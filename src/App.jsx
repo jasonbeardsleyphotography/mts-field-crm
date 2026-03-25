@@ -63,8 +63,9 @@ function parseEvent(ev) {
   const emailMatch = desc.match(/Email:\s*(\S+@\S+)/); const email = emailMatch ? emailMatch[1].trim() : "";
   const notesMatch = desc.match(/Notes:\s*([\s\S]*)/); const notes = notesMatch ? notesMatch[1].trim() : "";
   const isDriveBy = /drive[\s-]?by/i.test(s);
-  const isTodo = /^TODO:/i.test(s) || (/\bNOTE[!]*\b/i.test(s) && !jobNum);
-  const isAdmin = colorKey === "graphite" && !isTodo;
+  const isMtsNote = /MTS NOTE/i.test(s) || /\*{2,}NOTE[!]*\*{2,}/i.test(s);
+  const isTodo = !isMtsNote && (/^TODO:/i.test(s) || (/\bNOTE[!]*\b/i.test(s) && !jobNum));
+  const isAdmin = colorKey === "graphite" && !isTodo && !isMtsNote;
   const start = new Date(ev.start?.dateTime || ev.start?.date);
   const end = new Date(ev.end?.dateTime || ev.end?.date);
   const durH = (end - start) / 36e5, startH = start.getHours();
@@ -83,7 +84,7 @@ function parseEvent(ev) {
   if (/MEET (?:AT |.+?AT )(.+?)$/i.test(s)) { const m = s.match(/MEET (?:AT |.+?AT )(.+?)$/i); if (m) constraint = (constraint ? constraint + " · " : "") + "📍 " + m[1].slice(0, 40); }
   if (/YARD STICK/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "🪧 Bring yard stick";
   const ageDays = daysAgo(ev.created);
-  return { id:ev.id, cn:clientName, addr:address, phone, email, notes, desc, ck:colorKey, jn:jobNum, db:isDriveBy, isTodo, isAdm:isAdmin, wt:winType, wl:winLabel, con:constraint, raw:s, rawD:rd, st:start, en:end, ageDays, age:daysLabel(ageDays) };
+  return { id:ev.id, cn:clientName, addr:address, phone, email, notes, desc, ck:colorKey, jn:jobNum, db:isDriveBy, isTodo, isAdm:isAdmin, isMtsNote, wt:winType, wl:winLabel, con:constraint, raw:s, rawD:rd, st:start, en:end, ageDays, age:daysLabel(ageDays) };
 }
 
 // ── GOOGLE CALENDAR API ──────────────────────────────────────────────────────
@@ -535,13 +536,13 @@ export default function App() {
   const currentOrd = (ordIds[dayKey]?.length > 0) ? ordIds[dayKey] : dayParsed.map(e => e.id);
   const pmMap = useMemo(() => { const m = {}; dayParsed.forEach(p => { m[p.id] = p; }); return m; }, [dayParsed]);
 
-  const allStops = currentOrd.map(id => pmMap[id]).filter(Boolean);
+  const allStops = currentOrd.map(id => pmMap[id]).filter(Boolean).filter(s => !s.isMtsNote);
   const allClientStops = allStops.filter(s => !s.isAdm && !s.isTodo);
   const cs = allClientStops.filter(s => !dismissed[s.id]);
   const completedStops = allClientStops.filter(s => dismissed[s.id]);
   const todos = allStops.filter(s => s.isTodo);
   const admins = allStops.filter(s => s.isAdm && !s.isTodo);
-  const todayP = todayParsed.filter(s => !s.isAdm && !s.isTodo);
+  const todayP = todayParsed.filter(s => !s.isAdm && !s.isTodo && !s.isMtsNote);
 
   const needsAttention = useMemo(() => FU_RULES.flatMap(rule => todayP.filter(s => s.ck === rule.stage && s.ageDays >= rule.days).map(s => ({...s, rule}))), [todayP]);
 
@@ -656,7 +657,7 @@ export default function App() {
   return (
     <div ref={cRef} style={{height:"100dvh",width:"100%",background:"#090b10",display:"flex",flexDirection:"column",fontFamily:"'Inter',-apple-system,system-ui,sans-serif",color:"#e0e4ea",overflow:"hidden"}}>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
-      <style>{`.scr::-webkit-scrollbar{width:3px}.scr::-webkit-scrollbar-track{background:transparent}.scr::-webkit-scrollbar-thumb{background:#1e253644;border-radius:2px}.safe-bottom{padding-bottom:max(8px,env(safe-area-inset-bottom))}.gmnoprint,.gm-bundled-control,.gm-style-cc,.gm-control-active,.gm-fullscreen-control{display:none!important}`}</style>
+      <style>{`.scr::-webkit-scrollbar{width:3px}.scr::-webkit-scrollbar-track{background:transparent}.scr::-webkit-scrollbar-thumb{background:#1e253644;border-radius:2px}.safe-bottom{padding-bottom:max(8px,env(safe-area-inset-bottom))}.gmnoprint,.gm-bundled-control,.gm-style-cc,.gm-control-active,.gm-fullscreen-control,.gm-style .adp,.gm-style .adp-placemark{display:none!important}.gm-style button[title]{display:none!important}`}</style>
 
       {/* NAV */}
       <div style={{display:"flex",alignItems:"center",gap:4,padding:"6px 8px",background:"#0d0f14",borderBottom:"1px solid #161b25",flexShrink:0,zIndex:20}}>
