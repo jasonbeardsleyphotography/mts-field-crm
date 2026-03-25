@@ -282,35 +282,19 @@ function RouteMap({ stops, activeIdx, onSelect }) {
   const directionsRenderer = useRef(null);
   const [ready, setReady] = useState(false);
   const [coords, setCoords] = useState({});
+  const [mapError, setMapError] = useState(null);
 
-  useEffect(() => { loadMapsAPI().then(() => setReady(true)).catch(() => {}); }, []);
-
-  // Geocode all stop addresses with rate limiting
+  // Load Google Maps API
   useEffect(() => {
-    if (!ready || !stops.length) return;
-    let cancelled = false;
-    async function geo() {
-      const newCoords = {};
-      for (let i = 0; i < stops.length; i++) {
-        if (cancelled) break;
-        const s = stops[i];
-        if (!s.addr || s.addr.trim().length < 5) continue; // no address = no dot
-        const result = await geocodeAddress(s.addr);
-        if (result) newCoords[s.id] = result;
-        // Small delay between requests to avoid Google rate limits
-        if (i < stops.length - 1) await new Promise(r => setTimeout(r, 200));
-      }
-      if (!cancelled) setCoords(newCoords);
-    }
-    geo();
-    return () => { cancelled = true; };
-  }, [ready, stops.map(s => s.id + s.addr).join(",")]);
+    loadMapsAPI()
+      .then(() => setReady(true))
+      .catch(e => setMapError(e.message));
+  }, []);
 
-  // Create/update map, markers, and route
+  // Create map IMMEDIATELY when API is ready — don't wait for geocoding
   useEffect(() => {
-    if (!ready || !mapRef.current || !Object.keys(coords).length) return;
-
-    if (!mapInstance.current) {
+    if (!ready || !mapRef.current || mapInstance.current) return;
+    try {
       mapInstance.current = new window.google.maps.Map(mapRef.current, {
         center: { lat: 43.12, lng: -77.50 }, zoom: 11,
         styles: DARK_STYLE, disableDefaultUI: true,
@@ -319,13 +303,42 @@ function RouteMap({ stops, activeIdx, onSelect }) {
         keyboardShortcuts: false, clickableIcons: false,
         gestureHandling: "greedy", backgroundColor: "#0d0f14",
       });
+    } catch (e) { setMapError("Map failed: " + e.message); }
+  }, [ready]);
+
+  // Geocode stop addresses
+  useEffect(() => {
+    if (!ready || !stops.length) return;
+    let cancelled = false;
+    async function geo() {
+      const newCoords = {};
+      for (let i = 0; i < stops.length; i++) {
+        if (cancelled) break;
+        const s = stops[i];
+        if (!s.addr || s.addr.trim().length < 5) continue;
+        try {
+          const result = await geocodeAddress(s.addr);
+          if (result) newCoords[s.id] = result;
+        } catch (e) { /* skip failed geocode */ }
+        if (i < stops.length - 1) await new Promise(r => setTimeout(r, 200));
+      }
+      if (!cancelled) setCoords(newCoords);
     }
+    geo();
+    return () => { cancelled = true; };
+  }, [ready, stops.map(s => s.id + s.addr).join(",")]);
+
+  // Add markers and route when coords update
+  useEffect(() => {
     const map = mapInstance.current;
+    if (!map) return;
 
     // Clear old markers
     markersRef.current.forEach(m => m.setMap(null));
     markersRef.current = [];
     if (directionsRenderer.current) { directionsRenderer.current.setMap(null); directionsRenderer.current = null; }
+
+    if (!Object.keys(coords).length) return; // no coords yet — just show bare map
 
     const positions = [];
     const bounds = new window.google.maps.LatLngBounds();
@@ -354,42 +367,38 @@ function RouteMap({ stops, activeIdx, onSelect }) {
       bounds.extend(pos);
     });
 
-    // Draw road-following route using Directions API
+    // Draw road-following route
     if (positions.length >= 2) {
       const directionsService = new window.google.maps.DirectionsService();
-      const origin = positions[0];
-      const destination = positions[positions.length - 1];
-      const waypoints = positions.slice(1, -1).map(p => ({ location: p, stopover: true }));
-
       directionsService.route({
-        origin, destination, waypoints: waypoints.slice(0, 23), // API limit: 25 waypoints max
+        origin: positions[0],
+        destination: positions[positions.length - 1],
+        waypoints: positions.slice(1, -1).map(p => ({ location: p, stopover: true })).slice(0, 23),
         travelMode: window.google.maps.TravelMode.DRIVING,
-        optimizeWaypoints: false, // keep Jason's manual order
+        optimizeWaypoints: false,
       }, (result, status) => {
         if (status === "OK") {
-          const renderer = new window.google.maps.DirectionsRenderer({
-            map, directions: result, suppressMarkers: true, // we draw our own markers
+          directionsRenderer.current = new window.google.maps.DirectionsRenderer({
+            map, directions: result, suppressMarkers: true,
             polylineOptions: { strokeColor: "#039BE5", strokeOpacity: 0.7, strokeWeight: 4 },
           });
-          directionsRenderer.current = renderer;
-        }
-        // If Directions fails, fall back to straight polyline
-        else if (positions.length > 1) {
-          const polyline = new window.google.maps.Polyline({
+        } else {
+          // Fallback to straight polyline
+          const pl = new window.google.maps.Polyline({
             path: positions, geodesic: true, strokeColor: "#039BE5",
             strokeOpacity: 0.5, strokeWeight: 3, map,
           });
-          // Store for cleanup using directionsRenderer ref slot
-          directionsRenderer.current = { setMap: (m) => polyline.setMap(m) };
+          directionsRenderer.current = { setMap: (m) => pl.setMap(m) };
         }
       });
     }
 
     if (positions.length > 0) map.fitBounds(bounds, { top: 20, right: 20, bottom: 20, left: 20 });
-  }, [ready, coords, stops, activeIdx, onSelect]);
+  }, [coords, stops, activeIdx, onSelect]);
 
   return <div ref={mapRef} style={{ width:"100%", height:220, background:"#0d0f14" }}>
-    {!ready && <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", color:"#3a4560", fontSize:12 }}>Loading map...</div>}
+    {!ready && !mapError && <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", color:"#3a4560", fontSize:12 }}>Loading map...</div>}
+    {mapError && <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", color:"#c85a5a", fontSize:11, padding:10, textAlign:"center" }}>{mapError}</div>}
   </div>;
 }
 
