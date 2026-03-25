@@ -214,10 +214,17 @@ function loadMapsAPI() {
 const geocodeCache = {};
 async function geocodeAddress(addr) {
   if (!addr) return null;
-  // Normalize address: append ", NY" if it has a zip but no state
+  // Normalize: ensure address has city and state for accurate geocoding
   let fullAddr = addr;
-  if (/\b1\d{4}\b/.test(addr) && !/\bNY\b/i.test(addr)) {
-    fullAddr = addr.replace(/(\b1\d{4})\b/, ", NY $1");
+  if (!/Rochester|Pittsford|Fairport|Penfield|Webster|Macedon|Canandaigua|Honeoye|Brighton|Henrietta|Victor|Mendon/i.test(addr)) {
+    // No city name found — append Rochester NY area
+    if (/\b1\d{4}\b/.test(addr)) {
+      fullAddr = addr.replace(/(\b1\d{4})\b/, ", Rochester, NY $1");
+    } else {
+      fullAddr = addr + ", Rochester, NY";
+    }
+  } else if (!/\bNY\b/i.test(addr)) {
+    fullAddr = addr + ", NY";
   }
   if (geocodeCache[fullAddr]) return geocodeCache[fullAddr];
   try {
@@ -257,16 +264,20 @@ function RouteMap({ stops, activeIdx, onSelect }) {
 
   useEffect(() => { loadMapsAPI().then(() => setReady(true)).catch(() => {}); }, []);
 
-  // Geocode all stop addresses
+  // Geocode all stop addresses with rate limiting
   useEffect(() => {
     if (!ready || !stops.length) return;
     let cancelled = false;
     async function geo() {
       const newCoords = {};
-      for (const s of stops) {
+      for (let i = 0; i < stops.length; i++) {
         if (cancelled) break;
+        const s = stops[i];
+        if (!s.addr || s.addr.trim().length < 5) continue; // no address = no dot
         const result = await geocodeAddress(s.addr);
-        newCoords[s.id] = result || getFallbackCoords(s.addr);
+        if (result) newCoords[s.id] = result;
+        // Small delay between requests to avoid Google rate limits
+        if (i < stops.length - 1) await new Promise(r => setTimeout(r, 120));
       }
       if (!cancelled) setCoords(newCoords);
     }
@@ -281,8 +292,10 @@ function RouteMap({ stops, activeIdx, onSelect }) {
     if (!mapInstance.current) {
       mapInstance.current = new window.google.maps.Map(mapRef.current, {
         center: { lat: 43.12, lng: -77.50 }, zoom: 11,
-        styles: DARK_STYLE, disableDefaultUI: true, zoomControl: true,
-        zoomControlOptions: { position: window.google.maps.ControlPosition.RIGHT_BOTTOM },
+        styles: DARK_STYLE, disableDefaultUI: true,
+        zoomControl: false, mapTypeControl: false, scaleControl: false,
+        streetViewControl: false, rotateControl: false, fullscreenControl: false,
+        keyboardShortcuts: false, clickableIcons: false,
         gestureHandling: "greedy", backgroundColor: "#0d0f14",
       });
     }
@@ -684,7 +697,7 @@ export default function App() {
           </div>
 
           {/* Scrollable card list */}
-          <div className="scr" style={{flex:1,overflowY:"auto"}}>
+          <div className="scr" style={{flex:1,overflowY:"auto",paddingBottom:"max(12px, env(safe-area-inset-bottom))"}}>
           {(()=>{
             const q=searchQ.toLowerCase();
             const list=q?cs.filter(s=>(s.cn||"").toLowerCase().includes(q)||(s.addr||"").toLowerCase().includes(q)||(s.jn||"").includes(q)):cs;
@@ -730,13 +743,6 @@ export default function App() {
 
           </div>{/* end scrollable list */}
 
-          {/* Fixed bottom pipeline bar */}
-          <div style={{padding:"8px 10px",paddingBottom:"max(8px, env(safe-area-inset-bottom))",display:"flex",gap:3,borderTop:"1px solid #161b25",background:"#0b0d12",flexShrink:0}}>
-            {PO.filter(k=>todayP.filter(s=>s.ck===k).length>0).map(k=><div key={k} style={{flex:1,textAlign:"center",padding:"4px 0",borderRadius:4,background:C[k]+"08"}}>
-              <div style={{fontSize:14,fontWeight:700,color:C[k]}}>{todayP.filter(s=>s.ck===k).length}</div>
-              <div style={{fontSize:7,fontWeight:700,color:"#2a3548"}}>{PL[k].split(" ")[0].slice(0,5)}</div>
-            </div>)}
-          </div>
         </div>
 
       ) : (
