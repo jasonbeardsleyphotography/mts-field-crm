@@ -280,20 +280,21 @@ function RouteMap({ stops, activeIdx, onSelect }) {
   const mapInstance = useRef(null);
   const markersRef = useRef([]);
   const directionsRenderer = useRef(null);
-  const [ready, setReady] = useState(false);
+  const [status, setStatus] = useState("init");
   const [coords, setCoords] = useState({});
-  const [mapError, setMapError] = useState(null);
 
   // Load Google Maps API
   useEffect(() => {
+    if (!MAPS_KEY) { setStatus("err:No Maps API key found"); return; }
+    setStatus("loading...");
     loadMapsAPI()
-      .then(() => setReady(true))
-      .catch(e => setMapError(e.message));
+      .then(() => setStatus("ready"))
+      .catch(e => setStatus("err:" + e.message));
   }, []);
 
-  // Create map IMMEDIATELY when API is ready — don't wait for geocoding
+  // Create map when ready
   useEffect(() => {
-    if (!ready || !mapRef.current || mapInstance.current) return;
+    if (status !== "ready" || !mapRef.current || mapInstance.current) return;
     try {
       mapInstance.current = new window.google.maps.Map(mapRef.current, {
         center: { lat: 43.12, lng: -77.50 }, zoom: 11,
@@ -303,12 +304,14 @@ function RouteMap({ stops, activeIdx, onSelect }) {
         keyboardShortcuts: false, clickableIcons: false,
         gestureHandling: "greedy", backgroundColor: "#0d0f14",
       });
-    } catch (e) { setMapError("Map failed: " + e.message); }
-  }, [ready]);
+      setStatus("map-created");
+    } catch (e) { setStatus("err:Map create failed - " + e.message); }
+  }, [status]);
 
-  // Geocode stop addresses
+  // Geocode addresses
   useEffect(() => {
-    if (!ready || !stops.length) return;
+    if (status !== "map-created" && status !== "ready") return;
+    if (!stops.length) return;
     let cancelled = false;
     async function geo() {
       const newCoords = {};
@@ -319,31 +322,27 @@ function RouteMap({ stops, activeIdx, onSelect }) {
         try {
           const result = await geocodeAddress(s.addr);
           if (result) newCoords[s.id] = result;
-        } catch (e) { /* skip failed geocode */ }
+        } catch (e) { /* skip */ }
         if (i < stops.length - 1) await new Promise(r => setTimeout(r, 200));
       }
       if (!cancelled) setCoords(newCoords);
     }
     geo();
     return () => { cancelled = true; };
-  }, [ready, stops.map(s => s.id + s.addr).join(",")]);
+  }, [status, stops.map(s => s.id + s.addr).join(",")]);
 
-  // Add markers and route when coords update
+  // Place markers and route
   useEffect(() => {
     const map = mapInstance.current;
     if (!map) return;
-
-    // Clear old markers
     markersRef.current.forEach(m => m.setMap(null));
     markersRef.current = [];
     if (directionsRenderer.current) { directionsRenderer.current.setMap(null); directionsRenderer.current = null; }
-
-    if (!Object.keys(coords).length) return; // no coords yet — just show bare map
+    if (!Object.keys(coords).length) return;
 
     const positions = [];
     const bounds = new window.google.maps.LatLngBounds();
     let sn = 0;
-
     stops.forEach((s, i) => {
       const pos = coords[s.id];
       if (!pos) return;
@@ -367,38 +366,37 @@ function RouteMap({ stops, activeIdx, onSelect }) {
       bounds.extend(pos);
     });
 
-    // Draw road-following route
     if (positions.length >= 2) {
-      const directionsService = new window.google.maps.DirectionsService();
-      directionsService.route({
-        origin: positions[0],
-        destination: positions[positions.length - 1],
-        waypoints: positions.slice(1, -1).map(p => ({ location: p, stopover: true })).slice(0, 23),
-        travelMode: window.google.maps.TravelMode.DRIVING,
-        optimizeWaypoints: false,
-      }, (result, status) => {
-        if (status === "OK") {
-          directionsRenderer.current = new window.google.maps.DirectionsRenderer({
-            map, directions: result, suppressMarkers: true,
-            polylineOptions: { strokeColor: "#039BE5", strokeOpacity: 0.7, strokeWeight: 4 },
-          });
-        } else {
-          // Fallback to straight polyline
-          const pl = new window.google.maps.Polyline({
-            path: positions, geodesic: true, strokeColor: "#039BE5",
-            strokeOpacity: 0.5, strokeWeight: 3, map,
-          });
-          directionsRenderer.current = { setMap: (m) => pl.setMap(m) };
-        }
-      });
+      try {
+        const ds = new window.google.maps.DirectionsService();
+        ds.route({
+          origin: positions[0], destination: positions[positions.length - 1],
+          waypoints: positions.slice(1, -1).map(p => ({ location: p, stopover: true })).slice(0, 23),
+          travelMode: window.google.maps.TravelMode.DRIVING, optimizeWaypoints: false,
+        }, (result, s) => {
+          if (s === "OK") {
+            directionsRenderer.current = new window.google.maps.DirectionsRenderer({
+              map, directions: result, suppressMarkers: true,
+              polylineOptions: { strokeColor: "#039BE5", strokeOpacity: 0.7, strokeWeight: 4 },
+            });
+          } else {
+            const pl = new window.google.maps.Polyline({ path: positions, strokeColor: "#039BE5", strokeOpacity: 0.5, strokeWeight: 3, map });
+            directionsRenderer.current = { setMap: m => pl.setMap(m) };
+          }
+        });
+      } catch (e) {
+        const pl = new window.google.maps.Polyline({ path: positions, strokeColor: "#039BE5", strokeOpacity: 0.5, strokeWeight: 3, map });
+        directionsRenderer.current = { setMap: m => pl.setMap(m) };
+      }
     }
-
     if (positions.length > 0) map.fitBounds(bounds, { top: 20, right: 20, bottom: 20, left: 20 });
   }, [coords, stops, activeIdx, onSelect]);
 
+  const showStatus = status.startsWith("err:") || status === "init" || status === "loading...";
   return <div ref={mapRef} style={{ width:"100%", height:220, background:"#0d0f14" }}>
-    {!ready && !mapError && <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", color:"#3a4560", fontSize:12 }}>Loading map...</div>}
-    {mapError && <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", color:"#c85a5a", fontSize:11, padding:10, textAlign:"center" }}>{mapError}</div>}
+    {showStatus && <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", color:status.startsWith("err:")?"#c85a5a":"#3a4560", fontSize:11, padding:10, textAlign:"center" }}>
+      {status.startsWith("err:") ? status.slice(4) : status}
+    </div>}
   </div>;
 }
 
