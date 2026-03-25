@@ -185,34 +185,176 @@ function TextSheet({ stop, onClose, onSend }) {
   </div>;
 }
 
-// ── SVG MAP ──────────────────────────────────────────────────────────────────
-const ZC = { "14618":[43.12,77.57],"14526":[43.155,77.45],"14625":[43.14,77.51],"14450":[43.10,77.44],"14502":[43.07,77.30],"14424":[42.87,77.28],"14543":[42.99,77.64],"14534":[43.09,77.52],"14580":[43.21,77.43],"14472":[42.95,77.59],"14445":[43.11,77.49],"14607":[43.15,77.59],"14610":[43.14,77.57] };
-function getCoords(addr, i) { const z = (addr||"").match(/\b(1\d{4})\b/); const b = z && ZC[z[1]] ? ZC[z[1]] : [43.12, 77.50]; return [b[0]+((i*23+7)%19-9)*.0025, -(b[1]+((i*37+13)%29-14)*.0025)]; }
+// ── GOOGLE MAPS ──────────────────────────────────────────────────────────────
+const ZC = { "14618":[43.12,-77.57],"14526":[43.155,-77.45],"14625":[43.14,-77.51],"14450":[43.10,-77.44],"14502":[43.07,-77.30],"14424":[42.87,-77.28],"14543":[42.99,-77.64],"14534":[43.09,-77.52],"14580":[43.21,-77.43],"14472":[42.95,-77.59],"14445":[43.11,-77.49],"14607":[43.15,-77.59],"14610":[43.14,-77.57] };
+function getFallbackCoords(addr) {
+  const z = (addr||"").match(/\b(1\d{4})\b/);
+  return z && ZC[z[1]] ? { lat:ZC[z[1]][0], lng:ZC[z[1]][1] } : { lat:43.12, lng:-77.50 };
+}
+
+// Load Google Maps script once
+let mapsLoaded = false;
+let mapsPromise = null;
+function loadMapsAPI() {
+  if (mapsLoaded && window.google?.maps) return Promise.resolve();
+  if (mapsPromise) return mapsPromise;
+  mapsPromise = new Promise((resolve, reject) => {
+    if (window.google?.maps) { mapsLoaded = true; resolve(); return; }
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_KEY}&libraries=geocoding`;
+    script.async = true;
+    script.onload = () => { mapsLoaded = true; resolve(); };
+    script.onerror = () => reject(new Error("Failed to load Google Maps"));
+    document.head.appendChild(script);
+  });
+  return mapsPromise;
+}
+
+// Geocode cache to avoid re-geocoding same addresses
+const geocodeCache = {};
+async function geocodeAddress(addr) {
+  if (!addr) return null;
+  if (geocodeCache[addr]) return geocodeCache[addr];
+  try {
+    const geocoder = new window.google.maps.Geocoder();
+    const result = await geocoder.geocode({ address: addr });
+    if (result.results?.[0]?.geometry?.location) {
+      const loc = result.results[0].geometry.location;
+      const coords = { lat: loc.lat(), lng: loc.lng() };
+      geocodeCache[addr] = coords;
+      return coords;
+    }
+  } catch (e) { /* fall through to fallback */ }
+  return null;
+}
+
+// Dark map style
+const DARK_STYLE = [
+  { elementType:"geometry", stylers:[{color:"#0d0f14"}] },
+  { elementType:"labels.text.stroke", stylers:[{color:"#0d0f14"}] },
+  { elementType:"labels.text.fill", stylers:[{color:"#3a4560"}] },
+  { featureType:"road", elementType:"geometry", stylers:[{color:"#1e2536"}] },
+  { featureType:"road", elementType:"geometry.stroke", stylers:[{color:"#161b25"}] },
+  { featureType:"road.highway", elementType:"geometry", stylers:[{color:"#2a3548"}] },
+  { featureType:"water", elementType:"geometry", stylers:[{color:"#080a10"}] },
+  { featureType:"poi", stylers:[{visibility:"off"}] },
+  { featureType:"transit", stylers:[{visibility:"off"}] },
+  { featureType:"administrative", elementType:"geometry.stroke", stylers:[{color:"#161b25"}] },
+];
 
 function RouteMap({ stops, activeIdx, onSelect }) {
-  const ref = useRef(null); const [w, setW] = useState(360); const h = 200;
-  const [zoom, setZoom] = useState(1); const [pan, setPan] = useState({x:0,y:0});
-  const tr = useRef({sd:0,sz:1,sp:{x:0,y:0},sm:{x:0,y:0},p:false});
-  useEffect(() => { if (ref.current) setW(ref.current.offsetWidth); }, []);
-  const gd = t => Math.hypot(t[1].clientX-t[0].clientX,t[1].clientY-t[0].clientY);
-  const gm = t => ({x:(t[0].clientX+t[1].clientX)/2,y:(t[0].clientY+t[1].clientY)/2});
-  const hts = e => { const t=e.touches; if(t.length===2){e.preventDefault();tr.current={sd:gd(t),sz:zoom,sp:{...pan},sm:gm(t),p:true};}else if(t.length===1){tr.current={...tr.current,sp:{...pan},sm:{x:t[0].clientX,y:t[0].clientY},p:true};}};
-  const htm = e => { const t=e.touches; if(t.length===2){e.preventDefault();const d=gd(t),m=gm(t);const nz=Math.max(.5,Math.min(5,tr.current.sz*(d/tr.current.sd)));setZoom(nz);setPan({x:tr.current.sp.x+m.x-tr.current.sm.x,y:tr.current.sp.y+m.y-tr.current.sm.y});}else if(t.length===1&&tr.current.p&&zoom>1){setPan({x:tr.current.sp.x+t[0].clientX-tr.current.sm.x,y:tr.current.sp.y+t[0].clientY-tr.current.sm.y});}};
-  const reset = () => {setZoom(1);setPan({x:0,y:0});};
-  const pad = 28;
-  const bounds = useMemo(() => { if(!stops.length)return{a:43.05,b:43.2,c:-77.65,d:-77.3}; let a=Infinity,b=-Infinity,cc=Infinity,d=-Infinity; stops.forEach(s=>{const c=getCoords(s.addr,parseInt((s.id||"").replace(/\D/g,"").slice(0,4)||"0",10));a=Math.min(a,c[0]);b=Math.max(b,c[0]);cc=Math.min(cc,c[1]);d=Math.max(d,c[1]);}); const pA=(b-a)*.3||.03,pC=(d-cc)*.3||.04; return{a:a-pA,b:b+pA,c:cc-pC,d:d+pC}; }, [stops]);
-  const proj = (lat,lng) => [pad+(lng-bounds.c)/(bounds.d-bounds.c)*(w-pad*2),pad+(bounds.b-lat)/(bounds.b-bounds.a)*(h-pad*2)];
-  const pts = stops.map(s => { const c=getCoords(s.addr,parseInt((s.id||"").replace(/\D/g,"").slice(0,4)||"0",10)); return proj(c[0],c[1]); });
-  const cx=w/2,cy=h/2; const transform=`translate(${pan.x},${pan.y}) translate(${cx},${cy}) scale(${zoom}) translate(${-cx},${-cy})`;
-  let sn = 0;
-  return <div ref={ref} style={{width:"100%",height:h,background:"#080a0f",overflow:"hidden",touchAction:"none",position:"relative"}} onTouchStart={hts} onTouchMove={htm} onTouchEnd={()=>{tr.current.p=false;}} onDoubleClick={reset} onWheel={e=>{e.preventDefault();setZoom(z=>Math.max(.5,Math.min(5,z*(e.deltaY>0?.9:1.1))));}}>
-    <svg width={w} height={h}><rect width={w} height={h} fill="#080a0f"/><g transform={transform}>
-      {Array.from({length:6}).map((_,i)=><line key={`h${i}`} x1={0} y1={pad+i*((h-pad*2)/5)} x2={w} y2={pad+i*((h-pad*2)/5)} stroke="#111825" strokeWidth={.5/zoom}/>)}
-      {Array.from({length:8}).map((_,i)=><line key={`v${i}`} x1={pad+i*((w-pad*2)/7)} y1={0} x2={pad+i*((w-pad*2)/7)} y2={h} stroke="#111825" strokeWidth={.5/zoom}/>)}
-      {pts.length>1&&<polyline points={pts.map(p=>p.join(",")).join(" ")} fill="none" stroke="#2a4a6a" strokeWidth={2/zoom} strokeDasharray={`${6/zoom} ${3/zoom}`} strokeLinecap="round"/>}
-      {stops.map((s,i)=>{sn++;const[x,y]=pts[i];const isA=activeIdx===i;const r=(isA?15:11)/zoom;return <g key={s.id} onClick={e=>{e.stopPropagation();onSelect(i);}} style={{cursor:"pointer"}}>{isA&&<circle cx={x} cy={y} r={r+8/zoom} fill="none" stroke={C[s.ck]} strokeWidth={1.5/zoom} opacity={.25}/>}<circle cx={x} cy={y} r={r} fill={C[s.ck]} stroke={isA?"#fff":s.db?"rgba(255,255,255,.4)":"rgba(255,255,255,.2)"} strokeWidth={(isA?2.5:1)/zoom} strokeDasharray={s.db?`${3/zoom} ${2/zoom}`:"none"}/><text x={x} y={y+1} textAnchor="middle" dominantBaseline="middle" fontSize={(isA?10:8)/zoom} fontWeight={700} fill="#fff" fontFamily="Inter,sans-serif">{sn}</text></g>;})}
-    </g></svg>
-    {zoom!==1&&<button onClick={reset} style={{position:"absolute",bottom:6,right:6,padding:"3px 8px",borderRadius:5,background:"#0d0f14cc",border:"1px solid #1e2536",color:"#6a7590",fontSize:9,cursor:"pointer"}}>{Math.round(zoom*100)}% · Reset</button>}
+  const mapRef = useRef(null);
+  const mapInstance = useRef(null);
+  const markersRef = useRef([]);
+  const polylineRef = useRef(null);
+  const [ready, setReady] = useState(false);
+  const [coords, setCoords] = useState({}); // {stopId: {lat, lng}}
+
+  // Load Google Maps API
+  useEffect(() => {
+    loadMapsAPI().then(() => setReady(true)).catch(() => {});
+  }, []);
+
+  // Geocode all stop addresses
+  useEffect(() => {
+    if (!ready || !stops.length) return;
+    let cancelled = false;
+    async function geo() {
+      const newCoords = {};
+      for (const s of stops) {
+        if (cancelled) break;
+        const result = await geocodeAddress(s.addr);
+        newCoords[s.id] = result || getFallbackCoords(s.addr);
+      }
+      if (!cancelled) setCoords(newCoords);
+    }
+    geo();
+    return () => { cancelled = true; };
+  }, [ready, stops.map(s => s.id).join(",")]);
+
+  // Create/update map
+  useEffect(() => {
+    if (!ready || !mapRef.current || !Object.keys(coords).length) return;
+
+    // Create map if not exists
+    if (!mapInstance.current) {
+      mapInstance.current = new window.google.maps.Map(mapRef.current, {
+        center: { lat: 43.12, lng: -77.50 },
+        zoom: 11,
+        styles: DARK_STYLE,
+        disableDefaultUI: true,
+        zoomControl: true,
+        zoomControlOptions: { position: window.google.maps.ControlPosition.RIGHT_BOTTOM },
+        gestureHandling: "greedy",
+        backgroundColor: "#0d0f14",
+      });
+    }
+    const map = mapInstance.current;
+
+    // Clear old markers
+    markersRef.current.forEach(m => m.setMap(null));
+    markersRef.current = [];
+    if (polylineRef.current) { polylineRef.current.setMap(null); polylineRef.current = null; }
+
+    // Build markers and path
+    const path = [];
+    const bounds = new window.google.maps.LatLngBounds();
+    let sn = 0;
+
+    stops.forEach((s, i) => {
+      const pos = coords[s.id];
+      if (!pos) return;
+      sn++;
+      const isActive = activeIdx === i;
+
+      // Create custom marker label
+      const marker = new window.google.maps.Marker({
+        position: pos,
+        map,
+        label: {
+          text: String(sn),
+          color: "#fff",
+          fontWeight: "700",
+          fontSize: isActive ? "13px" : "11px",
+        },
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          scale: isActive ? 16 : 12,
+          fillColor: C[s.ck] || "#039BE5",
+          fillOpacity: s.db ? 0.6 : 1,
+          strokeColor: isActive ? "#fff" : s.db ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.2)",
+          strokeWeight: isActive ? 3 : 1,
+        },
+        zIndex: isActive ? 100 : 10,
+      });
+
+      marker.addListener("click", () => onSelect(i));
+      markersRef.current.push(marker);
+      path.push(pos);
+      bounds.extend(pos);
+    });
+
+    // Draw route polyline
+    if (path.length > 1) {
+      polylineRef.current = new window.google.maps.Polyline({
+        path,
+        geodesic: true,
+        strokeColor: "#039BE5",
+        strokeOpacity: 0.6,
+        strokeWeight: 3,
+        icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: 1, scale: 3 }, offset: "0", repeat: "15px" }],
+        map,
+      });
+    }
+
+    // Fit bounds with padding
+    if (path.length > 0) {
+      map.fitBounds(bounds, { top: 20, right: 20, bottom: 20, left: 20 });
+    }
+  }, [ready, coords, stops, activeIdx, onSelect]);
+
+  return <div ref={mapRef} style={{ width:"100%", height:220, background:"#0d0f14" }}>
+    {!ready && <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", color:"#3a4560", fontSize:12 }}>Loading map...</div>}
   </div>;
 }
 
