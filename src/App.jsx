@@ -193,18 +193,20 @@ function getFallbackCoords(addr) {
 }
 
 // Load Google Maps script once
-let mapsLoaded = false;
 let mapsPromise = null;
 function loadMapsAPI() {
-  if (mapsLoaded && window.google?.maps) return Promise.resolve();
+  if (window.google?.maps?.Map) return Promise.resolve(); // already loaded
   if (mapsPromise) return mapsPromise;
   mapsPromise = new Promise((resolve, reject) => {
-    if (window.google?.maps) { mapsLoaded = true; resolve(); return; }
+    if (window.google?.maps?.Map) { resolve(); return; }
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_KEY}&libraries=geocoding`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_KEY}`;
     script.async = true;
-    script.onload = () => { mapsLoaded = true; resolve(); };
-    script.onerror = () => reject(new Error("Failed to load Google Maps"));
+    script.onload = () => {
+      if (window.google?.maps?.Map) resolve();
+      else reject(new Error("Maps loaded but Map class not found"));
+    };
+    script.onerror = () => { mapsPromise = null; reject(new Error("Failed to load Google Maps")); };
     document.head.appendChild(script);
   });
   return mapsPromise;
