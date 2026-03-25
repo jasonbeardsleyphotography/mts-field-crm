@@ -214,14 +214,19 @@ function loadMapsAPI() {
 const geocodeCache = {};
 async function geocodeAddress(addr) {
   if (!addr) return null;
-  if (geocodeCache[addr]) return geocodeCache[addr];
+  // Normalize address: append ", NY" if it has a zip but no state
+  let fullAddr = addr;
+  if (/\b1\d{4}\b/.test(addr) && !/\bNY\b/i.test(addr)) {
+    fullAddr = addr.replace(/(\b1\d{4})\b/, ", NY $1");
+  }
+  if (geocodeCache[fullAddr]) return geocodeCache[fullAddr];
   try {
     const geocoder = new window.google.maps.Geocoder();
-    const result = await geocoder.geocode({ address: addr });
+    const result = await geocoder.geocode({ address: fullAddr });
     if (result.results?.[0]?.geometry?.location) {
       const loc = result.results[0].geometry.location;
       const coords = { lat: loc.lat(), lng: loc.lng() };
-      geocodeCache[addr] = coords;
+      geocodeCache[fullAddr] = coords;
       return coords;
     }
   } catch (e) { /* fall through to fallback */ }
@@ -246,14 +251,11 @@ function RouteMap({ stops, activeIdx, onSelect }) {
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
   const markersRef = useRef([]);
-  const polylineRef = useRef(null);
+  const directionsRenderer = useRef(null);
   const [ready, setReady] = useState(false);
-  const [coords, setCoords] = useState({}); // {stopId: {lat, lng}}
+  const [coords, setCoords] = useState({});
 
-  // Load Google Maps API
-  useEffect(() => {
-    loadMapsAPI().then(() => setReady(true)).catch(() => {});
-  }, []);
+  useEffect(() => { loadMapsAPI().then(() => setReady(true)).catch(() => {}); }, []);
 
   // Geocode all stop addresses
   useEffect(() => {
@@ -270,23 +272,18 @@ function RouteMap({ stops, activeIdx, onSelect }) {
     }
     geo();
     return () => { cancelled = true; };
-  }, [ready, stops.map(s => s.id).join(",")]);
+  }, [ready, stops.map(s => s.id + s.addr).join(",")]);
 
-  // Create/update map
+  // Create/update map, markers, and route
   useEffect(() => {
     if (!ready || !mapRef.current || !Object.keys(coords).length) return;
 
-    // Create map if not exists
     if (!mapInstance.current) {
       mapInstance.current = new window.google.maps.Map(mapRef.current, {
-        center: { lat: 43.12, lng: -77.50 },
-        zoom: 11,
-        styles: DARK_STYLE,
-        disableDefaultUI: true,
-        zoomControl: true,
+        center: { lat: 43.12, lng: -77.50 }, zoom: 11,
+        styles: DARK_STYLE, disableDefaultUI: true, zoomControl: true,
         zoomControlOptions: { position: window.google.maps.ControlPosition.RIGHT_BOTTOM },
-        gestureHandling: "greedy",
-        backgroundColor: "#0d0f14",
+        gestureHandling: "greedy", backgroundColor: "#0d0f14",
       });
     }
     const map = mapInstance.current;
@@ -294,10 +291,9 @@ function RouteMap({ stops, activeIdx, onSelect }) {
     // Clear old markers
     markersRef.current.forEach(m => m.setMap(null));
     markersRef.current = [];
-    if (polylineRef.current) { polylineRef.current.setMap(null); polylineRef.current = null; }
+    if (directionsRenderer.current) { directionsRenderer.current.setMap(null); directionsRenderer.current = null; }
 
-    // Build markers and path
-    const path = [];
+    const positions = [];
     const bounds = new window.google.maps.LatLngBounds();
     let sn = 0;
 
@@ -306,51 +302,56 @@ function RouteMap({ stops, activeIdx, onSelect }) {
       if (!pos) return;
       sn++;
       const isActive = activeIdx === i;
-
-      // Create custom marker label
       const marker = new window.google.maps.Marker({
-        position: pos,
-        map,
-        label: {
-          text: String(sn),
-          color: "#fff",
-          fontWeight: "700",
-          fontSize: isActive ? "13px" : "11px",
-        },
+        position: pos, map,
+        label: { text: String(sn), color: "#fff", fontWeight: "700", fontSize: isActive ? "13px" : "11px" },
         icon: {
           path: window.google.maps.SymbolPath.CIRCLE,
           scale: isActive ? 16 : 12,
-          fillColor: C[s.ck] || "#039BE5",
-          fillOpacity: s.db ? 0.6 : 1,
+          fillColor: C[s.ck] || "#039BE5", fillOpacity: s.db ? 0.6 : 1,
           strokeColor: isActive ? "#fff" : s.db ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.2)",
           strokeWeight: isActive ? 3 : 1,
         },
         zIndex: isActive ? 100 : 10,
       });
-
       marker.addListener("click", () => onSelect(i));
       markersRef.current.push(marker);
-      path.push(pos);
+      positions.push(pos);
       bounds.extend(pos);
     });
 
-    // Draw route polyline
-    if (path.length > 1) {
-      polylineRef.current = new window.google.maps.Polyline({
-        path,
-        geodesic: true,
-        strokeColor: "#039BE5",
-        strokeOpacity: 0.6,
-        strokeWeight: 3,
-        icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: 1, scale: 3 }, offset: "0", repeat: "15px" }],
-        map,
+    // Draw road-following route using Directions API
+    if (positions.length >= 2) {
+      const directionsService = new window.google.maps.DirectionsService();
+      const origin = positions[0];
+      const destination = positions[positions.length - 1];
+      const waypoints = positions.slice(1, -1).map(p => ({ location: p, stopover: true }));
+
+      directionsService.route({
+        origin, destination, waypoints: waypoints.slice(0, 23), // API limit: 25 waypoints max
+        travelMode: window.google.maps.TravelMode.DRIVING,
+        optimizeWaypoints: false, // keep Jason's manual order
+      }, (result, status) => {
+        if (status === "OK") {
+          const renderer = new window.google.maps.DirectionsRenderer({
+            map, directions: result, suppressMarkers: true, // we draw our own markers
+            polylineOptions: { strokeColor: "#039BE5", strokeOpacity: 0.7, strokeWeight: 4 },
+          });
+          directionsRenderer.current = renderer;
+        }
+        // If Directions fails, fall back to straight polyline
+        else if (positions.length > 1) {
+          const polyline = new window.google.maps.Polyline({
+            path: positions, geodesic: true, strokeColor: "#039BE5",
+            strokeOpacity: 0.5, strokeWeight: 3, map,
+          });
+          // Store for cleanup using directionsRenderer ref slot
+          directionsRenderer.current = { setMap: (m) => polyline.setMap(m) };
+        }
       });
     }
 
-    // Fit bounds with padding
-    if (path.length > 0) {
-      map.fitBounds(bounds, { top: 20, right: 20, bottom: 20, left: 20 });
-    }
+    if (positions.length > 0) map.fitBounds(bounds, { top: 20, right: 20, bottom: 20, left: 20 });
   }, [ready, coords, stops, activeIdx, onSelect]);
 
   return <div ref={mapRef} style={{ width:"100%", height:220, background:"#0d0f14" }}>
@@ -387,7 +388,7 @@ export default function App() {
 
   // Data state
   const [rawEvents, setRawEvents] = useState({}); // { "2026-03-24": [...events] }
-  const [businessDays, setBusinessDays] = useState(() => getBusinessDays(3));
+  const [businessDays, setBusinessDays] = useState(() => getBusinessDays(10));
 
   // UI state
   const [view, setView] = useState("route");
@@ -437,7 +438,7 @@ export default function App() {
     if (!token) return;
     setLoading(true);
     try {
-      const days = getBusinessDays(3);
+      const days = getBusinessDays(10);
       setBusinessDays(days);
       const all = {};
       for (const day of days) {
@@ -585,7 +586,7 @@ export default function App() {
 
   // ═══ SIGN IN SCREEN ═══════════════════════════════════════════════════
   if (!token) {
-    return <div style={{ height:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", background:"#090b10", fontFamily:"Inter,-apple-system,sans-serif", color:"#e0e4ea", padding:20 }}>
+    return <div style={{ height:"100dvh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", background:"#090b10", fontFamily:"Inter,-apple-system,sans-serif", color:"#e0e4ea", padding:20 }}>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet"/>
       <div style={{ fontSize:28, fontWeight:800, marginBottom:4 }}>MTS Field CRM</div>
       <div style={{ fontSize:13, color:"#4a5a6a", marginBottom:32 }}>Sales & Route Planning</div>
@@ -596,7 +597,7 @@ export default function App() {
 
   // ═══ LOADING ═══════════════════════════════════════════════════════════
   if (loading && !Object.keys(rawEvents).length) {
-    return <div style={{ height:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"#090b10", color:"#4a5a6a", fontFamily:"Inter,sans-serif" }}>
+    return <div style={{ height:"100dvh", display:"flex", alignItems:"center", justifyContent:"center", background:"#090b10", color:"#4a5a6a", fontFamily:"Inter,sans-serif" }}>
       <div style={{ textAlign:"center" }}><div style={{ fontSize:16, fontWeight:600, marginBottom:8 }}>Loading your calendar...</div><div style={{ fontSize:11 }}>Fetching {businessDays.length} business days</div></div>
     </div>;
   }
@@ -610,9 +611,9 @@ export default function App() {
   });
 
   return (
-    <div ref={cRef} style={{height:"100vh",width:"100%",background:"#090b10",display:"flex",flexDirection:"column",fontFamily:"'Inter',-apple-system,system-ui,sans-serif",color:"#e0e4ea",overflow:"hidden"}}>
+    <div ref={cRef} style={{height:"100dvh",width:"100%",background:"#090b10",display:"flex",flexDirection:"column",fontFamily:"'Inter',-apple-system,system-ui,sans-serif",color:"#e0e4ea",overflow:"hidden"}}>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
-      <style>{`.scr::-webkit-scrollbar{width:3px}.scr::-webkit-scrollbar-track{background:transparent}.scr::-webkit-scrollbar-thumb{background:#1e253644;border-radius:2px}`}</style>
+      <style>{`.scr::-webkit-scrollbar{width:3px}.scr::-webkit-scrollbar-track{background:transparent}.scr::-webkit-scrollbar-thumb{background:#1e253644;border-radius:2px}.safe-bottom{padding-bottom:max(8px,env(safe-area-inset-bottom))}`}</style>
 
       {/* NAV */}
       <div style={{display:"flex",alignItems:"center",gap:4,padding:"6px 8px",background:"#0d0f14",borderBottom:"1px solid #161b25",flexShrink:0,zIndex:20}}>
@@ -661,28 +662,29 @@ export default function App() {
 
       {/* ═══ ROUTE ═══ */}
       {view === "route" ? (
-        <div className="scr" style={{flex:1,overflowY:"auto"}}>
-          {reorderMode&&<div style={{padding:"6px 12px",background:"#1a0f28",borderBottom:"1px solid #301a40",display:"flex",alignItems:"center",gap:8}}>
-            {moving!==null?<><Dot color={cs[moving]?.ck||"basil"} sz={10}/><span style={{fontSize:12,fontWeight:600,color:"#c8a0e8"}}>Moving: {cs[moving]?.cn} — tap destination</span><button onClick={()=>setMoving(null)} style={{marginLeft:"auto",padding:"3px 8px",borderRadius:5,background:"#1e2536",border:"none",color:"#a0a8b8",fontSize:10,cursor:"pointer"}}>Deselect</button></>:
-            <span style={{fontSize:12,fontWeight:500,color:"#9a80c8"}}>↕ Tap a stop to pick it up</span>}
-          </div>}
-
-          <div style={{borderBottom:"1px solid #161b25"}}>
-            <div style={{display:"flex",alignItems:"center"}}>
-              <button onClick={()=>setMapOpen(!mapOpen)} style={{flex:1,padding:"8px 12px",background:"#0a0c12",border:"none",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
-                <span style={{transform:mapOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:8}}>▶</span>
-                🗺 {cs.length} stops{completedStops.length>0?` · ${completedStops.length} done`:""}
-              </button>
-              <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setActStop(null);}}} style={{padding:"6px 10px",margin:"4px 2px",borderRadius:8,background:reorderMode?"#8E24AA22":"#1e253644",border:`1px solid ${reorderMode?"#8E24AA55":"#1e2536"}`,color:reorderMode?"#c8a0e8":"#5a7090",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>{reorderMode?"✕ Done":"↕ Reorder"}</button>
-              {navUrl&&<a href={navUrl} target="_blank" rel="noopener noreferrer" style={{padding:"6px 10px",margin:"4px 4px 4px 0",borderRadius:8,background:"#039BE518",border:"1px solid #039BE533",color:"#039BE5",fontSize:11,fontWeight:700,textDecoration:"none",whiteSpace:"nowrap",flexShrink:0}}>🧭 All</a>}
+        <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          {/* Fixed top: reorder banner + map + controls */}
+          <div style={{flexShrink:0}}>
+            {reorderMode&&<div style={{padding:"6px 12px",background:"#1a0f28",borderBottom:"1px solid #301a40",display:"flex",alignItems:"center",gap:8}}>
+              {moving!==null?<><Dot color={cs[moving]?.ck||"basil"} sz={10}/><span style={{fontSize:12,fontWeight:600,color:"#c8a0e8"}}>Moving: {cs[moving]?.cn} — tap destination</span><button onClick={()=>setMoving(null)} style={{marginLeft:"auto",padding:"3px 8px",borderRadius:5,background:"#1e2536",border:"none",color:"#a0a8b8",fontSize:10,cursor:"pointer"}}>Deselect</button></>:
+              <span style={{fontSize:12,fontWeight:500,color:"#9a80c8"}}>↕ Tap a stop to pick it up</span>}
+            </div>}
+            <div style={{borderBottom:"1px solid #161b25"}}>
+              <div style={{display:"flex",alignItems:"center"}}>
+                <button onClick={()=>setMapOpen(!mapOpen)} style={{flex:1,padding:"8px 12px",background:"#0a0c12",border:"none",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
+                  <span style={{transform:mapOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:8}}>▶</span>
+                  🗺 {cs.length} stops{completedStops.length>0?` · ${completedStops.length} done`:""}
+                </button>
+                <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setActStop(null);}}} style={{padding:"6px 10px",margin:"4px 2px",borderRadius:8,background:reorderMode?"#8E24AA22":"#1e253644",border:`1px solid ${reorderMode?"#8E24AA55":"#1e2536"}`,color:reorderMode?"#c8a0e8":"#5a7090",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>{reorderMode?"✕ Done":"↕ Reorder"}</button>
+                {navUrl&&<a href={navUrl} target="_blank" rel="noopener noreferrer" style={{padding:"6px 10px",margin:"4px 4px 4px 0",borderRadius:8,background:"#039BE518",border:"1px solid #039BE533",color:"#039BE5",fontSize:11,fontWeight:700,textDecoration:"none",whiteSpace:"nowrap",flexShrink:0}}>🧭 All</a>}
+              </div>
+              {mapOpen&&cs.length>0&&<RouteMap stops={cs} activeIdx={moving!==null?moving:actStop} onSelect={i=>{if(reorderMode)handleTap(i);else setActStop(actStop===i?null:i);}}/>}
             </div>
-            {mapOpen&&cs.length>0&&<RouteMap stops={cs} activeIdx={moving!==null?moving:actStop} onSelect={i=>{if(reorderMode)handleTap(i);else setActStop(actStop===i?null:i);}}/>}
+            {admins.length>0&&<div style={{padding:"5px 10px",display:"flex",gap:4,flexWrap:"wrap",borderBottom:"1px solid #0e1018"}}>{admins.map(a=><span key={a.id} style={{padding:"3px 8px",borderRadius:6,background:"#0d0f14",border:"1px solid #161b25",fontSize:10,color:"#555"}}>⚫ {a.cn}</span>)}</div>}
           </div>
 
-          {admins.length>0&&<div style={{padding:"5px 10px",display:"flex",gap:4,flexWrap:"wrap",borderBottom:"1px solid #0e1018"}}>{admins.map(a=><span key={a.id} style={{padding:"3px 8px",borderRadius:6,background:"#0d0f14",border:"1px solid #161b25",fontSize:10,color:"#555"}}>⚫ {a.cn}</span>)}</div>}
-
-          {!reorderMode&&cs.length>0&&<div style={{padding:"4px 12px",fontSize:9,color:"#2a3548",textAlign:"center",borderBottom:"1px solid #0e1018"}}>swipe → done · ← navigate</div>}
-
+          {/* Scrollable card list */}
+          <div className="scr" style={{flex:1,overflowY:"auto"}}>
           {(()=>{
             const q=searchQ.toLowerCase();
             const list=q?cs.filter(s=>(s.cn||"").toLowerCase().includes(q)||(s.addr||"").toLowerCase().includes(q)||(s.jn||"").includes(q)):cs;
@@ -726,7 +728,10 @@ export default function App() {
             </div>)}
           </div>}
 
-          <div style={{padding:"8px 10px",display:"flex",gap:3,borderTop:"1px solid #161b25",background:"#0b0d12"}}>
+          </div>{/* end scrollable list */}
+
+          {/* Fixed bottom pipeline bar */}
+          <div style={{padding:"8px 10px",paddingBottom:"max(8px, env(safe-area-inset-bottom))",display:"flex",gap:3,borderTop:"1px solid #161b25",background:"#0b0d12",flexShrink:0}}>
             {PO.filter(k=>todayP.filter(s=>s.ck===k).length>0).map(k=><div key={k} style={{flex:1,textAlign:"center",padding:"4px 0",borderRadius:4,background:C[k]+"08"}}>
               <div style={{fontSize:14,fontWeight:700,color:C[k]}}>{todayP.filter(s=>s.ck===k).length}</div>
               <div style={{fontSize:7,fontWeight:700,color:"#2a3548"}}>{PL[k].split(" ")[0].slice(0,5)}</div>
@@ -765,7 +770,7 @@ export default function App() {
             <input value={pipeSearch} onChange={e=>setPipeSearch(e.target.value)} placeholder="Search pipeline..." style={{width:"100%",padding:"6px 10px",borderRadius:6,border:"1px solid #1e2536",background:"#111420",color:"#e0e4ea",fontSize:12,outline:"none",boxSizing:"border-box"}}/>
           </div>
 
-          <div className="scr" style={{flex:1,overflowY:"auto",padding:10}}>
+          <div className="scr" style={{flex:1,overflowY:"auto",padding:"10px 10px max(10px, env(safe-area-inset-bottom))"}}>
             {(()=>{
               let items=todayP.filter(s=>s.ck===pipeStage);
               if(pipeSearch){const q=pipeSearch.toLowerCase();items=items.filter(s=>(s.cn||"").toLowerCase().includes(q)||(s.addr||"").toLowerCase().includes(q)||(s.jn||"").includes(q));}
