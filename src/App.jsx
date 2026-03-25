@@ -647,7 +647,7 @@ export default function App() {
   return (
     <div ref={cRef} style={{height:"100dvh",width:"100%",background:"#090b10",display:"flex",flexDirection:"column",fontFamily:"'Inter',-apple-system,system-ui,sans-serif",color:"#e0e4ea",overflow:"hidden"}}>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
-      <style>{`.scr::-webkit-scrollbar{width:3px}.scr::-webkit-scrollbar-track{background:transparent}.scr::-webkit-scrollbar-thumb{background:#1e253644;border-radius:2px}.safe-bottom{padding-bottom:max(8px,env(safe-area-inset-bottom))}.gm-style button,.gm-style .gmnoprint,.gm-style .gm-control-active,.gm-bundled-control,.gm-style>div>div>div>div:last-child{display:none!important}.gm-style .gm-style-cc{display:none!important}`}</style>
+      <style>{`.scr::-webkit-scrollbar{width:3px}.scr::-webkit-scrollbar-track{background:transparent}.scr::-webkit-scrollbar-thumb{background:#1e253644;border-radius:2px}.safe-bottom{padding-bottom:max(8px,env(safe-area-inset-bottom))}.gmnoprint,.gm-bundled-control,.gm-style-cc,.gm-control-active,.gm-fullscreen-control{display:none!important}`}</style>
 
       {/* NAV */}
       <div style={{display:"flex",alignItems:"center",gap:4,padding:"6px 8px",background:"#0d0f14",borderBottom:"1px solid #161b25",flexShrink:0,zIndex:20}}>
