@@ -212,20 +212,39 @@ function loadMapsAPI() {
 
 // Geocode cache to avoid re-geocoding same addresses
 const geocodeCache = {};
+// Rochester area zip-to-city lookup for accurate geocoding
+const ZIP_CITY = {
+  "14445":"East Rochester","14450":"Fairport","14467":"Henrietta","14472":"Honeoye Falls",
+  "14502":"Macedon","14506":"Mendon","14514":"North Chili","14526":"Penfield",
+  "14534":"Pittsford","14543":"Rush","14580":"Webster","14586":"West Henrietta",
+  "14607":"Rochester","14608":"Rochester","14609":"Rochester","14610":"Rochester",
+  "14611":"Rochester","14612":"Rochester","14613":"Rochester","14614":"Rochester",
+  "14615":"Rochester","14616":"Rochester","14617":"Rochester","14618":"Rochester",
+  "14619":"Rochester","14620":"Rochester","14621":"Rochester","14622":"Rochester",
+  "14623":"Rochester","14624":"Rochester","14625":"Penfield","14626":"Rochester",
+  "14627":"Rochester","14642":"Rochester","14424":"Canandaigua","14432":"Clifton Springs",
+  "14456":"Geneva","14464":"Hamlin","14468":"Hilton","14510":"Livonia",
+  "14519":"Ontario","14544":"Phelps","14559":"Spencerport","14564":"Victor",
+  "14585":"Bloomfield","14428":"Churchville","14546":"Scottsville",
+};
+function getFullAddress(addr) {
+  if (!addr) return null;
+  const zipMatch = addr.match(/\b(1\d{4})\b/);
+  if (!zipMatch) return addr + ", Rochester, NY";
+  const zip = zipMatch[1];
+  const city = ZIP_CITY[zip] || "Rochester";
+  // Check if city name is already in the address
+  if (new RegExp(city, "i").test(addr)) {
+    if (!/\bNY\b/i.test(addr)) return addr + ", NY";
+    return addr;
+  }
+  // Insert city and state before zip
+  return addr.replace(/(\b1\d{4})\b/, `, ${city}, NY $1`);
+}
 async function geocodeAddress(addr) {
   if (!addr) return null;
-  // Normalize: ensure address has city and state for accurate geocoding
-  let fullAddr = addr;
-  if (!/Rochester|Pittsford|Fairport|Penfield|Webster|Macedon|Canandaigua|Honeoye|Brighton|Henrietta|Victor|Mendon/i.test(addr)) {
-    // No city name found — append Rochester NY area
-    if (/\b1\d{4}\b/.test(addr)) {
-      fullAddr = addr.replace(/(\b1\d{4})\b/, ", Rochester, NY $1");
-    } else {
-      fullAddr = addr + ", Rochester, NY";
-    }
-  } else if (!/\bNY\b/i.test(addr)) {
-    fullAddr = addr + ", NY";
-  }
+  const fullAddr = getFullAddress(addr);
+  if (!fullAddr) return null;
   if (geocodeCache[fullAddr]) return geocodeCache[fullAddr];
   try {
     const geocoder = new window.google.maps.Geocoder();
@@ -236,7 +255,7 @@ async function geocodeAddress(addr) {
       geocodeCache[fullAddr] = coords;
       return coords;
     }
-  } catch (e) { /* fall through to fallback */ }
+  } catch (e) { /* fall through */ }
   return null;
 }
 
@@ -277,7 +296,7 @@ function RouteMap({ stops, activeIdx, onSelect }) {
         const result = await geocodeAddress(s.addr);
         if (result) newCoords[s.id] = result;
         // Small delay between requests to avoid Google rate limits
-        if (i < stops.length - 1) await new Promise(r => setTimeout(r, 120));
+        if (i < stops.length - 1) await new Promise(r => setTimeout(r, 200));
       }
       if (!cancelled) setCoords(newCoords);
     }
