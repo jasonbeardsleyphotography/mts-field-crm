@@ -1,9 +1,0 @@
-{
-  "name": "MTS Field CRM",
-  "short_name": "MTS CRM",
-  "start_url": "/",
-  "display": "standalone",
-  "background_color": "#090b10",
-  "theme_color": "#090b10",
-  "description": "MTS Tree Service — Field Sales & Route CRM"
-}
