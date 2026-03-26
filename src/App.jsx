@@ -96,7 +96,7 @@ function parseEvent(ev) {
   const notes = notesMatch ? notesMatch[1].trim() : "";
 
   const isDriveBy = /drive[\s-]?by/i.test(s);
-  const isTodo = /^TODO:/i.test(s) || (/\bNOTE[!]*\b/i.test(s) && !jobNum);
+  const isTodo = /\bTODO\b/i.test(s);
   const isAdmin = colorKey === "graphite" && !isTodo;
 
   const start = new Date(ev.start?.dateTime || ev.start?.date);
@@ -494,7 +494,11 @@ function SwipeCard({ children, onSwipeRight, onSwipeLeft, enabled }) {
 
   const handleStart = e => {
     if (!enabled) return;
-    startX.current = e.touches[0].clientX;
+    const x = e.touches[0].clientX;
+    // Dead zone: ignore swipes starting within 30px of screen edges
+    // This prevents triggering Chrome's back/forward navigation
+    if (x < 30 || x > window.innerWidth - 30) return;
+    startX.current = x;
     startY.current = e.touches[0].clientY;
     dirLocked.current = null;
     setSwiping(true);
@@ -504,17 +508,22 @@ function SwipeCard({ children, onSwipeRight, onSwipeLeft, enabled }) {
     const dx = e.touches[0].clientX - startX.current;
     const dy = e.touches[0].clientY - startY.current;
     if (!dirLocked.current) {
-      if (Math.abs(dy) > Math.abs(dx) + 5) { dirLocked.current = "v"; return; }
-      if (Math.abs(dx) > 10) dirLocked.current = "h";
+      if (Math.abs(dy) > Math.abs(dx) + 3) { dirLocked.current = "v"; setSwiping(false); return; }
+      if (Math.abs(dx) > 8) {
+        dirLocked.current = "h";
+        e.preventDefault();
+      }
+      return;
     }
     if (dirLocked.current === "h") {
       e.preventDefault();
-      setOffset(dx * 0.6);
+      e.stopPropagation();
+      setOffset(dx * 0.5);
     }
   };
   const handleEnd = () => {
-    if (offset > 100 && onSwipeRight) onSwipeRight();
-    else if (offset < -100 && onSwipeLeft) onSwipeLeft();
+    if (offset > 120 && onSwipeRight) onSwipeRight();
+    else if (offset < -120 && onSwipeLeft) onSwipeLeft();
     setOffset(0);
     setSwiping(false);
     dirLocked.current = null;
@@ -751,6 +760,16 @@ function DeskPipeKanban({ stops, onStageChange, onCardClick, interLog, onTextShe
 }
 
 
+// ── LOCAL STORAGE PERSISTENCE ─────────────────────────────────────────────────
+const LS_PREFIX = "mts_crm_";
+function lsGet(key, fallback = {}) {
+  try { const v = localStorage.getItem(LS_PREFIX + key); return v ? JSON.parse(v) : fallback; }
+  catch { return fallback; }
+}
+function lsSet(key, val) {
+  try { localStorage.setItem(LS_PREFIX + key, JSON.stringify(val)); } catch {}
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ═════════════════════════════════════════════════════════════════════════════
@@ -779,20 +798,26 @@ export default function App() {
   const [pipeSearch, setPipeSearch] = useState("");
   const [pipeStage, setPipeStage] = useState("basil");
   const [soldPick, setSoldPick] = useState(null);
-  const [soldDates, setSoldDates] = useState({});
+  const [soldDates, setSoldDates] = useState(() => lsGet("soldDates"));
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQ, setSearchQ] = useState("");
   const [undoStack, setUndoStack] = useState([]);
   const [expandedPipe, setExpandedPipe] = useState(null);
   const [textSheet, setTextSheet] = useState(null);
-  const [syncQueue, setSyncQueue] = useState([]);
-  const [interLog, setInterLog] = useState({});
-  const [dismissed, setDismissed] = useState({});
+  const [syncQueue, setSyncQueue] = useState(() => lsGet("syncQueue", []));
+  const [interLog, setInterLog] = useState(() => lsGet("interLog"));
+  const [dismissed, setDismissed] = useState(() => lsGet("dismissed"));
   const [completedOpen, setCompletedOpen] = useState(false);
 
   const todoRef = useRef(null);
   const searchRef = useRef(null);
   const cRef = useRef(null);
+
+  // ── PERSIST STATE TO LOCALSTORAGE ──────────────────────────────────────
+  useEffect(() => { lsSet("dismissed", dismissed); }, [dismissed]);
+  useEffect(() => { lsSet("soldDates", soldDates); }, [soldDates]);
+  useEffect(() => { lsSet("interLog", interLog); }, [interLog]);
+  useEffect(() => { lsSet("syncQueue", syncQueue); }, [syncQueue]);
 
   // ── GOOGLE AUTH ────────────────────────────────────────────────────────
   const initAuth = useCallback(() => {
@@ -824,7 +849,6 @@ export default function App() {
       }
       setRawEvents(all);
       setSelDay(0);
-      setDismissed({});
       setActStop(null);
     } catch (e) {
       setError(`Failed to load: ${e.message}`);
@@ -880,24 +904,26 @@ export default function App() {
     });
   }, [rawEvents, todayKey, soldDates]);
 
-  const [ordIds, setOrdIds] = useState({});
+  const [ordIds, setOrdIds] = useState(() => lsGet("ordIds"));
   useEffect(() => {
     const key = dayKey;
     if (!key || ordIds[key]) return;
     setOrdIds(prev => ({ ...prev, [key]: dayParsed.map(e => e.id) }));
   }, [dayKey, dayParsed]);
+  useEffect(() => { lsSet("ordIds", ordIds); }, [ordIds]);
 
   const currentOrd = ordIds[dayKey] || dayParsed.map(e => e.id);
   const pmMap = useMemo(() => { const m = {}; dayParsed.forEach(p => { m[p.id] = p; }); return m; }, [dayParsed]);
   const allStops = currentOrd.map(id => pmMap[id]).filter(Boolean);
-  const allClientStops = allStops.filter(s => !s.isAdm && !s.isTodo);
+  // Only "Task | #XXXXX" events become client cards; everything else is ignored
+  const allClientStops = allStops.filter(s => s.jn && !s.isTodo);
   const cs = allClientStops.filter(s => !dismissed[s.id]);
   const completedStops = allClientStops.filter(s => dismissed[s.id]);
   const todos = allStops.filter(s => s.isTodo);
-  const admins = allStops.filter(s => s.isAdm && !s.isTodo);
+  const admins = []; // non-task events are now ignored
 
-  const todayP = todayParsed.filter(s => !s.isAdm && !s.isTodo);
-  const deskPipeStops = allDaysParsed.filter(s => !s.isAdm && !s.isTodo);
+  const todayP = todayParsed.filter(s => s.jn && !s.isTodo);
+  const deskPipeStops = allDaysParsed.filter(s => s.jn && !s.isTodo);
 
   const needsAttention = useMemo(() =>
     FU_RULES.flatMap(rule =>
