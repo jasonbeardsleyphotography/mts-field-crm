@@ -145,16 +145,22 @@ async function readSheetLog(token) {
 }
 
 async function appendSheetLog(token, eventId, jobNum, clientName, address, fromStage, toStage) {
-  if (!SHEET_ID) return;
+  if (!SHEET_ID) { console.warn("SHEET_ID is empty"); return "no-sheet-id"; }
   try {
     const ts = new Date().toLocaleString("en-US", { timeZone: "America/New_York", month:"numeric", day:"numeric", year:"2-digit", hour:"numeric", minute:"2-digit" });
     const url = `${SHEETS_BASE}/${SHEET_ID}/values/Sheet1!A:G:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
-    await fetch(url, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ values: [[ts, eventId, jobNum || "", clientName || "", address || "", PL[fromStage] || fromStage || "", PL[toStage] || toStage || ""]] }),
     });
-  } catch (e) { /* silent fail — sheet logging is non-critical */ }
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "unknown");
+      console.error("Sheet append failed:", res.status, errText);
+      return "error:" + res.status;
+    }
+    return "ok";
+  } catch (e) { console.error("Sheet append error:", e); return "error:" + e.message; }
 }
 
 // Compute days since last stage change for each event from sheet log
@@ -528,6 +534,7 @@ export default function App() {
   const [expandedPipe, setExpandedPipe] = useState(null);
   const [textSheet, setTextSheet] = useState(null);
   const [syncQueue, setSyncQueue] = useState([]);
+  const [sheetStatus, setSheetStatus] = useState(null); // null | "ok" | "no-sheet-id" | "error:..."
   const [interLog, setInterLog] = useState({});
   const [dismissed, setDismissed] = useState({});
   const [completedOpen, setCompletedOpen] = useState(false);
@@ -705,7 +712,9 @@ export default function App() {
     if (token && colorId) {
       await updateEventColor(token, stopId, colorId);
       // Log to Google Sheet
-      appendSheetLog(token, stopId, stop.jn, stop.cn, stop.addr, prevCk, toStage);
+      const sheetResult = await appendSheetLog(token, stopId, stop.jn, stop.cn, stop.addr, prevCk, toStage);
+      setSheetStatus(sheetResult);
+      setTimeout(() => setSheetStatus(null), 4000);
       loadEvents(); // refresh to see change
     }
   };
@@ -717,7 +726,9 @@ export default function App() {
     addToSync(soldPick.id, "sage");
     if (token) {
       await updateEventColor(token, soldPick.id, "2");
-      appendSheetLog(token, soldPick.id, soldPick.jn, soldPick.cn, soldPick.addr, soldPick.prevStage, "sage");
+      const sheetResult = await appendSheetLog(token, soldPick.id, soldPick.jn, soldPick.cn, soldPick.addr, soldPick.prevStage, "sage");
+      setSheetStatus(sheetResult);
+      setTimeout(() => setSheetStatus(null), 4000);
       loadEvents();
     }
     setSoldPick(null);
@@ -1022,6 +1033,10 @@ export default function App() {
       <NotePopup stop={popup} onClose={()=>setPopup(null)} contactLog={popup?interLog[popup.id]:[]}/>
       <SoldPicker stop={soldPick} onConfirm={confirmSold} onCancel={()=>setSoldPick(null)}/>
       <TextSheet stop={textSheet} onClose={()=>setTextSheet(null)} onSend={(id,label)=>logInteraction(id,"text",label)}/>
+      {sheetStatus && <div style={{position:"fixed",bottom:60,left:"50%",transform:"translateX(-50%)",padding:"8px 16px",borderRadius:8,fontSize:11,fontWeight:600,zIndex:300,background:sheetStatus==="ok"?"#33B67933":"#D5000033",border:`1px solid ${sheetStatus==="ok"?"#33B67966":"#D5000066"}`,color:sheetStatus==="ok"?"#33B679":"#ff6666"}}>
+        {sheetStatus==="ok"?"✓ Logged to sheet":sheetStatus==="no-sheet-id"?"⚠ No Sheet ID configured":"⚠ Sheet error: "+sheetStatus}
+      </div>}
+      {!SHEET_ID && <div style={{position:"fixed",bottom:4,right:4,fontSize:8,color:"#5a2020",zIndex:300}}>no sheet</div>}
     </div>
   );
 }
