@@ -13,6 +13,8 @@ const SCOPES = "https://www.googleapis.com/auth/calendar";
 // ── COLORS ───────────────────────────────────────────────────────────────────
 const STAGE_COLORS = { "10":"#0B8043","3":"#8E24AA","7":"#039BE5","1":"#7986CB","5":"#F6BF26","4":"#E67C73","2":"#33B679","11":"#D50000","9":"#3F51B5","8":"#616161" };
 function stageColor(colorId) { return STAGE_COLORS[colorId] || "#039BE5"; }
+const AM_COLOR = "#E8A817"; // warm yellow-amber for AM stops
+const PM_COLOR = "#1E88E5"; // strong blue for PM stops
 
 // ── HELPERS ──────────────────────────────────────────────────────────────────
 function getBusinessDays(n) {
@@ -191,15 +193,35 @@ function RouteMap({ stops }) {
     let n = 0;
     stops.forEach(s => {
       const pos = coords[s.id]; if (!pos) return; n++;
+      const isAM = (s.window||"").startsWith("AM");
+      const pinColor = isAM ? AM_COLOR : PM_COLOR;
+      const hasConstraint = !!s.constraint;
+      // Main numbered circle — smaller
       const m = new window.google.maps.Marker({
         position:pos, map:map.current,
-        label:{text:String(n),color:"#fff",fontWeight:"800",fontSize:"12px"},
-        icon:{path:window.google.maps.SymbolPath.CIRCLE, scale:14,
-          fillColor:s.color, fillOpacity:s.db?.7:1,
-          strokeColor:"#fff", strokeWeight:2},
+        label:{text:String(n),color:"#fff",fontWeight:"800",fontSize:"10px"},
+        icon:{path:window.google.maps.SymbolPath.CIRCLE,
+          scale:10,
+          fillColor:pinColor, fillOpacity:s.db?.7:1,
+          strokeColor:"#fff", strokeWeight:1.5},
         zIndex:10,
       });
       markers.current.push(m);
+      // Yellow warning triangle for constrained stops
+      if (hasConstraint) {
+        const tri = new window.google.maps.Marker({
+          position:pos, map:map.current,
+          icon:{
+            path:"M 0,-6 L 5,3 L -5,3 Z", // small triangle
+            fillColor:"#FFD600", fillOpacity:1,
+            strokeColor:"#000", strokeWeight:0.5,
+            scale:1.2,
+            anchor: new window.google.maps.Point(0, 12), // offset above the circle
+          },
+          zIndex:15, clickable:false,
+        });
+        markers.current.push(tri);
+      }
       positions.push(pos); bounds.extend(pos);
     });
 
@@ -479,21 +501,22 @@ export default function App() {
           const isMov = moving === idx;
           const isAM = s.window.startsWith("AM");
           const isPM = s.window.startsWith("PM");
-          const winColor = isAM ? "#5cb878" : isPM ? "#5a9ec8" : "#5a6580";
-          const winBg = isAM ? "rgba(92,184,120,.12)" : isPM ? "rgba(90,158,200,.12)" : "transparent";
+          const circleColor = isAM ? AM_COLOR : PM_COLOR;
+          const winColor = isAM ? "#e8b830" : "#5a9ec8";
+          const winBg = isAM ? "rgba(232,168,23,.12)" : "rgba(30,136,229,.12)";
 
           return <SwipeCard key={s.id} enabled={!reorderMode} onSwipeRight={() => dismiss(s.id)} onSwipeLeft={() => navigate(s.addr)}>
             <div onClick={() => { if (reorderMode) handleReorderTap(idx); else setExpanded(isExp ? null : s.id); }} style={{
               padding:"14px 16px", borderBottom:"1px solid #0e1220",
               cursor: reorderMode ? "grab" : "pointer",
               background: isMov ? "rgba(142,36,170,.08)" : isNext ? "#0e1525" : reorderMode ? "#0a0c12" : "transparent",
-              borderLeft: `4px solid ${isMov ? "#8E24AA" : isNext ? s.color : "transparent"}`,
+              borderLeft: `4px solid ${isMov ? "#8E24AA" : isNext ? circleColor : "transparent"}`,
               opacity: reorderMode && !isMov && moving !== null ? .5 : 1,
               transition: "opacity .15s",
             }}>
               {/* Main row: number + name + window badge + phone */}
               <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <div style={{width:isNext?38:32,height:isNext?38:32,borderRadius:"50%",background:s.color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:isNext?16:14,fontWeight:800,color:"#fff",flexShrink:0,border:s.db?"2px dashed rgba(255,255,255,.4)":isMov?"2px solid #8E24AA":"none"}}>{idx+1}</div>
+                <div style={{width:isNext?38:32,height:isNext?38:32,borderRadius:"50%",background:circleColor,display:"flex",alignItems:"center",justifyContent:"center",fontSize:isNext?16:14,fontWeight:800,color:"#fff",flexShrink:0,border:s.db?"2px dashed rgba(255,255,255,.4)":isMov?"2px solid #8E24AA":"none"}}>{idx+1}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:isNext?18:16,fontWeight:isNext?800:700,color:"#f0f4fa",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isNext?"▸ ":""}{s.cn}</div>
                   {s.addr && <div style={{fontSize:11,color:"#5a6a80",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{s.addr}</div>}
