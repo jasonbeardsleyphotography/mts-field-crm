@@ -196,32 +196,17 @@ function RouteMap({ stops }) {
       const isAM = (s.window||"").startsWith("AM");
       const pinColor = isAM ? AM_COLOR : PM_COLOR;
       const hasConstraint = !!s.constraint;
-      // Main numbered circle — smaller
       const m = new window.google.maps.Marker({
         position:pos, map:map.current,
         label:{text:String(n),color:"#fff",fontWeight:"800",fontSize:"10px"},
         icon:{path:window.google.maps.SymbolPath.CIRCLE,
           scale:10,
           fillColor:pinColor, fillOpacity:s.db?.7:1,
-          strokeColor:"#fff", strokeWeight:1.5},
+          strokeColor:hasConstraint?"#FF4081":"#fff",
+          strokeWeight:hasConstraint?3.5:1.5},
         zIndex:10,
       });
       markers.current.push(m);
-      // Yellow warning triangle for constrained stops — sits inside top-right of circle
-      if (hasConstraint) {
-        const tri = new window.google.maps.Marker({
-          position:pos, map:map.current,
-          icon:{
-            path:"M 0,-5 L 4,2 L -4,2 Z",
-            fillColor:"#FFD600", fillOpacity:1,
-            strokeColor:"#333", strokeWeight:0.5,
-            scale:0.9,
-            anchor: new window.google.maps.Point(6, 1),
-          },
-          zIndex:15, clickable:false,
-        });
-        markers.current.push(tri);
-      }
       positions.push(pos); bounds.extend(pos);
     });
 
