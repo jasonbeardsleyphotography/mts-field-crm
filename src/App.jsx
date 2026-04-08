@@ -49,17 +49,12 @@ function parseEvent(ev) {
   const isTodo = /^TODO:/i.test(s);
   const isAdmin = (ev.colorId === "8" || ev.colorId === "11") && !jobNum && !isTodo;
 
-  // Window detection: AM (8-12), PM (11-3/4), DB
+  // Window detection: AM or PM based on start hour, DB is separate
   const start = new Date(ev.start?.dateTime || ev.start?.date);
   const end = new Date(ev.end?.dateTime || ev.end?.date);
-  const startH = start.getHours();
-  const durH = (end - start) / 36e5;
-  let window = "";
-  if (isDriveBy) window = "DB";
-  else if (durH >= 3 && durH <= 5 && startH >= 7 && startH <= 9) window = "AM";
-  else if (durH >= 3 && durH <= 5 && startH >= 10 && startH <= 12) window = "PM";
-  else if (startH < 10) window = "AM";
-  else if (startH >= 10) window = "PM";
+  const startH = start.getHours() + start.getMinutes()/60;
+  let window = startH < 10.5 ? "AM" : "PM"; // 10:30 is the boundary
+  if (isDriveBy) window += " · DB";
 
   // Constraints — extracted from title
   let constraint = "";
@@ -288,8 +283,17 @@ export default function App() {
   const [mapOpen, setMapOpen] = useState(true);
   const [undoStack, setUndoStack] = useState([]);
   const [reorderMode, setReorderMode] = useState(false);
-  const [moving, setMoving] = useState(null); // index of card being moved
-  const [ordIds, setOrdIds] = useState({}); // {dayKey: [id, id, ...]}
+  const [moving, setMoving] = useState(null);
+  // Load saved order from localStorage, fall back to empty
+  const [ordIds, setOrdIds] = useState(() => {
+    try { const saved = localStorage.getItem("mts-route-order"); return saved ? JSON.parse(saved) : {}; }
+    catch(e) { return {}; }
+  });
+
+  // Persist ordIds to localStorage whenever they change
+  useEffect(() => {
+    try { localStorage.setItem("mts-route-order", JSON.stringify(ordIds)); } catch(e) {}
+  }, [ordIds]);
 
   // ── AUTH ─────────────────────────────────────────────────────────────────
   const initAuth = useCallback(() => {
@@ -313,7 +317,8 @@ export default function App() {
         const e = new Date(day); e.setHours(23,59,59,999);
         all[day.toDateString()] = await fetchEvents(token, s, e);
       }
-      setRawEvents(all); setSelDay(0); setDismissed({}); setExpanded(null); setOrdIds({}); setReorderMode(false); setMoving(null);
+      setRawEvents(all); setSelDay(0); setDismissed({}); setExpanded(null); setReorderMode(false); setMoving(null);
+      // Don't reset ordIds — preserve saved reorder from localStorage
     } catch (e) {
       setError(e.message);
       if (e.message.includes("401")) setToken(null);
@@ -330,11 +335,23 @@ export default function App() {
     return raw.map(parseEvent).filter(Boolean).filter(s => !s.isAdmin && !s.isTodo);
   }, [rawEvents, dayKey]);
 
-  // Initialize order for this day if not set
+  // Initialize/merge order for this day — preserves saved reorder, appends new events
   useEffect(() => {
     if (!dayKey || !parsed.length) return;
-    if (ordIds[dayKey]?.length > 0) return;
-    setOrdIds(prev => ({...prev, [dayKey]: parsed.map(s => s.id)}));
+    const saved = ordIds[dayKey] || [];
+    const parsedIds = parsed.map(s => s.id);
+    // If no saved order, initialize from parsed
+    if (!saved.length) {
+      setOrdIds(prev => ({...prev, [dayKey]: parsedIds}));
+      return;
+    }
+    // If saved order exists, check for new events not in saved order
+    const newIds = parsedIds.filter(id => !saved.includes(id));
+    // Also remove IDs that no longer exist in parsed data
+    const validSaved = saved.filter(id => parsedIds.includes(id));
+    if (newIds.length > 0 || validSaved.length !== saved.length) {
+      setOrdIds(prev => ({...prev, [dayKey]: [...validSaved, ...newIds]}));
+    }
   }, [dayKey, parsed]);
 
   // Build ordered stops from ordIds
@@ -449,7 +466,7 @@ export default function App() {
             <button onClick={()=>setMoving(null)} style={{marginLeft:"auto",padding:"3px 10px",borderRadius:6,background:"#1a2240",border:"none",color:"#90a8c0",fontSize:10,fontWeight:700,cursor:"pointer"}}>Cancel</button>
           </> : <span style={{fontSize:12,fontWeight:500,color:"#9a80c8"}}>↕ Tap a stop to pick it up</span>}
         </div>}
-        {mapOpen && active.length>0 && !reorderMode && <RouteMap stops={active}/>}
+        {mapOpen && active.length>0 && <RouteMap stops={active}/>}
       </div>
 
       {/* ── STOP LIST ──────────────────────────────────────────────────── */}
@@ -460,8 +477,10 @@ export default function App() {
           const isNext = idx === 0 && !reorderMode;
           const isExp = expanded === s.id && !reorderMode;
           const isMov = moving === idx;
-          const winColor = s.window === "AM" ? "#5cb878" : s.window === "PM" ? "#5a9ec8" : s.window === "DB" ? "#c8b050" : "#5a6580";
-          const winBg = s.window === "AM" ? "rgba(92,184,120,.1)" : s.window === "PM" ? "rgba(90,158,200,.1)" : s.window === "DB" ? "rgba(200,176,80,.1)" : "transparent";
+          const isAM = s.window.startsWith("AM");
+          const isPM = s.window.startsWith("PM");
+          const winColor = isAM ? "#5cb878" : isPM ? "#5a9ec8" : "#5a6580";
+          const winBg = isAM ? "rgba(92,184,120,.12)" : isPM ? "rgba(90,158,200,.12)" : "transparent";
 
           return <SwipeCard key={s.id} enabled={!reorderMode} onSwipeRight={() => dismiss(s.id)} onSwipeLeft={() => navigate(s.addr)}>
             <div onClick={() => { if (reorderMode) handleReorderTap(idx); else setExpanded(isExp ? null : s.id); }} style={{
