@@ -49,6 +49,18 @@ function parseEvent(ev) {
   const isTodo = /^TODO:/i.test(s);
   const isAdmin = (ev.colorId === "8" || ev.colorId === "11") && !jobNum && !isTodo;
 
+  // Window detection: AM (8-12), PM (11-3/4), DB
+  const start = new Date(ev.start?.dateTime || ev.start?.date);
+  const end = new Date(ev.end?.dateTime || ev.end?.date);
+  const startH = start.getHours();
+  const durH = (end - start) / 36e5;
+  let window = "";
+  if (isDriveBy) window = "DB";
+  else if (durH >= 3 && durH <= 5 && startH >= 7 && startH <= 9) window = "AM";
+  else if (durH >= 3 && durH <= 5 && startH >= 10 && startH <= 12) window = "PM";
+  else if (startH < 10) window = "AM";
+  else if (startH >= 10) window = "PM";
+
   // Constraints — extracted from title
   let constraint = "";
   if (/CALL (WHEN|FIRST|BEFORE|OTW)/i.test(s)) constraint = "📞 CALL FIRST";
@@ -66,7 +78,7 @@ function parseEvent(ev) {
   return {
     id: ev.id, cn: clientName, addr: address, phone, email, notes, desc,
     jn: jobNum, db: isDriveBy, isTodo, isAdmin, constraint, color,
-    colorId: ev.colorId, raw: s, rawD: rd,
+    colorId: ev.colorId, raw: s, rawD: rd, window,
   };
 }
 
@@ -275,6 +287,9 @@ export default function App() {
   const [completedOpen, setCompletedOpen] = useState(false);
   const [mapOpen, setMapOpen] = useState(true);
   const [undoStack, setUndoStack] = useState([]);
+  const [reorderMode, setReorderMode] = useState(false);
+  const [moving, setMoving] = useState(null); // index of card being moved
+  const [ordIds, setOrdIds] = useState({}); // {dayKey: [id, id, ...]}
 
   // ── AUTH ─────────────────────────────────────────────────────────────────
   const initAuth = useCallback(() => {
@@ -298,7 +313,7 @@ export default function App() {
         const e = new Date(day); e.setHours(23,59,59,999);
         all[day.toDateString()] = await fetchEvents(token, s, e);
       }
-      setRawEvents(all); setSelDay(0); setDismissed({}); setExpanded(null);
+      setRawEvents(all); setSelDay(0); setDismissed({}); setExpanded(null); setOrdIds({}); setReorderMode(false); setMoving(null);
     } catch (e) {
       setError(e.message);
       if (e.message.includes("401")) setToken(null);
@@ -310,18 +325,66 @@ export default function App() {
 
   // ── PARSE ────────────────────────────────────────────────────────────────
   const dayKey = businessDays[selDay]?.toDateString();
-  const stops = useMemo(() => {
+  const parsed = useMemo(() => {
     const raw = rawEvents[dayKey] || [];
     return raw.map(parseEvent).filter(Boolean).filter(s => !s.isAdmin && !s.isTodo);
   }, [rawEvents, dayKey]);
+
+  // Initialize order for this day if not set
+  useEffect(() => {
+    if (!dayKey || !parsed.length) return;
+    if (ordIds[dayKey]?.length > 0) return;
+    setOrdIds(prev => ({...prev, [dayKey]: parsed.map(s => s.id)}));
+  }, [dayKey, parsed]);
+
+  // Build ordered stops from ordIds
+  const stopMap = useMemo(() => { const m = {}; parsed.forEach(s => m[s.id] = s); return m; }, [parsed]);
+  const currentOrder = (ordIds[dayKey]?.length > 0) ? ordIds[dayKey] : parsed.map(s => s.id);
+  const stops = currentOrder.map(id => stopMap[id]).filter(Boolean);
 
   const active = stops.filter(s => !dismissed[s.id]);
   const completed = stops.filter(s => dismissed[s.id]);
 
   // ── ACTIONS ──────────────────────────────────────────────────────────────
-  const dismiss = id => { setUndoStack(u => [...u, id]); setDismissed(p => ({...p,[id]:true})); setExpanded(null); };
-  const undo = () => { if (!undoStack.length) return; const id = undoStack[undoStack.length-1]; setUndoStack(u => u.slice(0,-1)); setDismissed(p => { const n={...p}; delete n[id]; return n; }); };
+  const dismiss = id => { setUndoStack(u => [...u, {type:"dismiss",id}]); setDismissed(p => ({...p,[id]:true})); setExpanded(null); };
+  const undo = () => {
+    if (!undoStack.length) return;
+    const last = undoStack[undoStack.length-1];
+    setUndoStack(u => u.slice(0,-1));
+    if (last.type === "dismiss") setDismissed(p => { const n={...p}; delete n[last.id]; return n; });
+    if (last.type === "reorder") setOrdIds(prev => ({...prev, [dayKey]: last.prevOrder}));
+  };
   const navigate = addr => { if (addr) window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`, "_blank"); };
+
+  // Reorder: tap to pick up, tap destination to place
+  const handleReorderTap = (idx) => {
+    if (!reorderMode) return;
+    if (moving === null) {
+      // Pick up this card
+      setMoving(idx);
+      setExpanded(null);
+    } else if (moving === idx) {
+      // Tapped same card — deselect
+      setMoving(null);
+    } else {
+      // Drop: move the picked card to this position
+      const activeIds = active.map(s => s.id);
+      const prevOrder = [...(ordIds[dayKey] || currentOrder)];
+      const fromId = activeIds[moving];
+      const toId = activeIds[idx];
+
+      // Work on full order (including dismissed)
+      const fullOrder = [...prevOrder];
+      const fromIdx = fullOrder.indexOf(fromId);
+      fullOrder.splice(fromIdx, 1);
+      const toIdx = fullOrder.indexOf(toId);
+      fullOrder.splice(moving < idx ? toIdx + 1 : toIdx, 0, fromId);
+
+      setUndoStack(u => [...u, {type:"reorder", prevOrder}]);
+      setOrdIds(prev => ({...prev, [dayKey]: fullOrder}));
+      setMoving(null);
+    }
+  };
 
   const navAllUrl = useMemo(() => {
     const a = active.filter(s=>s.addr).map(s=>s.addr);
@@ -360,7 +423,7 @@ export default function App() {
 
       {/* ── HEADER ─────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:6,padding:"8px 12px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0}}>
-        <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setDismissed({});}} style={{padding:"6px 10px",borderRadius:8,border:"1px solid #1a2030",background:"#0a0c12",color:"#f0f4fa",fontSize:14,fontWeight:700,cursor:"pointer",outline:"none",appearance:"auto"}}>
+        <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setDismissed({});setReorderMode(false);setMoving(null);}} style={{padding:"6px 10px",borderRadius:8,border:"1px solid #1a2030",background:"#0a0c12",color:"#f0f4fa",fontSize:14,fontWeight:700,cursor:"pointer",outline:"none",appearance:"auto"}}>
           {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
         </select>
         <div style={{flex:1}}/>
@@ -370,14 +433,23 @@ export default function App() {
 
       {/* ── MAP ────────────────────────────────────────────────────────── */}
       <div style={{flexShrink:0,borderBottom:"1px solid #1a2030"}}>
-        <div style={{display:"flex",alignItems:"center",padding:"0 12px"}}>
+        <div style={{display:"flex",alignItems:"center",padding:"0 12px",gap:6}}>
           <button onClick={()=>setMapOpen(!mapOpen)} style={{flex:1,padding:"6px 0",background:"none",border:"none",color:"#5a6580",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
             <span style={{transform:mapOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:8}}>▶</span>
             {active.length} stops{completed.length>0?` · ${completed.length} done`:""}
           </button>
-          {navAllUrl && <a href={navAllUrl} target="_blank" rel="noopener noreferrer" style={{padding:"5px 12px",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:12,fontWeight:700,textDecoration:"none",margin:"4px 0"}}>🧭 Navigate All</a>}
+          <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}} style={{padding:"5px 12px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"#1a2240",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#2a3560"}`,color:reorderMode?"#c8a0e8":"#5a6580",fontSize:12,fontWeight:700,cursor:"pointer"}}>{reorderMode?"✕ Done":"↕ Reorder"}</button>
+          {navAllUrl && !reorderMode && <a href={navAllUrl} target="_blank" rel="noopener noreferrer" style={{padding:"5px 12px",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:12,fontWeight:700,textDecoration:"none"}}>🧭 All</a>}
         </div>
-        {mapOpen && active.length>0 && <RouteMap stops={active}/>}
+        {/* Reorder mode banner */}
+        {reorderMode && <div style={{padding:"6px 14px",background:"rgba(142,36,170,.08)",borderTop:"1px solid rgba(142,36,170,.15)",display:"flex",alignItems:"center",gap:8}}>
+          {moving !== null ? <>
+            <div style={{width:10,height:10,borderRadius:10,background:active[moving]?.color||"#8E24AA"}}/>
+            <span style={{fontSize:12,fontWeight:600,color:"#c8a0e8"}}>Moving: {active[moving]?.cn} — tap where to place</span>
+            <button onClick={()=>setMoving(null)} style={{marginLeft:"auto",padding:"3px 10px",borderRadius:6,background:"#1a2240",border:"none",color:"#90a8c0",fontSize:10,fontWeight:700,cursor:"pointer"}}>Cancel</button>
+          </> : <span style={{fontSize:12,fontWeight:500,color:"#9a80c8"}}>↕ Tap a stop to pick it up</span>}
+        </div>}
+        {mapOpen && active.length>0 && !reorderMode && <RouteMap stops={active}/>}
       </div>
 
       {/* ── STOP LIST ──────────────────────────────────────────────────── */}
@@ -385,28 +457,35 @@ export default function App() {
         {active.length === 0 && <div style={{padding:40,textAlign:"center",color:"#2a3050",fontSize:14,fontWeight:600}}>No stops</div>}
 
         {active.map((s, idx) => {
-          const isNext = idx === 0;
-          const isExp = expanded === s.id;
+          const isNext = idx === 0 && !reorderMode;
+          const isExp = expanded === s.id && !reorderMode;
+          const isMov = moving === idx;
+          const winColor = s.window === "AM" ? "#5cb878" : s.window === "PM" ? "#5a9ec8" : s.window === "DB" ? "#c8b050" : "#5a6580";
+          const winBg = s.window === "AM" ? "rgba(92,184,120,.1)" : s.window === "PM" ? "rgba(90,158,200,.1)" : s.window === "DB" ? "rgba(200,176,80,.1)" : "transparent";
 
-          return <SwipeCard key={s.id} enabled onSwipeRight={() => dismiss(s.id)} onSwipeLeft={() => navigate(s.addr)}>
-            <div onClick={() => setExpanded(isExp ? null : s.id)} style={{
-              padding:"14px 16px", borderBottom:"1px solid #0e1220", cursor:"pointer",
-              background: isNext ? "#0e1525" : "transparent",
-              borderLeft: `4px solid ${isNext ? s.color : "transparent"}`,
+          return <SwipeCard key={s.id} enabled={!reorderMode} onSwipeRight={() => dismiss(s.id)} onSwipeLeft={() => navigate(s.addr)}>
+            <div onClick={() => { if (reorderMode) handleReorderTap(idx); else setExpanded(isExp ? null : s.id); }} style={{
+              padding:"14px 16px", borderBottom:"1px solid #0e1220",
+              cursor: reorderMode ? "grab" : "pointer",
+              background: isMov ? "rgba(142,36,170,.08)" : isNext ? "#0e1525" : reorderMode ? "#0a0c12" : "transparent",
+              borderLeft: `4px solid ${isMov ? "#8E24AA" : isNext ? s.color : "transparent"}`,
+              opacity: reorderMode && !isMov && moving !== null ? .5 : 1,
+              transition: "opacity .15s",
             }}>
-              {/* Main row: number + name + phone */}
+              {/* Main row: number + name + window badge + phone */}
               <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <div style={{width:isNext?38:32,height:isNext?38:32,borderRadius:"50%",background:s.color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:isNext?16:14,fontWeight:800,color:"#fff",flexShrink:0,border:s.db?"2px dashed rgba(255,255,255,.4)":"none"}}>{idx+1}</div>
+                <div style={{width:isNext?38:32,height:isNext?38:32,borderRadius:"50%",background:s.color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:isNext?16:14,fontWeight:800,color:"#fff",flexShrink:0,border:s.db?"2px dashed rgba(255,255,255,.4)":isMov?"2px solid #8E24AA":"none"}}>{idx+1}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:isNext?18:16,fontWeight:isNext?800:700,color:"#f0f4fa",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isNext?"▸ ":""}{s.cn}</div>
                   {s.addr && <div style={{fontSize:11,color:"#5a6a80",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{s.addr}</div>}
                 </div>
-                {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} onClick={e=>e.stopPropagation()} style={{padding:"8px 14px",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#90a8c0",fontSize:14,textDecoration:"none",fontWeight:700,flexShrink:0}}>📞</a>}
-                {s.db && <span style={{fontSize:11,color:"#c8b050",fontWeight:700,flexShrink:0}}>DB</span>}
+                {/* Window badge: AM / PM / DB */}
+                {s.window && <span style={{padding:"3px 8px",borderRadius:6,fontSize:10,fontWeight:800,color:winColor,background:winBg,border:`1px solid ${winColor}30`,flexShrink:0,letterSpacing:.5}}>{s.window}</span>}
+                {!reorderMode && s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} onClick={e=>e.stopPropagation()} style={{padding:"8px 14px",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#90a8c0",fontSize:14,textDecoration:"none",fontWeight:700,flexShrink:0}}>📞</a>}
               </div>
 
               {/* Constraint — bright and prominent */}
-              {s.constraint && <div style={{marginTop:6,marginLeft:isNext?50:44,padding:"4px 10px",borderRadius:6,background:"rgba(200,90,158,.1)",border:"1px solid rgba(200,90,158,.2)",color:"#e880b0",fontSize:12,fontWeight:700,display:"inline-block"}}>{s.constraint}</div>}
+              {s.constraint && !reorderMode && <div style={{marginTop:6,marginLeft:isNext?50:44,padding:"4px 10px",borderRadius:6,background:"rgba(200,90,158,.1)",border:"1px solid rgba(200,90,158,.2)",color:"#e880b0",fontSize:12,fontWeight:700,display:"inline-block"}}>{s.constraint}</div>}
 
               {/* Expanded */}
               {isExp && <div style={{marginTop:12,marginLeft:isNext?50:44,paddingTop:12,borderTop:"1px solid #1a2030"}}>
