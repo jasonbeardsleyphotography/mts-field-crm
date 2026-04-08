@@ -13,8 +13,8 @@ const SCOPES = "https://www.googleapis.com/auth/calendar";
 // ── COLORS ───────────────────────────────────────────────────────────────────
 const STAGE_COLORS = { "10":"#0B8043","3":"#8E24AA","7":"#039BE5","1":"#7986CB","5":"#F6BF26","4":"#E67C73","2":"#33B679","11":"#D50000","9":"#3F51B5","8":"#616161" };
 function stageColor(colorId) { return STAGE_COLORS[colorId] || "#039BE5"; }
-const AM_COLOR = "#E8A817"; // warm yellow-amber for AM stops
-const PM_COLOR = "#1E88E5"; // strong blue for PM stops
+const AM_COLOR = "#2E7D32"; // green for AM stops
+const PM_COLOR = "#1E88E5"; // blue for PM stops
 
 // ── HELPERS ──────────────────────────────────────────────────────────────────
 function getBusinessDays(n) {
@@ -207,16 +207,16 @@ function RouteMap({ stops }) {
         zIndex:10,
       });
       markers.current.push(m);
-      // Yellow warning triangle for constrained stops
+      // Yellow warning triangle for constrained stops — sits inside top-right of circle
       if (hasConstraint) {
         const tri = new window.google.maps.Marker({
           position:pos, map:map.current,
           icon:{
-            path:"M 0,-6 L 5,3 L -5,3 Z", // small triangle
+            path:"M 0,-5 L 4,2 L -4,2 Z",
             fillColor:"#FFD600", fillOpacity:1,
-            strokeColor:"#000", strokeWeight:0.5,
-            scale:1.2,
-            anchor: new window.google.maps.Point(0, 12), // offset above the circle
+            strokeColor:"#333", strokeWeight:0.5,
+            scale:0.9,
+            anchor: new window.google.maps.Point(6, 1),
           },
           zIndex:15, clickable:false,
         });
@@ -235,7 +235,7 @@ function RouteMap({ stops }) {
         }, (result, status) => {
           if (status === "OK") {
             route.current = new window.google.maps.DirectionsRenderer({
-              map:map.current, directions:result, suppressMarkers:true,
+              map:map.current, directions:result, suppressMarkers:true, preserveViewport:true,
               polylineOptions:{strokeColor:"#039BE5",strokeOpacity:.7,strokeWeight:4},
             });
           } else {
@@ -381,8 +381,8 @@ export default function App() {
   const currentOrder = (ordIds[dayKey]?.length > 0) ? ordIds[dayKey] : parsed.map(s => s.id);
   const stops = currentOrder.map(id => stopMap[id]).filter(Boolean);
 
-  const active = stops.filter(s => !dismissed[s.id]);
-  const completed = stops.filter(s => dismissed[s.id]);
+  const active = useMemo(() => stops.filter(s => !dismissed[s.id]), [stops, dismissed]);
+  const completed = useMemo(() => stops.filter(s => dismissed[s.id]), [stops, dismissed]);
 
   // ── ACTIONS ──────────────────────────────────────────────────────────────
   const dismiss = id => { setUndoStack(u => [...u, {type:"dismiss",id}]); setDismissed(p => ({...p,[id]:true})); setExpanded(null); };
@@ -502,8 +502,8 @@ export default function App() {
           const isAM = s.window.startsWith("AM");
           const isPM = s.window.startsWith("PM");
           const circleColor = isAM ? AM_COLOR : PM_COLOR;
-          const winColor = isAM ? "#e8b830" : "#5a9ec8";
-          const winBg = isAM ? "rgba(232,168,23,.12)" : "rgba(30,136,229,.12)";
+          const winColor = isAM ? "#4CAF50" : "#5a9ec8";
+          const winBg = isAM ? "rgba(46,125,50,.12)" : "rgba(30,136,229,.12)";
 
           return <SwipeCard key={s.id} enabled={!reorderMode} onSwipeRight={() => dismiss(s.id)} onSwipeLeft={() => navigate(s.addr)}>
             <div onClick={() => { if (reorderMode) handleReorderTap(idx); else setExpanded(isExp ? null : s.id); }} style={{
