@@ -425,13 +425,8 @@ export default function App() {
   const navigate = addr => {
     if (!addr) return;
     const q = encodeURIComponent(addr);
-    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-    if (isIOS) {
-      // Apple Maps opens natively on iPhone — no prompt, no page replacement
-      window.open(`https://maps.apple.com/?daddr=${q}`, "_blank");
-    } else {
-      window.open(`https://www.google.com/maps/dir/?api=1&destination=${q}`, "_blank");
-    }
+    // Open Google Maps app directly — no extra tab, no fallback
+    window.location.href = `comgooglemaps://?daddr=${q}&directionsmode=driving`;
   };
 
   // Reorder: tap to pick up, tap destination to place
@@ -468,9 +463,8 @@ export default function App() {
     const a = mapStops.filter(s=>s.addr).map(s=>s.addr);
     if (!a.length) return;
     if (a.length === 1) { navigate(a[0]); return; }
-    // Multi-stop: use Google Maps URL (opens in new tab, iOS may offer to open in app)
-    const url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(a[0])}&destination=${encodeURIComponent(a[a.length-1])}${a.length>2?`&waypoints=${a.slice(1,-1).map(encodeURIComponent).join("|")}`:""}`;
-    window.open(url, "_blank");
+    // Multi-stop directions in Google Maps app
+    window.location.href = `comgooglemaps://?saddr=${encodeURIComponent(a[0])}&daddr=${encodeURIComponent(a[a.length-1])}&directionsmode=driving`;
   }, [mapStops]);
   const hasStopsWithAddr = mapStops.some(s => s.addr);
 
@@ -581,7 +575,6 @@ export default function App() {
                 {s.notes && <div style={{fontSize:13,color:"#8898a8",lineHeight:1.6,marginBottom:10}}>{s.notes}</div>}
                 {s.phone && <div style={{fontSize:13,color:"#90a8c0",marginBottom:3}}>📞 {s.phone}</div>}
                 {s.email && <div style={{fontSize:13,color:"#90a8c0",marginBottom:8}}>✉️ {s.email}</div>}
-                {s.jn && <button onClick={e=>{e.stopPropagation();window.open(`https://app.singleops.com/jobs?search=${s.jn}`,"_blank");}} style={{display:"inline-block",padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:700,background:"#0d1018",border:"1px solid #1a2030",color:"#5a6580",cursor:"pointer",marginBottom:8}}>SO #{s.jn} ↗</button>}
                 <div style={{display:"flex",gap:8,marginTop:4}}>
                   {s.phone && <button onClick={e=>{e.stopPropagation();setTextSheet(s);setOtwMinutes(null);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#90a8c0",fontSize:13,fontWeight:700,cursor:"pointer"}}>💬 Text</button>}
                   {s.addr && <button onClick={e=>{e.stopPropagation();navigate(s.addr);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:13,fontWeight:700,cursor:"pointer"}}>🧭 Navigate</button>}
