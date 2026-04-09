@@ -35,7 +35,7 @@ function parseEvent(ev) {
   const jobMatch = s.match(/Task \| #(\d+)/);
   const jobNum = jobMatch ? jobMatch[1] : null;
   const nameMatch = s.match(/Task \| #\d+\s+[^-]+\s*-\s*([^-]+?)(?:\s*-\s*(.*))?$/);
-  const clientName = nameMatch ? nameMatch[1].trim() : s.replace(/^TODO:\s*/i,"").trim();
+  const clientName = nameMatch ? nameMatch[1].trim() : s.replace(/^TODO:\s*/i,"").replace(/^TASK\s+/i,"").trim();
   const addrMatch = s.match(/Task \| #\d+\s+([^-]+?)\s*-/);
   const address = ev.location || (addrMatch ? addrMatch[1].trim() : "");
 
@@ -362,21 +362,19 @@ export default function App() {
   const dayKey = businessDays[selDay]?.toDateString();
   const allParsed = useMemo(() => {
     const raw = rawEvents[dayKey] || [];
-    return raw.map(parseEvent).filter(Boolean);
+    return raw.map(parseEvent).filter(Boolean).filter(s => !s.isAdmin && !s.isTodo);
   }, [rawEvents, dayKey]);
 
-  // Tasks = real appointments (have "Task |" prefix) — go on map, get numbered
-  const tasksParsed = useMemo(() => allParsed.filter(s => s.isTask && !s.isAdmin), [allParsed]);
-  // Reminders = everything else that's not admin/MTS NOTE — show at bottom as TD
-  const reminders = useMemo(() => allParsed.filter(s => !s.isTask && !s.isAdmin && !s.isTodo), [allParsed]);
-
-  // Initialize/merge order for tasks only
+  // Initialize order: tasks first, then TD items — all reorderable together
   useEffect(() => {
-    if (!dayKey || !tasksParsed.length) return;
+    if (!dayKey || !allParsed.length) return;
     const saved = ordIds[dayKey] || [];
-    const parsedIds = tasksParsed.map(s => s.id);
+    const parsedIds = allParsed.map(s => s.id);
     if (!saved.length) {
-      setOrdIds(prev => ({...prev, [dayKey]: parsedIds}));
+      // Default order: tasks first, TDs at bottom
+      const tasks = allParsed.filter(s => s.isTask).map(s => s.id);
+      const tds = allParsed.filter(s => !s.isTask).map(s => s.id);
+      setOrdIds(prev => ({...prev, [dayKey]: [...tasks, ...tds]}));
       return;
     }
     const newIds = parsedIds.filter(id => !saved.includes(id));
@@ -384,15 +382,16 @@ export default function App() {
     if (newIds.length > 0 || validSaved.length !== saved.length) {
       setOrdIds(prev => ({...prev, [dayKey]: [...validSaved, ...newIds]}));
     }
-  }, [dayKey, tasksParsed]);
+  }, [dayKey, allParsed]);
 
-  // Build ordered stops from ordIds (tasks only)
-  const stopMap = useMemo(() => { const m = {}; tasksParsed.forEach(s => m[s.id] = s); return m; }, [tasksParsed]);
-  const currentOrder = (ordIds[dayKey]?.length > 0) ? ordIds[dayKey] : tasksParsed.map(s => s.id);
+  const stopMap = useMemo(() => { const m = {}; allParsed.forEach(s => m[s.id] = s); return m; }, [allParsed]);
+  const currentOrder = (ordIds[dayKey]?.length > 0) ? ordIds[dayKey] : allParsed.map(s => s.id);
   const stops = currentOrder.map(id => stopMap[id]).filter(Boolean);
 
   const active = useMemo(() => stops.filter(s => !dismissed[s.id]), [stops, dismissed]);
   const completed = useMemo(() => stops.filter(s => dismissed[s.id]), [stops, dismissed]);
+  // Only task items go on the map
+  const mapStops = useMemo(() => active.filter(s => s.isTask), [active]);
 
   // ── ACTIONS ──────────────────────────────────────────────────────────────
   const dismiss = id => { setUndoStack(u => [...u, {type:"dismiss",id}]); setDismissed(p => ({...p,[id]:true})); setExpanded(null); };
@@ -451,7 +450,7 @@ export default function App() {
   };
 
   const navAll = useCallback(() => {
-    const a = active.filter(s=>s.addr).map(s=>s.addr);
+    const a = mapStops.filter(s=>s.addr).map(s=>s.addr);
     if (!a.length) return;
     const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
     if (a.length === 1) {
@@ -463,8 +462,8 @@ export default function App() {
       window.location.href = iosUrl;
       setTimeout(() => { window.location.href = webUrl; }, 500);
     } else { window.open(webUrl, "_blank"); }
-  }, [active]);
-  const hasStopsWithAddr = active.some(s => s.addr);
+  }, [mapStops]);
+  const hasStopsWithAddr = mapStops.some(s => s.addr);
 
   // Day labels
   const dayLabels = businessDays.map(d => {
@@ -496,47 +495,44 @@ export default function App() {
       <style>{`.scr::-webkit-scrollbar{width:0}.gmnoprint,.gm-bundled-control,.gm-style-cc,.gm-control-active,.gm-fullscreen-control,.gm-style .adp,.gm-style button[title]{display:none!important}`}</style>
 
       {/* ── HEADER ─────────────────────────────────────────────────────── */}
-      <div style={{display:"flex",alignItems:"center",gap:6,padding:"8px 12px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0}}>
-        <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setDismissed({});setReorderMode(false);setMoving(null);}} style={{padding:"6px 10px",borderRadius:8,border:"1px solid #1a2030",background:"#0a0c12",color:"#f0f4fa",fontSize:14,fontWeight:700,cursor:"pointer",outline:"none",appearance:"auto"}}>
+      <div style={{display:"flex",alignItems:"center",gap:5,padding:"8px 10px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0}}>
+        <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setDismissed({});setReorderMode(false);setMoving(null);}} style={{padding:"6px 8px",borderRadius:8,border:"1px solid #1a2030",background:"#0a0c12",color:"#f0f4fa",fontSize:13,fontWeight:700,cursor:"pointer",outline:"none",appearance:"auto"}}>
           {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
         </select>
         <div style={{flex:1}}/>
-        <button onClick={undo} disabled={!undoStack.length} style={{width:36,height:36,borderRadius:8,background:undoStack.length?"#1a2240":"transparent",border:"1px solid #1a2030",color:undoStack.length?"#f0f4fa":"#2a3050",fontSize:14,cursor:undoStack.length?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center"}}>↩</button>
-        <button onClick={load} style={{width:36,height:36,borderRadius:8,background:loading?"#1a2240":"transparent",border:"1px solid #1a2030",color:loading?"#039BE5":"#5a6580",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>⟳</button>
+        <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}} style={{padding:"5px 10px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"#1a2240",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#2a3560"}`,color:reorderMode?"#c8a0e8":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}>{reorderMode?"✕ Done":"↕ Reorder"}</button>
+        {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"5px 10px",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:11,fontWeight:700,cursor:"pointer"}}>🧭 All</button>}
+        <button onClick={undo} disabled={!undoStack.length} style={{width:34,height:34,borderRadius:8,background:undoStack.length?"#1a2240":"transparent",border:"1px solid #1a2030",color:undoStack.length?"#f0f4fa":"#2a3050",fontSize:13,cursor:undoStack.length?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center"}}>↩</button>
       </div>
 
       {/* ── MAP ────────────────────────────────────────────────────────── */}
       <div style={{flexShrink:0,borderBottom:"1px solid #1a2030"}}>
-        <div style={{display:"flex",alignItems:"center",padding:"0 12px",gap:6}}>
-          <button onClick={()=>setMapOpen(!mapOpen)} style={{flex:1,padding:"6px 0",background:"none",border:"none",color:"#5a6580",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
-            <span style={{transform:mapOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:8}}>▶</span>
-            {active.length} stops{completed.length>0?` · ${completed.length} done`:""}
-          </button>
-          <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}} style={{padding:"5px 12px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"#1a2240",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#2a3560"}`,color:reorderMode?"#c8a0e8":"#5a6580",fontSize:12,fontWeight:700,cursor:"pointer"}}>{reorderMode?"✕ Done":"↕ Reorder"}</button>
-          {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"5px 12px",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:12,fontWeight:700,cursor:"pointer"}}>🧭 All</button>}
-        </div>
+        <button onClick={()=>setMapOpen(!mapOpen)} style={{width:"100%",padding:"4px 12px",background:"none",border:"none",color:"#3a4560",fontSize:10,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
+          <span style={{transform:mapOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7}}>▶</span>
+          {mapOpen?"hide map":"show map"}
+        </button>
         {/* Reorder mode banner */}
-        {reorderMode && <div style={{padding:"6px 14px",background:"rgba(142,36,170,.08)",borderTop:"1px solid rgba(142,36,170,.15)",display:"flex",alignItems:"center",gap:8}}>
+        {reorderMode && <div style={{padding:"5px 12px",background:"rgba(142,36,170,.08)",borderTop:"1px solid rgba(142,36,170,.15)",display:"flex",alignItems:"center",gap:8}}>
           {moving !== null ? <>
             <div style={{width:10,height:10,borderRadius:10,background:active[moving]?.color||"#8E24AA"}}/>
             <span style={{fontSize:12,fontWeight:600,color:"#c8a0e8"}}>Moving: {active[moving]?.cn} — tap where to place</span>
             <button onClick={()=>setMoving(null)} style={{marginLeft:"auto",padding:"3px 10px",borderRadius:6,background:"#1a2240",border:"none",color:"#90a8c0",fontSize:10,fontWeight:700,cursor:"pointer"}}>Cancel</button>
           </> : <span style={{fontSize:12,fontWeight:500,color:"#9a80c8"}}>↕ Tap a stop to pick it up</span>}
         </div>}
-        {mapOpen && active.length>0 && <RouteMap stops={active}/>}
+        {mapOpen && mapStops.length>0 && <RouteMap stops={mapStops}/>}
       </div>
 
       {/* ── STOP LIST ──────────────────────────────────────────────────── */}
       <div className="scr" style={{flex:1,overflowY:"auto",paddingBottom:"max(12px,env(safe-area-inset-bottom))"}}>
         {active.length === 0 && <div style={{padding:40,textAlign:"center",color:"#2a3050",fontSize:14,fontWeight:600}}>No stops</div>}
 
-        {active.map((s, idx) => {
-          const isNext = idx === 0 && !reorderMode;
+        {(()=>{ let taskNum = 0; return active.map((s, idx) => {
+          if (s.isTask) taskNum++;
+          const isNext = idx === 0 && !reorderMode && s.isTask;
           const isExp = expanded === s.id && !reorderMode;
           const isMov = moving === idx;
-          const isAM = s.window.startsWith("AM");
-          const isPM = s.window.startsWith("PM");
-          const circleColor = isAM ? AM_COLOR : PM_COLOR;
+          const isAM = (s.window||"").startsWith("AM");
+          const circleColor = s.isTask ? (isAM ? AM_COLOR : PM_COLOR) : "#2a2040";
           const winColor = isAM ? "#4CAF50" : "#5a9ec8";
           const winBg = isAM ? "rgba(46,125,50,.12)" : "rgba(30,136,229,.12)";
 
@@ -551,15 +547,15 @@ export default function App() {
             }}>
               {/* Main row: number + name + window badge + phone */}
               <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <div style={{width:isNext?38:32,height:isNext?38:32,borderRadius:"50%",background:circleColor,display:"flex",alignItems:"center",justifyContent:"center",fontSize:isNext?16:14,fontWeight:800,color:"#fff",flexShrink:0,border:s.db?"2px dashed rgba(255,255,255,.4)":isMov?"2px solid #8E24AA":"none"}}>{idx+1}</div>
+                <div style={{width:isNext?38:32,height:isNext?38:32,borderRadius:"50%",background:circleColor,display:"flex",alignItems:"center",justifyContent:"center",fontSize:s.isTask?(isNext?16:14):9,fontWeight:800,color:s.isTask?"#fff":"#9a80c8",flexShrink:0,border:s.db?"2px dashed rgba(255,255,255,.4)":isMov?"2px solid #8E24AA":!s.isTask?"1px solid #3a3060":"none",letterSpacing:s.isTask?0:-.5}}>{s.isTask?taskNum:"TD"}</div>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:isNext?18:16,fontWeight:isNext?800:700,color:"#f0f4fa",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isNext?"▸ ":""}{s.cn}</div>
+                  <div style={{fontSize:isNext?18:16,fontWeight:isNext?800:s.isTask?700:600,color:s.isTask?"#f0f4fa":"#c0b8d8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isNext?"▸ ":""}{s.cn}</div>
                   {s.addr && <div style={{fontSize:11,color:"#5a6a80",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{s.addr}</div>}
                 </div>
-                {/* Window badge: AM (green) or PM (blue) */}
-                {s.window && <span style={{padding:"3px 8px",borderRadius:6,fontSize:10,fontWeight:800,color:winColor,background:winBg,border:`1px solid ${winColor}30`,flexShrink:0,letterSpacing:.5}}>{s.window}</span>}
-                {/* DB badge: separate yellow */}
-                {s.db && <span style={{padding:"3px 6px",borderRadius:6,fontSize:9,fontWeight:800,color:"#c8a820",background:"rgba(200,168,32,.12)",border:"1px solid rgba(200,168,32,.3)",flexShrink:0,letterSpacing:.5}}>DB</span>}
+                {/* Window badge: AM/PM for tasks, time range for TDs */}
+                {s.isTask && s.window && <span style={{padding:"3px 8px",borderRadius:6,fontSize:10,fontWeight:800,color:winColor,background:winBg,border:`1px solid ${winColor}30`,flexShrink:0,letterSpacing:.5}}>{s.window}</span>}
+                {s.isTask && s.db && <span style={{padding:"3px 6px",borderRadius:6,fontSize:9,fontWeight:800,color:"#c8a820",background:"rgba(200,168,32,.12)",border:"1px solid rgba(200,168,32,.3)",flexShrink:0,letterSpacing:.5}}>DB</span>}
+                {!s.isTask && s.timeLabel && <span style={{padding:"3px 8px",borderRadius:6,fontSize:10,fontWeight:700,color:"#6a6090",background:"rgba(100,80,160,.1)",border:"1px solid rgba(100,80,160,.2)",flexShrink:0}}>{s.timeLabel}</span>}
                 {!reorderMode && s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} onClick={e=>e.stopPropagation()} style={{padding:"8px 14px",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#90a8c0",fontSize:14,textDecoration:"none",fontWeight:700,flexShrink:0}}>📞</a>}
               </div>
 
@@ -580,7 +576,7 @@ export default function App() {
               </div>}
             </div>
           </SwipeCard>;
-        })}
+        }); })()}
 
         {/* Completed */}
         {completed.length>0 && <div style={{borderTop:"1px solid #1a2030"}}>
@@ -593,20 +589,6 @@ export default function App() {
               <div style={{width:24,height:24,borderRadius:"50%",background:s.color+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff"}}>✓</div>
               <div style={{flex:1,fontSize:13,color:"#5a6580",textDecoration:"line-through"}}>{s.cn}</div>
               <button onClick={()=>{setDismissed(p=>{const n={...p};delete n[s.id];return n;});}} style={{padding:"4px 10px",borderRadius:6,background:"transparent",border:"1px solid #1a2030",color:"#5a6580",fontSize:10,fontWeight:600,cursor:"pointer"}}>Restore</button>
-            </div>
-          ))}
-        </div>}
-
-        {/* Reminders / To-Do items (non-Task calendar entries) */}
-        {reminders.length>0 && <div style={{borderTop:"1px solid #1a2030"}}>
-          {reminders.map(s => (
-            <div key={s.id} style={{padding:"12px 16px",borderBottom:"1px solid #0e1220",display:"flex",alignItems:"center",gap:12}}>
-              <div style={{width:32,height:32,borderRadius:"50%",background:"#2a2040",border:"1px solid #3a3060",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:"#9a80c8",flexShrink:0,letterSpacing:-.5}}>TD</div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:15,fontWeight:600,color:"#c0b8d8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.cn}</div>
-                {s.addr && <div style={{fontSize:11,color:"#5a6a80",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{s.addr}</div>}
-              </div>
-              <span style={{padding:"3px 8px",borderRadius:6,fontSize:10,fontWeight:700,color:"#6a6090",background:"rgba(100,80,160,.1)",border:"1px solid rgba(100,80,160,.2)",flexShrink:0}}>{s.timeLabel}</span>
             </div>
           ))}
         </div>}
