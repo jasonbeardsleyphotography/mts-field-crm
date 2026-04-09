@@ -540,7 +540,9 @@ export default function App() {
           const winBg = isAM ? "rgba(46,125,50,.12)" : "rgba(30,136,229,.12)";
 
           return <SwipeCard key={s.id} enabled={!reorderMode} onSwipeRight={() => dismiss(s.id)} onSwipeLeft={() => navigate(s.addr)}>
-            <div onClick={() => { if (reorderMode) handleReorderTap(idx); else setExpanded(isExp ? null : s.id); }} style={{
+            <div onClick={() => { if (reorderMode) handleReorderTap(idx); else setExpanded(isExp ? null : s.id); }}
+              ref={el => { if (el && expanded === s.id) setTimeout(() => el.scrollIntoView({behavior:"smooth",block:"nearest"}), 50); }}
+              style={{
               padding:"14px 16px", borderBottom:"1px solid #0e1220",
               cursor: reorderMode ? "grab" : "pointer",
               background: isMov ? "rgba(142,36,170,.08)" : isNext ? "#0e1525" : reorderMode ? "#0a0c12" : "transparent",
