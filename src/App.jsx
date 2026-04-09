@@ -182,16 +182,39 @@ export default function App() {
     if (!dayKey || !allParsed.length) return;
     const saved = ordIds[dayKey] || [];
     const parsedIds = allParsed.map(s => s.id);
+
+    // Default order: AM tasks → PM tasks → TDs
+    const buildDefault = () => {
+      const amTasks = allParsed.filter(s => s.isTask && (s.window||"").startsWith("AM"));
+      const pmTasks = allParsed.filter(s => s.isTask && !(s.window||"").startsWith("AM"));
+      const tds = allParsed.filter(s => !s.isTask);
+      return [...amTasks, ...pmTasks, ...tds].map(s => s.id);
+    };
+
     if (!saved.length) {
-      const tasks = allParsed.filter(s => s.isTask).map(s => s.id);
-      const tds = allParsed.filter(s => !s.isTask).map(s => s.id);
-      setOrdIds(prev => ({...prev, [dayKey]: [...tasks, ...tds]}));
+      setOrdIds(prev => ({...prev, [dayKey]: buildDefault()}));
       return;
     }
     const newIds = parsedIds.filter(id => !saved.includes(id));
     const validSaved = saved.filter(id => parsedIds.includes(id));
     if (newIds.length > 0 || validSaved.length !== saved.length) {
-      setOrdIds(prev => ({...prev, [dayKey]: [...validSaved, ...newIds]}));
+      // New stops get inserted in AM/PM order, not just appended
+      const newAM = allParsed.filter(s => newIds.includes(s.id) && s.isTask && (s.window||"").startsWith("AM")).map(s => s.id);
+      const newPM = allParsed.filter(s => newIds.includes(s.id) && s.isTask && !(s.window||"").startsWith("AM")).map(s => s.id);
+      const newTD = allParsed.filter(s => newIds.includes(s.id) && !s.isTask).map(s => s.id);
+      // Find insertion points: AM goes before first PM in saved, PM before first TD, TDs at end
+      const firstPMIdx = validSaved.findIndex(id => { const s = allParsed.find(x => x.id === id); return s && s.isTask && !(s.window||"").startsWith("AM"); });
+      const firstTDIdx = validSaved.findIndex(id => { const s = allParsed.find(x => x.id === id); return s && !s.isTask; });
+      let merged = [...validSaved];
+      // Insert new TDs at end
+      merged.push(...newTD);
+      // Insert new PM before TDs
+      const pmInsert = firstTDIdx >= 0 ? firstTDIdx : merged.length - newTD.length;
+      merged.splice(pmInsert, 0, ...newPM);
+      // Insert new AM before PM
+      const amInsert = firstPMIdx >= 0 ? firstPMIdx : pmInsert;
+      merged.splice(amInsert, 0, ...newAM);
+      setOrdIds(prev => ({...prev, [dayKey]: merged}));
     }
   }, [dayKey, allParsed]);
 
@@ -288,6 +311,16 @@ export default function App() {
         </select>
         <div style={{flex:1}}/>
         <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}} style={{padding:"5px 10px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"#1a2240",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#2a3560"}`,color:reorderMode?"#c8a0e8":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}>{reorderMode?"✕ Done":"↕ Reorder"}</button>
+        {reorderMode && <button onClick={()=>{
+          // Reset to default AM → PM → TD order
+          const amTasks = allParsed.filter(s => s.isTask && (s.window||"").startsWith("AM"));
+          const pmTasks = allParsed.filter(s => s.isTask && !(s.window||"").startsWith("AM"));
+          const tds = allParsed.filter(s => !s.isTask);
+          const fresh = [...amTasks, ...pmTasks, ...tds].map(s => s.id);
+          setUndoStack(u => [...u, {type:"reorder", prevOrder: ordIds[dayKey] || currentOrder}]);
+          setOrdIds(prev => ({...prev, [dayKey]: fresh}));
+          setMoving(null);
+        }} style={{padding:"5px 10px",borderRadius:8,background:"rgba(200,90,60,.1)",border:"1px solid rgba(200,90,60,.25)",color:"#e8a080",fontSize:11,fontWeight:700,cursor:"pointer"}}>↻ Reset</button>}
         {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"5px 10px",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:11,fontWeight:700,cursor:"pointer"}}>🧭 All</button>}
         <button onClick={undo} disabled={!undoStack.length} style={{width:34,height:34,borderRadius:8,background:undoStack.length?"#1a2240":"transparent",border:"1px solid #1a2030",color:undoStack.length?"#f0f4fa":"#2a3050",fontSize:13,cursor:undoStack.length?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center"}}>↩</button>
       </div>
