@@ -77,12 +77,24 @@ function parseEvent(ev) {
   // Detect tight/unusual windows (not standard 4hr AM or PM) — if no constraint set yet
   if (!constraint && !isDriveBy && durH < 3) constraint = "⏰ " + fmt(start) + "–" + fmt(end);
 
+  // Extract title context: everything after "On Site Estimate" or "DRIVE BY" in title
+  let titleContext = "";
+  if (nameMatch && nameMatch[2]) {
+    // nameMatch[2] = everything after client name, e.g. "On Site Estimate - COMING FROM BUFFALO; CAN'T MEET BEFORE 9:00 - CELL..."
+    let suffix = nameMatch[2].trim();
+    // Strip known visit types
+    suffix = suffix.replace(/^On Site (?:Estimate|Site)\s*[-–]?\s*/i, "");
+    suffix = suffix.replace(/^DRIVE[\s-]?BY\s*[-–]?\s*/i, "");
+    // What's left is the extra context
+    if (suffix.length > 2) titleContext = suffix;
+  }
+
   const color = stageColor(ev.colorId);
 
   return {
     id: ev.id, cn: clientName, addr: address, phone, email, notes, desc,
     jn: jobNum, db: isDriveBy, isTask, isTodo, isAdmin, constraint, color,
-    colorId: ev.colorId, raw: s, rawD: rd, window, timeLabel,
+    colorId: ev.colorId, raw: s, rawD: rd, window, timeLabel, titleContext,
   };
 }
 
@@ -407,17 +419,12 @@ export default function App() {
   const navigate = addr => {
     if (!addr) return;
     const q = encodeURIComponent(addr);
-    // Try Google Maps app directly on iOS, fall back to web
-    const gmapsApp = `comgooglemaps://?q=${q}&directionsmode=driving`;
-    const gmapsWeb = `https://www.google.com/maps/search/?api=1&query=${q}`;
-    // Check if on iOS
     const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
     if (isIOS) {
-      window.location.href = gmapsApp;
-      // If app isn't installed, the page stays — fall back after a short delay
-      setTimeout(() => { window.location.href = gmapsWeb; }, 500);
+      // Apple Maps opens natively on iPhone — no prompt, no page replacement
+      window.open(`https://maps.apple.com/?daddr=${q}`, "_blank");
     } else {
-      window.open(gmapsWeb, "_blank");
+      window.open(`https://www.google.com/maps/dir/?api=1&destination=${q}`, "_blank");
     }
   };
 
@@ -454,16 +461,10 @@ export default function App() {
   const navAll = useCallback(() => {
     const a = mapStops.filter(s=>s.addr).map(s=>s.addr);
     if (!a.length) return;
-    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-    if (a.length === 1) {
-      navigate(a[0]); return;
-    }
-    const webUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(a[0])}&destination=${encodeURIComponent(a[a.length-1])}${a.length>2?`&waypoints=${a.slice(1,-1).map(encodeURIComponent).join("|")}`:""}`;
-    if (isIOS) {
-      const iosUrl = `comgooglemaps://?saddr=${encodeURIComponent(a[0])}&daddr=${encodeURIComponent(a[a.length-1])}${a.length>2?`&waypoints=${a.slice(1,-1).map(encodeURIComponent).join("|")}`:""}`;
-      window.location.href = iosUrl;
-      setTimeout(() => { window.location.href = webUrl; }, 500);
-    } else { window.open(webUrl, "_blank"); }
+    if (a.length === 1) { navigate(a[0]); return; }
+    // Multi-stop: use Google Maps URL (opens in new tab, iOS may offer to open in app)
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(a[0])}&destination=${encodeURIComponent(a[a.length-1])}${a.length>2?`&waypoints=${a.slice(1,-1).map(encodeURIComponent).join("|")}`:""}`;
+    window.open(url, "_blank");
   }, [mapStops]);
   const hasStopsWithAddr = mapStops.some(s => s.addr);
 
@@ -564,9 +565,12 @@ export default function App() {
               {/* Constraint — bright and prominent */}
               {s.constraint && !reorderMode && <div style={{marginTop:6,marginLeft:isNext?50:44,padding:"4px 10px",borderRadius:6,background:"rgba(200,90,158,.1)",border:"1px solid rgba(200,90,158,.2)",color:"#e880b0",fontSize:12,fontWeight:700,display:"inline-block"}}>{s.constraint}</div>}
 
+              {/* Title context — extra info from the event title */}
+              {s.titleContext && !reorderMode && <div style={{marginTop:4,marginLeft:isNext?50:44,fontSize:12,color:"#a0a8b8",lineHeight:1.5,fontStyle:"italic"}}>{s.titleContext}</div>}
+
               {/* Expanded */}
               {isExp && <div style={{marginTop:12,marginLeft:isNext?50:44,paddingTop:12,borderTop:"1px solid #1a2030"}}>
-                {s.notes && <div style={{fontSize:13,color:"#8898a8",lineHeight:1.6,marginBottom:10,display:"-webkit-box",WebkitLineClamp:4,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{s.notes}</div>}
+                {s.notes && <div style={{fontSize:13,color:"#8898a8",lineHeight:1.6,marginBottom:10}}>{s.notes}</div>}
                 {s.phone && <div style={{fontSize:13,color:"#90a8c0",marginBottom:3}}>📞 {s.phone}</div>}
                 {s.email && <div style={{fontSize:13,color:"#90a8c0",marginBottom:8}}>✉️ {s.email}</div>}
                 {s.jn && <button onClick={e=>{e.stopPropagation();window.open(`https://app.singleops.com/jobs?search=${s.jn}`,"_blank");}} style={{display:"inline-block",padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:700,background:"#0d1018",border:"1px solid #1a2030",color:"#5a6580",cursor:"pointer",marginBottom:8}}>SO #{s.jn} ↗</button>}
@@ -614,15 +618,15 @@ export default function App() {
           {/* OTW */}
           {otwMinutes === null ? (
             <div>
-              <div style={{fontSize:11,fontWeight:700,color:"#5a6580",marginBottom:6,letterSpacing:.5}}>OTW — how many minutes?</div>
-              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                {[5,10,15,20,25,30].map(m => (
-                  <button key={m} onClick={()=>{
+              <div style={{fontSize:11,fontWeight:700,color:"#5a6580",marginBottom:6,letterSpacing:.5}}>OTW — how far out are you?</div>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                {[["4–6","4 to 6 minutes"],["5–7","5 to 7 minutes"],["6–8","6 to 8 minutes"],["8–10","8 to 10 minutes"],["10–12","10 to 12 minutes"],["12–15","12 to 15 minutes"],["15–20","15 to 20 minutes"],["20–25","20 to 25 minutes"],["30–40","30 to 40 minutes"],["40–50","40 to 50 minutes"],["45–1 hr","45 minutes to an hour"]].map(([label,txt]) => (
+                  <button key={label} onClick={()=>{
                     const fn = (textSheet.cn||"").split(" ")[0];
-                    const msg = `Hi there ${fn}, this is Jason with Monster Tree Service, and I'm just reaching out to let you know that I'm headed toward your property and I'm about ${m} minutes away.`;
+                    const msg = `Hi there ${fn}, this is Jason with Monster Tree Service, and I'm just reaching out to let you know that I'm headed toward your property and I'm about ${txt} away.`;
                     window.open(`sms:${textSheet.phone.replace(/\D/g,"")}&body=${encodeURIComponent(msg)}`,"_self");
                     setTextSheet(null); setOtwMinutes(null);
-                  }} style={{flex:"1 0 28%",padding:"12px 0",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:15,fontWeight:800,cursor:"pointer",textAlign:"center"}}>{m} min</button>
+                  }} style={{flex:"1 0 30%",padding:"10px 0",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:13,fontWeight:800,cursor:"pointer",textAlign:"center"}}>{label}</button>
                 ))}
               </div>
             </div>
