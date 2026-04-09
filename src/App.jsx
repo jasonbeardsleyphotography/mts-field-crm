@@ -48,8 +48,9 @@ function parseEvent(ev) {
   const notes = notesMatch ? notesMatch[1].replace(/<[^>]*>/g," ").replace(/&nbsp;/g," ").replace(/&amp;/g,"&").replace(/\s+/g," ").trim() : "";
 
   const isDriveBy = /drive[\s-]?by/i.test(s);
+  const isTask = /^Task\b/i.test(s); // real appointment from SingleOps
   const isTodo = /^TODO:/i.test(s);
-  const isAdmin = (ev.colorId === "8" || ev.colorId === "11") && !jobNum && !isTodo;
+  const isAdmin = (ev.colorId === "8" || ev.colorId === "11") && !isTask && !isTodo;
 
   // Window detection: AM or PM based on start hour, DB is separate flag
   const start = new Date(ev.start?.dateTime || ev.start?.date);
@@ -58,6 +59,7 @@ function parseEvent(ev) {
   const durH = (end - start) / 36e5;
   let window = startH < 10.5 ? "AM" : "PM";
   const fmt = d => d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}).replace(":00","");
+  const timeLabel = fmt(start) + "–" + fmt(end);
 
   // Constraints — extracted from title + time analysis
   let constraint = "";
@@ -79,8 +81,8 @@ function parseEvent(ev) {
 
   return {
     id: ev.id, cn: clientName, addr: address, phone, email, notes, desc,
-    jn: jobNum, db: isDriveBy, isTodo, isAdmin, constraint, color,
-    colorId: ev.colorId, raw: s, rawD: rd, window,
+    jn: jobNum, db: isDriveBy, isTask, isTodo, isAdmin, constraint, color,
+    colorId: ev.colorId, raw: s, rawD: rd, window, timeLabel,
   };
 }
 
@@ -208,7 +210,7 @@ function RouteMap({ stops }) {
           scale:10,
           fillColor:pinColor, fillOpacity:s.db?.7:1,
           strokeColor:hasConstraint?"#FF4081":"#fff",
-          strokeWeight:hasConstraint?3.5:1.5},
+          strokeWeight:hasConstraint?2:1.5},
         zIndex:10,
       });
       markers.current.push(m);
@@ -358,33 +360,35 @@ export default function App() {
 
   // ── PARSE ────────────────────────────────────────────────────────────────
   const dayKey = businessDays[selDay]?.toDateString();
-  const parsed = useMemo(() => {
+  const allParsed = useMemo(() => {
     const raw = rawEvents[dayKey] || [];
-    return raw.map(parseEvent).filter(Boolean).filter(s => !s.isAdmin && !s.isTodo);
+    return raw.map(parseEvent).filter(Boolean);
   }, [rawEvents, dayKey]);
 
-  // Initialize/merge order for this day — preserves saved reorder, appends new events
+  // Tasks = real appointments (have "Task |" prefix) — go on map, get numbered
+  const tasksParsed = useMemo(() => allParsed.filter(s => s.isTask && !s.isAdmin), [allParsed]);
+  // Reminders = everything else that's not admin/MTS NOTE — show at bottom as TD
+  const reminders = useMemo(() => allParsed.filter(s => !s.isTask && !s.isAdmin && !s.isTodo), [allParsed]);
+
+  // Initialize/merge order for tasks only
   useEffect(() => {
-    if (!dayKey || !parsed.length) return;
+    if (!dayKey || !tasksParsed.length) return;
     const saved = ordIds[dayKey] || [];
-    const parsedIds = parsed.map(s => s.id);
-    // If no saved order, initialize from parsed
+    const parsedIds = tasksParsed.map(s => s.id);
     if (!saved.length) {
       setOrdIds(prev => ({...prev, [dayKey]: parsedIds}));
       return;
     }
-    // If saved order exists, check for new events not in saved order
     const newIds = parsedIds.filter(id => !saved.includes(id));
-    // Also remove IDs that no longer exist in parsed data
     const validSaved = saved.filter(id => parsedIds.includes(id));
     if (newIds.length > 0 || validSaved.length !== saved.length) {
       setOrdIds(prev => ({...prev, [dayKey]: [...validSaved, ...newIds]}));
     }
-  }, [dayKey, parsed]);
+  }, [dayKey, tasksParsed]);
 
-  // Build ordered stops from ordIds
-  const stopMap = useMemo(() => { const m = {}; parsed.forEach(s => m[s.id] = s); return m; }, [parsed]);
-  const currentOrder = (ordIds[dayKey]?.length > 0) ? ordIds[dayKey] : parsed.map(s => s.id);
+  // Build ordered stops from ordIds (tasks only)
+  const stopMap = useMemo(() => { const m = {}; tasksParsed.forEach(s => m[s.id] = s); return m; }, [tasksParsed]);
+  const currentOrder = (ordIds[dayKey]?.length > 0) ? ordIds[dayKey] : tasksParsed.map(s => s.id);
   const stops = currentOrder.map(id => stopMap[id]).filter(Boolean);
 
   const active = useMemo(() => stops.filter(s => !dismissed[s.id]), [stops, dismissed]);
@@ -589,6 +593,20 @@ export default function App() {
               <div style={{width:24,height:24,borderRadius:"50%",background:s.color+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff"}}>✓</div>
               <div style={{flex:1,fontSize:13,color:"#5a6580",textDecoration:"line-through"}}>{s.cn}</div>
               <button onClick={()=>{setDismissed(p=>{const n={...p};delete n[s.id];return n;});}} style={{padding:"4px 10px",borderRadius:6,background:"transparent",border:"1px solid #1a2030",color:"#5a6580",fontSize:10,fontWeight:600,cursor:"pointer"}}>Restore</button>
+            </div>
+          ))}
+        </div>}
+
+        {/* Reminders / To-Do items (non-Task calendar entries) */}
+        {reminders.length>0 && <div style={{borderTop:"1px solid #1a2030"}}>
+          {reminders.map(s => (
+            <div key={s.id} style={{padding:"12px 16px",borderBottom:"1px solid #0e1220",display:"flex",alignItems:"center",gap:12}}>
+              <div style={{width:32,height:32,borderRadius:"50%",background:"#2a2040",border:"1px solid #3a3060",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:"#9a80c8",flexShrink:0,letterSpacing:-.5}}>TD</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:15,fontWeight:600,color:"#c0b8d8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.cn}</div>
+                {s.addr && <div style={{fontSize:11,color:"#5a6a80",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{s.addr}</div>}
+              </div>
+              <span style={{padding:"3px 8px",borderRadius:6,fontSize:10,fontWeight:700,color:"#6a6090",background:"rgba(100,80,160,.1)",border:"1px solid rgba(100,80,160,.2)",flexShrink:0}}>{s.timeLabel}</span>
             </div>
           ))}
         </div>}
