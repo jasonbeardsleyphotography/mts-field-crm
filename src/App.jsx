@@ -310,6 +310,8 @@ export default function App() {
   const [expanded, setExpanded] = useState(null);
   const [dismissed, setDismissed] = useState({});
   const [completedOpen, setCompletedOpen] = useState(false);
+  const [textSheet, setTextSheet] = useState(null); // stop object when text sheet is open
+  const [otwMinutes, setOtwMinutes] = useState(null); // null = choosing, number = selected
   const [mapOpen, setMapOpen] = useState(true);
   const [undoStack, setUndoStack] = useState([]);
   const [reorderMode, setReorderMode] = useState(false);
@@ -556,7 +558,7 @@ export default function App() {
                 {s.isTask && s.window && <span style={{padding:"3px 8px",borderRadius:6,fontSize:10,fontWeight:800,color:winColor,background:winBg,border:`1px solid ${winColor}30`,flexShrink:0,letterSpacing:.5}}>{s.window}</span>}
                 {s.isTask && s.db && <span style={{padding:"3px 6px",borderRadius:6,fontSize:9,fontWeight:800,color:"#c8a820",background:"rgba(200,168,32,.12)",border:"1px solid rgba(200,168,32,.3)",flexShrink:0,letterSpacing:.5}}>DB</span>}
                 {!s.isTask && s.timeLabel && <span style={{padding:"3px 8px",borderRadius:6,fontSize:10,fontWeight:700,color:"#6a6090",background:"rgba(100,80,160,.1)",border:"1px solid rgba(100,80,160,.2)",flexShrink:0}}>{s.timeLabel}</span>}
-                {!reorderMode && s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} onClick={e=>e.stopPropagation()} style={{padding:"8px 14px",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#90a8c0",fontSize:14,textDecoration:"none",fontWeight:700,flexShrink:0}}>📞</a>}
+                {!reorderMode && s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} onClick={e=>e.stopPropagation()} style={{padding:"5px 10px",borderRadius:6,background:"#1a2240",border:"1px solid #2a3560",color:"#90a8c0",fontSize:12,textDecoration:"none",fontWeight:700,flexShrink:0}}>📞</a>}
               </div>
 
               {/* Constraint — bright and prominent */}
@@ -567,9 +569,9 @@ export default function App() {
                 {s.notes && <div style={{fontSize:13,color:"#8898a8",lineHeight:1.6,marginBottom:10,display:"-webkit-box",WebkitLineClamp:4,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{s.notes}</div>}
                 {s.phone && <div style={{fontSize:13,color:"#90a8c0",marginBottom:3}}>📞 {s.phone}</div>}
                 {s.email && <div style={{fontSize:13,color:"#90a8c0",marginBottom:8}}>✉️ {s.email}</div>}
-                {s.jn && <a href={`https://app.singleops.com/jobs?search=${s.jn}`} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{display:"inline-block",padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:700,background:"#0d1018",border:"1px solid #1a2030",color:"#5a6580",textDecoration:"none",marginBottom:8}}>SO #{s.jn} ↗</a>}
+                {s.jn && <button onClick={e=>{e.stopPropagation();window.open(`https://app.singleops.com/jobs?search=${s.jn}`,"_blank");}} style={{display:"inline-block",padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:700,background:"#0d1018",border:"1px solid #1a2030",color:"#5a6580",cursor:"pointer",marginBottom:8}}>SO #{s.jn} ↗</button>}
                 <div style={{display:"flex",gap:8,marginTop:4}}>
-                  {s.phone && <a href={`sms:${s.phone.replace(/\D/g,"")}`} onClick={e=>e.stopPropagation()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#90a8c0",fontSize:13,fontWeight:700,textDecoration:"none",textAlign:"center"}}>💬 Text</a>}
+                  {s.phone && <button onClick={e=>{e.stopPropagation();setTextSheet(s);setOtwMinutes(null);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#90a8c0",fontSize:13,fontWeight:700,cursor:"pointer"}}>💬 Text</button>}
                   {s.addr && <button onClick={e=>{e.stopPropagation();navigate(s.addr);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:13,fontWeight:700,cursor:"pointer"}}>🧭 Navigate</button>}
                   <button onClick={e=>{e.stopPropagation();dismiss(s.id);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(51,182,121,.1)",border:"1px solid rgba(51,182,121,.2)",color:"#33B679",fontSize:13,fontWeight:700,cursor:"pointer"}}>✓ Done</button>
                 </div>
@@ -593,6 +595,40 @@ export default function App() {
           ))}
         </div>}
       </div>
+
+      {/* ── TEXT SHEET ─────────────────────────────────────────────────── */}
+      {textSheet && <div onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:"#0d1018",border:"1px solid #1a2030",borderRadius:"14px 14px 0 0",padding:18,maxWidth:480,width:"100%",paddingBottom:"max(18px,env(safe-area-inset-bottom))"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+            <span style={{fontSize:15,fontWeight:700,color:"#f0f4fa",flex:1}}>Text {(textSheet.cn||"").split(" ")[0]}</span>
+            <span style={{fontSize:12,color:"#5a6580"}}>{textSheet.phone}</span>
+            <button onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{width:28,height:28,borderRadius:6,background:"#1a2240",border:"1px solid #2a3560",color:"#5a6580",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+          </div>
+
+          {/* Custom text */}
+          <button onClick={()=>{window.open(`sms:${textSheet.phone.replace(/\D/g,"")}`,"_self");setTextSheet(null);}} style={{width:"100%",padding:"12px 14px",marginBottom:8,borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",cursor:"pointer",textAlign:"left"}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#90a8c0"}}>Custom</div>
+            <div style={{fontSize:11,color:"#5a6580",marginTop:2}}>Open blank message</div>
+          </button>
+
+          {/* OTW */}
+          {otwMinutes === null ? (
+            <div>
+              <div style={{fontSize:11,fontWeight:700,color:"#5a6580",marginBottom:6,letterSpacing:.5}}>OTW — how many minutes?</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {[5,10,15,20,25,30].map(m => (
+                  <button key={m} onClick={()=>{
+                    const fn = (textSheet.cn||"").split(" ")[0];
+                    const msg = `Hi there ${fn}, this is Jason with Monster Tree Service, and I'm just reaching out to let you know that I'm headed toward your property and I'm about ${m} minutes away.`;
+                    window.open(`sms:${textSheet.phone.replace(/\D/g,"")}&body=${encodeURIComponent(msg)}`,"_self");
+                    setTextSheet(null); setOtwMinutes(null);
+                  }} style={{flex:"1 0 28%",padding:"12px 0",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:15,fontWeight:800,cursor:"pointer",textAlign:"center"}}>{m} min</button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>}
     </div>
   );
 }
