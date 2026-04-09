@@ -51,24 +51,29 @@ function parseEvent(ev) {
   const isTodo = /^TODO:/i.test(s);
   const isAdmin = (ev.colorId === "8" || ev.colorId === "11") && !jobNum && !isTodo;
 
-  // Window detection: AM or PM based on start hour, DB is separate
+  // Window detection: AM or PM based on start hour, DB is separate flag
   const start = new Date(ev.start?.dateTime || ev.start?.date);
   const end = new Date(ev.end?.dateTime || ev.end?.date);
   const startH = start.getHours() + start.getMinutes()/60;
-  let window = startH < 10.5 ? "AM" : "PM"; // 10:30 is the boundary
-  if (isDriveBy) window += " · DB";
+  const durH = (end - start) / 36e5;
+  let window = startH < 10.5 ? "AM" : "PM";
+  const fmt = d => d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}).replace(":00","");
 
-  // Constraints — extracted from title
+  // Constraints — extracted from title + time analysis
   let constraint = "";
   if (/CALL (WHEN|FIRST|BEFORE|OTW)/i.test(s)) constraint = "📞 CALL FIRST";
   if (/NOT BEFORE\s*([\d:]+)/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "Not before " + s.match(/NOT BEFORE\s*([\d:]+)/i)[1];
   if (/([\d:]+)\s*OR LATER/i.test(s)) constraint = (constraint ? constraint + " · " : "") + s.match(/([\d:]+)\s*OR LATER/i)[1] + " or later";
   if (/CAN'?T MEET BEFORE\s*([\d:]+)/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "Not before " + s.match(/CAN'?T MEET BEFORE\s*([\d:]+)/i)[1];
   if (/CANNOT MEET BEFORE\s*(\w+)/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "Not before " + s.match(/CANNOT MEET BEFORE\s*(\w+)/i)[1];
+  if (/CAN'?T MEET (PAST|AFTER)\s*([\d:]+)/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "Before " + s.match(/CAN'?T MEET (?:PAST|AFTER)\s*([\d:]+)/i)[1];
+  if (/CAN'?T MEET OUTSIDE/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "⏰ " + fmt(start) + "–" + fmt(end) + " ONLY";
   if (/EARLIER IS BETTER/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "⏰ EARLIER IS BETTER";
   if (/MEET (?:AT |.+?AT )(.+?)$/i.test(s)) { const m = s.match(/MEET (?:AT |.+?AT )(.+?)$/i); if (m) constraint = (constraint ? constraint + " · " : "") + "📍 " + m[1].slice(0,40); }
   if (/YARD STICK/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "🪧 Yard stick";
   if (/WE CAN MOVE/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "↔ Flexible";
+  // Detect tight/unusual windows (not standard 4hr AM or PM) — if no constraint set yet
+  if (!constraint && !isDriveBy && durH < 3) constraint = "⏰ " + fmt(start) + "–" + fmt(end);
 
   const color = stageColor(ev.colorId);
 
@@ -278,7 +283,23 @@ function SwipeCard({ children, onSwipeRight, onSwipeLeft, enabled }) {
 // MAIN APP
 // ═════════════════════════════════════════════════════════════════════════════
 export default function App() {
-  const [token, setToken] = useState(null);
+  // Restore cached token if still valid (tokens last ~1 hour)
+  const [token, setToken] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("mts-token") || "null");
+      if (saved && saved.expiry > Date.now()) return saved.token;
+    } catch(e) {}
+    return null;
+  });
+  const saveToken = (t) => {
+    setToken(t);
+    if (t) {
+      // Cache token with 55-min expiry (tokens last 60 min, leave 5 min buffer)
+      localStorage.setItem("mts-token", JSON.stringify({ token: t, expiry: Date.now() + 55 * 60 * 1000 }));
+    } else {
+      localStorage.removeItem("mts-token");
+    }
+  };
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [rawEvents, setRawEvents] = useState({});
@@ -307,8 +328,8 @@ export default function App() {
     if (!window.google?.accounts?.oauth2) { setTimeout(initAuth, 200); return; }
     window.google.accounts.oauth2.initTokenClient({
       client_id: CLIENT_ID, scope: SCOPES,
-      callback: r => { if (r.access_token) { setToken(r.access_token); setError(null); } else setError("Sign-in failed"); },
-    }).requestAccessToken({ prompt: "consent" });
+      callback: r => { if (r.access_token) { saveToken(r.access_token); setError(null); } else setError("Sign-in failed"); },
+    }).requestAccessToken();
   }, []);
 
   // ── LOAD ─────────────────────────────────────────────────────────────────
@@ -328,7 +349,7 @@ export default function App() {
       // Don't reset ordIds — preserve saved reorder from localStorage
     } catch (e) {
       setError(e.message);
-      if (e.message.includes("401")) setToken(null);
+      if (e.message.includes("401")) saveToken(null);
     }
     setLoading(false);
   }, [token]);
@@ -378,7 +399,22 @@ export default function App() {
     if (last.type === "dismiss") setDismissed(p => { const n={...p}; delete n[last.id]; return n; });
     if (last.type === "reorder") setOrdIds(prev => ({...prev, [dayKey]: last.prevOrder}));
   };
-  const navigate = addr => { if (addr) window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`, "_blank"); };
+  const navigate = addr => {
+    if (!addr) return;
+    const q = encodeURIComponent(addr);
+    // Try Google Maps app directly on iOS, fall back to web
+    const gmapsApp = `comgooglemaps://?q=${q}&directionsmode=driving`;
+    const gmapsWeb = `https://www.google.com/maps/search/?api=1&query=${q}`;
+    // Check if on iOS
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (isIOS) {
+      window.location.href = gmapsApp;
+      // If app isn't installed, the page stays — fall back after a short delay
+      setTimeout(() => { window.location.href = gmapsWeb; }, 500);
+    } else {
+      window.open(gmapsWeb, "_blank");
+    }
+  };
 
   // Reorder: tap to pick up, tap destination to place
   const handleReorderTap = (idx) => {
@@ -410,11 +446,21 @@ export default function App() {
     }
   };
 
-  const navAllUrl = useMemo(() => {
+  const navAll = useCallback(() => {
     const a = active.filter(s=>s.addr).map(s=>s.addr);
-    if (a.length < 2) return a.length===1 ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a[0])}` : null;
-    return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(a[0])}&destination=${encodeURIComponent(a[a.length-1])}${a.length>2?`&waypoints=${a.slice(1,-1).map(encodeURIComponent).join("|")}`:""}`;
+    if (!a.length) return;
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (a.length === 1) {
+      navigate(a[0]); return;
+    }
+    const webUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(a[0])}&destination=${encodeURIComponent(a[a.length-1])}${a.length>2?`&waypoints=${a.slice(1,-1).map(encodeURIComponent).join("|")}`:""}`;
+    if (isIOS) {
+      const iosUrl = `comgooglemaps://?saddr=${encodeURIComponent(a[0])}&daddr=${encodeURIComponent(a[a.length-1])}${a.length>2?`&waypoints=${a.slice(1,-1).map(encodeURIComponent).join("|")}`:""}`;
+      window.location.href = iosUrl;
+      setTimeout(() => { window.location.href = webUrl; }, 500);
+    } else { window.open(webUrl, "_blank"); }
   }, [active]);
+  const hasStopsWithAddr = active.some(s => s.addr);
 
   // Day labels
   const dayLabels = businessDays.map(d => {
@@ -463,7 +509,7 @@ export default function App() {
             {active.length} stops{completed.length>0?` · ${completed.length} done`:""}
           </button>
           <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}} style={{padding:"5px 12px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"#1a2240",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#2a3560"}`,color:reorderMode?"#c8a0e8":"#5a6580",fontSize:12,fontWeight:700,cursor:"pointer"}}>{reorderMode?"✕ Done":"↕ Reorder"}</button>
-          {navAllUrl && !reorderMode && <a href={navAllUrl} target="_blank" rel="noopener noreferrer" style={{padding:"5px 12px",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:12,fontWeight:700,textDecoration:"none"}}>🧭 All</a>}
+          {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"5px 12px",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:12,fontWeight:700,cursor:"pointer"}}>🧭 All</button>}
         </div>
         {/* Reorder mode banner */}
         {reorderMode && <div style={{padding:"6px 14px",background:"rgba(142,36,170,.08)",borderTop:"1px solid rgba(142,36,170,.15)",display:"flex",alignItems:"center",gap:8}}>
@@ -506,8 +552,10 @@ export default function App() {
                   <div style={{fontSize:isNext?18:16,fontWeight:isNext?800:700,color:"#f0f4fa",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isNext?"▸ ":""}{s.cn}</div>
                   {s.addr && <div style={{fontSize:11,color:"#5a6a80",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{s.addr}</div>}
                 </div>
-                {/* Window badge: AM / PM / DB */}
+                {/* Window badge: AM (green) or PM (blue) */}
                 {s.window && <span style={{padding:"3px 8px",borderRadius:6,fontSize:10,fontWeight:800,color:winColor,background:winBg,border:`1px solid ${winColor}30`,flexShrink:0,letterSpacing:.5}}>{s.window}</span>}
+                {/* DB badge: separate yellow */}
+                {s.db && <span style={{padding:"3px 6px",borderRadius:6,fontSize:9,fontWeight:800,color:"#c8a820",background:"rgba(200,168,32,.12)",border:"1px solid rgba(200,168,32,.3)",flexShrink:0,letterSpacing:.5}}>DB</span>}
                 {!reorderMode && s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} onClick={e=>e.stopPropagation()} style={{padding:"8px 14px",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#90a8c0",fontSize:14,textDecoration:"none",fontWeight:700,flexShrink:0}}>📞</a>}
               </div>
 
