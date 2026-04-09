@@ -320,7 +320,13 @@ export default function App() {
   const [businessDays, setBusinessDays] = useState(() => getBusinessDays(10));
   const [selDay, setSelDay] = useState(0);
   const [expanded, setExpanded] = useState(null);
-  const [dismissed, setDismissed] = useState({});
+  const [dismissed, setDismissed] = useState(() => {
+    try { const saved = localStorage.getItem("mts-dismissed"); return saved ? JSON.parse(saved) : {}; }
+    catch(e) { return {}; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("mts-dismissed", JSON.stringify(dismissed)); } catch(e) {}
+  }, [dismissed]);
   const [completedOpen, setCompletedOpen] = useState(false);
   const [textSheet, setTextSheet] = useState(null); // stop object when text sheet is open
   const [otwMinutes, setOtwMinutes] = useState(null); // null = choosing, number = selected
@@ -361,7 +367,7 @@ export default function App() {
         const e = new Date(day); e.setHours(23,59,59,999);
         all[day.toDateString()] = await fetchEvents(token, s, e);
       }
-      setRawEvents(all); setSelDay(0); setDismissed({}); setExpanded(null); setReorderMode(false); setMoving(null);
+      setRawEvents(all); setSelDay(0); setExpanded(null); setReorderMode(false); setMoving(null);
       // Don't reset ordIds — preserve saved reorder from localStorage
     } catch (e) {
       setError(e.message);
@@ -499,7 +505,7 @@ export default function App() {
 
       {/* ── HEADER ─────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:5,padding:"8px 10px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0}}>
-        <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setDismissed({});setReorderMode(false);setMoving(null);}} style={{padding:"6px 8px",borderRadius:8,border:"1px solid #1a2030",background:"#0a0c12",color:"#f0f4fa",fontSize:13,fontWeight:700,cursor:"pointer",outline:"none",appearance:"auto"}}>
+        <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"6px 8px",borderRadius:8,border:"1px solid #1a2030",background:"#0a0c12",color:"#f0f4fa",fontSize:13,fontWeight:700,cursor:"pointer",outline:"none",appearance:"auto"}}>
           {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
         </select>
         <div style={{flex:1}}/>
