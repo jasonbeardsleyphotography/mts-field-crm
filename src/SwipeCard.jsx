@@ -2,7 +2,7 @@ import { useState, useRef } from "react";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Swipe Card
-   Touch-swipeable card wrapper. Right = Done, Left = Navigate.
+   Right = Navigate to property. Left = Open Onsite screen.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 export default function SwipeCard({ children, onSwipeRight, onSwipeLeft, enabled }) {
@@ -20,9 +20,9 @@ export default function SwipeCard({ children, onSwipeRight, onSwipeLeft, enabled
   const abs = Math.abs(offset), reveal = Math.min(abs/80,1), opacity = 1-Math.min(abs/250,.5), right = offset>0;
 
   return <div style={{position:"relative",overflow:"hidden"}}>
-    {abs>20 && <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:right?"flex-start":"flex-end",justifyContent:"center",padding:"0 20px",opacity:reveal,background:right?"rgba(51,182,121,.1)":"rgba(3,155,229,.1)"}}>
-      <div style={{fontSize:20,fontWeight:800,color:right?"#33B679":"#039BE5"}}>{right?"✓":"🧭"}</div>
-      <div style={{fontSize:12,fontWeight:700,color:right?"#33B679":"#039BE5",marginTop:2}}>{right?"Done":"Navigate"}</div>
+    {abs>20 && <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:right?"flex-start":"flex-end",justifyContent:"center",padding:"0 20px",opacity:reveal,background:right?"rgba(3,155,229,.1)":"rgba(51,182,121,.1)"}}>
+      <div style={{fontSize:20,fontWeight:800,color:right?"#039BE5":"#33B679"}}>{right?"🧭":"📋"}</div>
+      <div style={{fontSize:12,fontWeight:700,color:right?"#039BE5":"#33B679",marginTop:2}}>{right?"Navigate":"Onsite"}</div>
     </div>}
     <div onTouchStart={ts} onTouchMove={tm} onTouchEnd={te}
       style={{transform:`translateX(${offset}px)`,opacity,transition:swiping?"none":"transform .25s,opacity .25s",position:"relative",zIndex:1,touchAction:"pan-y"}}>

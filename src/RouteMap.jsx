@@ -2,20 +2,16 @@ import { useState, useRef, useEffect } from "react";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Route Map
-   Google Maps with dark styling, stop markers, route line, live location dot.
+   Satellite hybrid map. Live blue dot. Selected stop highlight.
+   Directions line from current location to next (first) stop.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const MAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_KEY;
 export const AM_COLOR = "#2E7D32";
 export const PM_COLOR = "#1E88E5";
 
-const DARK_STYLE = [
-  {elementType:"geometry",stylers:[{color:"#10131a"}]},
-  {elementType:"labels.text.stroke",stylers:[{color:"#10131a"}]},
-  {elementType:"labels.text.fill",stylers:[{color:"#5a6580"}]},
-  {featureType:"road",elementType:"geometry",stylers:[{color:"#1e2940"}]},
-  {featureType:"road.highway",elementType:"geometry",stylers:[{color:"#2a3a55"}]},
-  {featureType:"water",elementType:"geometry",stylers:[{color:"#080a10"}]},
+// Minimal label styling for hybrid satellite
+const SAT_STYLE = [
   {featureType:"poi",stylers:[{visibility:"off"}]},
   {featureType:"transit",stylers:[{visibility:"off"}]},
 ];
@@ -67,24 +63,27 @@ export function loadMaps() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-export default function RouteMap({ stops }) {
+export default function RouteMap({ stops, selectedId }) {
   const ref = useRef(null);
   const map = useRef(null);
-  const markers = useRef([]);
+  const markers = useRef([]); // [{marker, stopId}]
   const route = useRef(null);
+  const nextRoute = useRef(null); // directions to next stop
   const prevSet = useRef("");
   const locMarker = useRef(null);
   const watchId = useRef(null);
+  const userLoc = useRef(null); // latest GPS coords
   const [ready, setReady] = useState(false);
   const [coords, setCoords] = useState({});
 
   useEffect(() => { loadMaps().then(() => setReady(true)).catch(() => {}); }, []);
 
-  // Create map once
+  // Create map — satellite hybrid
   useEffect(() => {
     if (!ready || !ref.current || map.current) return;
     map.current = new window.google.maps.Map(ref.current, {
-      center:{lat:43.12,lng:-77.50}, zoom:11, styles:DARK_STYLE,
+      center:{lat:43.12,lng:-77.50}, zoom:11,
+      mapTypeId: "hybrid", styles: SAT_STYLE,
       disableDefaultUI:true, gestureHandling:"greedy", backgroundColor:"#10131a",
       zoomControl:false, mapTypeControl:false, streetViewControl:false,
       fullscreenControl:false, keyboardShortcuts:false, clickableIcons:false,
@@ -97,6 +96,7 @@ export default function RouteMap({ stops }) {
     watchId.current = navigator.geolocation.watchPosition(
       pos => {
         const latlng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        userLoc.current = latlng;
         if (!locMarker.current) {
           locMarker.current = new window.google.maps.Marker({
             position: latlng, map: map.current, zIndex: 999,
@@ -149,10 +149,10 @@ export default function RouteMap({ stops }) {
     return () => { dead = true; };
   }, [ready, stops.map(s => s.id + s.addr).join(",")]);
 
-  // Markers + route
+  // ── MARKERS + ROUTE LINE ──────────────────────────────────────────────
   useEffect(() => {
     if (!map.current) return;
-    markers.current.forEach(m => m.setMap(null)); markers.current = [];
+    markers.current.forEach(m => m.marker.setMap(null)); markers.current = [];
     if (route.current) { route.current.setMap(null); route.current = null; }
     if (!Object.keys(coords).length) return;
 
@@ -164,20 +164,22 @@ export default function RouteMap({ stops }) {
       const isAM = (s.window||"").startsWith("AM");
       const pinColor = isAM ? AM_COLOR : PM_COLOR;
       const hasConstraint = !!s.constraint;
+      const isSel = s.id === selectedId;
       const m = new window.google.maps.Marker({
         position:pos, map:map.current,
-        label:{text:String(n),color:"#fff",fontWeight:"800",fontSize:"10px"},
+        label:{text:String(n),color:"#fff",fontWeight:"800",fontSize: isSel ? "12px" : "10px"},
         icon:{path:window.google.maps.SymbolPath.CIRCLE,
-          scale:10,
-          fillColor:pinColor, fillOpacity:s.db?.7:1,
-          strokeColor:hasConstraint?"#FF4081":"#fff",
-          strokeWeight:hasConstraint?2:1.5},
-        zIndex:10,
+          scale: isSel ? 15 : 10,
+          fillColor:pinColor, fillOpacity: s.db ? .7 : 1,
+          strokeColor: isSel ? "#FFD600" : hasConstraint ? "#FF4081" : "#fff",
+          strokeWeight: isSel ? 3 : hasConstraint ? 2 : 1.5},
+        zIndex: isSel ? 20 : 10,
       });
-      markers.current.push(m);
+      markers.current.push({ marker: m, stopId: s.id });
       positions.push(pos); bounds.extend(pos);
     });
 
+    // Full route polyline
     if (positions.length >= 2) {
       try {
         new window.google.maps.DirectionsService().route({
@@ -188,27 +190,74 @@ export default function RouteMap({ stops }) {
           if (status === "OK") {
             route.current = new window.google.maps.DirectionsRenderer({
               map:map.current, directions:result, suppressMarkers:true, preserveViewport:true,
-              polylineOptions:{strokeColor:"#039BE5",strokeOpacity:.7,strokeWeight:4},
+              polylineOptions:{strokeColor:"#039BE5",strokeOpacity:.6,strokeWeight:3},
             });
           } else {
             route.current = new window.google.maps.Polyline({
-              path:positions, strokeColor:"#039BE5", strokeOpacity:.5, strokeWeight:3, map:map.current,
+              path:positions, strokeColor:"#039BE5", strokeOpacity:.4, strokeWeight:2, map:map.current,
             });
           }
         });
       } catch(e) {
         route.current = new window.google.maps.Polyline({
-          path:positions, strokeColor:"#039BE5", strokeOpacity:.5, strokeWeight:3, map:map.current,
+          path:positions, strokeColor:"#039BE5", strokeOpacity:.4, strokeWeight:2, map:map.current,
         });
       }
     }
 
+    // Fit bounds only when stop SET changes
     const set = [...stops.map(s=>s.id)].sort().join(",");
     if (positions.length > 0 && set !== prevSet.current) {
       map.current.fitBounds(bounds, {top:20,right:20,bottom:20,left:20});
       prevSet.current = set;
     }
-  }, [coords, stops]);
+  }, [coords, stops, selectedId]);
+
+  // ── DIRECTIONS FROM CURRENT LOCATION TO NEXT STOP ─────────────────────
+  useEffect(() => {
+    if (!map.current) return;
+    if (nextRoute.current) { nextRoute.current.setMap(null); nextRoute.current = null; }
+    // Next stop = first stop in list
+    const firstStop = stops[0];
+    if (!firstStop || !coords[firstStop.id] || !userLoc.current) return;
+
+    try {
+      new window.google.maps.DirectionsService().route({
+        origin: userLoc.current,
+        destination: coords[firstStop.id],
+        travelMode: window.google.maps.TravelMode.DRIVING,
+      }, (result, status) => {
+        if (status === "OK") {
+          nextRoute.current = new window.google.maps.DirectionsRenderer({
+            map: map.current, directions: result, suppressMarkers: true, preserveViewport: true,
+            polylineOptions: { strokeColor: "#FFD600", strokeOpacity: .8, strokeWeight: 5 },
+          });
+        }
+      });
+    } catch(e) {}
+  }, [coords, stops, ready]);
+
+  // ── HIGHLIGHT SELECTED MARKER ──────────────────────────────────────────
+  useEffect(() => {
+    if (!map.current) return;
+    markers.current.forEach(({ marker, stopId }) => {
+      const isSel = stopId === selectedId;
+      const s = stops.find(x => x.id === stopId);
+      if (!s) return;
+      const isAM = (s.window||"").startsWith("AM");
+      const pinColor = isAM ? AM_COLOR : PM_COLOR;
+      const hasConstraint = !!s.constraint;
+      marker.setIcon({
+        path: window.google.maps.SymbolPath.CIRCLE,
+        scale: isSel ? 15 : 10,
+        fillColor: pinColor, fillOpacity: s.db ? .7 : 1,
+        strokeColor: isSel ? "#FFD600" : hasConstraint ? "#FF4081" : "#fff",
+        strokeWeight: isSel ? 3 : hasConstraint ? 2 : 1.5,
+      });
+      marker.setZIndex(isSel ? 20 : 10);
+      marker.setLabel({ text: marker.getLabel().text, color: "#fff", fontWeight: "800", fontSize: isSel ? "12px" : "10px" });
+    });
+  }, [selectedId]);
 
   return <div ref={ref} style={{width:"100%",height:200,background:"#10131a"}}>{!ready && <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:"#5a6580",fontSize:12}}>Loading map...</div>}</div>;
 }
