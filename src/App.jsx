@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { parseEvent, stageColor } from "./parseEvent";
 import RouteMap, { AM_COLOR, PM_COLOR } from "./RouteMap";
 import SwipeCard from "./SwipeCard";
-import CardDetail from "./CardDetail";
+import OnsiteWindow from "./OnsiteWindow";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS FIELD ROUTE — Main App
@@ -104,6 +104,11 @@ export default function App() {
   const [moving, setMoving] = useState(null);
   const [ordIds, setOrdIds] = useState(() => lsGet("mts-route-order", {}));
   useEffect(() => { lsSet("mts-route-order", ordIds); }, [ordIds]);
+
+  // ── ONSITE WINDOW ──────────────────────────────────────────────────────
+  const [onsiteStop, setOnsiteStop] = useState(null); // stop object when onsite window open
+  const [undoToast, setUndoToast] = useState(null); // {id, cn, timer}
+  const undoToastTimer = useRef(null);
 
   // ── AUTH ─────────────────────────────────────────────────────────────────
   const initAuth = useCallback(() => {
@@ -228,7 +233,37 @@ export default function App() {
   const mapStops = useMemo(() => active.filter(s => s.isTask), [active]);
 
   // ── ACTIONS ──────────────────────────────────────────────────────────────
-  const dismiss = id => { setUndoStack(u => [...u, {type:"dismiss",id}]); setDismissed(p => ({...p,[id]:true})); setExpanded(null); };
+  const openOnsite = (stop) => { setOnsiteStop(stop); setExpanded(null); };
+  const [declineConfirm, setDeclineConfirm] = useState(null); // stop id awaiting confirm
+  const [addStopOpen, setAddStopOpen] = useState(false);
+  const [addStopAddr, setAddStopAddr] = useState("");
+
+  // Decline = remove from route with confirmation
+  const decline = (id) => {
+    setUndoStack(u => [...u, {type:"dismiss",id}]);
+    setDismissed(p => ({...p,[id]:true}));
+    setExpanded(null);
+    setDeclineConfirm(null);
+    setOnsiteStop(null);
+  };
+  // markDone = move to pipeline (real appointments)
+  const markDone = (id) => {
+    const stop = stopMap[id];
+    setUndoStack(u => [...u, {type:"dismiss",id}]);
+    setDismissed(p => ({...p,[id]:true}));
+    setExpanded(null);
+    setOnsiteStop(null);
+    if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
+    setUndoToast({ id, cn: stop?.cn || "Stop" });
+    undoToastTimer.current = setTimeout(() => setUndoToast(null), 30000);
+  };
+  const undoToastAction = () => {
+    if (!undoToast) return;
+    setDismissed(p => { const n={...p}; delete n[undoToast.id]; return n; });
+    setUndoStack(u => u.slice(0,-1));
+    if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
+    setUndoToast(null);
+  };
   const restore = id => { setUndoStack(u => [...u, {type:"restore",id}]); setDismissed(p => { const n={...p}; delete n[id]; return n; }); };
   const undo = () => {
     if (!undoStack.length) return;
@@ -242,6 +277,22 @@ export default function App() {
     if (!addr) return;
     const q = encodeURIComponent(addr);
     window.location.href = `comgooglemaps://?daddr=${q}&directionsmode=driving`;
+  };
+
+  // ── TEXT-TO-SPEECH ──────────────────────────────────────────────────────
+  const speakStop = (s) => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const parts = [];
+    parts.push(s.cn);
+    if (s.addr) parts.push(`at ${s.addr}`);
+    if (s.window) parts.push(`${s.window} window`);
+    if (s.constraint) parts.push(s.constraint.replace(/[📞⏰📍🪧↔]/g,"").trim());
+    if (s.notes) parts.push(`Notes: ${s.notes.slice(0,300)}`);
+    const text = parts.join(". ");
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 0.95;
+    window.speechSynthesis.speak(u);
   };
 
   const handleReorderTap = (idx) => {
@@ -284,9 +335,9 @@ export default function App() {
 
   // ── SIGN IN ──────────────────────────────────────────────────────────────
   if (!token) return (
-    <div style={{height:"100dvh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0a0c12",fontFamily:"'Barlow Condensed','DM Sans',system-ui,sans-serif",color:"#f0f4fa",padding:20}}>
-      <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800;900&family=DM+Sans:wght@500;700;800&display=swap" rel="stylesheet"/>
-      <div style={{fontSize:32,fontWeight:900,letterSpacing:2,textTransform:"uppercase",fontFamily:"'Barlow Condensed',sans-serif"}}>MTS</div>
+    <div style={{height:"100dvh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0a0c12",fontFamily:"'Oswald','DM Sans',system-ui,sans-serif",color:"#f0f4fa",padding:20}}>
+      <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=DM+Sans:wght@500;700;800&display=swap" rel="stylesheet"/>
+      <div style={{fontSize:32,fontWeight:900,letterSpacing:2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif"}}>MTS</div>
       <div style={{fontSize:13,color:"#5a6580",marginBottom:32,fontWeight:500}}>Field Route</div>
       <button onClick={initAuth} style={{padding:"16px 40px",borderRadius:12,background:"#1a2240",border:"1px solid #2a3560",color:"#f0f4fa",fontSize:16,fontWeight:700,cursor:"pointer",letterSpacing:.5}}>Sign in with Google</button>
       {error && <div style={{marginTop:16,color:"#ff5555",fontSize:12}}>{error}</div>}
@@ -302,7 +353,7 @@ export default function App() {
   // ═════════════════════════════════════════════════════════════════════════
   return (
     <div style={{height:"100dvh",width:"100%",background:"#0a0c12",display:"flex",flexDirection:"column",fontFamily:"'DM Sans',system-ui,sans-serif",color:"#f0f4fa",overflow:"hidden"}}>
-      <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800;900&family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+      <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
       <style>{`
 .scr::-webkit-scrollbar{width:0}
 .gmnoprint,.gm-bundled-control,.gm-style-cc,.gm-control-active,.gm-fullscreen-control,.gm-style .adp,.gm-style button[title]{display:none!important}
@@ -336,8 +387,29 @@ export default function App() {
           setMoving(null);
         }} style={{padding:"5px 10px",borderRadius:8,background:"rgba(200,90,60,.1)",border:"1px solid rgba(200,90,60,.25)",color:"#e8a080",fontSize:11,fontWeight:700,cursor:"pointer"}}>↻ Reset</button>}
         {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"5px 10px",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:11,fontWeight:700,cursor:"pointer"}}>🧭 All</button>}
+        <button onClick={load} disabled={loading} style={{width:34,height:34,borderRadius:8,background:"#1a2240",border:"1px solid #1a2030",color:loading?"#2a3050":"#5a6580",fontSize:13,cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"transform .3s",transform:loading?"rotate(360deg)":"none"}}>↻</button>
         <button onClick={undo} disabled={!undoStack.length} style={{width:34,height:34,borderRadius:8,background:undoStack.length?"#1a2240":"transparent",border:"1px solid #1a2030",color:undoStack.length?"#f0f4fa":"#2a3050",fontSize:13,cursor:undoStack.length?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center"}}>↩</button>
+        {!reorderMode && <button onClick={()=>setAddStopOpen(!addStopOpen)} style={{width:34,height:34,borderRadius:8,background:addStopOpen?"rgba(3,155,229,.15)":"transparent",border:"1px solid #1a2030",color:addStopOpen?"#039BE5":"#3a4560",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:300}}>+</button>}
       </div>
+
+      {/* ── ADD STOP (minimal popover) ────────────────────────────────── */}
+      {addStopOpen && <div style={{padding:"8px 12px",background:"#0d1018",borderBottom:"1px solid #1a2030",display:"flex",gap:6,alignItems:"center"}}>
+        <input value={addStopAddr} onChange={e=>setAddStopAddr(e.target.value)} placeholder="Address or note..." style={{flex:1,padding:"8px 10px",borderRadius:8,background:"#0e1525",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:13,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none"}} />
+        <button onClick={()=>{
+          if (!addStopAddr.trim()) return;
+          // Create a local-only stop (not from calendar)
+          const id = "local-" + Date.now();
+          const newStop = { id, cn: addStopAddr.trim(), addr: addStopAddr.trim(), phone:"", email:"", notes:"", desc:"", jn:null, db:false, isTask:true, isTodo:false, isAdmin:false, constraint:"", color:"#039BE5", colorId:"7", raw:"", rawD:"", window:"", timeLabel:"", titleContext:"" };
+          // Add to current day's parsed events by injecting into rawEvents
+          setRawEvents(prev => {
+            const dayEvts = prev[dayKey] || [];
+            return {...prev, [dayKey]: [...dayEvts, { id, summary: addStopAddr.trim(), location: addStopAddr.trim(), start:{dateTime:new Date().toISOString()}, end:{dateTime:new Date().toISOString()}, colorId:"7", description:"" }]};
+          });
+          setAddStopAddr("");
+          setAddStopOpen(false);
+        }} style={{padding:"8px 14px",borderRadius:8,background:"rgba(3,155,229,.15)",border:"1px solid rgba(3,155,229,.25)",color:"#039BE5",fontSize:12,fontWeight:700,cursor:"pointer"}}>Add</button>
+        <button onClick={()=>{setAddStopOpen(false);setAddStopAddr("");}} style={{padding:"8px 10px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#4a5a70",fontSize:12,cursor:"pointer"}}>✕</button>
+      </div>}
 
       {/* ── BODY: map + list (side-by-side on desktop) ─────────────── */}
       <div className="mts-body">
@@ -356,7 +428,7 @@ export default function App() {
           </> : <span style={{fontSize:12,fontWeight:500,color:"#9a80c8"}}>↕ Tap a stop to pick it up</span>}
         </div>}
         <div className="mts-map-inner">
-          {mapOpen && mapStops.length>0 && <RouteMap stops={mapStops}/>}
+          {mapOpen && mapStops.length>0 && <RouteMap stops={mapStops} selectedId={expanded}/>}
         </div>
       </div>
 
@@ -374,8 +446,8 @@ export default function App() {
           const winColor = isAM ? "#4CAF50" : "#5a9ec8";
           const winBg = isAM ? "rgba(46,125,50,.12)" : "rgba(30,136,229,.12)";
 
-          return <SwipeCard key={s.id} enabled={!reorderMode} onSwipeRight={() => dismiss(s.id)} onSwipeLeft={() => navigate(s.addr)}>
-            <div onClick={() => { if (reorderMode) handleReorderTap(idx); else setExpanded(isExp ? null : s.id); }}
+          return <SwipeCard key={s.id} enabled={!reorderMode} onSwipeRight={() => navigate(s.addr)} onSwipeLeft={() => openOnsite(s)}>
+            <div onClick={() => { if (reorderMode) handleReorderTap(idx); else { setDeclineConfirm(null); setExpanded(isExp ? null : s.id); } }}
               ref={el => { if (el && expanded === s.id) setTimeout(() => el.scrollIntoView({behavior:"smooth",block:"nearest"}), 50); }}
               style={{
               padding:"14px 16px", borderBottom:"1px solid #0e1220",
@@ -387,35 +459,47 @@ export default function App() {
             }}>
               {/* ── MAIN ROW: High-contrast sunlight-readable ──────────── */}
               <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <div style={{width:isNext?38:32,height:isNext?38:32,borderRadius:"50%",background:circleColor,display:"flex",alignItems:"center",justifyContent:"center",fontSize:s.isTask?(isNext?16:14):9,fontWeight:900,color:"#fff",flexShrink:0,border:s.db?"2px dashed rgba(255,255,255,.5)":isMov?"2px solid #8E24AA":!s.isTask?"1px solid #3a3060":"none",letterSpacing:s.isTask?0:-.5,fontFamily:"'Barlow Condensed',sans-serif",textShadow:"0 1px 2px rgba(0,0,0,.5)"}}>{s.isTask?taskNum:"TD"}</div>
+                <div style={{width:isNext?38:32,height:isNext?38:32,borderRadius:"50%",background:circleColor,display:"flex",alignItems:"center",justifyContent:"center",fontSize:s.isTask?(isNext?16:14):9,fontWeight:900,color:"#fff",flexShrink:0,border:s.db?"2px dashed rgba(255,255,255,.5)":isMov?"2px solid #8E24AA":!s.isTask?"1px solid #3a3060":"none",letterSpacing:s.isTask?0:-.5,fontFamily:"'Oswald',sans-serif",textShadow:"0 1px 2px rgba(0,0,0,.5)"}}>{s.isTask?taskNum:"TD"}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{
                     fontSize:isNext?17:15, fontWeight:isNext?900:800,
                     color: s.isTask ? "#FFFFFF" : "#d0c8e8",
                     overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",
-                    fontFamily:"'Barlow Condensed',sans-serif",
+                    fontFamily:"'Oswald',sans-serif",
                     textTransform:"uppercase",
                     letterSpacing: isNext ? 1 : 0.5,
                     textShadow: isNext ? "0 0 8px rgba(255,255,255,.15)" : "none",
                   }}>{isNext?"▸ ":""}{s.cn}</div>
-                  {s.addr && <div style={{fontSize:11,color:"#8a96a8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:2,fontWeight:600,letterSpacing:0.2}}>{s.addr}</div>}
+                  {s.addr && <div style={{fontSize:12,color:"#96a2b4",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:2,fontWeight:500,letterSpacing:1,fontFamily:"'Oswald',sans-serif",textTransform:"uppercase"}}>{s.addr}</div>}
                 </div>
-                {s.isTask && s.window && <span style={{padding:"3px 8px",borderRadius:6,fontSize:11,fontWeight:900,color:isAM?"#66BB6A":"#64B5F6",background:winBg,border:`1px solid ${winColor}40`,flexShrink:0,letterSpacing:1,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase"}}>{s.window}</span>}
-                {s.isTask && s.db && <span style={{padding:"3px 6px",borderRadius:6,fontSize:10,fontWeight:900,color:"#FFD54F",background:"rgba(255,213,79,.12)",border:"1px solid rgba(255,213,79,.3)",flexShrink:0,letterSpacing:1,fontFamily:"'Barlow Condensed',sans-serif"}}>DB</span>}
+                {s.isTask && s.window && <span style={{padding:"3px 8px",borderRadius:6,fontSize:11,fontWeight:900,color:isAM?"#66BB6A":"#64B5F6",background:winBg,border:`1px solid ${winColor}40`,flexShrink:0,letterSpacing:1,fontFamily:"'Oswald',sans-serif",textTransform:"uppercase"}}>{s.window}</span>}
+                {s.isTask && s.db && <span style={{padding:"3px 6px",borderRadius:6,fontSize:10,fontWeight:900,color:"#FFD54F",background:"rgba(255,213,79,.12)",border:"1px solid rgba(255,213,79,.3)",flexShrink:0,letterSpacing:1,fontFamily:"'Oswald',sans-serif"}}>DB</span>}
                 {!s.isTask && s.timeLabel && <span style={{padding:"3px 8px",borderRadius:6,fontSize:10,fontWeight:700,color:"#9a8cc0",background:"rgba(100,80,160,.1)",border:"1px solid rgba(100,80,160,.2)",flexShrink:0}}>{s.timeLabel}</span>}
                 {!reorderMode && s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} onClick={e=>e.stopPropagation()} style={{padding:"5px 10px",borderRadius:6,background:"#1a2240",border:"1px solid #2a3560",color:"#90a8c0",fontSize:12,textDecoration:"none",fontWeight:700,flexShrink:0}}>📞</a>}
               </div>
 
-              {s.constraint && !reorderMode && <div style={{marginTop:6,marginLeft:isNext?50:44,padding:"4px 10px",borderRadius:6,background:"rgba(255,80,160,.12)",border:"1px solid rgba(255,80,160,.25)",color:"#FF80AB",fontSize:12,fontWeight:800,display:"inline-block",letterSpacing:0.3,fontFamily:"'Barlow Condensed','DM Sans',sans-serif",textTransform:"uppercase"}}>{s.constraint}</div>}
+              {s.constraint && !reorderMode && <div style={{marginTop:6,marginLeft:isNext?50:44,padding:"4px 10px",borderRadius:6,background:"rgba(255,80,160,.12)",border:"1px solid rgba(255,80,160,.25)",color:"#FF80AB",fontSize:12,fontWeight:800,display:"inline-block",letterSpacing:0.3,fontFamily:"'Oswald','DM Sans',sans-serif",textTransform:"uppercase"}}>{s.constraint}</div>}
 
               {s.titleContext && !reorderMode && <div style={{marginTop:4,marginLeft:isNext?50:44,fontSize:12,color:"#b0b8c8",lineHeight:1.5,fontStyle:"italic",fontWeight:500}}>{s.titleContext}</div>}
 
-              {isExp && <CardDetail
-                stop={s} isNext={isNext}
-                onText={() => { setTextSheet(s); setOtwMinutes(null); }}
-                onNavigate={() => navigate(s.addr)}
-                onDismiss={() => dismiss(s.id)}
-              />}
+              {isExp && <div onClick={e=>e.stopPropagation()} style={{marginTop:12,marginLeft:isNext?50:44,paddingTop:12,borderTop:"1px solid #1a2030"}}>
+                {s.notes && <div style={{fontSize:13,color:"#a0b0c0",lineHeight:1.6,marginBottom:10,fontWeight:500}}>{s.notes}</div>}
+                {s.phone && <div style={{fontSize:13,color:"#a0b8d0",marginBottom:3,fontWeight:600}}>📞 {s.phone}</div>}
+                {s.email && <div style={{fontSize:13,color:"#a0b8d0",marginBottom:8,fontWeight:600}}>✉️ {s.email}</div>}
+                <div style={{display:"flex",gap:6,marginTop:4}}>
+                  {s.phone && <button onClick={()=>{setTextSheet(s);setOtwMinutes(null);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#a0b8d0",fontSize:13,fontWeight:700,cursor:"pointer"}}>💬</button>}
+                  {s.addr && <button onClick={()=>navigate(s.addr)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:13,fontWeight:700,cursor:"pointer"}}>🧭</button>}
+                  <button onClick={()=>speakStop(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(100,80,200,.08)",border:"1px solid rgba(100,80,200,.2)",color:"#8a80c0",fontSize:13,fontWeight:700,cursor:"pointer"}}>🔊</button>
+                </div>
+                <div style={{display:"flex",gap:6,marginTop:6}}>
+                  <button onClick={()=>openOnsite(s)} style={{flex:3,padding:"11px 0",borderRadius:8,background:"rgba(51,182,121,.08)",border:"1px solid rgba(51,182,121,.2)",color:"#33B679",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>📋 ONSITE</button>
+                  {declineConfirm !== s.id ? (
+                    <button onClick={()=>setDeclineConfirm(s.id)} style={{flex:1,padding:"11px 0",borderRadius:8,background:"rgba(200,60,60,.06)",border:"1px solid rgba(200,60,60,.15)",color:"#a06060",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>✕</button>
+                  ) : (
+                    <button onClick={()=>decline(s.id)} style={{flex:2,padding:"11px 0",borderRadius:8,background:"rgba(200,60,60,.15)",border:"1px solid rgba(200,60,60,.3)",color:"#FF5555",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>CONFIRM?</button>
+                  )}
+                </div>
+              </div>}
             </div>
           </SwipeCard>;
         }); })()}
@@ -433,7 +517,7 @@ export default function App() {
                 <div style={{fontSize:13,color:"#6a7890",textDecoration:"line-through",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.cn}</div>
                 {s.addr && <div style={{fontSize:10,color:"#3a4560",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{s.addr}</div>}
               </div>
-              <button onClick={()=>restore(s.id)} style={{padding:"6px 14px",borderRadius:8,background:"rgba(255,183,77,.08)",border:"1px solid rgba(255,183,77,.25)",color:"#FFB74D",fontSize:11,fontWeight:800,cursor:"pointer",letterSpacing:0.3,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",whiteSpace:"nowrap"}}>↩ RESTORE</button>
+              <button onClick={()=>restore(s.id)} style={{padding:"6px 14px",borderRadius:8,background:"rgba(255,183,77,.08)",border:"1px solid rgba(255,183,77,.25)",color:"#FFB74D",fontSize:11,fontWeight:800,cursor:"pointer",letterSpacing:0.3,fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",whiteSpace:"nowrap"}}>↩ RESTORE</button>
             </div>
           ))}
         </div>}
@@ -470,6 +554,21 @@ export default function App() {
             </div>
           ) : null}
         </div>
+      </div>}
+
+      {/* ── ONSITE WINDOW ──────────────────────────────────────────── */}
+      {onsiteStop && <OnsiteWindow
+        stop={onsiteStop}
+        onBack={() => setOnsiteStop(null)}
+        onDone={() => markDone(onsiteStop.id)}
+        onDecline={() => { decline(onsiteStop.id); setOnsiteStop(null); }}
+      />}
+
+      {/* ── UNDO TOAST ─────────────────────────────────────────────── */}
+      {undoToast && <div style={{position:"fixed",top:0,left:0,right:0,padding:"10px 16px",paddingTop:"max(10px,env(safe-area-inset-top))",background:"#1a2a20",borderBottom:"1px solid rgba(51,182,121,.3)",display:"flex",alignItems:"center",gap:10,zIndex:150}}>
+        <div style={{flex:1,fontSize:13,color:"#33B679",fontWeight:600,fontFamily:"'Oswald',sans-serif",letterSpacing:0.5}}>✓ {undoToast.cn} → NEEDS PROPOSAL</div>
+        <button onClick={undoToastAction} style={{padding:"6px 16px",borderRadius:8,background:"rgba(255,183,77,.12)",border:"1px solid rgba(255,183,77,.3)",color:"#FFB74D",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5}}>UNDO</button>
+        <button onClick={() => { if (undoToastTimer.current) clearTimeout(undoToastTimer.current); setUndoToast(null); }} style={{padding:"6px 10px",borderRadius:6,background:"transparent",border:"none",color:"#4a6050",fontSize:14,cursor:"pointer"}}>✕</button>
       </div>}
     </div>
   );
