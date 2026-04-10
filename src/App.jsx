@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { parseEvent, stageColor } from "./parseEvent";
 import RouteMap, { AM_COLOR, PM_COLOR } from "./RouteMap";
 import SwipeCard from "./SwipeCard";
+import CardDetail from "./CardDetail";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS FIELD ROUTE — Main App
@@ -302,7 +303,20 @@ export default function App() {
   return (
     <div style={{height:"100dvh",width:"100%",background:"#0a0c12",display:"flex",flexDirection:"column",fontFamily:"'DM Sans',system-ui,sans-serif",color:"#f0f4fa",overflow:"hidden"}}>
       <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800;900&family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
-      <style>{`.scr::-webkit-scrollbar{width:0}.gmnoprint,.gm-bundled-control,.gm-style-cc,.gm-control-active,.gm-fullscreen-control,.gm-style .adp,.gm-style button[title]{display:none!important}`}</style>
+      <style>{`
+.scr::-webkit-scrollbar{width:0}
+.gmnoprint,.gm-bundled-control,.gm-style-cc,.gm-control-active,.gm-fullscreen-control,.gm-style .adp,.gm-style button[title]{display:none!important}
+.mts-body{display:flex;flex-direction:column;flex:1;overflow:hidden}
+.mts-map{flex-shrink:0;border-bottom:1px solid #1a2030}
+.mts-list{flex:1;overflow-y:auto}
+@media(min-width:768px){
+  .mts-body{flex-direction:row}
+  .mts-map{width:45%;min-width:320px;max-width:500px;border-bottom:none;border-right:1px solid #1a2030;overflow:hidden;display:flex;flex-direction:column}
+  .mts-map .mts-map-inner{flex:1;min-height:0}
+  .mts-map .mts-map-inner>div{height:100%!important}
+  .mts-list{flex:1;min-width:0}
+}
+      `}</style>
 
       {/* ── HEADER ─────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:5,padding:"8px 10px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0}}>
@@ -325,8 +339,11 @@ export default function App() {
         <button onClick={undo} disabled={!undoStack.length} style={{width:34,height:34,borderRadius:8,background:undoStack.length?"#1a2240":"transparent",border:"1px solid #1a2030",color:undoStack.length?"#f0f4fa":"#2a3050",fontSize:13,cursor:undoStack.length?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center"}}>↩</button>
       </div>
 
+      {/* ── BODY: map + list (side-by-side on desktop) ─────────────── */}
+      <div className="mts-body">
+
       {/* ── MAP ────────────────────────────────────────────────────────── */}
-      <div style={{flexShrink:0,borderBottom:"1px solid #1a2030"}}>
+      <div className="mts-map">
         <button onClick={()=>setMapOpen(!mapOpen)} style={{width:"100%",padding:"4px 12px",background:"none",border:"none",color:"#3a4560",fontSize:10,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
           <span style={{transform:mapOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7}}>▶</span>
           {mapOpen?"hide map":"show map"}
@@ -338,11 +355,13 @@ export default function App() {
             <button onClick={()=>setMoving(null)} style={{marginLeft:"auto",padding:"3px 10px",borderRadius:6,background:"#1a2240",border:"none",color:"#90a8c0",fontSize:10,fontWeight:700,cursor:"pointer"}}>Cancel</button>
           </> : <span style={{fontSize:12,fontWeight:500,color:"#9a80c8"}}>↕ Tap a stop to pick it up</span>}
         </div>}
-        {mapOpen && mapStops.length>0 && <RouteMap stops={mapStops}/>}
+        <div className="mts-map-inner">
+          {mapOpen && mapStops.length>0 && <RouteMap stops={mapStops}/>}
+        </div>
       </div>
 
       {/* ── STOP LIST ──────────────────────────────────────────────────── */}
-      <div className="scr" style={{flex:1,overflowY:"auto",paddingBottom:"max(12px,env(safe-area-inset-bottom))"}}>
+      <div className="scr mts-list" style={{paddingBottom:"max(12px,env(safe-area-inset-bottom))"}}>
         {active.length === 0 && <div style={{padding:40,textAlign:"center",color:"#2a3050",fontSize:14,fontWeight:600}}>No stops</div>}
 
         {(()=>{ let taskNum = 0; return active.map((s, idx) => {
@@ -391,16 +410,12 @@ export default function App() {
 
               {s.titleContext && !reorderMode && <div style={{marginTop:4,marginLeft:isNext?50:44,fontSize:12,color:"#b0b8c8",lineHeight:1.5,fontStyle:"italic",fontWeight:500}}>{s.titleContext}</div>}
 
-              {isExp && <div style={{marginTop:12,marginLeft:isNext?50:44,paddingTop:12,borderTop:"1px solid #1a2030"}}>
-                {s.notes && <div style={{fontSize:13,color:"#a0b0c0",lineHeight:1.6,marginBottom:10,fontWeight:500}}>{s.notes}</div>}
-                {s.phone && <div style={{fontSize:13,color:"#a0b8d0",marginBottom:3,fontWeight:600}}>📞 {s.phone}</div>}
-                {s.email && <div style={{fontSize:13,color:"#a0b8d0",marginBottom:8,fontWeight:600}}>✉️ {s.email}</div>}
-                <div style={{display:"flex",gap:8,marginTop:4}}>
-                  {s.phone && <button onClick={e=>{e.stopPropagation();setTextSheet(s);setOtwMinutes(null);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#a0b8d0",fontSize:13,fontWeight:700,cursor:"pointer"}}>💬 Text</button>}
-                  {s.addr && <button onClick={e=>{e.stopPropagation();navigate(s.addr);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:13,fontWeight:700,cursor:"pointer"}}>🧭 Navigate</button>}
-                  <button onClick={e=>{e.stopPropagation();dismiss(s.id);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(51,182,121,.1)",border:"1px solid rgba(51,182,121,.2)",color:"#33B679",fontSize:13,fontWeight:700,cursor:"pointer"}}>✓ Done</button>
-                </div>
-              </div>}
+              {isExp && <CardDetail
+                stop={s} isNext={isNext}
+                onText={() => { setTextSheet(s); setOtwMinutes(null); }}
+                onNavigate={() => navigate(s.addr)}
+                onDismiss={() => dismiss(s.id)}
+              />}
             </div>
           </SwipeCard>;
         }); })()}
@@ -423,6 +438,7 @@ export default function App() {
           ))}
         </div>}
       </div>
+      </div>{/* end mts-body */}
 
       {/* ── TEXT SHEET ─────────────────────────────────────────────────── */}
       {textSheet && <div onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
