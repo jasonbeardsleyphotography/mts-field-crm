@@ -167,9 +167,9 @@ export default function RouteMap({ stops, selectedId }) {
       const isSel = s.id === selectedId;
       const m = new window.google.maps.Marker({
         position:pos, map:map.current,
-        label:{text:String(n),color:"#fff",fontWeight:"800",fontSize: isSel ? "12px" : "10px"},
+        label:{text:String(n),color:"#fff",fontWeight:"800",fontSize: isSel ? "11px" : "10px"},
         icon:{path:window.google.maps.SymbolPath.CIRCLE,
-          scale: isSel ? 15 : 10,
+          scale: isSel ? 12 : 10,
           fillColor:pinColor, fillOpacity: s.db ? .7 : 1,
           strokeColor: isSel ? "#FFD600" : hasConstraint ? "#FF4081" : "#fff",
           strokeWeight: isSel ? 3 : hasConstraint ? 2 : 1.5},
@@ -249,13 +249,13 @@ export default function RouteMap({ stops, selectedId }) {
       const hasConstraint = !!s.constraint;
       marker.setIcon({
         path: window.google.maps.SymbolPath.CIRCLE,
-        scale: isSel ? 15 : 10,
+        scale: isSel ? 12 : 10,
         fillColor: pinColor, fillOpacity: s.db ? .7 : 1,
         strokeColor: isSel ? "#FFD600" : hasConstraint ? "#FF4081" : "#fff",
         strokeWeight: isSel ? 3 : hasConstraint ? 2 : 1.5,
       });
       marker.setZIndex(isSel ? 20 : 10);
-      marker.setLabel({ text: marker.getLabel().text, color: "#fff", fontWeight: "800", fontSize: isSel ? "12px" : "10px" });
+      marker.setLabel({ text: marker.getLabel().text, color: "#fff", fontWeight: "800", fontSize: isSel ? "11px" : "10px" });
     });
   }, [selectedId]);
 

@@ -25,6 +25,11 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
   const [recDuration, setRecDuration] = useState(0);
   const [playingIdx, setPlayingIdx] = useState(null);
   const [declineConfirm, setDeclineConfirm] = useState(false);
+  const [swipeX, setSwipeX] = useState(0);
+  const [swiping, setSwiping] = useState(false);
+  const swipeStartX = useRef(0);
+  const swipeStartY = useRef(0);
+  const swipeDir = useRef(null);
   const cameraRef = useRef(null);
   const libraryRef = useRef(null);
   const mediaRecRef = useRef(null);
@@ -129,6 +134,20 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
   const F = "'Oswald',sans-serif";
   const B = "'DM Sans',system-ui,sans-serif";
 
+  // Swipe left on body → pipeline
+  const onTouchStart = (e) => { swipeStartX.current = e.touches[0].clientX; swipeStartY.current = e.touches[0].clientY; swipeDir.current = null; setSwiping(true); };
+  const onTouchMove = (e) => {
+    if (!swiping) return;
+    const dx = e.touches[0].clientX - swipeStartX.current;
+    const dy = e.touches[0].clientY - swipeStartY.current;
+    if (swipeDir.current === null && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) swipeDir.current = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
+    if (swipeDir.current === "h" && dx < 0) setSwipeX(dx);
+  };
+  const onTouchEnd = () => {
+    if (swipeX < -120) onDone();
+    setSwipeX(0); setSwiping(false); swipeDir.current = null;
+  };
+
   return (
     <div style={{position:"fixed",inset:0,zIndex:100,background:"#0a0c12",display:"flex",flexDirection:"column",fontFamily:B,color:"#f0f4fa",overflow:"hidden"}}>
 
@@ -142,7 +161,11 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
       </div>
 
       {/* ── SCROLLABLE BODY ────────────────────────────────────────────── */}
-      <div style={{flex:1,overflowY:"auto",paddingBottom:"max(80px,calc(70px + env(safe-area-inset-bottom)))"}}>
+      <div onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+        style={{flex:1,overflowY:"auto",paddingBottom:"max(80px,calc(70px + env(safe-area-inset-bottom)))",transform:`translateX(${swipeX}px)`,transition:swiping?"none":"transform .25s"}}>
+
+        {/* Swipe-to-pipeline hint */}
+        {swipeX < -30 && <div style={{position:"fixed",top:"50%",right:12,transform:"translateY(-50%)",padding:"10px 14px",borderRadius:10,background:"rgba(51,182,121,.15)",border:"1px solid rgba(51,182,121,.3)",color:"#33B679",fontSize:12,fontWeight:800,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",opacity:Math.min(Math.abs(swipeX)/120,1),zIndex:102}}>→ PIPELINE</div>}
 
         {/* Address + meta */}
         <div style={{padding:"10px 16px",background:"#0d1018",borderBottom:"1px solid #1a2030"}}>
