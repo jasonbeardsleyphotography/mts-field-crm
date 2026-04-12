@@ -111,6 +111,7 @@ export default function App() {
   const [undoToast, setUndoToast] = useState(null); // {id, cn, timer}
   const undoToastTimer = useRef(null);
   const [view, setView] = useState("route"); // "route" | "pipeline"
+  const [pipelineSearch, setPipelineSearch] = useState("");
 
   // ── AUTH ─────────────────────────────────────────────────────────────────
   const initAuth = useCallback(() => {
@@ -385,11 +386,11 @@ export default function App() {
       <div style={{display:"flex",alignItems:"center",gap:5,padding:"8px 10px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0}}>
         <button onClick={()=>setView(view==="route"?"pipeline":"route")} style={{padding:"6px 10px",borderRadius:8,background:"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:14,letterSpacing:2,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#33B679",transition:"color .2s"}}>{view==="route"?"MTS ROUTE":"MTS PIPELINE"}</button>
         {view === "route" && <>
-        <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"6px 8px",borderRadius:8,border:"1px solid #1a2030",background:"#0a0c12",color:"#f0f4fa",fontSize:13,fontWeight:700,cursor:"pointer",outline:"none",appearance:"auto"}}>
+        <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"6px 8px",borderRadius:8,border:"1px solid #1a2030",background:"#0a0c12",color:"#f0f4fa",fontSize:12,fontWeight:700,cursor:"pointer",outline:"none",appearance:"auto"}}>
           {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
         </select>
         <div style={{flex:1}}/>
-        <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}} style={{padding:"5px 10px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"#1a2240",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#2a3560"}`,color:reorderMode?"#c8a0e8":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}>{reorderMode?"✕ Done":"↕ Reorder"}</button>
+        <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}} style={{padding:"6px 12px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"#1a2240",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#2a3560"}`,color:reorderMode?"#c8a0e8":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}>{reorderMode?"✕ Done":"↕ Reorder"}</button>
         {reorderMode && <button onClick={()=>{
           const amTasks = allParsed.filter(s => s.isTask && (s.window||"").startsWith("AM"));
           const pmTasks = allParsed.filter(s => s.isTask && !(s.window||"").startsWith("AM"));
@@ -398,12 +399,13 @@ export default function App() {
           setUndoStack(u => [...u, {type:"reorder", prevOrder: ordIds[dayKey] || currentOrder}]);
           setOrdIds(prev => ({...prev, [dayKey]: fresh}));
           setMoving(null);
-        }} style={{padding:"5px 10px",borderRadius:8,background:"rgba(200,90,60,.1)",border:"1px solid rgba(200,90,60,.25)",color:"#e8a080",fontSize:11,fontWeight:700,cursor:"pointer"}}>↻ Reset</button>}
-        {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"5px 10px",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:11,fontWeight:700,cursor:"pointer"}}>🧭 All</button>}
-        <button onClick={load} disabled={loading} style={{width:34,height:34,borderRadius:8,background:"#1a2240",border:"1px solid #1a2030",color:loading?"#2a3050":"#5a6580",fontSize:13,cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>↻</button>
-        <button onClick={undo} disabled={!undoStack.length} style={{width:34,height:34,borderRadius:8,background:undoStack.length?"#1a2240":"transparent",border:"1px solid #1a2030",color:undoStack.length?"#f0f4fa":"#2a3050",fontSize:13,cursor:undoStack.length?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center"}}>↩</button>
+        }} style={{padding:"6px 12px",borderRadius:8,background:"rgba(200,90,60,.1)",border:"1px solid rgba(200,90,60,.25)",color:"#e8a080",fontSize:11,fontWeight:700,cursor:"pointer"}}>↻ Reset</button>}
+        <button onClick={undo} disabled={!undoStack.length} style={{padding:"6px 12px",borderRadius:8,background:undoStack.length?"#1a2240":"transparent",border:`1px solid ${undoStack.length?"#2a3560":"#1a2030"}`,color:undoStack.length?"#f0f4fa":"#2a3050",fontSize:11,fontWeight:700,cursor:undoStack.length?"pointer":"default"}}>↩ Undo</button>
         </>}
-        {view === "pipeline" && <div style={{flex:1}}/>}
+        {view === "pipeline" && <>
+          <div style={{flex:1}}/>
+          <input value={pipelineSearch} onChange={e=>setPipelineSearch(e.target.value)} placeholder="Search..." style={{maxWidth:180,padding:"6px 10px",borderRadius:8,background:"#0e1525",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:12,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none"}} />
+        </>}
       </div>
 
       {/* ── ROUTE VIEW ──────────────────────────────────────────────── */}
@@ -499,15 +501,18 @@ export default function App() {
           </SwipeCard>;
         }); })()}
 
-        {/* ── BOTTOM BAR: completed + add stop ───────────────────────── */}
-        <div style={{borderTop:"1px solid #1a2030",display:"flex",alignItems:"center"}}>
+        {/* ── BOTTOM BAR ────────────────────────────────────────────── */}
+        <div style={{borderTop:"1px solid #1a2030",display:"flex",alignItems:"center",padding:"4px 8px",gap:4,flexShrink:0,background:"#0a0c10"}}>
           {completed.length>0 ? (
-            <button onClick={()=>setCompletedOpen(!completedOpen)} style={{flex:1,padding:"10px 16px",background:"#0a0c10",border:"none",color:"#33B679",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
-              <span style={{transform:completedOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:8}}>▶</span>
-              ✓ {completed.length} completed
+            <button onClick={()=>setCompletedOpen(!completedOpen)} style={{padding:"8px 10px",background:"transparent",border:"none",color:"#33B679",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
+              <span style={{transform:completedOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7}}>▶</span>
+              ✓ {completed.length}
             </button>
-          ) : <div style={{flex:1}}/>}
-          <button onClick={()=>setAddStopOpen(true)} style={{padding:"8px 14px",margin:"4px 10px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#3a4a60",fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0}}>+ Add stop</button>
+          ) : <div style={{width:8}}/>}
+          <div style={{flex:1}}/>
+          <button onClick={load} disabled={loading} style={{padding:"6px 10px",borderRadius:8,background:"#1a2240",border:"1px solid #1a2030",color:loading?"#2a3050":"#5a6580",fontSize:11,fontWeight:700,cursor:loading?"default":"pointer"}}>↻ Refresh</button>
+          {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"6px 10px",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:11,fontWeight:700,cursor:"pointer"}}>🧭 All</button>}
+          <button onClick={()=>setAddStopOpen(true)} style={{padding:"6px 10px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#3a4a60",fontSize:11,fontWeight:600,cursor:"pointer"}}>+ Add</button>
         </div>
         {completedOpen && completed.length > 0 && completed.map(s => (
             <div key={s.id} style={{padding:"10px 16px",borderBottom:"1px solid #0a0e16",display:"flex",alignItems:"center",gap:10}}>
@@ -545,7 +550,7 @@ export default function App() {
       </>}{/* end route view */}
 
       {/* ── PIPELINE VIEW ──────────────────────────────────────────── */}
-      {view === "pipeline" && <Pipeline onSwitchToRoute={() => setView("route")} />}
+      {view === "pipeline" && <Pipeline onSwitchToRoute={() => setView("route")} search={pipelineSearch} />}
 
       {/* ── TEXT SHEET ─────────────────────────────────────────────────── */}
       {textSheet && <div onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
