@@ -40,16 +40,16 @@ function loadFieldData(id) { try { return JSON.parse(localStorage.getItem(FIELD_
 const F = "'Oswald',sans-serif";
 
 // ═════════════════════════════════════════════════════════════════════════════
-export default function Pipeline({ onSwitchToRoute }) {
+export default function Pipeline({ onSwitchToRoute, search = "" }) {
   const [pipeline, setPipeline] = useState(() => loadPipeline());
   const [activeTab, setActiveTab] = useState("all");
   const [selectedCard, setSelectedCard] = useState(null);
   const [dragId, setDragId] = useState(null);
-  const [search, setSearch] = useState("");
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState({}); // {id: true}
   const [emailSheet, setEmailSheet] = useState(false);
   const [emailPreview, setEmailPreview] = useState(null); // template object
+  const [pauseMenu, setPauseMenu] = useState(null); // card id showing pause options
 
   // Persist
   useEffect(() => { savePipeline(pipeline); }, [pipeline]);
@@ -61,7 +61,14 @@ export default function Pipeline({ onSwitchToRoute }) {
     const updated = { ...pipeline };
     Object.keys(updated).forEach(id => {
       const card = updated[id];
-      if (card.paused) return; // Skip paused cards
+      // Check if paused with expiry
+      if (card.pauseUntil && now < card.pauseUntil) return;
+      // Auto-unpause expired pauses
+      if (card.pauseUntil && now >= card.pauseUntil) {
+        updated[id] = { ...card, pauseUntil: null, stageChangedAt: now };
+        changed = true;
+        return;
+      }
       const age = now - (card.stageChangedAt || card.addedAt || now);
       if (card.stage === "proposal_sent" && age > THREE_DAYS) {
         updated[id] = { ...card, stage: "stale", stageChangedAt: now };
@@ -92,6 +99,13 @@ export default function Pipeline({ onSwitchToRoute }) {
 
   const allCards = useMemo(() => Object.values(pipeline), [pipeline]);
 
+  // Cards in proposal_sent for 2+ days (due for follow-up nudge)
+  const dueForFollowUp = useMemo(() => {
+    const TWO_DAYS = 2 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    return allCards.filter(c => c.stage === "proposal_sent" && !c.pauseUntil && (now - (c.stageChangedAt || c.addedAt || now)) > TWO_DAYS);
+  }, [allCards]);
+
   // Search filter
   const searchFilter = useCallback((card) => {
     if (!search.trim()) return true;
@@ -117,9 +131,15 @@ export default function Pipeline({ onSwitchToRoute }) {
     setPipeline(prev => ({ ...prev, [id]: { ...prev[id], hot: !prev[id]?.hot } }));
   }, []);
 
-  // Toggle pause
-  const togglePause = useCallback((id) => {
-    setPipeline(prev => ({ ...prev, [id]: { ...prev[id], paused: !prev[id]?.paused } }));
+  // Pause for N days
+  const pauseFor = useCallback((id, days) => {
+    setPipeline(prev => ({ ...prev, [id]: { ...prev[id], pauseUntil: Date.now() + days * 24 * 60 * 60 * 1000 } }));
+    setPauseMenu(null);
+  }, []);
+
+  // Unpause
+  const unpause = useCallback((id) => {
+    setPipeline(prev => ({ ...prev, [id]: { ...prev[id], pauseUntil: null, stageChangedAt: Date.now() } }));
   }, []);
 
   // Days since stage change
@@ -201,7 +221,7 @@ export default function Pipeline({ onSwitchToRoute }) {
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:compact?14:15,fontWeight:600,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
               {card.hot && <span style={{color:"#FFB300",marginRight:4}}>🔥</span>}
-              {card.paused && <span style={{color:"#8a96a8",marginRight:4}}>⏸</span>}
+              {card.pauseUntil && Date.now() < card.pauseUntil && <span style={{color:"#8a96a8",marginRight:4}}>⏸</span>}
               {card.cn}
             </div>
             {card.addr && <div style={{fontSize:11,color:"#6a7890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1,fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{card.addr}</div>}
@@ -219,7 +239,16 @@ export default function Pipeline({ onSwitchToRoute }) {
           {hasVideo && <span style={{fontSize:10,color:"#5a6580"}}>🎬</span>}
           {card.jn && <button onClick={e=>{e.stopPropagation();openSingleOps(card.jn);}} style={{fontSize:10,color:"#039BE5",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}>SO #{card.jn} 📋</button>}
           <div style={{flex:1}}/>
-          <button onClick={e=>{e.stopPropagation();togglePause(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:card.paused?"rgba(138,150,168,.12)":"transparent",border:"1px solid #1a2030",color:card.paused?"#8a96a8":"#2a3050",fontSize:10,cursor:"pointer"}}>⏸</button>
+          <div style={{position:"relative"}}>
+            {card.pauseUntil && Date.now() < card.pauseUntil ? (
+              <button onClick={e=>{e.stopPropagation();unpause(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:"rgba(138,150,168,.12)",border:"1px solid rgba(138,150,168,.25)",color:"#8a96a8",fontSize:9,cursor:"pointer",fontWeight:600}}>⏸ {Math.ceil((card.pauseUntil - Date.now()) / (24*60*60*1000))}d</button>
+            ) : (
+              <button onClick={e=>{e.stopPropagation();setPauseMenu(pauseMenu===card.id?null:card.id);}} style={{padding:"2px 6px",borderRadius:4,background:pauseMenu===card.id?"rgba(138,150,168,.12)":"transparent",border:"1px solid #1a2030",color:"#2a3050",fontSize:10,cursor:"pointer"}}>⏸</button>
+            )}
+            {pauseMenu === card.id && <div style={{position:"absolute",top:"100%",right:0,marginTop:4,background:"#0d1018",border:"1px solid #1a2540",borderRadius:8,padding:4,zIndex:30,display:"flex",gap:3}}>
+              {[3,7,14].map(d => <button key={d} onClick={e=>{e.stopPropagation();pauseFor(card.id,d);}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(138,150,168,.08)",border:"1px solid #1a2540",color:"#8a96a8",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>{d}d</button>)}
+            </div>}
+          </div>
           <button onClick={e=>{e.stopPropagation();toggleHot(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:card.hot?"rgba(255,179,0,.12)":"transparent",border:card.hot?"1px solid rgba(255,179,0,.3)":"1px solid #1a2030",color:card.hot?"#FFB300":"#2a3050",fontSize:10,cursor:"pointer"}}>🔥</button>
         </div>}
 
@@ -262,9 +291,9 @@ export default function Pipeline({ onSwitchToRoute }) {
 
     return (
       <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
-        {/* Search + select toggle */}
+        {/* Select toggle */}
         <div style={{display:"flex",gap:6,padding:"6px 10px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0,alignItems:"center"}}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search pipeline..." style={{flex:1,padding:"6px 10px",borderRadius:8,background:"#0e1525",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:12,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none"}} />
+          <div style={{flex:1}}/>
           <button onClick={()=>{setSelectMode(!selectMode);setSelected({});}} style={{padding:"5px 10px",borderRadius:8,background:selectMode?"rgba(3,155,229,.15)":"#1a2240",border:`1px solid ${selectMode?"rgba(3,155,229,.3)":"#2a3560"}`,color:selectMode?"#039BE5":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}>{selectMode?"✕ Done":"Select"}</button>
         </div>
 
@@ -285,6 +314,12 @@ export default function Pipeline({ onSwitchToRoute }) {
           <span style={{fontSize:14,fontWeight:600,color:"#f0f4fa"}}>{sorted.length} cards</span>
           {(cardsByStage.stale || []).length > 0 && <span style={{fontSize:11,color:"#FF8A65",fontWeight:600}}>{cardsByStage.stale.length} stale</span>}
         </div>
+
+        {/* Follow-up reminder banner */}
+        {dueForFollowUp.length > 0 && !selectMode && <div style={{padding:"8px 14px",background:"rgba(246,191,38,.06)",borderBottom:"1px solid rgba(246,191,38,.15)",display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:12,color:"#F6BF26",fontWeight:600,flex:1}}>{dueForFollowUp.length} proposal{dueForFollowUp.length>1?"s":""} sent 2+ days ago — follow up?</span>
+          <button onClick={()=>{setSelectMode(true);const sel={};dueForFollowUp.forEach(c=>{sel[c.id]=true;});setSelected(sel);}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>📧 Select all</button>
+        </div>}
 
         {/* Card list */}
         <div style={{flex:1,overflowY:"auto",paddingBottom:selectMode && selectedCount>0?"max(70px,calc(60px + env(safe-area-inset-bottom)))":"max(12px,env(safe-area-inset-bottom))"}}>
@@ -308,9 +343,8 @@ export default function Pipeline({ onSwitchToRoute }) {
   // ── DESKTOP: Kanban columns ──────────────────────────────────────────────
   const desktopView = () => (
     <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
-      {/* Search bar */}
+      {/* Select toggle */}
       <div style={{display:"flex",gap:6,padding:"6px 10px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0,alignItems:"center"}}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search pipeline..." style={{flex:1,maxWidth:300,padding:"6px 10px",borderRadius:8,background:"#0e1525",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:12,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none"}} />
         <div style={{flex:1}}/>
         <button onClick={()=>{setSelectMode(!selectMode);setSelected({});}} style={{padding:"5px 10px",borderRadius:8,background:selectMode?"rgba(3,155,229,.15)":"#1a2240",border:`1px solid ${selectMode?"rgba(3,155,229,.3)":"#2a3560"}`,color:selectMode?"#039BE5":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}>{selectMode?"✕ Done":"Select"}</button>
         {selectMode && selectedCount > 0 && <button onClick={()=>setEmailSheet(true)} style={{padding:"5px 10px",borderRadius:8,background:"rgba(3,155,229,.12)",border:"1px solid rgba(3,155,229,.25)",color:"#039BE5",fontSize:11,fontWeight:700,cursor:"pointer"}}>📧 {selectedCount} selected</button>}
