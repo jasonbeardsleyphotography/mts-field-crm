@@ -181,6 +181,24 @@ export default function App() {
 
   useEffect(() => { if (token) load(); }, [token, load]);
 
+  // ── CLOUD SYNC: Pull pipeline from Drive on startup ──────────────────
+  useEffect(() => {
+    if (!token) return;
+    (async () => {
+      try {
+        const cloudPipeline = await loadPipelineFromDrive(token);
+        if (cloudPipeline && Object.keys(cloudPipeline).length > 0) {
+          // Merge: cloud wins for cards that exist in cloud, keep local-only cards
+          const local = loadPipeline();
+          const merged = { ...local, ...cloudPipeline };
+          savePipeline(merged);
+        }
+      } catch(e) {
+        console.warn("Cloud pipeline pull failed:", e);
+      }
+    })();
+  }, [token]);
+
   // ── PARSE ────────────────────────────────────────────────────────────────
   const dayKey = businessDays[selDay]?.toDateString();
   const allParsed = useMemo(() => {
@@ -233,7 +251,7 @@ export default function App() {
   const stops = currentOrder.map(id => stopMap[id]).filter(Boolean);
 
   const active = useMemo(() => stops.filter(s => !dismissed[s.id]), [stops, dismissed]);
-  const completed = useMemo(() => stops.filter(s => dismissed[s.id]), [stops, dismissed]);
+  const completed = useMemo(() => stops.filter(s => dismissed[s.id]).sort((a, b) => (dismissed[b.id] || 0) - (dismissed[a.id] || 0)), [stops, dismissed]);
   const mapStops = useMemo(() => active.filter(s => s.isTask), [active]);
 
   // ── ACTIONS ──────────────────────────────────────────────────────────────
@@ -246,7 +264,7 @@ export default function App() {
   // Decline = remove from route with confirmation
   const decline = (id) => {
     setUndoStack(u => [...u, {type:"dismiss",id}]);
-    setDismissed(p => ({...p,[id]:true}));
+    setDismissed(p => ({...p,[id]:Date.now()}));
     setExpanded(null);
     setDeclineConfirm(null);
     setOnsiteStop(null);
@@ -255,7 +273,7 @@ export default function App() {
   const markDone = (id) => {
     const stop = stopMap[id];
     setUndoStack(u => [...u, {type:"dismiss",id}]);
-    setDismissed(p => ({...p,[id]:true}));
+    setDismissed(p => ({...p,[id]:Date.now()}));
     setExpanded(null);
     setOnsiteStop(null);
     // Add to pipeline storage (localStorage)
@@ -284,7 +302,7 @@ export default function App() {
     }
     if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
     setUndoToast({ id, cn: stop?.cn || "Stop" });
-    undoToastTimer.current = setTimeout(() => setUndoToast(null), 30000);
+    undoToastTimer.current = setTimeout(() => setUndoToast(null), 10000);
   };
   const undoToastAction = () => {
     if (!undoToast) return;
@@ -400,7 +418,7 @@ export default function App() {
       <div style={{display:"flex",alignItems:"center",gap:5,padding:"8px 10px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0}}>
         <button onClick={()=>setView(view==="route"?"pipeline":"route")} style={{padding:"6px 10px",borderRadius:8,background:"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:14,letterSpacing:2,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#33B679",transition:"color .2s"}}>{view==="route"?"MTS ROUTE":"MTS PIPELINE"}</button>
         {view === "route" && <>
-        <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"6px 8px",borderRadius:8,border:"1px solid #1a2030",background:"#0a0c12",color:"#f0f4fa",fontSize:12,fontWeight:700,cursor:"pointer",outline:"none",appearance:"auto"}}>
+        <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"6px 12px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0c12",color:"#f0f4fa",fontSize:11,fontWeight:700,cursor:"pointer",outline:"none",appearance:"auto"}}>
           {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
         </select>
         <div style={{flex:1}}/>
@@ -528,7 +546,8 @@ export default function App() {
           {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"6px 10px",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:11,fontWeight:700,cursor:"pointer"}}>🧭 All</button>}
           <button onClick={()=>setAddStopOpen(true)} style={{padding:"6px 10px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#3a4a60",fontSize:11,fontWeight:600,cursor:"pointer"}}>+ Add</button>
         </div>
-        {completedOpen && completed.length > 0 && completed.map(s => (
+        {completedOpen && completed.length > 0 && <div ref={el => { if (el) setTimeout(() => el.scrollIntoView({behavior:"smooth",block:"start"}), 50); }}>
+          {completed.map(s => (
             <div key={s.id} style={{padding:"10px 16px",borderBottom:"1px solid #0a0e16",display:"flex",alignItems:"center",gap:10}}>
               <div style={{width:24,height:24,borderRadius:"50%",background:s.color+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff"}}>✓</div>
               <div style={{flex:1,minWidth:0}}>
@@ -537,7 +556,8 @@ export default function App() {
               </div>
               <button onClick={()=>restore(s.id)} style={{padding:"6px 14px",borderRadius:8,background:"rgba(255,183,77,.08)",border:"1px solid rgba(255,183,77,.25)",color:"#FFB74D",fontSize:11,fontWeight:800,cursor:"pointer",letterSpacing:0.3,fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",whiteSpace:"nowrap"}}>↩ RESTORE</button>
             </div>
-        ))}
+          ))}
+        </div>}
       </div>
       </div>{/* end mts-body */}
 
@@ -607,8 +627,8 @@ export default function App() {
       />}
 
       {/* ── UNDO TOAST ─────────────────────────────────────────────── */}
-      {undoToast && <div style={{position:"fixed",top:0,left:0,right:0,padding:"10px 16px",paddingTop:"max(10px,env(safe-area-inset-top))",background:"#1a2a20",borderBottom:"1px solid rgba(51,182,121,.3)",display:"flex",alignItems:"center",gap:10,zIndex:150}}>
-        <div style={{flex:1,fontSize:13,color:"#33B679",fontWeight:600,fontFamily:"'Oswald',sans-serif",letterSpacing:0.5}}>✓ {undoToast.cn} → NEEDS PROPOSAL</div>
+      {undoToast && <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"10px 16px",paddingBottom:"max(10px,env(safe-area-inset-bottom))",background:"#1a2a20",borderTop:"1px solid rgba(51,182,121,.3)",display:"flex",alignItems:"center",gap:10,zIndex:150}}>
+        <div style={{flex:1,fontSize:13,color:"#33B679",fontWeight:600,fontFamily:"'Oswald',sans-serif",letterSpacing:0.5}}>✓ {undoToast.cn} → PIPELINE</div>
         <button onClick={undoToastAction} style={{padding:"6px 16px",borderRadius:8,background:"rgba(255,183,77,.12)",border:"1px solid rgba(255,183,77,.3)",color:"#FFB74D",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5}}>UNDO</button>
         <button onClick={() => { if (undoToastTimer.current) clearTimeout(undoToastTimer.current); setUndoToast(null); }} style={{padding:"6px 10px",borderRadius:6,background:"transparent",border:"none",color:"#4a6050",fontSize:14,cursor:"pointer"}}>✕</button>
       </div>}

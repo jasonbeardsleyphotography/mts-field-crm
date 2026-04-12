@@ -262,7 +262,7 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
                 {fd.photos.map((p,i) => (
                   <div key={i} style={{position:"relative",width:56,height:56,borderRadius:6,overflow:"hidden",border:"1px solid #1a2540"}}>
                     <img src={p.dataUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
-                    <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{position:"absolute",bottom:1,right:1,padding:"1px 4px",borderRadius:3,background:"rgba(0,0,0,.7)",color:"#ccc",fontSize:7,textDecoration:"none"}}>💾</a>
+                    <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{position:"absolute",bottom:1,right:1,padding:"1px 4px",borderRadius:3,background:"rgba(0,0,0,.7)",color:"#ccc",fontSize:7,textDecoration:"none"}}>⬇</a>
                   </div>
                 ))}
               </div>

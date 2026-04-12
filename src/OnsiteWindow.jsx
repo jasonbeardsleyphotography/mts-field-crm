@@ -242,7 +242,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
                   <button onClick={(e) => { e.stopPropagation(); removePhoto(i); }} style={{position:"absolute",top:3,right:3,width:18,height:18,borderRadius:9,background:"rgba(0,0,0,.7)",border:"none",color:"#ff6666",fontSize:10,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
                   <div style={{position:"absolute",bottom:3,left:3,display:"flex",gap:3}}>
                     <div onClick={() => setMarkupIdx(i)} style={{padding:"2px 5px",borderRadius:4,background:"rgba(0,0,0,.65)",color:"#ccc",fontSize:8,fontWeight:700,cursor:"pointer"}}>✏️</div>
-                    <a href={p.dataUrl} download={`mts_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"2px 5px",borderRadius:4,background:"rgba(0,0,0,.65)",color:"#ccc",fontSize:8,fontWeight:700,cursor:"pointer",textDecoration:"none"}}>💾</a>
+                    <a href={p.dataUrl} download={`mts_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"2px 5px",borderRadius:4,background:"rgba(0,0,0,.65)",color:"#ccc",fontSize:8,fontWeight:700,cursor:"pointer",textDecoration:"none"}}>⬇</a>
                   </div>
                 </div>
               ))}
@@ -251,8 +251,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
           <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={handleCamera} style={{display:"none"}} />
           <input ref={libraryRef} type="file" accept="image/*" onChange={handleLibrary} style={{display:"none"}} />
           <div style={{display:"flex",gap:6}}>
-            <button onClick={() => cameraRef.current?.click()} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:13,fontWeight:600,cursor:"pointer"}}>📷 Camera</button>
-            <button onClick={() => libraryRef.current?.click()} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:13,fontWeight:600,cursor:"pointer"}}>🖼 Library</button>
+            <button onClick={() => cameraRef.current?.click()} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:13,fontWeight:600,cursor:"pointer"}}>📷 Take photo</button>
+            <button onClick={() => libraryRef.current?.click()} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:13,fontWeight:600,cursor:"pointer"}}>🖼 Photo library</button>
           </div>
         </div>
 
