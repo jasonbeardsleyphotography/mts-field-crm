@@ -13,13 +13,56 @@ export function parseEvent(ev) {
   // Filter: skip MTS NOTE and ***NOTE!*** events
   if (/MTS NOTE/i.test(s) || /\*{2,}NOTE[!]*\*{2,}/i.test(s)) return null;
 
-  // Parse fields
+  // Parse fields — handle varying title formats from SingleOps
+  // Format: Task | #NUM SEGMENT1 - SEGMENT2 - SEGMENT3 - ...
+  // Address is always first segment(s), client name follows, then visit type
   const jobMatch = s.match(/Task \| #(\d+)/);
   const jobNum = jobMatch ? jobMatch[1] : null;
-  const nameMatch = s.match(/Task \| #\d+\s+[^-]+\s*-\s*([^-]+?)(?:\s*-\s*(.*))?$/);
-  const clientName = nameMatch ? nameMatch[1].trim() : s.replace(/^TODO:\s*/i,"").replace(/^TASK\s+/i,"").trim();
-  const addrMatch = s.match(/Task \| #\d+\s+([^-]+?)\s*-/);
-  const address = ev.location || (addrMatch ? addrMatch[1].trim() : "");
+
+  // Split everything after "Task | #NUM " by dashes
+  const afterJob = s.replace(/^Task \| #\d+\s*/, "");
+  const segments = afterJob.split(/\s*-\s*/).map(x => x.trim()).filter(Boolean);
+
+  // Detect if a segment looks like an address (starts with number + street-like words or is a zip)
+  const looksLikeAddr = (t) => /^\d+\s+\w/.test(t) && /\b(rd|st|ave|dr|ln|ct|blvd|way|pl|cir|pkwy|hwy|ter|trail|road|street|avenue|drive|lane|court)\b/i.test(t) || /^\d{5}$/.test(t.trim()) || /\b\d{5}\b/.test(t);
+
+  // Walk segments: skip address-like ones, first non-address is the client name
+  let clientName = "", titleContext = "";
+  const addrSegments = [];
+  let nameIdx = -1;
+  if (segments.length >= 2) {
+    // First segment is always part of address
+    addrSegments.push(segments[0]);
+    // Check subsequent segments — if they look like addresses, they're part of address too
+    for (let i = 1; i < segments.length; i++) {
+      if (nameIdx === -1 && looksLikeAddr(segments[i])) {
+        addrSegments.push(segments[i]);
+      } else if (nameIdx === -1) {
+        clientName = segments[i];
+        nameIdx = i;
+      } else {
+        // Everything after client name is title context
+        titleContext = segments.slice(i).join(" – ");
+        break;
+      }
+    }
+    if (nameIdx === -1 && segments.length >= 2) {
+      // Fallback: no address-like segment found, use original pattern (seg 1 = name)
+      clientName = segments[1] || segments[0];
+      if (segments.length > 2) titleContext = segments.slice(2).join(" – ");
+    }
+  } else if (segments.length === 1) {
+    clientName = segments[0];
+  }
+
+  // If no job match, fall back to raw title cleanup
+  if (!jobMatch) {
+    clientName = s.replace(/^TODO:\s*/i,"").replace(/^TASK\s+/i,"").trim();
+  }
+
+  // Address: prefer Google Calendar location field, fall back to parsed address segments
+  const parsedAddr = addrSegments.join(", ");
+  const address = ev.location || parsedAddr;
 
   const mobileMatch = desc.match(/Mobile:\s*([\d\-(). +]+?)(?:\s*$|\s*Email)/);
   const phoneMatch = desc.match(/Phone:\s*([\d\-(). +]+?)(?:\s*$|\s*Mobile)/);
@@ -57,13 +100,11 @@ export function parseEvent(ev) {
   if (/WE CAN MOVE/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "↔ Flexible";
   if (!constraint && !isDriveBy && durH < 3) constraint = "⏰ " + fmt(start) + "–" + fmt(end);
 
-  // Title context
-  let titleContext = "";
-  if (nameMatch && nameMatch[2]) {
-    let suffix = nameMatch[2].trim();
-    suffix = suffix.replace(/^On Site (?:Estimate|Site)\s*[-–]?\s*/i, "");
-    suffix = suffix.replace(/^DRIVE[\s-]?BY\s*[-–]?\s*/i, "");
-    if (suffix.length > 2) titleContext = suffix;
+  // Clean up title context — strip visit type prefixes
+  if (titleContext) {
+    titleContext = titleContext.replace(/^On Site (?:Estimate|Site)\s*[-–]?\s*/i, "");
+    titleContext = titleContext.replace(/^DRIVE[\s-]?BY\s*[-–]?\s*/i, "");
+    if (titleContext.length <= 2) titleContext = "";
   }
 
   const color = stageColor(ev.colorId);
