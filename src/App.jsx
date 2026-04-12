@@ -3,6 +3,7 @@ import { parseEvent, stageColor } from "./parseEvent";
 import RouteMap, { AM_COLOR, PM_COLOR } from "./RouteMap";
 import SwipeCard from "./SwipeCard";
 import OnsiteWindow from "./OnsiteWindow";
+import Pipeline, { savePipeline, loadPipeline } from "./Pipeline";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS FIELD ROUTE — Main App
@@ -109,6 +110,7 @@ export default function App() {
   const [onsiteStop, setOnsiteStop] = useState(null); // stop object when onsite window open
   const [undoToast, setUndoToast] = useState(null); // {id, cn, timer}
   const undoToastTimer = useRef(null);
+  const [view, setView] = useState("route"); // "route" | "pipeline"
 
   // ── AUTH ─────────────────────────────────────────────────────────────────
   const initAuth = useCallback(() => {
@@ -237,6 +239,7 @@ export default function App() {
   const [declineConfirm, setDeclineConfirm] = useState(null); // stop id awaiting confirm
   const [addStopOpen, setAddStopOpen] = useState(false);
   const [addStopAddr, setAddStopAddr] = useState("");
+  const [addStopName, setAddStopName] = useState("");
 
   // Decline = remove from route with confirmation
   const decline = (id) => {
@@ -246,13 +249,24 @@ export default function App() {
     setDeclineConfirm(null);
     setOnsiteStop(null);
   };
-  // markDone = move to pipeline (real appointments)
+  // markDone = move to pipeline as "estimate_needed"
   const markDone = (id) => {
     const stop = stopMap[id];
     setUndoStack(u => [...u, {type:"dismiss",id}]);
     setDismissed(p => ({...p,[id]:true}));
     setExpanded(null);
     setOnsiteStop(null);
+    // Add to pipeline storage
+    if (stop) {
+      const pl = loadPipeline();
+      pl[id] = {
+        id, cn: stop.cn, addr: stop.addr, phone: stop.phone, email: stop.email,
+        jn: stop.jn, notes: stop.notes, constraint: stop.constraint,
+        stage: "estimate_needed", addedAt: Date.now(), stageChangedAt: Date.now(),
+        hot: false,
+      };
+      savePipeline(pl);
+    }
     if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
     setUndoToast({ id, cn: stop?.cn || "Stop" });
     undoToastTimer.current = setTimeout(() => setUndoToast(null), 30000);
@@ -261,6 +275,8 @@ export default function App() {
     if (!undoToast) return;
     setDismissed(p => { const n={...p}; delete n[undoToast.id]; return n; });
     setUndoStack(u => u.slice(0,-1));
+    // Remove from pipeline
+    const pl = loadPipeline(); delete pl[undoToast.id]; savePipeline(pl);
     if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
     setUndoToast(null);
   };
@@ -283,15 +299,9 @@ export default function App() {
   const speakStop = (s) => {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
-    const parts = [];
-    parts.push(s.cn);
-    if (s.addr) parts.push(`at ${s.addr}`);
-    if (s.window) parts.push(`${s.window} window`);
-    if (s.constraint) parts.push(s.constraint.replace(/[📞⏰📍🪧↔]/g,"").trim());
-    if (s.notes) parts.push(`Notes: ${s.notes.slice(0,300)}`);
-    const text = parts.join(". ");
+    const text = s.notes || "No notes available.";
     const u = new SpeechSynthesisUtterance(text);
-    u.rate = 0.95;
+    u.rate = 0.85;
     window.speechSynthesis.speak(u);
   };
 
@@ -366,18 +376,21 @@ export default function App() {
   .mts-map .mts-map-inner{flex:1;min-height:0}
   .mts-map .mts-map-inner>div{height:100%!important}
   .mts-list{flex:1;min-width:0}
+  .mts-pipeline-mobile{display:none!important}
+  .mts-pipeline-desktop{display:flex!important}
 }
       `}</style>
 
       {/* ── HEADER ─────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:5,padding:"8px 10px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0}}>
+        <button onClick={()=>setView(view==="route"?"pipeline":"route")} style={{padding:"6px 10px",borderRadius:8,background:"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:14,letterSpacing:2,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#33B679",transition:"color .2s"}}>{view==="route"?"MTS ROUTE":"MTS PIPELINE"}</button>
+        {view === "route" && <>
         <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"6px 8px",borderRadius:8,border:"1px solid #1a2030",background:"#0a0c12",color:"#f0f4fa",fontSize:13,fontWeight:700,cursor:"pointer",outline:"none",appearance:"auto"}}>
           {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
         </select>
         <div style={{flex:1}}/>
         <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}} style={{padding:"5px 10px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"#1a2240",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#2a3560"}`,color:reorderMode?"#c8a0e8":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}>{reorderMode?"✕ Done":"↕ Reorder"}</button>
         {reorderMode && <button onClick={()=>{
-          // Reset to default AM → PM → TD order
           const amTasks = allParsed.filter(s => s.isTask && (s.window||"").startsWith("AM"));
           const pmTasks = allParsed.filter(s => s.isTask && !(s.window||"").startsWith("AM"));
           const tds = allParsed.filter(s => !s.isTask);
@@ -387,30 +400,14 @@ export default function App() {
           setMoving(null);
         }} style={{padding:"5px 10px",borderRadius:8,background:"rgba(200,90,60,.1)",border:"1px solid rgba(200,90,60,.25)",color:"#e8a080",fontSize:11,fontWeight:700,cursor:"pointer"}}>↻ Reset</button>}
         {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"5px 10px",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:11,fontWeight:700,cursor:"pointer"}}>🧭 All</button>}
-        <button onClick={load} disabled={loading} style={{width:34,height:34,borderRadius:8,background:"#1a2240",border:"1px solid #1a2030",color:loading?"#2a3050":"#5a6580",fontSize:13,cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"transform .3s",transform:loading?"rotate(360deg)":"none"}}>↻</button>
+        <button onClick={load} disabled={loading} style={{width:34,height:34,borderRadius:8,background:"#1a2240",border:"1px solid #1a2030",color:loading?"#2a3050":"#5a6580",fontSize:13,cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>↻</button>
         <button onClick={undo} disabled={!undoStack.length} style={{width:34,height:34,borderRadius:8,background:undoStack.length?"#1a2240":"transparent",border:"1px solid #1a2030",color:undoStack.length?"#f0f4fa":"#2a3050",fontSize:13,cursor:undoStack.length?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center"}}>↩</button>
-        {!reorderMode && <button onClick={()=>setAddStopOpen(!addStopOpen)} style={{width:34,height:34,borderRadius:8,background:addStopOpen?"rgba(3,155,229,.15)":"transparent",border:"1px solid #1a2030",color:addStopOpen?"#039BE5":"#3a4560",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:300}}>+</button>}
+        </>}
+        {view === "pipeline" && <div style={{flex:1}}/>}
       </div>
 
-      {/* ── ADD STOP (minimal popover) ────────────────────────────────── */}
-      {addStopOpen && <div style={{padding:"8px 12px",background:"#0d1018",borderBottom:"1px solid #1a2030",display:"flex",gap:6,alignItems:"center"}}>
-        <input value={addStopAddr} onChange={e=>setAddStopAddr(e.target.value)} placeholder="Address or note..." style={{flex:1,padding:"8px 10px",borderRadius:8,background:"#0e1525",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:13,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none"}} />
-        <button onClick={()=>{
-          if (!addStopAddr.trim()) return;
-          // Create a local-only stop (not from calendar)
-          const id = "local-" + Date.now();
-          const newStop = { id, cn: addStopAddr.trim(), addr: addStopAddr.trim(), phone:"", email:"", notes:"", desc:"", jn:null, db:false, isTask:true, isTodo:false, isAdmin:false, constraint:"", color:"#039BE5", colorId:"7", raw:"", rawD:"", window:"", timeLabel:"", titleContext:"" };
-          // Add to current day's parsed events by injecting into rawEvents
-          setRawEvents(prev => {
-            const dayEvts = prev[dayKey] || [];
-            return {...prev, [dayKey]: [...dayEvts, { id, summary: addStopAddr.trim(), location: addStopAddr.trim(), start:{dateTime:new Date().toISOString()}, end:{dateTime:new Date().toISOString()}, colorId:"7", description:"" }]};
-          });
-          setAddStopAddr("");
-          setAddStopOpen(false);
-        }} style={{padding:"8px 14px",borderRadius:8,background:"rgba(3,155,229,.15)",border:"1px solid rgba(3,155,229,.25)",color:"#039BE5",fontSize:12,fontWeight:700,cursor:"pointer"}}>Add</button>
-        <button onClick={()=>{setAddStopOpen(false);setAddStopAddr("");}} style={{padding:"8px 10px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#4a5a70",fontSize:12,cursor:"pointer"}}>✕</button>
-      </div>}
-
+      {/* ── ROUTE VIEW ──────────────────────────────────────────────── */}
+      {view === "route" && <>
       {/* ── BODY: map + list (side-by-side on desktop) ─────────────── */}
       <div className="mts-body">
 
@@ -489,14 +486,12 @@ export default function App() {
                 <div style={{display:"flex",gap:6,marginTop:4}}>
                   {s.phone && <button onClick={()=>{setTextSheet(s);setOtwMinutes(null);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#a0b8d0",fontSize:13,fontWeight:700,cursor:"pointer"}}>💬</button>}
                   {s.addr && <button onClick={()=>navigate(s.addr)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:13,fontWeight:700,cursor:"pointer"}}>🧭</button>}
-                  <button onClick={()=>speakStop(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(100,80,200,.08)",border:"1px solid rgba(100,80,200,.2)",color:"#8a80c0",fontSize:13,fontWeight:700,cursor:"pointer"}}>🔊</button>
-                </div>
-                <div style={{display:"flex",gap:6,marginTop:6}}>
-                  <button onClick={()=>openOnsite(s)} style={{flex:3,padding:"11px 0",borderRadius:8,background:"rgba(51,182,121,.08)",border:"1px solid rgba(51,182,121,.2)",color:"#33B679",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>📋 ONSITE</button>
+                  {s.notes && <button onClick={()=>speakStop(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(100,80,200,.08)",border:"1px solid rgba(100,80,200,.2)",color:"#8a80c0",fontSize:13,fontWeight:700,cursor:"pointer"}}>🔊</button>}
+                  <button onClick={()=>openOnsite(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(51,182,121,.06)",border:"1px solid rgba(51,182,121,.15)",color:"#33B679",fontSize:13,fontWeight:700,cursor:"pointer"}}>📋</button>
                   {declineConfirm !== s.id ? (
-                    <button onClick={()=>setDeclineConfirm(s.id)} style={{flex:1,padding:"11px 0",borderRadius:8,background:"rgba(200,60,60,.06)",border:"1px solid rgba(200,60,60,.15)",color:"#a06060",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>✕</button>
+                    <button onClick={()=>setDeclineConfirm(s.id)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(200,60,60,.06)",border:"1px solid rgba(200,60,60,.15)",color:"#a06060",fontSize:13,fontWeight:700,cursor:"pointer"}}>✕</button>
                   ) : (
-                    <button onClick={()=>decline(s.id)} style={{flex:2,padding:"11px 0",borderRadius:8,background:"rgba(200,60,60,.15)",border:"1px solid rgba(200,60,60,.3)",color:"#FF5555",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>CONFIRM?</button>
+                    <button onClick={()=>decline(s.id)} style={{flex:1.5,padding:"10px 0",borderRadius:8,background:"rgba(200,60,60,.15)",border:"1px solid rgba(200,60,60,.3)",color:"#FF5555",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",textTransform:"uppercase"}}>CONFIRM?</button>
                   )}
                 </div>
               </div>}
@@ -504,13 +499,17 @@ export default function App() {
           </SwipeCard>;
         }); })()}
 
-        {/* ── COMPLETED ────────────────────────────────────────────────── */}
-        {completed.length>0 && <div style={{borderTop:"1px solid #1a2030"}}>
-          <button onClick={()=>setCompletedOpen(!completedOpen)} style={{width:"100%",padding:"10px 16px",background:"#0a0c10",border:"none",color:"#33B679",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
-            <span style={{transform:completedOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:8}}>▶</span>
-            ✓ {completed.length} completed
-          </button>
-          {completedOpen && completed.map(s => (
+        {/* ── BOTTOM BAR: completed + add stop ───────────────────────── */}
+        <div style={{borderTop:"1px solid #1a2030",display:"flex",alignItems:"center"}}>
+          {completed.length>0 ? (
+            <button onClick={()=>setCompletedOpen(!completedOpen)} style={{flex:1,padding:"10px 16px",background:"#0a0c10",border:"none",color:"#33B679",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
+              <span style={{transform:completedOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:8}}>▶</span>
+              ✓ {completed.length} completed
+            </button>
+          ) : <div style={{flex:1}}/>}
+          <button onClick={()=>setAddStopOpen(true)} style={{padding:"8px 14px",margin:"4px 10px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#3a4a60",fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0}}>+ Add stop</button>
+        </div>
+        {completedOpen && completed.length > 0 && completed.map(s => (
             <div key={s.id} style={{padding:"10px 16px",borderBottom:"1px solid #0a0e16",display:"flex",alignItems:"center",gap:10}}>
               <div style={{width:24,height:24,borderRadius:"50%",background:s.color+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff"}}>✓</div>
               <div style={{flex:1,minWidth:0}}>
@@ -519,10 +518,34 @@ export default function App() {
               </div>
               <button onClick={()=>restore(s.id)} style={{padding:"6px 14px",borderRadius:8,background:"rgba(255,183,77,.08)",border:"1px solid rgba(255,183,77,.25)",color:"#FFB74D",fontSize:11,fontWeight:800,cursor:"pointer",letterSpacing:0.3,fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",whiteSpace:"nowrap"}}>↩ RESTORE</button>
             </div>
-          ))}
-        </div>}
+        ))}
       </div>
       </div>{/* end mts-body */}
+
+      {/* ── ADD STOP POPUP ─────────────────────────────────────────── */}
+      {addStopOpen && <div onClick={()=>{setAddStopOpen(false);setAddStopAddr("");setAddStopName("");}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:"#0d1018",border:"1px solid #1a2030",borderRadius:14,padding:20,maxWidth:360,width:"100%"}}>
+          <div style={{fontSize:15,fontWeight:700,color:"#f0f4fa",marginBottom:14,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>Add a stop</div>
+          <input value={addStopName} onChange={e=>setAddStopName(e.target.value)} placeholder="Name (e.g. Smith)" style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"#0e1525",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none",marginBottom:8}} />
+          <input value={addStopAddr} onChange={e=>setAddStopAddr(e.target.value)} placeholder="Address" style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"#0e1525",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none",marginBottom:12}} />
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>{setAddStopOpen(false);setAddStopAddr("");setAddStopName("");}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#5a6580",fontSize:13,fontWeight:600,cursor:"pointer"}}>Cancel</button>
+            <button onClick={()=>{
+              if (!addStopName.trim() && !addStopAddr.trim()) return;
+              const id = "local-" + Date.now();
+              setRawEvents(prev => {
+                const dayEvts = prev[dayKey] || [];
+                return {...prev, [dayKey]: [...dayEvts, { id, summary: addStopName.trim() || addStopAddr.trim(), location: addStopAddr.trim(), start:{dateTime:new Date().toISOString()}, end:{dateTime:new Date().toISOString()}, colorId:"7", description:"" }]};
+              });
+              setAddStopAddr(""); setAddStopName(""); setAddStopOpen(false);
+            }} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(3,155,229,.15)",border:"1px solid rgba(3,155,229,.25)",color:"#039BE5",fontSize:13,fontWeight:700,cursor:"pointer"}}>Add</button>
+          </div>
+        </div>
+      </div>}
+      </>}{/* end route view */}
+
+      {/* ── PIPELINE VIEW ──────────────────────────────────────────── */}
+      {view === "pipeline" && <Pipeline onSwitchToRoute={() => setView("route")} />}
 
       {/* ── TEXT SHEET ─────────────────────────────────────────────────── */}
       {textSheet && <div onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
