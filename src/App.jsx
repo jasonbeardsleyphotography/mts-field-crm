@@ -4,6 +4,7 @@ import RouteMap, { AM_COLOR, PM_COLOR } from "./RouteMap";
 import SwipeCard from "./SwipeCard";
 import OnsiteWindow from "./OnsiteWindow";
 import Pipeline, { savePipeline, loadPipeline } from "./Pipeline";
+import { savePipelineToDrive, saveFieldDataToDrive, savePhotoToDrive, loadPipelineFromDrive } from "./driveSync";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS FIELD ROUTE — Main App
@@ -12,7 +13,7 @@ import Pipeline, { savePipeline, loadPipeline } from "./Pipeline";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const CAL_BASE = "https://www.googleapis.com/calendar/v3/calendars/primary";
-const SCOPES = "https://www.googleapis.com/auth/calendar";
+const SCOPES = "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.file";
 
 // ── HELPERS ──────────────────────────────────────────────────────────────────
 function getBusinessDays(n) {
@@ -257,7 +258,7 @@ export default function App() {
     setDismissed(p => ({...p,[id]:true}));
     setExpanded(null);
     setOnsiteStop(null);
-    // Add to pipeline storage
+    // Add to pipeline storage (localStorage)
     if (stop) {
       const pl = loadPipeline();
       pl[id] = {
@@ -267,6 +268,19 @@ export default function App() {
         hot: false,
       };
       savePipeline(pl);
+      // Background sync to Google Drive (non-blocking)
+      if (token) {
+        const fieldData = lsGet(`mts-field-${id}`, {});
+        savePipelineToDrive(token, pl).catch(e => console.warn("Drive pipeline sync failed:", e));
+        if (Object.keys(fieldData).length > 0) {
+          saveFieldDataToDrive(token, id, fieldData).catch(e => console.warn("Drive field sync failed:", e));
+          if (fieldData.photos?.length > 0) {
+            fieldData.photos.forEach((p, i) => {
+              savePhotoToDrive(token, id, i, p.dataUrl).catch(e => console.warn("Drive photo sync failed:", e));
+            });
+          }
+        }
+      }
     }
     if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
     setUndoToast({ id, cn: stop?.cn || "Stop" });
