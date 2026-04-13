@@ -19,9 +19,10 @@ export function parseEvent(ev) {
   const jobMatch = s.match(/Task \| #(\d+)/);
   const jobNum = jobMatch ? jobMatch[1] : null;
 
-  // Split everything after "Task | #NUM " by dashes
+  // Split everything after "Task | #NUM " by spaced dashes only ( - )
+  // This preserves hyphenated names like Zimmer-Smith
   const afterJob = s.replace(/^Task \| #\d+\s*/, "");
-  const segments = afterJob.split(/\s*-\s*/).map(x => x.trim()).filter(Boolean);
+  const segments = afterJob.split(/ - /).map(x => x.trim()).filter(Boolean);
 
   // Detect if a segment looks like an address (starts with number + street-like words or is a zip)
   const looksLikeAddr = (t) => /^\d+\s+\w/.test(t) && /\b(rd|st|ave|dr|ln|ct|blvd|way|pl|cir|pkwy|hwy|ter|trail|road|street|avenue|drive|lane|court)\b/i.test(t) || /^\d{5}$/.test(t.trim()) || /\b\d{5}\b/.test(t);
