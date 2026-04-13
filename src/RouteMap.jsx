@@ -216,8 +216,9 @@ export default function RouteMap({ stops, selectedId }) {
   // ── DIRECTIONS FROM CURRENT LOCATION TO NEXT STOP ─────────────────────
   useEffect(() => {
     if (!map.current) return;
+    // Clean up old direction line
     if (nextRoute.current) { nextRoute.current.setMap(null); nextRoute.current = null; }
-    // Next stop = first stop in list
+    let stale = false;
     const firstStop = stops[0];
     if (!firstStop || !coords[firstStop.id] || !userLoc.current) return;
 
@@ -227,6 +228,7 @@ export default function RouteMap({ stops, selectedId }) {
         destination: coords[firstStop.id],
         travelMode: window.google.maps.TravelMode.DRIVING,
       }, (result, status) => {
+        if (stale) return; // Don't create renderer if effect already re-ran
         if (status === "OK") {
           nextRoute.current = new window.google.maps.DirectionsRenderer({
             map: map.current, directions: result, suppressMarkers: true, preserveViewport: true,
@@ -235,6 +237,10 @@ export default function RouteMap({ stops, selectedId }) {
         }
       });
     } catch(e) {}
+    return () => {
+      stale = true;
+      if (nextRoute.current) { nextRoute.current.setMap(null); nextRoute.current = null; }
+    };
   }, [coords, stops, ready]);
 
   // ── HIGHLIGHT SELECTED MARKER ──────────────────────────────────────────
