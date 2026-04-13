@@ -13,7 +13,7 @@ import { savePipelineToDrive, saveFieldDataToDrive, savePhotoToDrive, loadPipeli
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const CAL_BASE = "https://www.googleapis.com/calendar/v3/calendars/primary";
-const SCOPES = "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.file";
+const SCOPES = "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/youtube.upload";
 
 // ── HELPERS ──────────────────────────────────────────────────────────────────
 function getBusinessDays(n) {
@@ -75,14 +75,11 @@ export default function App() {
     });
   }, []);
 
-  // Auto-refresh token 5 min before expiry
+  // Auto-refresh token every 50 min to stay signed in continuously
   useEffect(() => {
     if (!token) return;
-    const saved = lsGet("mts-token", null);
-    if (!saved?.expiry) return;
-    const msUntilRefresh = Math.max(saved.expiry - Date.now() - 5 * 60 * 1000, 10000);
-    const timer = setTimeout(() => { silentReauth(); }, msUntilRefresh);
-    return () => clearTimeout(timer);
+    const interval = setInterval(() => { silentReauth(); }, 50 * 60 * 1000);
+    return () => clearInterval(interval);
   }, [token, silentReauth]);
 
   const [loading, setLoading] = useState(false);
@@ -111,8 +108,11 @@ export default function App() {
   const [onsiteStop, setOnsiteStop] = useState(null); // stop object when onsite window open
   const [undoToast, setUndoToast] = useState(null); // {id, cn, timer}
   const undoToastTimer = useRef(null);
-  const [view, setView] = useState("route"); // "route" | "pipeline"
+  const [view, setView] = useState(() => lsGet("mts-view", "route"));
   const [pipelineSearch, setPipelineSearch] = useState("");
+
+  // Persist view state so tab resume doesn't reset
+  useEffect(() => { lsSet("mts-view", view); }, [view]);
 
   // ── AUTH ─────────────────────────────────────────────────────────────────
   const initAuth = useCallback(() => {
@@ -418,21 +418,12 @@ export default function App() {
       <div style={{display:"flex",alignItems:"center",gap:5,padding:"8px 10px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0}}>
         <button onClick={()=>setView(view==="route"?"pipeline":"route")} style={{padding:"6px 10px",borderRadius:8,background:"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:14,letterSpacing:2,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#33B679",transition:"color .2s"}}>{view==="route"?"MTS ROUTE":"MTS PIPELINE"}</button>
         {view === "route" && <>
-        <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"6px 12px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0c12",color:"#f0f4fa",fontSize:11,fontWeight:700,cursor:"pointer",outline:"none",appearance:"auto"}}>
+        <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"6px 12px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0c12",color:"#f0f4fa",fontSize:11,fontWeight:600,cursor:"pointer",outline:"none",appearance:"auto",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
           {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
         </select>
         <div style={{flex:1}}/>
-        <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}} style={{padding:"6px 12px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"#1a2240",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#2a3560"}`,color:reorderMode?"#c8a0e8":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}>{reorderMode?"✕ Done":"↕ Reorder"}</button>
-        {reorderMode && <button onClick={()=>{
-          const amTasks = allParsed.filter(s => s.isTask && (s.window||"").startsWith("AM"));
-          const pmTasks = allParsed.filter(s => s.isTask && !(s.window||"").startsWith("AM"));
-          const tds = allParsed.filter(s => !s.isTask);
-          const fresh = [...amTasks, ...pmTasks, ...tds].map(s => s.id);
-          setUndoStack(u => [...u, {type:"reorder", prevOrder: ordIds[dayKey] || currentOrder}]);
-          setOrdIds(prev => ({...prev, [dayKey]: fresh}));
-          setMoving(null);
-        }} style={{padding:"6px 12px",borderRadius:8,background:"rgba(200,90,60,.1)",border:"1px solid rgba(200,90,60,.25)",color:"#e8a080",fontSize:11,fontWeight:700,cursor:"pointer"}}>↻ Reset</button>}
-        <button onClick={undo} disabled={!undoStack.length} style={{padding:"6px 12px",borderRadius:8,background:undoStack.length?"#1a2240":"transparent",border:`1px solid ${undoStack.length?"#2a3560":"#1a2030"}`,color:undoStack.length?"#f0f4fa":"#2a3050",fontSize:11,fontWeight:700,cursor:undoStack.length?"pointer":"default"}}>↩ Undo</button>
+        <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}} style={{padding:"6px 12px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"#1a2240",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#2a3560"}`,color:reorderMode?"#c8a0e8":"#5a6580",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>{reorderMode?"✕ DONE":"↕ REORDER"}</button>
+        <button onClick={undo} disabled={!undoStack.length} style={{padding:"6px 12px",borderRadius:8,background:undoStack.length?"#1a2240":"transparent",border:`1px solid ${undoStack.length?"#2a3560":"#1a2030"}`,color:undoStack.length?"#f0f4fa":"#2a3050",fontSize:11,fontWeight:600,cursor:undoStack.length?"pointer":"default",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>↩ UNDO</button>
         </>}
         {view === "pipeline" && <>
           <div style={{flex:1}}/>
