@@ -10,11 +10,11 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 
 const STAGES = [
   { id: "estimate_needed", label: "Estimate needed", short: "Estimate", color: "#039BE5", bg: "rgba(3,155,229,.1)" },
-  { id: "waiting", label: "Waiting", short: "Waiting", color: "#FF8A65", bg: "rgba(255,138,101,.1)" },
-  { id: "strong", label: "Strong", short: "Strong", color: "#8E24AA", bg: "rgba(142,36,170,.1)" },
-  { id: "weak", label: "Weak", short: "Weak", color: "#7986CB", bg: "rgba(121,134,203,.1)" },
+  { id: "waiting", label: "Waiting", short: "Waiting", color: "#8E24AA", bg: "rgba(142,36,170,.1)" },
+  { id: "strong", label: "Strong", short: "Strong", color: "#33B679", bg: "rgba(51,182,121,.1)" },
+  { id: "weak", label: "Weak", short: "Weak", color: "#FF8A65", bg: "rgba(255,138,101,.1)" },
   { id: "follow_up", label: "Follow up", short: "Follow up", color: "#F6BF26", bg: "rgba(246,191,38,.1)" },
-  { id: "sold", label: "Sold", short: "Sold", color: "#33B679", bg: "rgba(51,182,121,.1)" },
+  { id: "sold", label: "Sold", short: "Sold", color: "#0B8043", bg: "rgba(11,128,67,.1)" },
   { id: "declined", label: "Declined", short: "Declined", color: "#616161", bg: "rgba(97,97,97,.1)" },
 ];
 
@@ -50,9 +50,8 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
   const [selected, setSelected] = useState({}); // {id: true}
   const [emailSheet, setEmailSheet] = useState(false);
   const [emailPreview, setEmailPreview] = useState(null); // template object
-  const [pauseMenu, setPauseMenu] = useState(null);
-  const [detailCard, setDetailCard] = useState(null); // full card object for detail popup
-  const [detailPhoto, setDetailPhoto] = useState(null); // index of photo in lightbox
+  const [pauseMenu, setPauseMenu] = useState(null); // card id showing pause options
+  const [detailCard, setDetailCard] = useState(null); // full detail popup
 
   // Persist
   useEffect(() => { savePipeline(pipeline); }, [pipeline]);
@@ -71,12 +70,11 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
         return;
       }
       const age = now - (card.stageChangedAt || card.addedAt || now);
-      // Migrate old stages to new ones
-      if (card.stage === "proposal_sent") {
-        updated[id] = { ...card, stage: "waiting", stageChangedAt: card.stageChangedAt || now };
+      if (card.stage === "waiting" && age > THREE_DAYS) {
+        updated[id] = { ...card, stage: "weak", stageChangedAt: now };
         changed = true;
-      } else if (card.stage === "stale") {
-        updated[id] = { ...card, stage: "weak", stageChangedAt: card.stageChangedAt || now };
+      } else if (card.stage === "weak" && age > THREE_DAYS) {
+        updated[id] = { ...card, stage: "declined", stageChangedAt: now, autoDeclined: true };
         changed = true;
       } else if (card.stage === "follow_up" && age > THREE_DAYS) {
         updated[id] = { ...card, stage: "declined", stageChangedAt: now, autoDeclined: true };
@@ -101,11 +99,11 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
 
   const allCards = useMemo(() => Object.values(pipeline), [pipeline]);
 
-  // Cards in waiting/weak for 2+ days (due for follow-up)
+  // Cards in waiting for 2+ days (due for follow-up nudge)
   const dueForFollowUp = useMemo(() => {
     const TWO_DAYS = 2 * 24 * 60 * 60 * 1000;
     const now = Date.now();
-    return allCards.filter(c => (c.stage === "waiting" || c.stage === "weak") && !c.pauseUntil && (now - (c.stageChangedAt || c.addedAt || now)) > TWO_DAYS);
+    return allCards.filter(c => c.stage === "waiting" && !c.pauseUntil && (now - (c.stageChangedAt || c.addedAt || now)) > TWO_DAYS);
   }, [allCards]);
 
   // Search filter
@@ -205,7 +203,7 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
         onDragStart={e => onDragStart(e, card.id)}
         onClick={() => {
           if (selectMode) { toggleSelect(card.id); return; }
-          setSelectedCard(selectedCard === card.id ? null : card.id);
+          setDetailCard(card);
         }}
         style={{
           padding: compact ? "10px 12px" : "12px 14px",
@@ -253,37 +251,6 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
           </div>
           <button onClick={e=>{e.stopPropagation();toggleHot(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:card.hot?"rgba(255,179,0,.12)":"transparent",border:card.hot?"1px solid rgba(255,179,0,.3)":"1px solid #1a2030",color:card.hot?"#FFB300":"#2a3050",fontSize:10,cursor:"pointer"}}>🔥</button>
         </div>}
-
-        {/* Expanded detail */}
-        {selectedCard === card.id && !selectMode && (
-          <div onClick={e=>e.stopPropagation()} style={{marginTop:10,paddingTop:10,borderTop:"1px solid #1a2030"}}>
-            {card.notes && <div style={{fontSize:12,color:"#6a7890",lineHeight:1.5,marginBottom:6,fontStyle:"italic"}}>{card.notes}</div>}
-            {fd.myNotes && <div style={{fontSize:12,color:"#8898a8",lineHeight:1.5,marginBottom:8,whiteSpace:"pre-wrap"}}>{fd.myNotes}</div>}
-            {(fd.photos || []).length > 0 && (
-              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
-                {fd.photos.slice(0,4).map((p,i) => (
-                  <div key={i} style={{position:"relative",width:80,height:80,borderRadius:8,overflow:"hidden",border:"1px solid #1a2540"}}>
-                    <img src={p.dataUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
-                  </div>
-                ))}
-                {fd.photos.length > 4 && <div style={{width:80,height:80,borderRadius:8,background:"#1a2240",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#5a6580",fontWeight:700}}>+{fd.photos.length-4}</div>}
-              </div>
-            )}
-            {card.phone && <div style={{fontSize:11,color:"#6a8aB0",marginBottom:4}}>📞 {card.phone}</div>}
-            {card.email && <div style={{fontSize:11,color:"#6a8aB0",marginBottom:8}}>✉️ {card.email}</div>}
-
-            {/* Open full detail */}
-            <button onClick={()=>setDetailCard(card)} style={{width:"100%",padding:"10px 0",marginBottom:8,borderRadius:8,background:"rgba(3,155,229,.08)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:12,fontWeight:700,cursor:"pointer"}}>View full detail →</button>
-
-            {/* Stage move buttons */}
-            <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-              {isDeclined && <button onClick={()=>reactivate(card.id)} style={{padding:"6px 14px",borderRadius:6,background:"rgba(255,183,77,.1)",border:"1px solid rgba(255,183,77,.3)",color:"#FFB74D",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>↩ REACTIVATE</button>}
-              {STAGES.filter(st => st.id !== card.stage && !(isDeclined && st.id !== "estimate_needed")).map(st => (
-                <button key={st.id} onClick={()=>moveCard(card.id, st.id)} style={{padding:"5px 10px",borderRadius:6,background:st.bg,border:`1px solid ${st.color}30`,color:st.color,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{st.short}</button>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     );
   };
@@ -321,7 +288,7 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
 
         {/* Follow-up reminder banner */}
         {dueForFollowUp.length > 0 && !selectMode && <div style={{padding:"8px 14px",background:"rgba(246,191,38,.06)",borderBottom:"1px solid rgba(246,191,38,.15)",display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontSize:12,color:"#F6BF26",fontWeight:600,flex:1}}>{dueForFollowUp.length} card{dueForFollowUp.length>1?"s":""} waiting 2+ days — follow up?</span>
+          <span style={{fontSize:12,color:"#F6BF26",fontWeight:600,flex:1}}>{dueForFollowUp.length} proposal{dueForFollowUp.length>1?"s":""} sent 2+ days ago — follow up?</span>
           <button onClick={()=>{setSelectMode(true);const sel={};dueForFollowUp.forEach(c=>{sel[c.id]=true;});setSelected(sel);}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>📧 Select all</button>
         </div>}
 
@@ -381,95 +348,97 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
       <div className="mts-pipeline-mobile" style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>{mobileView()}</div>
       <div className="mts-pipeline-desktop" style={{display:"none",flex:1,overflow:"hidden"}}>{desktopView()}</div>
 
-      {/* ── FULL DETAIL POPUP ─────────────────────────────────────────── */}
+      {/* ── FULL CARD DETAIL POPUP ──────────────────────────────────── */}
       {detailCard && (() => {
         const card = detailCard;
         const fd = loadFieldData(card.id);
-        const stage = STAGES.find(s => s.id === card.stage);
-        const photos = fd.photos || [];
-        return <div onClick={()=>{setDetailCard(null);setDetailPhoto(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",backdropFilter:"blur(8px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-          <div onClick={e=>e.stopPropagation()} style={{background:"#0d1018",border:"1px solid #1a2030",borderRadius:16,width:"100%",maxWidth:720,maxHeight:"92vh",overflowY:"auto",position:"relative"}}>
-
-            {/* Close button */}
-            <button onClick={()=>{setDetailCard(null);setDetailPhoto(null);}} style={{position:"sticky",top:10,float:"right",margin:"10px 10px 0 0",width:36,height:36,borderRadius:10,background:"#1a2240",border:"1px solid #2a3560",color:"#90a8c0",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",zIndex:5}}>✕</button>
+        const stage = STAGES.find(st => st.id === card.stage);
+        const isDeclined = card.stage === "declined";
+        const ytId = (fd.videoUrl || "").match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
+        return <div onClick={() => setDetailCard(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",backdropFilter:"blur(6px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:10,overflowY:"auto"}}>
+          <div onClick={e => e.stopPropagation()} style={{background:"#0d1018",border:"1px solid #1a2030",borderRadius:14,width:"100%",maxWidth:700,maxHeight:"90vh",overflowY:"auto",padding:0}}>
 
             {/* Header */}
-            <div style={{padding:"20px 24px 14px"}}>
-              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-                <span style={{padding:"3px 10px",borderRadius:99,background:stage?.bg,color:stage?.color,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",fontSize:11}}>{stage?.label}</span>
-                {card.hot && <span style={{fontSize:14}}>🔥</span>}
-                <span style={{fontSize:11,color:"#4a5a70"}}>{daysSince(card.stageChangedAt || card.addedAt)}</span>
+            <div style={{padding:"16px 20px",background:"#0a0c12",borderBottom:"1px solid #1a2030",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:1}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:20,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.5}}>{card.hot && "🔥 "}{card.cn}</div>
+                {card.addr && <div style={{fontSize:13,color:"#8a96a8",fontFamily:F,textTransform:"uppercase",letterSpacing:1,marginTop:2}}>{card.addr}</div>}
               </div>
-              <div style={{fontSize:24,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:2}}>{card.cn}</div>
-              {card.addr && <div style={{fontSize:14,color:"#8a96a8",marginTop:4,fontFamily:F,letterSpacing:0.5}}>{card.addr}</div>}
-              {card.jn && <div style={{fontSize:12,color:"#4a5a70",marginTop:4}}>Job #{card.jn}</div>}
+              <span style={{padding:"4px 12px",borderRadius:99,background:stage?.bg,color:stage?.color,fontSize:12,fontWeight:700,fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{stage?.label}</span>
+              <button onClick={() => setDetailCard(null)} style={{width:32,height:32,borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#5a6580",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
             </div>
 
-            {/* Contact */}
-            {(card.phone || card.email) && <div style={{padding:"0 24px 14px",display:"flex",gap:12,flexWrap:"wrap"}}>
-              {card.phone && <a href={`tel:${card.phone.replace(/\D/g,"")}`} style={{padding:"8px 16px",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#a0b8d0",fontSize:13,fontWeight:600,textDecoration:"none"}}>📞 {card.phone}</a>}
-              {card.email && <a href={`mailto:${card.email}`} style={{padding:"8px 16px",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#a0b8d0",fontSize:13,fontWeight:600,textDecoration:"none"}}>✉️ {card.email}</a>}
-            </div>}
+            <div style={{padding:"16px 20px"}}>
+              {/* Contact */}
+              <div style={{display:"flex",gap:16,marginBottom:16,flexWrap:"wrap"}}>
+                {card.phone && <div style={{fontSize:14,color:"#a0b8d0"}}>📞 <a href={`tel:${card.phone.replace(/\D/g,"")}`} style={{color:"#a0b8d0"}}>{card.phone}</a></div>}
+                {card.email && <div style={{fontSize:14,color:"#a0b8d0"}}>✉️ <a href={`mailto:${card.email}`} style={{color:"#a0b8d0"}}>{card.email}</a></div>}
+                {card.jn && <button onClick={() => openSingleOps(card.jn)} style={{fontSize:14,color:"#039BE5",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}>SingleOps #{card.jn} 📋</button>}
+              </div>
 
-            {/* Constraint + title context */}
-            {card.constraint && <div style={{margin:"0 24px 10px",padding:"8px 14px",borderRadius:8,background:"rgba(200,90,158,.08)",border:"1px solid rgba(200,90,158,.15)",color:"#e880b0",fontSize:13,fontWeight:700}}>{card.constraint}</div>}
-            {card.titleContext && <div style={{margin:"0 24px 10px",fontSize:13,color:"#a0a8b8",lineHeight:1.6,fontStyle:"italic"}}>{card.titleContext}</div>}
+              {/* Job notes */}
+              {card.notes && <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>JOB NOTES</div>
+                <div style={{fontSize:14,color:"#8898a8",lineHeight:1.6,fontStyle:"italic"}}>{card.notes}</div>
+              </div>}
 
-            {/* Office notes */}
-            {card.notes && <div style={{padding:"14px 24px",borderTop:"1px solid #1a2030"}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>OFFICE NOTES</div>
-              <div style={{fontSize:14,color:"#a0b0c0",lineHeight:1.7}}>{card.notes}</div>
-            </div>}
+              {/* My notes */}
+              {fd.myNotes && <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>MY NOTES</div>
+                <div style={{fontSize:14,color:"#b0b8c8",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{fd.myNotes}</div>
+              </div>}
 
-            {/* Field notes */}
-            {fd.myNotes && <div style={{padding:"14px 24px",borderTop:"1px solid #1a2030"}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>FIELD NOTES</div>
-              <div style={{fontSize:14,color:"#c0d0e0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{fd.myNotes}</div>
-            </div>}
+              {/* AI Summary */}
+              {fd.aiSummary && <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>AI SUMMARY</div>
+                <div style={{fontSize:14,color:"#a0b0c8",lineHeight:1.6,whiteSpace:"pre-wrap",padding:12,borderRadius:10,background:"rgba(127,119,221,.06)",border:"1px solid rgba(127,119,221,.12)"}}>{fd.aiSummary}</div>
+              </div>}
 
-            {/* Audio clips */}
-            {(fd.audioClips || []).length > 0 && <div style={{padding:"14px 24px",borderTop:"1px solid #1a2030"}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>VOICE MEMOS ({fd.audioClips.length})</div>
-              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {/* Photos — large grid */}
+              {(fd.photos || []).length > 0 && <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>PHOTOS ({fd.photos.length})</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:8}}>
+                  {fd.photos.map((p, i) => (
+                    <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
+                      <img src={p.dataUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+                      <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_${i+1}.jpg`} style={{position:"absolute",bottom:6,right:6,padding:"4px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#fff",fontSize:11,textDecoration:"none",fontWeight:600}}>⬇ Download</a>
+                    </div>
+                  ))}
+                </div>
+              </div>}
+
+              {/* Video */}
+              {fd.videoUrl && <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>VIDEO</div>
+                {ytId ? (
+                  <div style={{position:"relative",paddingBottom:"56.25%",borderRadius:10,overflow:"hidden"}}>
+                    <iframe src={`https://www.youtube.com/embed/${ytId}`} style={{position:"absolute",inset:0,width:"100%",height:"100%",border:"none"}} allowFullScreen />
+                  </div>
+                ) : (
+                  <a href={fd.videoUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:14,color:"#6a8aB0"}}>{fd.videoUrl}</a>
+                )}
+              </div>}
+
+              {/* Audio clips */}
+              {(fd.audioClips || []).length > 0 && <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>VOICE MEMOS ({fd.audioClips.length})</div>
                 {fd.audioClips.map((clip, i) => (
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:"#0e1525",border:"1px solid #1a2540"}}>
-                    <button onClick={()=>{const a=new Audio(clip.dataUrl);a.play();}} style={{width:32,height:32,borderRadius:16,background:"rgba(3,155,229,.1)",border:"none",color:"#039BE5",fontSize:14,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>▶</button>
-                    <span style={{fontSize:12,color:"#6a7a90"}}>Voice memo {i+1}{clip.duration ? ` · ${Math.floor(clip.duration/60)}:${String(clip.duration%60).padStart(2,"0")}` : ""}</span>
-                  </div>
+                  <audio key={i} controls src={clip.dataUrl} style={{width:"100%",marginBottom:4,height:36}} />
+                ))}
+              </div>}
+
+              {/* Metadata */}
+              <div style={{fontSize:12,color:"#4a5a70",marginBottom:16}}>
+                Added {card.addedAt ? new Date(card.addedAt).toLocaleDateString() : "—"} · {card.constraint || "No constraints"}
+              </div>
+
+              {/* Stage move */}
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",paddingTop:12,borderTop:"1px solid #1a2030"}}>
+                {isDeclined && <button onClick={() => { reactivate(card.id); setDetailCard({...card, stage:"estimate_needed"}); }} style={{padding:"8px 16px",borderRadius:8,background:"rgba(255,183,77,.1)",border:"1px solid rgba(255,183,77,.3)",color:"#FFB74D",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>↩ REACTIVATE</button>}
+                {STAGES.filter(st => st.id !== card.stage && !(isDeclined && st.id !== "estimate_needed")).map(st => (
+                  <button key={st.id} onClick={() => { moveCard(card.id, st.id); setDetailCard({...card, stage: st.id}); }} style={{padding:"8px 14px",borderRadius:8,background:st.bg,border:`1px solid ${st.color}40`,color:st.color,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{st.label}</button>
                 ))}
               </div>
-            </div>}
-
-            {/* Photos — LARGE */}
-            {photos.length > 0 && <div style={{padding:"14px 24px",borderTop:"1px solid #1a2030"}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>PHOTOS ({photos.length})</div>
-              <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                {photos.map((p, i) => (
-                  <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",cursor:"pointer"}} onClick={()=>setDetailPhoto(detailPhoto===i?null:i)}>
-                    <img src={p.dataUrl} alt="" style={{width:"100%",display:"block",borderRadius:10}} />
-                    <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{position:"absolute",top:8,right:8,padding:"6px 12px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#fff",fontSize:11,fontWeight:700,textDecoration:"none"}}>⬇ Download</a>
-                  </div>
-                ))}
-              </div>
-            </div>}
-
-            {/* Video */}
-            {fd.videoUrl && <div style={{padding:"14px 24px",borderTop:"1px solid #1a2030"}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>VIDEO</div>
-              <a href={fd.videoUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:13,color:"#6a8aB0",wordBreak:"break-all"}}>{fd.videoUrl}</a>
-            </div>}
-
-            {/* AI Summary */}
-            {fd.aiSummary && <div style={{padding:"14px 24px",borderTop:"1px solid #1a2030"}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>✨ AI SUMMARY</div>
-              <div style={{fontSize:14,color:"#c0d0e0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{fd.aiSummary}</div>
-            </div>}
-
-            {/* Stage move buttons */}
-            <div style={{padding:"16px 24px 24px",borderTop:"1px solid #1a2030",display:"flex",gap:6,flexWrap:"wrap"}}>
-              {STAGES.filter(st => st.id !== card.stage).map(st => (
-                <button key={st.id} onClick={()=>{moveCard(card.id, st.id);setDetailCard({...card,stage:st.id});}} style={{padding:"8px 16px",borderRadius:8,background:st.bg,border:`1px solid ${st.color}40`,color:st.color,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{st.label}</button>
-              ))}
             </div>
           </div>
         </div>;
