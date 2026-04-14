@@ -1,9 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import PhotoMarkup from "./PhotoMarkup";
 
-const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
-const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
-
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Onsite Window
    Full-screen data capture for a client stop. Opens via swipe-right.
@@ -27,16 +24,13 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
   const [recording, setRecording] = useState(false);
   const [recDuration, setRecDuration] = useState(0);
   const [playingIdx, setPlayingIdx] = useState(null);
-  const [aiResult, setAiResult] = useState(fd.aiSummary || "");
-  const [aiLoading, setAiLoading] = useState(false);
-  const [ytUploading, setYtUploading] = useState(false);
-  const ytFileRef = useRef(null);
   const [declineConfirm, setDeclineConfirm] = useState(false);
   const [swipeX, setSwipeX] = useState(0);
   const [swiping, setSwiping] = useState(false);
   const swipeStartX = useRef(0);
   const swipeStartY = useRef(0);
   const swipeDir = useRef(null);
+  const cameraRef = useRef(null);
   const libraryRef = useRef(null);
   const mediaRecRef = useRef(null);
   const chunksRef = useRef([]);
@@ -46,8 +40,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
 
   // Auto-save on every change
   useEffect(() => {
-    saveFieldData(s.id, { myNotes, videoUrl, photos, audioClips, aiSummary: aiResult });
-  }, [myNotes, videoUrl, photos, audioClips, aiResult, s.id]);
+    saveFieldData(s.id, { myNotes, videoUrl, photos, audioClips });
+  }, [myNotes, videoUrl, photos, audioClips, s.id]);
 
   // ── PHOTO HANDLING ──────────────────────────────────────────────────
   const processPhoto = (file) => {
@@ -68,11 +62,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
     };
     reader.readAsDataURL(file);
   };
-  const handlePhotos = (e) => {
-    const files = Array.from(e.target.files || []);
-    files.forEach(f => processPhoto(f));
-    e.target.value = "";
-  };
+  const handleCamera = (e) => { processPhoto(e.target.files?.[0]); e.target.value = ""; };
+  const handleLibrary = (e) => { processPhoto(e.target.files?.[0]); e.target.value = ""; };
   const removePhoto = (i) => setPhotos(prev => prev.filter((_, j) => j !== i));
   const handleMarkupSave = (dataUrl) => {
     setPhotos(prev => prev.map((p, i) => i === markupIdx ? { ...p, dataUrl } : p));
@@ -140,89 +131,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
     return <PhotoMarkup photoDataUrl={photos[markupIdx].dataUrl} onSave={handleMarkupSave} onCancel={() => setMarkupIdx(null)} />;
   }
 
-  // ── GEMINI AI SUMMARY ─────────────────────────────────────────────────
-  const generateSummary = async () => {
-    if (!GEMINI_KEY) { setAiResult("Add VITE_GEMINI_KEY to .env"); return; }
-    setAiLoading(true);
-    try {
-      const prompt = `You are an arborist's field assistant. Summarize these field notes into a structured estimate summary. Include: species/trees observed, conditions found, recommended treatments, and a rough job value estimate if enough info exists. Be concise and professional.
-
-Client: ${s.cn}
-Address: ${s.addr}
-Job notes from office: ${s.notes || "None"}
-My field notes: ${myNotes || "None"}
-Constraints: ${s.constraint || "None"}`;
-
-      const res = await fetch(`${GEMINI_URL}?key=${GEMINI_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-      });
-      const data = await res.json();
-      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
-      setAiResult(text);
-    } catch(e) {
-      setAiResult("Error: " + e.message);
-    }
-    setAiLoading(false);
-  };
-
-  // ── YOUTUBE UPLOAD ──────────────────────────────────────────────────────
-  const uploadToYouTube = async (file) => {
-    if (!file) return;
-    setYtUploading(true);
-    try {
-      // Get fresh Google token from localStorage
-      const tokenData = JSON.parse(localStorage.getItem("mts-token") || "null");
-      const tok = tokenData?.token;
-      if (!tok) { alert("Sign in required"); setYtUploading(false); return; }
-
-      const metadata = {
-        snippet: { title: `${s.cn} - ${s.addr || "Property"}`, description: `Field visit: ${s.cn}\n${s.addr}\n${new Date().toLocaleDateString()}`, categoryId: "22" },
-        status: { privacyStatus: "unlisted" },
-      };
-
-      // Resumable upload: init
-      const initRes = await fetch("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
-        body: JSON.stringify(metadata),
-      });
-
-      if (!initRes.ok) {
-        const err = await initRes.text();
-        if (initRes.status === 403 && err.includes("forbidden")) {
-          alert("YouTube API not enabled or audit not passed. Video uploads as private until approved.");
-        }
-        // Try anyway with simpler upload
-      }
-
-      const uploadUrl = initRes.headers.get("Location");
-      if (uploadUrl) {
-        const uploadRes = await fetch(uploadUrl, {
-          method: "PUT",
-          headers: { "Content-Type": file.type || "video/mp4" },
-          body: file,
-        });
-        const result = await uploadRes.json();
-        if (result.id) {
-          const ytUrl = `https://youtu.be/${result.id}`;
-          setVideoUrl(ytUrl);
-        }
-      }
-    } catch(e) {
-      console.warn("YouTube upload failed:", e);
-      alert("Upload failed: " + e.message);
-    }
-    setYtUploading(false);
-  };
-
-  const handleYtFile = (e) => {
-    const file = e.target.files?.[0];
-    if (file) uploadToYouTube(file);
-    e.target.value = "";
-  };
-
   const F = "'Oswald',sans-serif";
   const B = "'DM Sans',system-ui,sans-serif";
 
@@ -267,6 +175,7 @@ Constraints: ${s.constraint || "None"}`;
             {s.jn && <span>#{s.jn}</span>}
             {s.constraint && <span style={{marginLeft:8,color:"#FF80AB"}}>{s.constraint}</span>}
           </div>
+          {s.titleContext && <div style={{fontSize:12,color:"#a0a8b8",marginTop:4,fontStyle:"italic",lineHeight:1.5}}>{s.titleContext}</div>}
         </div>
 
         {/* ── JOB NOTES (read-only from SingleOps) ──────────────────── */}
@@ -325,62 +234,36 @@ Constraints: ${s.constraint || "None"}`;
 
         {/* ── PHOTOS ────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
-          <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>PHOTOS</div>
+          <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>PHOTOS {photos.length > 0 && `(${photos.length})`}</div>
           {photos.length > 0 && (
-            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
               {photos.map((p, i) => (
-                <div key={i} style={{position:"relative",width:80,height:80,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
+                <div key={i} style={{position:"relative",width:120,height:120,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
                   <img src={p.dataUrl} alt="" onClick={() => setMarkupIdx(i)} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
-                  <button onClick={(e) => { e.stopPropagation(); removePhoto(i); }} style={{position:"absolute",top:3,right:3,width:18,height:18,borderRadius:9,background:"rgba(0,0,0,.7)",border:"none",color:"#ff6666",fontSize:10,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
-                  <div style={{position:"absolute",bottom:3,left:3,display:"flex",gap:3}}>
-                    <div onClick={() => setMarkupIdx(i)} style={{padding:"2px 5px",borderRadius:4,background:"rgba(0,0,0,.65)",color:"#ccc",fontSize:8,fontWeight:700,cursor:"pointer"}}>✏️</div>
-                    <a href={p.dataUrl} download={`mts_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"2px 5px",borderRadius:4,background:"rgba(0,0,0,.65)",color:"#ccc",fontSize:8,fontWeight:700,cursor:"pointer",textDecoration:"none"}}>⬇</a>
+                  <button onClick={(e) => { e.stopPropagation(); removePhoto(i); }} style={{position:"absolute",top:4,right:4,width:22,height:22,borderRadius:11,background:"rgba(0,0,0,.7)",border:"none",color:"#ff6666",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+                  <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
+                    <div onClick={() => setMarkupIdx(i)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(0,0,0,.65)",color:"#ccc",fontSize:9,fontWeight:700,cursor:"pointer"}}>✏️ Markup</div>
+                    <a href={p.dataUrl} download={`mts_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"3px 8px",borderRadius:5,background:"rgba(0,0,0,.65)",color:"#ccc",fontSize:9,fontWeight:700,cursor:"pointer",textDecoration:"none"}}>⬇</a>
                   </div>
                 </div>
               ))}
             </div>
           )}
-          <input ref={libraryRef} type="file" accept="image/*" multiple onChange={handlePhotos} style={{display:"none"}} />
+          <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={handleCamera} style={{display:"none"}} />
+          <input ref={libraryRef} type="file" accept="image/*" multiple onChange={(e) => { Array.from(e.target.files || []).forEach(processPhoto); e.target.value = ""; }} style={{display:"none"}} />
           <div style={{display:"flex",gap:6}}>
-            <button onClick={() => libraryRef.current?.click()} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:13,fontWeight:600,cursor:"pointer"}}>📷 Add photos</button>
+            <button onClick={() => cameraRef.current?.click()} style={{flex:1,padding:"14px 0",borderRadius:10,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:14,fontWeight:600,cursor:"pointer"}}>📷 Camera</button>
+            <button onClick={() => libraryRef.current?.click()} style={{flex:1,padding:"14px 0",borderRadius:10,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:14,fontWeight:600,cursor:"pointer"}}>🖼 Library</button>
           </div>
         </div>
 
-        {/* ── VIDEO ─────────────────────────────────────────────────── */}
-        <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
-          <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>VIDEO</div>
-          {videoUrl && !showVideoInput ? (
-            <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px",borderRadius:10,background:"#0e1525",border:"1px solid #1a2540"}}>
-              {ytId && <img src={`https://img.youtube.com/vi/${ytId}/default.jpg`} alt="" style={{width:56,height:42,borderRadius:6,objectFit:"cover"}} />}
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:11,color:"#a0b0c0",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{videoUrl}</div>
-              </div>
-              <button onClick={() => setShowVideoInput(true)} style={{padding:"4px 10px",borderRadius:6,background:"#1a2240",border:"1px solid #2a3560",color:"#5a6580",fontSize:10,fontWeight:700,cursor:"pointer"}}>Edit</button>
-              <button onClick={() => { setVideoUrl(""); setShowVideoInput(false); }} style={{padding:"4px 10px",borderRadius:6,background:"rgba(200,60,60,.1)",border:"1px solid rgba(200,60,60,.2)",color:"#e06060",fontSize:10,fontWeight:700,cursor:"pointer"}}>✕</button>
-            </div>
-          ) : showVideoInput ? (
-            <div>
-              <input type="url" value={videoUrl} onChange={e => setVideoUrl(e.target.value)} placeholder="Paste YouTube link..." style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1525",border:"1px solid #2a3560",color:"#e0e8f0",fontSize:13,fontFamily:B,outline:"none"}} />
-              <button onClick={() => setShowVideoInput(false)} style={{marginTop:6,padding:"6px 14px",borderRadius:6,background:"#1a2240",border:"1px solid #2a3560",color:"#90a8c0",fontSize:11,fontWeight:700,cursor:"pointer"}}>Done</button>
-            </div>
-          ) : (
-            <div style={{display:"flex",gap:6}}>
-              <input ref={ytFileRef} type="file" accept="video/*" onChange={handleYtFile} style={{display:"none"}} />
-              <button onClick={() => ytFileRef.current?.click()} disabled={ytUploading} style={{flex:1,padding:"14px 0",borderRadius:10,background:"rgba(255,0,0,.06)",border:"1px dashed rgba(255,0,0,.2)",color:ytUploading?"#804040":"#cc4040",fontSize:13,fontWeight:600,cursor:ytUploading?"default":"pointer"}}>{ytUploading ? "Uploading..." : "🎬 Upload to YouTube"}</button>
-              <button onClick={() => setShowVideoInput(true)} style={{flex:1,padding:"14px 0",borderRadius:10,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:13,fontWeight:600,cursor:"pointer"}}>📋 Paste link</button>
-            </div>
-          )}
-        </div>
-
-        {/* ── AI ASSIST ─────────────────────────────────────────────── */}
+        {/* ── AI ASSIST (placeholder) ──────────────────────────────── */}
         <div style={{padding:"12px 16px"}}>
           <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>AI ASSIST</div>
           <div style={{padding:"14px",borderRadius:10,background:"linear-gradient(135deg, rgba(127,119,221,.06), rgba(3,155,229,.06))",border:"1px solid rgba(127,119,221,.15)"}}>
-            {aiResult && <div style={{fontSize:12,color:"#a0b0c8",lineHeight:1.6,marginBottom:10,whiteSpace:"pre-wrap"}}>{aiResult}</div>}
-            <div style={{display:"flex",gap:6}}>
-              <button onClick={generateSummary} disabled={aiLoading} style={{padding:"10px 16px",borderRadius:8,background:"rgba(127,119,221,.12)",border:"1px solid rgba(127,119,221,.25)",color:aiLoading?"#5a5080":"#9a90e0",fontSize:12,fontWeight:700,cursor:aiLoading?"default":"pointer"}}>{aiLoading ? "Generating..." : aiResult ? "✨ Regenerate" : "✨ Generate summary"}</button>
-              {aiResult && <button onClick={()=>{navigator.clipboard?.writeText(aiResult);}} style={{padding:"10px 12px",borderRadius:8,background:"rgba(3,155,229,.08)",border:"1px solid rgba(3,155,229,.15)",color:"#6a8aB0",fontSize:12,fontWeight:700,cursor:"pointer"}}>📋 Copy</button>}
-            </div>
+            <div style={{fontSize:12,color:"#6a6090",fontWeight:600,marginBottom:6}}>✨ Claude integration coming soon</div>
+            <div style={{fontSize:11,color:"#4a5070",lineHeight:1.5}}>Auto-summarize your notes and photos into structured estimates, client emails, and follow-up reminders.</div>
+            <button disabled style={{marginTop:10,padding:"10px 20px",borderRadius:8,background:"rgba(127,119,221,.08)",border:"1px solid rgba(127,119,221,.15)",color:"#5a5080",fontSize:12,fontWeight:700,cursor:"default",opacity:.5}}>✨ Generate summary</button>
           </div>
         </div>
 

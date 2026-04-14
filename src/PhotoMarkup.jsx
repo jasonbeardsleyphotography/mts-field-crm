@@ -128,6 +128,21 @@ function drawArrow(ctx, arrow) {
   ctx.stroke();
 }
 
+function drawLine(ctx, line) {
+  ctx.beginPath();
+  ctx.strokeStyle = line.color;
+  ctx.lineWidth = line.size;
+  ctx.lineCap = "round";
+  ctx.moveTo(line.start.x, line.start.y);
+  ctx.lineTo(line.end.x, line.end.y);
+  ctx.stroke();
+}
+
+function buildLineStroke(points, color, size) {
+  if (points.length < 2) return null;
+  return { type: "line", start: points[0], end: points[points.length - 1], color, size };
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 
 export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
@@ -136,12 +151,13 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
   const containerRef = useRef(null);
   const [color, setColor] = useState(COLORS[0].hex);
   const [brushSize, setBrushSize] = useState(SIZES[1]);
+  const [drawMode, setDrawMode] = useState("line"); // "line" | "arrow" | "free"
   const [drawing, setDrawing] = useState(false);
-  const [strokes, setStrokes] = useState([]); // mixed: {type:"freehand", points, color, size} or {type:"arrow", ...}
+  const [strokes, setStrokes] = useState([]);
   const [currentStroke, setCurrentStroke] = useState(null);
   const [imgLoaded, setImgLoaded] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0, scale: 1 });
-  const [arrowPreview, setArrowPreview] = useState(null); // flash the arrow briefly before committing
+  const [arrowPreview, setArrowPreview] = useState(null);
 
   // Load image
   useEffect(() => {
@@ -173,6 +189,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
     // All committed strokes
     strokes.forEach(s => {
       if (s.type === "arrow") drawArrow(ctx, s);
+      else if (s.type === "line") drawLine(ctx, s);
       else drawFreehand(ctx, s);
     });
 
@@ -221,21 +238,30 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
       return;
     }
 
-    // Check for arrow shape
-    const arrowInfo = analyzeStroke(currentStroke.points);
-    if (arrowInfo) {
+    if (drawMode === "arrow") {
+      // Force arrow from start to end point
+      const arrowInfo = { start: currentStroke.points[0], end: currentStroke.points[currentStroke.points.length - 1], angle: Math.atan2(currentStroke.points[currentStroke.points.length-1].y - currentStroke.points[0].y, currentStroke.points[currentStroke.points.length-1].x - currentStroke.points[0].x) };
       const arrow = buildArrowStroke(arrowInfo, currentStroke.color, currentStroke.size);
       setArrowPreview(arrow);
       setCurrentStroke(null);
-      // Brief flash then commit
-      setTimeout(() => {
-        setStrokes(prev => [...prev, arrow]);
-        setArrowPreview(null);
-      }, 150);
-    } else {
-      // Regular freehand stroke
-      setStrokes(prev => [...prev, currentStroke]);
+      setTimeout(() => { setStrokes(prev => [...prev, arrow]); setArrowPreview(null); }, 150);
+    } else if (drawMode === "line") {
+      // Snap to straight line from start to end
+      const line = buildLineStroke(currentStroke.points, currentStroke.color, currentStroke.size);
+      if (line) setStrokes(prev => [...prev, line]);
       setCurrentStroke(null);
+    } else {
+      // Free mode — check for auto-arrow detection
+      const arrowInfo = analyzeStroke(currentStroke.points);
+      if (arrowInfo) {
+        const arrow = buildArrowStroke(arrowInfo, currentStroke.color, currentStroke.size);
+        setArrowPreview(arrow);
+        setCurrentStroke(null);
+        setTimeout(() => { setStrokes(prev => [...prev, arrow]); setArrowPreview(null); }, 150);
+      } else {
+        setStrokes(prev => [...prev, currentStroke]);
+        setCurrentStroke(null);
+      }
     }
   };
 
@@ -266,6 +292,14 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
           size: s.size * sx,
         };
         drawArrow(ctx, scaled);
+      } else if (s.type === "line") {
+        const scaled = {
+          ...s,
+          start: { x: s.start.x * sx, y: s.start.y * sy },
+          end: { x: s.end.x * sx, y: s.end.y * sy },
+          size: s.size * sx,
+        };
+        drawLine(ctx, scaled);
       } else {
         const scaled = {
           ...s,
@@ -324,8 +358,17 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
         padding:"10px 16px", background:"#111", borderTop:"1px solid #2a2a2a",
         paddingBottom:"max(10px, env(safe-area-inset-bottom))", flexShrink:0,
       }}>
-        {/* Hint */}
-        <div style={{textAlign:"center",fontSize:10,color:"#3a4a5a",marginBottom:8,fontWeight:500}}>Draw straight to auto-create arrows</div>
+        {/* Draw mode */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginBottom:10}}>
+          {[{id:"line",label:"Line",icon:"╱"},{id:"arrow",label:"Arrow",icon:"→"},{id:"free",label:"Free",icon:"〰"}].map(m => (
+            <button key={m.id} onClick={()=>setDrawMode(m.id)} style={{
+              padding:"6px 16px",borderRadius:8,fontSize:12,fontWeight:drawMode===m.id?700:500,
+              background:drawMode===m.id?"rgba(0,122,255,.15)":"transparent",
+              border:drawMode===m.id?"1px solid rgba(0,122,255,.4)":"1px solid #3a3a3a",
+              color:drawMode===m.id?"#007AFF":"#777",cursor:"pointer",
+            }}>{m.icon} {m.label}</button>
+          ))}
+        </div>
 
         {/* Colors */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:10}}>

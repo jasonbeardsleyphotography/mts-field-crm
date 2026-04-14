@@ -10,8 +10,9 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 
 const STAGES = [
   { id: "estimate_needed", label: "Estimate needed", short: "Estimate", color: "#039BE5", bg: "rgba(3,155,229,.1)" },
-  { id: "proposal_sent", label: "Proposal sent", short: "Proposal", color: "#8E24AA", bg: "rgba(142,36,170,.1)" },
-  { id: "stale", label: "Stale", short: "Stale", color: "#FF8A65", bg: "rgba(255,138,101,.1)" },
+  { id: "waiting", label: "Waiting", short: "Waiting", color: "#FF8A65", bg: "rgba(255,138,101,.1)" },
+  { id: "strong", label: "Strong", short: "Strong", color: "#8E24AA", bg: "rgba(142,36,170,.1)" },
+  { id: "weak", label: "Weak", short: "Weak", color: "#7986CB", bg: "rgba(121,134,203,.1)" },
   { id: "follow_up", label: "Follow up", short: "Follow up", color: "#F6BF26", bg: "rgba(246,191,38,.1)" },
   { id: "sold", label: "Sold", short: "Sold", color: "#33B679", bg: "rgba(51,182,121,.1)" },
   { id: "declined", label: "Declined", short: "Declined", color: "#616161", bg: "rgba(97,97,97,.1)" },
@@ -49,7 +50,9 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
   const [selected, setSelected] = useState({}); // {id: true}
   const [emailSheet, setEmailSheet] = useState(false);
   const [emailPreview, setEmailPreview] = useState(null); // template object
-  const [pauseMenu, setPauseMenu] = useState(null); // card id showing pause options
+  const [pauseMenu, setPauseMenu] = useState(null);
+  const [detailCard, setDetailCard] = useState(null); // full card object for detail popup
+  const [detailPhoto, setDetailPhoto] = useState(null); // index of photo in lightbox
 
   // Persist
   useEffect(() => { savePipeline(pipeline); }, [pipeline]);
@@ -61,20 +64,19 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
     const updated = { ...pipeline };
     Object.keys(updated).forEach(id => {
       const card = updated[id];
-      // Check if paused with expiry
       if (card.pauseUntil && now < card.pauseUntil) return;
-      // Auto-unpause expired pauses
       if (card.pauseUntil && now >= card.pauseUntil) {
         updated[id] = { ...card, pauseUntil: null, stageChangedAt: now };
         changed = true;
         return;
       }
       const age = now - (card.stageChangedAt || card.addedAt || now);
-      if (card.stage === "proposal_sent" && age > THREE_DAYS) {
-        updated[id] = { ...card, stage: "stale", stageChangedAt: now };
+      // Migrate old stages to new ones
+      if (card.stage === "proposal_sent") {
+        updated[id] = { ...card, stage: "waiting", stageChangedAt: card.stageChangedAt || now };
         changed = true;
-      } else if (card.stage === "stale" && age > THREE_DAYS) {
-        updated[id] = { ...card, stage: "declined", stageChangedAt: now, autoDeclined: true };
+      } else if (card.stage === "stale") {
+        updated[id] = { ...card, stage: "weak", stageChangedAt: card.stageChangedAt || now };
         changed = true;
       } else if (card.stage === "follow_up" && age > THREE_DAYS) {
         updated[id] = { ...card, stage: "declined", stageChangedAt: now, autoDeclined: true };
@@ -99,11 +101,11 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
 
   const allCards = useMemo(() => Object.values(pipeline), [pipeline]);
 
-  // Cards in proposal_sent for 2+ days (due for follow-up nudge)
+  // Cards in waiting/weak for 2+ days (due for follow-up)
   const dueForFollowUp = useMemo(() => {
     const TWO_DAYS = 2 * 24 * 60 * 60 * 1000;
     const now = Date.now();
-    return allCards.filter(c => c.stage === "proposal_sent" && !c.pauseUntil && (now - (c.stageChangedAt || c.addedAt || now)) > TWO_DAYS);
+    return allCards.filter(c => (c.stage === "waiting" || c.stage === "weak") && !c.pauseUntil && (now - (c.stageChangedAt || c.addedAt || now)) > TWO_DAYS);
   }, [allCards]);
 
   // Search filter
@@ -228,7 +230,7 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
           </div>
           <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0}}>
             {!compact && <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:stage?.bg,color:stage?.color,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>{stage?.label}</span>}
-            <span style={{fontSize:10,color:card.stage==="stale"?"#FF8A65":"#4a5a70"}}>{daysSince(card.stageChangedAt || card.addedAt)}</span>
+            <span style={{fontSize:10,color:card.stage==="weak"?"#FF8A65":"#4a5a70"}}>{daysSince(card.stageChangedAt || card.addedAt)}</span>
           </div>
         </div>
 
@@ -258,21 +260,23 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
             {card.notes && <div style={{fontSize:12,color:"#6a7890",lineHeight:1.5,marginBottom:6,fontStyle:"italic"}}>{card.notes}</div>}
             {fd.myNotes && <div style={{fontSize:12,color:"#8898a8",lineHeight:1.5,marginBottom:8,whiteSpace:"pre-wrap"}}>{fd.myNotes}</div>}
             {(fd.photos || []).length > 0 && (
-              <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
-                {fd.photos.map((p,i) => (
-                  <div key={i} style={{position:"relative",width:56,height:56,borderRadius:6,overflow:"hidden",border:"1px solid #1a2540"}}>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+                {fd.photos.slice(0,4).map((p,i) => (
+                  <div key={i} style={{position:"relative",width:80,height:80,borderRadius:8,overflow:"hidden",border:"1px solid #1a2540"}}>
                     <img src={p.dataUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
-                    <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{position:"absolute",bottom:1,right:1,padding:"1px 4px",borderRadius:3,background:"rgba(0,0,0,.7)",color:"#ccc",fontSize:7,textDecoration:"none"}}>⬇</a>
                   </div>
                 ))}
+                {fd.photos.length > 4 && <div style={{width:80,height:80,borderRadius:8,background:"#1a2240",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#5a6580",fontWeight:700}}>+{fd.photos.length-4}</div>}
               </div>
             )}
-            {fd.videoUrl && <div style={{fontSize:11,color:"#6a8aB0",marginBottom:8}}>🎬 <a href={fd.videoUrl} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{color:"#6a8aB0"}}>{fd.videoUrl}</a></div>}
             {card.phone && <div style={{fontSize:11,color:"#6a8aB0",marginBottom:4}}>📞 {card.phone}</div>}
             {card.email && <div style={{fontSize:11,color:"#6a8aB0",marginBottom:8}}>✉️ {card.email}</div>}
 
+            {/* Open full detail */}
+            <button onClick={()=>setDetailCard(card)} style={{width:"100%",padding:"10px 0",marginBottom:8,borderRadius:8,background:"rgba(3,155,229,.08)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:12,fontWeight:700,cursor:"pointer"}}>View full detail →</button>
+
             {/* Stage move buttons */}
-            <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:6}}>
+            <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
               {isDeclined && <button onClick={()=>reactivate(card.id)} style={{padding:"6px 14px",borderRadius:6,background:"rgba(255,183,77,.1)",border:"1px solid rgba(255,183,77,.3)",color:"#FFB74D",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>↩ REACTIVATE</button>}
               {STAGES.filter(st => st.id !== card.stage && !(isDeclined && st.id !== "estimate_needed")).map(st => (
                 <button key={st.id} onClick={()=>moveCard(card.id, st.id)} style={{padding:"5px 10px",borderRadius:6,background:st.bg,border:`1px solid ${st.color}30`,color:st.color,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{st.short}</button>
@@ -304,7 +308,7 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
             const count = (cardsByStage[st.id] || []).length;
             return <button key={st.id} onClick={()=>setActiveTab(st.id)} style={{padding:"8px 12px",fontSize:11,fontWeight:activeTab===st.id?700:500,color:activeTab===st.id?st.color:"#4a5a70",borderBottom:activeTab===st.id?`2px solid ${st.color}`:"2px solid transparent",background:"transparent",border:"none",borderBottomStyle:"solid",cursor:"pointer",whiteSpace:"nowrap",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",position:"relative"}}>
               {st.short} {count > 0 && <span style={{fontSize:9,color:st.color,marginLeft:2}}>({count})</span>}
-              {st.id === "stale" && count > 0 && <span style={{position:"absolute",top:4,right:2,width:5,height:5,borderRadius:3,background:"#FF8A65"}}/>}
+              {st.id === "weak" && count > 0 && <span style={{position:"absolute",top:4,right:2,width:5,height:5,borderRadius:3,background:"#FF8A65"}}/>}
             </button>;
           })}
         </div>
@@ -312,12 +316,12 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
         {/* Summary */}
         <div style={{padding:"6px 14px",background:"#0a0c12",borderBottom:"1px solid #1a2030",display:"flex",gap:12,alignItems:"center",flexShrink:0}}>
           <span style={{fontSize:14,fontWeight:600,color:"#f0f4fa"}}>{sorted.length} cards</span>
-          {(cardsByStage.stale || []).length > 0 && <span style={{fontSize:11,color:"#FF8A65",fontWeight:600}}>{cardsByStage.stale.length} stale</span>}
+          {(cardsByStage.weak || []).length > 0 && <span style={{fontSize:11,color:"#FF8A65",fontWeight:600}}>{cardsByStage.weak.length} stale</span>}
         </div>
 
         {/* Follow-up reminder banner */}
         {dueForFollowUp.length > 0 && !selectMode && <div style={{padding:"8px 14px",background:"rgba(246,191,38,.06)",borderBottom:"1px solid rgba(246,191,38,.15)",display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontSize:12,color:"#F6BF26",fontWeight:600,flex:1}}>{dueForFollowUp.length} proposal{dueForFollowUp.length>1?"s":""} sent 2+ days ago — follow up?</span>
+          <span style={{fontSize:12,color:"#F6BF26",fontWeight:600,flex:1}}>{dueForFollowUp.length} card{dueForFollowUp.length>1?"s":""} waiting 2+ days — follow up?</span>
           <button onClick={()=>{setSelectMode(true);const sel={};dueForFollowUp.forEach(c=>{sel[c.id]=true;});setSelected(sel);}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>📧 Select all</button>
         </div>}
 
@@ -376,6 +380,100 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
     <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
       <div className="mts-pipeline-mobile" style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>{mobileView()}</div>
       <div className="mts-pipeline-desktop" style={{display:"none",flex:1,overflow:"hidden"}}>{desktopView()}</div>
+
+      {/* ── FULL DETAIL POPUP ─────────────────────────────────────────── */}
+      {detailCard && (() => {
+        const card = detailCard;
+        const fd = loadFieldData(card.id);
+        const stage = STAGES.find(s => s.id === card.stage);
+        const photos = fd.photos || [];
+        return <div onClick={()=>{setDetailCard(null);setDetailPhoto(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",backdropFilter:"blur(8px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"#0d1018",border:"1px solid #1a2030",borderRadius:16,width:"100%",maxWidth:720,maxHeight:"92vh",overflowY:"auto",position:"relative"}}>
+
+            {/* Close button */}
+            <button onClick={()=>{setDetailCard(null);setDetailPhoto(null);}} style={{position:"sticky",top:10,float:"right",margin:"10px 10px 0 0",width:36,height:36,borderRadius:10,background:"#1a2240",border:"1px solid #2a3560",color:"#90a8c0",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",zIndex:5}}>✕</button>
+
+            {/* Header */}
+            <div style={{padding:"20px 24px 14px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                <span style={{padding:"3px 10px",borderRadius:99,background:stage?.bg,color:stage?.color,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",fontSize:11}}>{stage?.label}</span>
+                {card.hot && <span style={{fontSize:14}}>🔥</span>}
+                <span style={{fontSize:11,color:"#4a5a70"}}>{daysSince(card.stageChangedAt || card.addedAt)}</span>
+              </div>
+              <div style={{fontSize:24,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:2}}>{card.cn}</div>
+              {card.addr && <div style={{fontSize:14,color:"#8a96a8",marginTop:4,fontFamily:F,letterSpacing:0.5}}>{card.addr}</div>}
+              {card.jn && <div style={{fontSize:12,color:"#4a5a70",marginTop:4}}>Job #{card.jn}</div>}
+            </div>
+
+            {/* Contact */}
+            {(card.phone || card.email) && <div style={{padding:"0 24px 14px",display:"flex",gap:12,flexWrap:"wrap"}}>
+              {card.phone && <a href={`tel:${card.phone.replace(/\D/g,"")}`} style={{padding:"8px 16px",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#a0b8d0",fontSize:13,fontWeight:600,textDecoration:"none"}}>📞 {card.phone}</a>}
+              {card.email && <a href={`mailto:${card.email}`} style={{padding:"8px 16px",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#a0b8d0",fontSize:13,fontWeight:600,textDecoration:"none"}}>✉️ {card.email}</a>}
+            </div>}
+
+            {/* Constraint + title context */}
+            {card.constraint && <div style={{margin:"0 24px 10px",padding:"8px 14px",borderRadius:8,background:"rgba(200,90,158,.08)",border:"1px solid rgba(200,90,158,.15)",color:"#e880b0",fontSize:13,fontWeight:700}}>{card.constraint}</div>}
+            {card.titleContext && <div style={{margin:"0 24px 10px",fontSize:13,color:"#a0a8b8",lineHeight:1.6,fontStyle:"italic"}}>{card.titleContext}</div>}
+
+            {/* Office notes */}
+            {card.notes && <div style={{padding:"14px 24px",borderTop:"1px solid #1a2030"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>OFFICE NOTES</div>
+              <div style={{fontSize:14,color:"#a0b0c0",lineHeight:1.7}}>{card.notes}</div>
+            </div>}
+
+            {/* Field notes */}
+            {fd.myNotes && <div style={{padding:"14px 24px",borderTop:"1px solid #1a2030"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>FIELD NOTES</div>
+              <div style={{fontSize:14,color:"#c0d0e0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{fd.myNotes}</div>
+            </div>}
+
+            {/* Audio clips */}
+            {(fd.audioClips || []).length > 0 && <div style={{padding:"14px 24px",borderTop:"1px solid #1a2030"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>VOICE MEMOS ({fd.audioClips.length})</div>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {fd.audioClips.map((clip, i) => (
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:"#0e1525",border:"1px solid #1a2540"}}>
+                    <button onClick={()=>{const a=new Audio(clip.dataUrl);a.play();}} style={{width:32,height:32,borderRadius:16,background:"rgba(3,155,229,.1)",border:"none",color:"#039BE5",fontSize:14,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>▶</button>
+                    <span style={{fontSize:12,color:"#6a7a90"}}>Voice memo {i+1}{clip.duration ? ` · ${Math.floor(clip.duration/60)}:${String(clip.duration%60).padStart(2,"0")}` : ""}</span>
+                  </div>
+                ))}
+              </div>
+            </div>}
+
+            {/* Photos — LARGE */}
+            {photos.length > 0 && <div style={{padding:"14px 24px",borderTop:"1px solid #1a2030"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>PHOTOS ({photos.length})</div>
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {photos.map((p, i) => (
+                  <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",cursor:"pointer"}} onClick={()=>setDetailPhoto(detailPhoto===i?null:i)}>
+                    <img src={p.dataUrl} alt="" style={{width:"100%",display:"block",borderRadius:10}} />
+                    <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{position:"absolute",top:8,right:8,padding:"6px 12px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#fff",fontSize:11,fontWeight:700,textDecoration:"none"}}>⬇ Download</a>
+                  </div>
+                ))}
+              </div>
+            </div>}
+
+            {/* Video */}
+            {fd.videoUrl && <div style={{padding:"14px 24px",borderTop:"1px solid #1a2030"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>VIDEO</div>
+              <a href={fd.videoUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:13,color:"#6a8aB0",wordBreak:"break-all"}}>{fd.videoUrl}</a>
+            </div>}
+
+            {/* AI Summary */}
+            {fd.aiSummary && <div style={{padding:"14px 24px",borderTop:"1px solid #1a2030"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>✨ AI SUMMARY</div>
+              <div style={{fontSize:14,color:"#c0d0e0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{fd.aiSummary}</div>
+            </div>}
+
+            {/* Stage move buttons */}
+            <div style={{padding:"16px 24px 24px",borderTop:"1px solid #1a2030",display:"flex",gap:6,flexWrap:"wrap"}}>
+              {STAGES.filter(st => st.id !== card.stage).map(st => (
+                <button key={st.id} onClick={()=>{moveCard(card.id, st.id);setDetailCard({...card,stage:st.id});}} style={{padding:"8px 16px",borderRadius:8,background:st.bg,border:`1px solid ${st.color}40`,color:st.color,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{st.label}</button>
+              ))}
+            </div>
+          </div>
+        </div>;
+      })()}
 
       {/* ── EMAIL TEMPLATE SHEET ──────────────────────────────────────── */}
       {emailSheet && <div onClick={()=>{setEmailSheet(false);setEmailPreview(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:emailPreview?"center":"flex-end",justifyContent:"center",padding:emailPreview?20:0}}>
