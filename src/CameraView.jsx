@@ -14,9 +14,6 @@ export default function CameraView({ onPhoto, onClose }) {
   const [ready, setReady] = useState(false);
   const [count, setCount] = useState(0);
   const [flash, setFlash] = useState(false);
-  const [zoom, setZoom] = useState(1);
-  const [zoomRange, setZoomRange] = useState({ min: 1, max: 1, step: 0.1 });
-  const [zoomSupported, setZoomSupported] = useState(false);
 
   // Start camera
   useEffect(() => {
@@ -34,20 +31,6 @@ export default function CameraView({ onPhoto, onClose }) {
           videoRef.current.play();
           setReady(true);
         }
-
-        // Detect zoom support via MediaStreamTrack capabilities
-        const track = stream.getVideoTracks()[0];
-        if (track) {
-          const caps = track.getCapabilities?.();
-          if (caps?.zoom) {
-            setZoomRange({
-              min: caps.zoom.min ?? 1,
-              max: caps.zoom.max ?? 1,
-              step: caps.zoom.step ?? 0.1,
-            });
-            setZoomSupported(true);
-          }
-        }
       } catch(e) {
         console.warn("Camera failed:", e);
         onClose();
@@ -59,33 +42,16 @@ export default function CameraView({ onPhoto, onClose }) {
     };
   }, []);
 
-  // Apply zoom via MediaStreamTrack constraints
-  const applyZoom = useCallback(async (val) => {
-    setZoom(val);
-    const track = streamRef.current?.getVideoTracks()[0];
-    if (track && zoomSupported) {
-      try {
-        await track.applyConstraints({ advanced: [{ zoom: val }] });
-      } catch(e) {
-        console.warn("Zoom constraint failed:", e);
-      }
-    }
-  }, [zoomSupported]);
-
-  // Capture — MAX 2400, quality 0.82
+  // Capture
   const capture = useCallback(() => {
     const video = videoRef.current;
     if (!video || !canvasRef.current) return;
     const canvas = canvasRef.current;
-    const MAX = 2400;
-    let w = video.videoWidth, h = video.videoHeight;
-    if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
-    if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
-    canvas.width = w;
-    canvas.height = h;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
     const ctx = canvas.getContext("2d");
-    ctx.drawImage(video, 0, 0, w, h);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+    ctx.drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
     onPhoto(dataUrl);
     setCount(c => c + 1);
     // Flash effect
@@ -113,31 +79,7 @@ export default function CameraView({ onPhoto, onClose }) {
         {count > 0 && <div style={{position:"absolute",top:16,right:16,padding:"4px 12px",borderRadius:99,background:"rgba(51,182,121,.9)",color:"#fff",fontSize:14,fontWeight:700}}>
           {count} 📷
         </div>}
-
-        {/* Zoom level overlay */}
-        {zoomSupported && zoom !== 1 && (
-          <div style={{position:"absolute",top:16,left:16,padding:"4px 10px",borderRadius:99,background:"rgba(0,0,0,.55)",color:"#fff",fontSize:13,fontWeight:700,letterSpacing:0.5}}>
-            {zoom.toFixed(1)}×
-          </div>
-        )}
       </div>
-
-      {/* Zoom slider — only rendered when hardware zoom is available */}
-      {zoomSupported && (
-        <div style={{background:"#000",padding:"8px 24px 4px",display:"flex",alignItems:"center",gap:12}}>
-          <span style={{color:"rgba(255,255,255,.4)",fontSize:11,fontWeight:600,minWidth:16}}>1×</span>
-          <input
-            type="range"
-            min={zoomRange.min}
-            max={zoomRange.max}
-            step={zoomRange.step}
-            value={zoom}
-            onChange={e => applyZoom(parseFloat(e.target.value))}
-            style={{flex:1,accentColor:"#fff",height:4,cursor:"pointer"}}
-          />
-          <span style={{color:"rgba(255,255,255,.4)",fontSize:11,fontWeight:600,minWidth:28}}>{zoomRange.max.toFixed(0)}×</span>
-        </div>
-      )}
 
       {/* Controls */}
       <div style={{padding:"16px 0",paddingBottom:"max(16px, env(safe-area-inset-bottom))",background:"#000",display:"flex",alignItems:"center",justifyContent:"center",gap:40}}>

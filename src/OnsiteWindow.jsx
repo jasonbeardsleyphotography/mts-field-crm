@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import PhotoMarkup from "./PhotoMarkup";
 import CameraView from "./CameraView";
+import { saveFieldToDrive, loadFieldFromDrive } from "./driveSync";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
@@ -16,7 +17,7 @@ const FIELD_KEY = id => `mts-field-${id}`;
 function loadFieldData(id) { try { return JSON.parse(localStorage.getItem(FIELD_KEY(id))) || {}; } catch(e) { return {}; } }
 function saveFieldData(id, data) { try { localStorage.setItem(FIELD_KEY(id), JSON.stringify(data)); } catch(e) {} }
 
-export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
+export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token }) {
   const s = stop;
   const fd = loadFieldData(s.id);
   // Backward compat: migrate old myNotes/photos to scope
@@ -26,6 +27,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
   const [addonPhotos, setAddonPhotos] = useState(fd.addonPhotos || []);
   const [videoUrl, setVideoUrl] = useState(fd.videoUrl || "");
   const [audioClips, setAudioClips] = useState(fd.audioClips || []);
+  const [cloudLoading, setCloudLoading] = useState(false);
   const [markupIdx, setMarkupIdx] = useState(null);
   const [markupSection, setMarkupSection] = useState("scope"); // which photo array to edit
   const [showCamera, setShowCamera] = useState(false);
@@ -41,6 +43,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
   const [aiScopeLoading, setAiScopeLoading] = useState(false);
   const [aiAddonLoading, setAiAddonLoading] = useState(false);
   const [declineConfirm, setDeclineConfirm] = useState(false);
+  const [jobNotesOpen, setJobNotesOpen] = useState(false);
   const [swipeX, setSwipeX] = useState(0);
   const [swiping, setSwiping] = useState(false);
   const swipeStartX = useRef(0);
@@ -54,10 +57,41 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
   const audioElRef = useRef(null);
   const notesRef = useRef(null);
 
-  // Auto-save on every change
+  // Auto-save on every change — local + Drive
   useEffect(() => {
-    saveFieldData(s.id, { scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrl, audioClips, aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult });
+    const data = { scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrl, audioClips, aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult };
+    saveFieldData(s.id, data);
+    // Sync to Drive (debounced via timer)
+    if (token) {
+      if (window._fieldSyncTimer) clearTimeout(window._fieldSyncTimer);
+      window._fieldSyncTimer = setTimeout(() => {
+        saveFieldToDrive(token, s.id, data).catch(() => {});
+      }, 3000);
+    }
   }, [scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrl, audioClips, aiScopeResult, aiAddonResult, s.id]);
+
+  // If localStorage is empty (desktop), pull from Drive
+  useEffect(() => {
+    const hasLocal = !!(fd.scopeNotes || fd.myNotes || fd.addonNotes || (fd.scopePhotos || fd.photos || []).length);
+    if (!hasLocal && token) {
+      setCloudLoading(true);
+      loadFieldFromDrive(token, s.id).then(cloud => {
+        if (cloud) {
+          if (cloud.scopeNotes || cloud.myNotes) setScopeNotes(cloud.scopeNotes || cloud.myNotes || "");
+          if (cloud.addonNotes) setAddonNotes(cloud.addonNotes);
+          if (cloud.scopePhotos || cloud.photos) setScopePhotos(cloud.scopePhotos || cloud.photos || []);
+          if (cloud.addonPhotos) setAddonPhotos(cloud.addonPhotos);
+          if (cloud.videoUrl) setVideoUrl(cloud.videoUrl);
+          if (cloud.audioClips) setAudioClips(cloud.audioClips);
+          if (cloud.aiScopeSummary) setAiScopeResult(cloud.aiScopeSummary);
+          if (cloud.aiAddonEmail) setAiAddonResult(cloud.aiAddonEmail);
+          // Save to local for next time
+          saveFieldData(s.id, cloud);
+        }
+        setCloudLoading(false);
+      }).catch(() => setCloudLoading(false));
+    }
+  }, [s.id, token]);
 
   // ── PHOTO HANDLING ──────────────────────────────────────────────────
   const processPhoto = (file, section = "scope") => {
@@ -68,8 +102,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
       img.onload = () => {
         const MAX = 2400;
         let w = img.width, h = img.height;
-        if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
-        if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
+        if (w > MAX) { h = h * MAX / w; w = MAX; }
+        if (h > MAX) { w = w * MAX / h; h = MAX; }
         const c = document.createElement("canvas");
         c.width = w; c.height = h;
         c.getContext("2d").drawImage(img, 0, 0, w, h);
@@ -183,55 +217,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
     return data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response.";
   };
 
-  // ── GEMINI TTS ──────────────────────────────────────────────────────
-  const ttsAudioRef = useRef(null);
-  const speakText = async (text) => {
-    if (!GEMINI_KEY) { console.warn("speakText: VITE_GEMINI_KEY not set"); return; }
-    if (!text?.trim()) return;
-    try {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${GEMINI_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text }] }],
-            generationConfig: {
-              responseModalities: ["AUDIO"],
-              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } } },
-            },
-          }),
-        }
-      );
-      const data = await res.json();
-      const b64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (!b64) { console.warn("speakText: no audio returned", data); return; }
-      // Stop any currently playing TTS
-      if (ttsAudioRef.current) { ttsAudioRef.current.pause(); ttsAudioRef.current = null; }
-      // Wrap raw L16/24kHz PCM in a WAV envelope and play
-      const pcm = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-      const sampleRate = 24000, numChannels = 1, bitsPerSample = 16;
-      const byteRate = sampleRate * numChannels * bitsPerSample / 8;
-      const blockAlign = numChannels * bitsPerSample / 8;
-      const hdr = new ArrayBuffer(44);
-      const dv = new DataView(hdr);
-      const ws = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
-      ws(0, "RIFF"); dv.setUint32(4, 36 + pcm.byteLength, true);
-      ws(8, "WAVE"); ws(12, "fmt "); dv.setUint32(16, 16, true);
-      dv.setUint16(20, 1, true); dv.setUint16(22, numChannels, true);
-      dv.setUint32(24, sampleRate, true); dv.setUint32(28, byteRate, true);
-      dv.setUint16(32, blockAlign, true); dv.setUint16(34, bitsPerSample, true);
-      ws(36, "data"); dv.setUint32(40, pcm.byteLength, true);
-      const url = URL.createObjectURL(new Blob([hdr, pcm], { type: "audio/wav" }));
-      const audio = new Audio(url);
-      audio.onended = () => { URL.revokeObjectURL(url); ttsAudioRef.current = null; };
-      ttsAudioRef.current = audio;
-      await audio.play();
-    } catch(e) {
-      console.warn("speakText error:", e);
-    }
-  };
-
   const generateScopeSummary = async () => {
     if (!GEMINI_KEY) { setAiScopeResult("Add VITE_GEMINI_KEY to .env"); return; }
     setAiScopeLoading(true);
@@ -252,7 +237,15 @@ Constraints: ${s.constraint || "None"}`);
     if (!GEMINI_KEY) { setAiAddonResult("Add VITE_GEMINI_KEY to .env"); return; }
     setAiAddonLoading(true);
     try {
-      const text = await callGemini(`You are an ISA-certified arborist writing a professional but warm email to a homeowner. Based on these additional findings discovered during a site visit, compose a brief email explaining each issue, why it matters, and what you recommend. Keep it friendly and non-alarming. Sign as Jason from Monster Tree Service of Rochester.
+      const text = await callGemini(`You are an ISA-certified arborist writing a professional, educational email to a homeowner. Based on these additional findings discovered during a site visit:
+
+1. For each issue found, write a brief educational paragraph explaining what it is, why it matters for tree/plant health, and what treatments or recommendations exist.
+2. Reference science-based information — cite Cornell Cooperative Extension, Northeast university extension resources, or ISA best practices where relevant. Use phrases like "According to Cornell Extension research..." or "ISA best management practices recommend..."
+3. NEVER use the word "chemical" — instead use "treatments," "applications," "plant healthcare solutions," or "recommendations."
+4. Tone should be educational but down-to-earth — like a knowledgeable neighbor explaining things, not a textbook.
+5. Keep it warm and professional. Do not be alarming.
+6. End with a brief recommendation and offer to discuss further.
+7. Sign as Jason from Monster Tree Service of Rochester.
 
 Client first name: ${(s.cn || "").split(" ")[0]}
 Add-on findings: ${addonNotes || "None"}
@@ -351,10 +344,14 @@ Property: ${s.addr || ""}`);
       <div onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
         style={{flex:1,overflowY:"auto",paddingBottom:"max(80px,calc(70px + env(safe-area-inset-bottom)))",transform:`translateX(${swipeX}px)`,transition:swiping?"none":"transform .25s"}}>
 
-        {/* Swipe-to-pipeline hint */}
+        {cloudLoading && <div style={{padding:"12px 16px",background:"rgba(3,155,229,.06)",borderBottom:"1px solid rgba(3,155,229,.1)",fontSize:12,color:"#5a8ab0",display:"flex",gap:8,alignItems:"center"}}>
+          <span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>⟳</span> Loading from cloud...
+          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+        </div>}
+
         {swipeX < -30 && <div style={{position:"fixed",top:"50%",right:12,transform:"translateY(-50%)",padding:"10px 14px",borderRadius:10,background:"rgba(51,182,121,.15)",border:"1px solid rgba(51,182,121,.3)",color:"#33B679",fontSize:12,fontWeight:800,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",opacity:Math.min(Math.abs(swipeX)/120,1),zIndex:102}}>→ PIPELINE</div>}
 
-        {/* Address + meta */}
+        {/* Address + contact */}
         <div style={{padding:"10px 16px",background:"#0d1018",borderBottom:"1px solid #1a2030"}}>
           <div style={{fontSize:12,color:"#96a2b4",fontFamily:F,textTransform:"uppercase",letterSpacing:1}}>{s.addr}</div>
           <div style={{fontSize:11,color:"#4a5a70",marginTop:2}}>
@@ -362,20 +359,31 @@ Property: ${s.addr || ""}`);
             {s.jn && <span>#{s.jn}</span>}
             {s.constraint && <span style={{marginLeft:8,color:"#FF80AB"}}>{s.constraint}</span>}
           </div>
+          <div style={{display:"flex",gap:12,marginTop:6,flexWrap:"wrap"}}>
+            {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none"}}>📞 {s.phone}</a>}
+            {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none"}}>✉️ {s.email}</a>}
+          </div>
         </div>
 
-        {/* ── JOB NOTES (read-only from SingleOps) ──────────────────── */}
+        {/* ── JOB NOTES (collapsible) ────────────────────────────────── */}
         {s.notes && (
-          <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
-            <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5,display:"flex",alignItems:"center",gap:5}}>JOB NOTES <span style={{fontSize:8,color:"#3a4a60"}}>🔒</span></div>
-            <div style={{fontSize:13,color:"#8898a8",lineHeight:1.6}}>{s.notes}</div>
+          <div style={{borderBottom:"1px solid #1a2030"}}>
+            <button onClick={()=>setJobNotesOpen(!jobNotesOpen)} style={{width:"100%",padding:"10px 16px",background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
+              <span style={{transform:jobNotesOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7,color:"#4a5a70"}}>▶</span>
+              <span style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F}}>JOB NOTES</span>
+              <span style={{fontSize:8,color:"#3a4a60"}}>🔒</span>
+            </button>
+            {jobNotesOpen && <div style={{padding:"0 16px 12px",fontSize:13,color:"#8898a8",lineHeight:1.6}}>{s.notes}</div>}
           </div>
         )}
 
         {/* ── SCOPE ────────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
-          <div style={{fontSize:11,fontWeight:700,color:"#039BE5",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>SCOPE</div>
-          <textarea value={scopeNotes} onChange={e => setScopeNotes(e.target.value)} placeholder="Equipment, treatments, what you're quoting..." rows={4}
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#039BE5",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,flex:1}}>SCOPE</div>
+            <button onClick={()=>setScopeNotes(scopeNotes.toUpperCase())} style={{padding:"3px 8px",borderRadius:4,background:"rgba(3,155,229,.06)",border:"1px solid rgba(3,155,229,.15)",color:"#039BE5",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F}}>AA</button>
+          </div>
+          <textarea value={scopeNotes} onChange={e => setScopeNotes(e.target.value)} placeholder="Equipment, treatments, what you're quoting..." rows={6}
             style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1525",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}} />
 
           {/* Scope AI */}
@@ -407,7 +415,10 @@ Property: ${s.addr || ""}`);
 
         {/* ── ADD-ON ──────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
-          <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>ADD-ON</div>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,flex:1}}>ADD-ON</div>
+            <button onClick={()=>setAddonNotes(addonNotes.toUpperCase())} style={{padding:"3px 8px",borderRadius:4,background:"rgba(255,138,101,.06)",border:"1px solid rgba(255,138,101,.15)",color:"#FF8A65",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F}}>AA</button>
+          </div>
           <textarea value={addonNotes} onChange={e => setAddonNotes(e.target.value)} placeholder="Additional findings — box tree moth, dead limb over driveway, etc..." rows={3}
             style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1525",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}} />
 

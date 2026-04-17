@@ -399,7 +399,7 @@ export default function App() {
   }, []);
 
   if (!token) return (
-    <div style={{height:"100dvh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0a0c12",fontFamily:"'Oswald','DM Sans',system-ui,sans-serif",color:"#f0f4fa",padding:20}}>
+    <div style={{height:"100dvh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0a0c12",fontFamily:"'Oswald','DM Sans',system-ui,sans-serif",color:"#f0f4fa",padding:20,paddingTop:"max(20px,env(safe-area-inset-top))",boxSizing:"border-box"}}>
       <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=DM+Sans:wght@500;700;800&display=swap" rel="stylesheet"/>
       <div style={{fontSize:28,fontWeight:900,letterSpacing:3,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif"}}>MTS FIELD SALES</div>
       <div style={{fontSize:12,color:"#5a6580",marginBottom:32,fontWeight:500,letterSpacing:1}}>Monster Tree Service of Rochester</div>
@@ -416,7 +416,7 @@ export default function App() {
 
   // ═════════════════════════════════════════════════════════════════════════
   return (
-    <div style={{height:"100dvh",width:"100%",background:"#0a0c12",display:"flex",flexDirection:"column",fontFamily:"'DM Sans',system-ui,sans-serif",color:"#f0f4fa",overflow:"hidden"}}>
+    <div style={{height:"100dvh",width:"100%",background:"#0a0c12",display:"flex",flexDirection:"column",fontFamily:"'DM Sans',system-ui,sans-serif",color:"#f0f4fa",overflow:"hidden",paddingTop:"env(safe-area-inset-top)",boxSizing:"border-box"}}>
       <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
       <style>{`
 .scr::-webkit-scrollbar{width:0}
@@ -635,6 +635,7 @@ export default function App() {
       {/* ── ONSITE WINDOW ──────────────────────────────────────────── */}
       {onsiteStop && <OnsiteWindow
         stop={onsiteStop}
+        token={token}
         onBack={() => setOnsiteStop(null)}
         onDone={() => markDone(onsiteStop.id)}
         onDecline={() => { decline(onsiteStop.id); setOnsiteStop(null); }}

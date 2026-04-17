@@ -98,12 +98,8 @@ export async function saveFieldToDrive(token, eventId, fieldData) {
   try {
     const rootId = await findOrCreateFolder(token, FOLDER_NAME);
     const fid = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
-    // Strip photo dataUrls (too large for JSON); photos synced separately if needed
-    const clean = { ...fieldData };
-    delete clean.scopePhotos;
-    delete clean.addonPhotos;
-    delete clean.photos;
-    await saveJson(token, `${eventId}.json`, fid, clean);
+    // Include full field data including photos as base64
+    await saveJson(token, `${eventId}.json`, fieldData);
   } catch(e) {
     console.warn("Drive field save failed:", e);
   }
