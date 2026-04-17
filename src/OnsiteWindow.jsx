@@ -66,14 +66,14 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
-        const MAX = 1600;
+        const MAX = 2400;
         let w = img.width, h = img.height;
-        if (w > MAX) { h = h * MAX / w; w = MAX; }
-        if (h > MAX) { w = w * MAX / h; h = MAX; }
+        if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
+        if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
         const c = document.createElement("canvas");
         c.width = w; c.height = h;
         c.getContext("2d").drawImage(img, 0, 0, w, h);
-        const photo = { dataUrl: c.toDataURL("image/jpeg", 0.80), ts: Date.now() };
+        const photo = { dataUrl: c.toDataURL("image/jpeg", 0.82), ts: Date.now() };
         if (section === "addon") setAddonPhotos(prev => [...prev, photo]);
         else setScopePhotos(prev => [...prev, photo]);
       };
@@ -181,6 +181,55 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
     });
     const data = await res.json();
     return data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response.";
+  };
+
+  // ── GEMINI TTS ──────────────────────────────────────────────────────
+  const ttsAudioRef = useRef(null);
+  const speakText = async (text) => {
+    if (!GEMINI_KEY) { console.warn("speakText: VITE_GEMINI_KEY not set"); return; }
+    if (!text?.trim()) return;
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${GEMINI_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text }] }],
+            generationConfig: {
+              responseModalities: ["AUDIO"],
+              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } } },
+            },
+          }),
+        }
+      );
+      const data = await res.json();
+      const b64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (!b64) { console.warn("speakText: no audio returned", data); return; }
+      // Stop any currently playing TTS
+      if (ttsAudioRef.current) { ttsAudioRef.current.pause(); ttsAudioRef.current = null; }
+      // Wrap raw L16/24kHz PCM in a WAV envelope and play
+      const pcm = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      const sampleRate = 24000, numChannels = 1, bitsPerSample = 16;
+      const byteRate = sampleRate * numChannels * bitsPerSample / 8;
+      const blockAlign = numChannels * bitsPerSample / 8;
+      const hdr = new ArrayBuffer(44);
+      const dv = new DataView(hdr);
+      const ws = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+      ws(0, "RIFF"); dv.setUint32(4, 36 + pcm.byteLength, true);
+      ws(8, "WAVE"); ws(12, "fmt "); dv.setUint32(16, 16, true);
+      dv.setUint16(20, 1, true); dv.setUint16(22, numChannels, true);
+      dv.setUint32(24, sampleRate, true); dv.setUint32(28, byteRate, true);
+      dv.setUint16(32, blockAlign, true); dv.setUint16(34, bitsPerSample, true);
+      ws(36, "data"); dv.setUint32(40, pcm.byteLength, true);
+      const url = URL.createObjectURL(new Blob([hdr, pcm], { type: "audio/wav" }));
+      const audio = new Audio(url);
+      audio.onended = () => { URL.revokeObjectURL(url); ttsAudioRef.current = null; };
+      ttsAudioRef.current = audio;
+      await audio.play();
+    } catch(e) {
+      console.warn("speakText error:", e);
+    }
   };
 
   const generateScopeSummary = async () => {
