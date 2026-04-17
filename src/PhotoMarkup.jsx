@@ -142,7 +142,8 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
   const [imgLoaded, setImgLoaded] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0, scale: 1 });
   const [arrowPreview, setArrowPreview] = useState(null);
-  const [arrowMode, setArrowMode] = useState(false); // default: freehand lines
+  const [arrowMode, setArrowMode] = useState(false);
+  const [eraserMode, setEraserMode] = useState(false);
 
   // Load image
   useEffect(() => {
@@ -199,8 +200,39 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
     return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
   };
 
+  // Distance from point to line segment
+  const distToSegment = (px, py, x1, y1, x2, y2) => {
+    const dx = x2 - x1, dy = y2 - y1;
+    const len2 = dx * dx + dy * dy;
+    if (len2 === 0) return Math.hypot(px - x1, py - y1);
+    let t = ((px - x1) * dx + (py - y1) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+  };
+
+  const eraseAtPoint = (pos) => {
+    const HIT = 15; // pixel tolerance
+    for (let i = strokes.length - 1; i >= 0; i--) {
+      const s = strokes[i];
+      if (s.type === "arrow") {
+        if (distToSegment(pos.x, pos.y, s.start.x, s.start.y, s.end.x, s.end.y) < HIT) {
+          setStrokes(prev => prev.filter((_, j) => j !== i));
+          return;
+        }
+      } else if (s.points) {
+        for (let k = 0; k < s.points.length - 1; k++) {
+          if (distToSegment(pos.x, pos.y, s.points[k].x, s.points[k].y, s.points[k+1].x, s.points[k+1].y) < HIT) {
+            setStrokes(prev => prev.filter((_, j) => j !== i));
+            return;
+          }
+        }
+      }
+    }
+  };
+
   const startDraw = (e) => {
     e.preventDefault();
+    if (eraserMode) { eraseAtPoint(getPos(e)); return; }
     setDrawing(true);
     setArrowPreview(null);
     setCurrentStroke({ type: "freehand", points: [getPos(e)], color, size: brushSize });
@@ -295,7 +327,8 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
       }}>
         <button onClick={onCancel} style={{padding:"6px 14px",borderRadius:8,background:"transparent",border:"1px solid #3a3a3a",color:"#aaa",fontSize:13,fontWeight:600,cursor:"pointer"}}>Cancel</button>
         <div style={{flex:1}}/>
-        <button onClick={()=>setArrowMode(!arrowMode)} style={{padding:"6px 14px",borderRadius:8,background:arrowMode?"rgba(0,122,255,.2)":"transparent",border:`1px solid ${arrowMode?"#007AFF":"#3a3a3a"}`,color:arrowMode?"#007AFF":"#aaa",fontSize:13,fontWeight:600,cursor:"pointer"}}>→ Arrow</button>
+        <button onClick={()=>{setArrowMode(!arrowMode);if(!arrowMode)setEraserMode(false);}} style={{padding:"6px 14px",borderRadius:8,background:arrowMode?"rgba(0,122,255,.2)":"transparent",border:`1px solid ${arrowMode?"#007AFF":"#3a3a3a"}`,color:arrowMode?"#007AFF":"#aaa",fontSize:13,fontWeight:600,cursor:"pointer"}}>→ Arrow</button>
+        <button onClick={()=>{setEraserMode(!eraserMode);if(!eraserMode)setArrowMode(false);}} style={{padding:"6px 14px",borderRadius:8,background:eraserMode?"rgba(255,100,100,.2)":"transparent",border:`1px solid ${eraserMode?"#ff6b6b":"#3a3a3a"}`,color:eraserMode?"#ff6b6b":"#aaa",fontSize:13,fontWeight:600,cursor:"pointer"}}>⌫ Eraser</button>
         <button onClick={undo} disabled={!strokes.length} style={{padding:"6px 14px",borderRadius:8,background:"transparent",border:"1px solid #3a3a3a",color:strokes.length?"#fff":"#3a3a3a",fontSize:13,fontWeight:600,cursor:"pointer"}}>↩ Undo</button>
         <button onClick={clearAll} disabled={!strokes.length} style={{padding:"6px 14px",borderRadius:8,background:"transparent",border:"1px solid #3a3a3a",color:strokes.length?"#ff6b6b":"#3a3a3a",fontSize:13,fontWeight:600,cursor:"pointer"}}>Clear</button>
         <button onClick={handleSave} style={{padding:"6px 14px",borderRadius:8,background:"#007AFF",border:"none",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}}>Done</button>

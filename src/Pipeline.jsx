@@ -41,7 +41,7 @@ function loadFieldData(id) { try { return JSON.parse(localStorage.getItem(FIELD_
 const F = "'Oswald',sans-serif";
 
 // ═════════════════════════════════════════════════════════════════════════════
-export default function Pipeline({ onSwitchToRoute, search = "" }) {
+export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) {
   const [pipeline, setPipeline] = useState(() => loadPipeline());
   const [activeTab, setActiveTab] = useState("all");
   const [selectedCard, setSelectedCard] = useState(null);
@@ -55,6 +55,7 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
 
   // Persist
   useEffect(() => { savePipeline(pipeline); }, [pipeline]);
+  useEffect(() => { if (onCloudSync) onCloudSync(); }, [pipeline]);
 
   // ── AUTO-AGING ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -131,6 +132,11 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
     setPipeline(prev => ({ ...prev, [id]: { ...prev[id], hot: !prev[id]?.hot } }));
   }, []);
 
+  // Toggle revision flag
+  const toggleRevision = useCallback((id) => {
+    setPipeline(prev => ({ ...prev, [id]: { ...prev[id], revision: !prev[id]?.revision } }));
+  }, []);
+
   // Pause for N days
   const pauseFor = useCallback((id, days) => {
     setPipeline(prev => ({ ...prev, [id]: { ...prev[id], pauseUntil: Date.now() + days * 24 * 60 * 60 * 1000 } }));
@@ -190,8 +196,8 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
     if (!searchFilter(card)) return null;
     const stage = STAGES.find(s => s.id === card.stage);
     const fd = loadFieldData(card.id);
-    const photoCount = (fd.photos || []).length;
-    const hasNotes = !!(fd.myNotes);
+    const photoCount = (fd.scopePhotos || fd.photos || []).length + (fd.addonPhotos || []).length;
+    const hasNotes = !!(fd.scopeNotes || fd.myNotes || fd.addonNotes);
     const hasVideo = !!(fd.videoUrl);
     const isSelected = !!selected[card.id];
     const isDeclined = card.stage === "declined";
@@ -221,6 +227,7 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:compact?14:15,fontWeight:600,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
               {card.hot && <span style={{color:"#FFB300",marginRight:4}}>🔥</span>}
+              {card.revision && <span style={{color:"#FF6B9D",marginRight:4}}>🔄</span>}
               {card.pauseUntil && Date.now() < card.pauseUntil && <span style={{color:"#8a96a8",marginRight:4}}>⏸</span>}
               {card.cn}
             </div>
@@ -250,6 +257,7 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
             </div>}
           </div>
           <button onClick={e=>{e.stopPropagation();toggleHot(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:card.hot?"rgba(255,179,0,.12)":"transparent",border:card.hot?"1px solid rgba(255,179,0,.3)":"1px solid #1a2030",color:card.hot?"#FFB300":"#2a3050",fontSize:10,cursor:"pointer"}}>🔥</button>
+          <button onClick={e=>{e.stopPropagation();toggleRevision(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:card.revision?"rgba(255,107,157,.12)":"transparent",border:card.revision?"1px solid rgba(255,107,157,.3)":"1px solid #1a2030",color:card.revision?"#FF6B9D":"#2a3050",fontSize:10,cursor:"pointer"}}>🔄</button>
         </div>}
       </div>
     );
@@ -288,7 +296,7 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
 
         {/* Follow-up reminder banner */}
         {dueForFollowUp.length > 0 && !selectMode && <div style={{padding:"8px 14px",background:"rgba(246,191,38,.06)",borderBottom:"1px solid rgba(246,191,38,.15)",display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontSize:12,color:"#F6BF26",fontWeight:600,flex:1}}>{dueForFollowUp.length} proposal{dueForFollowUp.length>1?"s":""} sent 2+ days ago — follow up?</span>
+          <span style={{fontSize:12,color:"#F6BF26",fontWeight:600,flex:1}}>{dueForFollowUp.length} card{dueForFollowUp.length>1?"s":""} waiting 2+ days — follow up?</span>
           <button onClick={()=>{setSelectMode(true);const sel={};dueForFollowUp.forEach(c=>{sel[c.id]=true;});setSelected(sel);}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>📧 Select all</button>
         </div>}
 
@@ -382,26 +390,49 @@ export default function Pipeline({ onSwitchToRoute, search = "" }) {
                 <div style={{fontSize:14,color:"#8898a8",lineHeight:1.6,fontStyle:"italic"}}>{card.notes}</div>
               </div>}
 
-              {/* My notes */}
-              {fd.myNotes && <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>MY NOTES</div>
-                <div style={{fontSize:14,color:"#b0b8c8",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{fd.myNotes}</div>
+              {/* Scope section */}
+              {(fd.scopeNotes || fd.myNotes) && <div style={{marginBottom:16}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#039BE5",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>SCOPE</div>
+                <div style={{fontSize:14,color:"#b0b8c8",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{fd.scopeNotes || fd.myNotes}</div>
               </div>}
 
-              {/* AI Summary */}
-              {fd.aiSummary && <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>AI SUMMARY</div>
-                <div style={{fontSize:14,color:"#a0b0c8",lineHeight:1.6,whiteSpace:"pre-wrap",padding:12,borderRadius:10,background:"rgba(127,119,221,.06)",border:"1px solid rgba(127,119,221,.12)"}}>{fd.aiSummary}</div>
+              {fd.aiScopeSummary && <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>AI SCOPE SUMMARY</div>
+                <div style={{fontSize:14,color:"#a0b0c8",lineHeight:1.6,whiteSpace:"pre-wrap",padding:12,borderRadius:10,background:"rgba(127,119,221,.06)",border:"1px solid rgba(127,119,221,.12)"}}>{fd.aiScopeSummary}</div>
               </div>}
 
-              {/* Photos — large grid */}
-              {(fd.photos || []).length > 0 && <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>PHOTOS ({fd.photos.length})</div>
+              {/* Scope photos */}
+              {((fd.scopePhotos || fd.photos || []).length > 0) && <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#039BE5",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>SCOPE PHOTOS ({(fd.scopePhotos || fd.photos).length})</div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:8}}>
-                  {fd.photos.map((p, i) => (
+                  {(fd.scopePhotos || fd.photos).map((p, i) => (
                     <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
                       <img src={p.dataUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
-                      <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_${i+1}.jpg`} style={{position:"absolute",bottom:6,right:6,padding:"4px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#fff",fontSize:11,textDecoration:"none",fontWeight:600}}>⬇ Download</a>
+                      <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_scope_${i+1}.jpg`} style={{position:"absolute",bottom:6,right:6,padding:"4px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#fff",fontSize:11,textDecoration:"none",fontWeight:600}}>⬇ Download</a>
+                    </div>
+                  ))}
+                </div>
+              </div>}
+
+              {/* Add-on section */}
+              {fd.addonNotes && <div style={{marginBottom:16}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>ADD-ON</div>
+                <div style={{fontSize:14,color:"#c8b0a0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{fd.addonNotes}</div>
+              </div>}
+
+              {fd.aiAddonEmail && <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>AI ADD-ON EMAIL</div>
+                <div style={{fontSize:14,color:"#c8a090",lineHeight:1.6,whiteSpace:"pre-wrap",padding:12,borderRadius:10,background:"rgba(255,138,101,.04)",border:"1px solid rgba(255,138,101,.1)"}}>{fd.aiAddonEmail}</div>
+              </div>}
+
+              {/* Add-on photos */}
+              {(fd.addonPhotos || []).length > 0 && <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>ADD-ON PHOTOS ({fd.addonPhotos.length})</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:8}}>
+                  {fd.addonPhotos.map((p, i) => (
+                    <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
+                      <img src={p.dataUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+                      <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_addon_${i+1}.jpg`} style={{position:"absolute",bottom:6,right:6,padding:"4px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#fff",fontSize:11,textDecoration:"none",fontWeight:600}}>⬇ Download</a>
                     </div>
                   ))}
                 </div>

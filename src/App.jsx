@@ -4,7 +4,7 @@ import RouteMap, { AM_COLOR, PM_COLOR } from "./RouteMap";
 import SwipeCard from "./SwipeCard";
 import OnsiteWindow from "./OnsiteWindow";
 import Pipeline, { savePipeline, loadPipeline } from "./Pipeline";
-import { savePipelineToDrive, saveFieldDataToDrive, savePhotoToDrive, loadPipelineFromDrive } from "./driveSync";
+import { saveAppState, loadAppState, saveFieldToDrive, onSyncStatus } from "./driveSync";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS FIELD ROUTE — Main App
@@ -181,23 +181,46 @@ export default function App() {
 
   useEffect(() => { if (token) load(); }, [token, load]);
 
-  // ── CLOUD SYNC: Pull pipeline from Drive on startup ──────────────────
+  // ── CLOUD SYNC: Pull app state from Drive on startup ───────────────
+  const [syncIndicator, setSyncIndicator] = useState("idle");
+  useEffect(() => { return onSyncStatus(setSyncIndicator); }, []);
+
   useEffect(() => {
     if (!token) return;
     (async () => {
       try {
-        const cloudPipeline = await loadPipelineFromDrive(token);
-        if (cloudPipeline && Object.keys(cloudPipeline).length > 0) {
-          // Merge: cloud wins for cards that exist in cloud, keep local-only cards
-          const local = loadPipeline();
-          const merged = { ...local, ...cloudPipeline };
-          savePipeline(merged);
+        const cloud = await loadAppState(token);
+        if (cloud) {
+          // Merge pipeline: cloud wins
+          if (cloud.pipeline && Object.keys(cloud.pipeline).length > 0) {
+            const local = loadPipeline();
+            const merged = { ...local, ...cloud.pipeline };
+            savePipeline(merged);
+          }
+          // Merge dismissed: cloud wins, keep local-only
+          if (cloud.dismissed) {
+            setDismissed(prev => ({ ...prev, ...cloud.dismissed }));
+          }
         }
       } catch(e) {
-        console.warn("Cloud pipeline pull failed:", e);
+        console.warn("Cloud pull failed:", e);
       }
     })();
   }, [token]);
+
+  // Sync dismissed + pipeline to Drive whenever dismissed changes
+  const cloudSyncTimer = useRef(null);
+  const triggerCloudSync = useCallback(() => {
+    if (!token) return;
+    if (cloudSyncTimer.current) clearTimeout(cloudSyncTimer.current);
+    // Debounce: wait 2s after last change before syncing
+    cloudSyncTimer.current = setTimeout(() => {
+      const pl = loadPipeline();
+      saveAppState(token, pl, dismissed).catch(() => {});
+    }, 2000);
+  }, [token, dismissed]);
+
+  useEffect(() => { triggerCloudSync(); }, [dismissed, triggerCloudSync]);
 
   // ── PARSE ────────────────────────────────────────────────────────────────
   const dayKey = businessDays[selDay]?.toDateString();
@@ -273,10 +296,9 @@ export default function App() {
   const markDone = (id) => {
     const stop = stopMap[id];
     setUndoStack(u => [...u, {type:"dismiss",id}]);
-    setDismissed(p => ({...p,[id]:Date.now()}));
+    setDismissed(p => ({...p,[id]:Date.now()})); // triggers cloud sync automatically
     setExpanded(null);
     setOnsiteStop(null);
-    // Add to pipeline storage (localStorage)
     if (stop) {
       const pl = loadPipeline();
       pl[id] = {
@@ -286,18 +308,10 @@ export default function App() {
         hot: false,
       };
       savePipeline(pl);
-      // Background sync to Google Drive (non-blocking)
+      // Also sync field data to Drive
       if (token) {
-        const fieldData = lsGet(`mts-field-${id}`, {});
-        savePipelineToDrive(token, pl).catch(e => console.warn("Drive pipeline sync failed:", e));
-        if (Object.keys(fieldData).length > 0) {
-          saveFieldDataToDrive(token, id, fieldData).catch(e => console.warn("Drive field sync failed:", e));
-          if (fieldData.photos?.length > 0) {
-            fieldData.photos.forEach((p, i) => {
-              savePhotoToDrive(token, id, i, p.dataUrl).catch(e => console.warn("Drive photo sync failed:", e));
-            });
-          }
-        }
+        const fd = lsGet(`mts-field-${id}`, {});
+        if (Object.keys(fd).length > 0) saveFieldToDrive(token, id, fd).catch(() => {});
       }
     }
     if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
@@ -331,7 +345,7 @@ export default function App() {
   // ── TEXT-TO-SPEECH ──────────────────────────────────────────────────────
   const speakStop = (s) => {
     if (!window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
+    if (window.speechSynthesis.speaking) { window.speechSynthesis.cancel(); return; }
     const text = s.notes || "No notes available.";
     const u = new SpeechSynthesisUtterance(text);
     u.rate = 0.85;
@@ -416,7 +430,8 @@ export default function App() {
 
       {/* ── HEADER ─────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:5,padding:"8px 10px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0}}>
-        <button onClick={()=>setView(view==="route"?"pipeline":"route")} style={{padding:"6px 10px",borderRadius:8,background:"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:14,letterSpacing:2,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#33B679",transition:"color .2s"}}>{view==="route"?"MTS ROUTE":"MTS PIPELINE"}</button>
+        <button onClick={()=>setView(view==="route"?"pipeline":"route")} style={{padding:"6px 10px",borderRadius:8,background:"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:14,letterSpacing:2,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#33B679",transition:"color .2s"}}>{view==="route"?"MTS FIELD SALES":"MTS PIPELINE"}</button>
+        <div style={{width:6,height:6,borderRadius:3,background:syncIndicator==="syncing"?"#F6BF26":syncIndicator==="success"?"#33B679":syncIndicator==="error"?"#FF5555":"transparent",transition:"background .3s",flexShrink:0}} title={syncIndicator}/>
         {view === "route" && <>
         <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"6px 12px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0c12",color:"#f0f4fa",fontSize:11,fontWeight:600,cursor:"pointer",outline:"none",appearance:"auto",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
           {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
@@ -469,7 +484,7 @@ export default function App() {
           const winBg = isAM ? "rgba(46,125,50,.12)" : "rgba(30,136,229,.12)";
 
           return <SwipeCard key={s.id} enabled={!reorderMode} onSwipeRight={() => navigate(s.addr)} onSwipeLeft={() => openOnsite(s)}>
-            <div onClick={() => { if (reorderMode) handleReorderTap(idx); else { setDeclineConfirm(null); setExpanded(isExp ? null : s.id); } }}
+            <div onClick={() => { if (reorderMode) handleReorderTap(idx); else { setDeclineConfirm(null); setCompletedOpen(false); setExpanded(isExp ? null : s.id); } }}
               ref={el => { if (el && expanded === s.id) setTimeout(() => el.scrollIntoView({behavior:"smooth",block:"nearest"}), 50); }}
               style={{
               padding:"14px 16px", borderBottom:"1px solid #0e1220",
@@ -500,7 +515,7 @@ export default function App() {
                 {!reorderMode && s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} onClick={e=>e.stopPropagation()} style={{padding:"5px 10px",borderRadius:6,background:"#1a2240",border:"1px solid #2a3560",color:"#90a8c0",fontSize:12,textDecoration:"none",fontWeight:700,flexShrink:0}}>📞</a>}
               </div>
 
-              {s.constraint && !reorderMode && <div style={{marginTop:6,marginLeft:isNext?50:44,padding:"4px 10px",borderRadius:6,background:"rgba(255,80,160,.12)",border:"1px solid rgba(255,80,160,.25)",color:"#FF80AB",fontSize:12,fontWeight:800,display:"inline-block",letterSpacing:0.3,fontFamily:"'Oswald','DM Sans',sans-serif",textTransform:"uppercase"}}>{s.constraint}</div>}
+              {s.constraint && <div style={{marginTop:6,marginLeft:isNext?50:44,padding:"4px 10px",borderRadius:6,background:"rgba(255,80,160,.12)",border:"1px solid rgba(255,80,160,.25)",color:"#FF80AB",fontSize:12,fontWeight:800,display:"inline-block",letterSpacing:0.3,fontFamily:"'Oswald','DM Sans',sans-serif",textTransform:"uppercase"}}>{s.constraint}</div>}
 
               {s.titleContext && !reorderMode && <div style={{marginTop:4,marginLeft:isNext?50:44,fontSize:12,color:"#b0b8c8",lineHeight:1.5,fontStyle:"italic",fontWeight:500}}>{s.titleContext}</div>}
 
@@ -537,7 +552,7 @@ export default function App() {
           {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"6px 10px",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:11,fontWeight:700,cursor:"pointer"}}>🧭 All</button>}
           <button onClick={()=>setAddStopOpen(true)} style={{padding:"6px 10px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#3a4a60",fontSize:11,fontWeight:600,cursor:"pointer"}}>+ Add</button>
         </div>
-        {completedOpen && completed.length > 0 && <div ref={el => { if (el) setTimeout(() => el.scrollIntoView({behavior:"smooth",block:"start"}), 50); }}>
+        {completedOpen && completed.length > 0 && <div >
           {completed.map(s => (
             <div key={s.id} style={{padding:"10px 16px",borderBottom:"1px solid #0a0e16",display:"flex",alignItems:"center",gap:10}}>
               <div style={{width:24,height:24,borderRadius:"50%",background:s.color+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff"}}>✓</div>
@@ -545,7 +560,8 @@ export default function App() {
                 <div style={{fontSize:13,color:"#6a7890",textDecoration:"line-through",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.cn}</div>
                 {s.addr && <div style={{fontSize:10,color:"#3a4560",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{s.addr}</div>}
               </div>
-              <button onClick={()=>restore(s.id)} style={{padding:"6px 14px",borderRadius:8,background:"rgba(255,183,77,.08)",border:"1px solid rgba(255,183,77,.25)",color:"#FFB74D",fontSize:11,fontWeight:800,cursor:"pointer",letterSpacing:0.3,fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",whiteSpace:"nowrap"}}>↩ RESTORE</button>
+              <button onClick={()=>openOnsite(s)} style={{padding:"6px 12px",borderRadius:8,background:"rgba(3,155,229,.08)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:11,fontWeight:800,cursor:"pointer",letterSpacing:0.3,fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",whiteSpace:"nowrap"}}>✏️ EDIT</button>
+              <button onClick={()=>restore(s.id)} style={{padding:"6px 12px",borderRadius:8,background:"rgba(255,183,77,.08)",border:"1px solid rgba(255,183,77,.25)",color:"#FFB74D",fontSize:11,fontWeight:800,cursor:"pointer",letterSpacing:0.3,fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",whiteSpace:"nowrap"}}>↩ RESTORE</button>
             </div>
           ))}
         </div>}
@@ -575,7 +591,7 @@ export default function App() {
       </>}{/* end route view */}
 
       {/* ── PIPELINE VIEW ──────────────────────────────────────────── */}
-      {view === "pipeline" && <Pipeline onSwitchToRoute={() => setView("route")} search={pipelineSearch} />}
+      {view === "pipeline" && <Pipeline onSwitchToRoute={() => setView("route")} search={pipelineSearch} onCloudSync={triggerCloudSync} />}
 
       {/* ── TEXT SHEET ─────────────────────────────────────────────────── */}
       {textSheet && <div onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>

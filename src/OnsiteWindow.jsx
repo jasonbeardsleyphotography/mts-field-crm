@@ -19,27 +19,35 @@ function saveFieldData(id, data) { try { localStorage.setItem(FIELD_KEY(id), JSO
 export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
   const s = stop;
   const fd = loadFieldData(s.id);
-  const [myNotes, setMyNotes] = useState(fd.myNotes || "");
+  // Backward compat: migrate old myNotes/photos to scope
+  const [scopeNotes, setScopeNotes] = useState(fd.scopeNotes || fd.myNotes || "");
+  const [addonNotes, setAddonNotes] = useState(fd.addonNotes || "");
+  const [scopePhotos, setScopePhotos] = useState(fd.scopePhotos || fd.photos || []);
+  const [addonPhotos, setAddonPhotos] = useState(fd.addonPhotos || []);
   const [videoUrl, setVideoUrl] = useState(fd.videoUrl || "");
-  const [photos, setPhotos] = useState(fd.photos || []);
-  const [audioClips, setAudioClips] = useState(fd.audioClips || []); // [{dataUrl, ts, duration}]
+  const [audioClips, setAudioClips] = useState(fd.audioClips || []);
   const [markupIdx, setMarkupIdx] = useState(null);
+  const [markupSection, setMarkupSection] = useState("scope"); // which photo array to edit
   const [showCamera, setShowCamera] = useState(false);
+  const [cameraSection, setCameraSection] = useState("scope");
   const [showVideoInput, setShowVideoInput] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recDuration, setRecDuration] = useState(0);
   const [playingIdx, setPlayingIdx] = useState(null);
-  const [aiResult, setAiResult] = useState(fd.aiSummary || "");
-  const [aiLoading, setAiLoading] = useState(false);
   const [ytUploading, setYtUploading] = useState(false);
   const ytFileRef = useRef(null);
+  const [aiScopeResult, setAiScopeResult] = useState(fd.aiScopeSummary || "");
+  const [aiAddonResult, setAiAddonResult] = useState(fd.aiAddonEmail || "");
+  const [aiScopeLoading, setAiScopeLoading] = useState(false);
+  const [aiAddonLoading, setAiAddonLoading] = useState(false);
   const [declineConfirm, setDeclineConfirm] = useState(false);
   const [swipeX, setSwipeX] = useState(0);
   const [swiping, setSwiping] = useState(false);
   const swipeStartX = useRef(0);
   const swipeStartY = useRef(0);
   const swipeDir = useRef(null);
-  const libraryRef = useRef(null);
+  const scopeLibRef = useRef(null);
+  const addonLibRef = useRef(null);
   const mediaRecRef = useRef(null);
   const chunksRef = useRef([]);
   const recTimerRef = useRef(null);
@@ -48,36 +56,42 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
 
   // Auto-save on every change
   useEffect(() => {
-    saveFieldData(s.id, { myNotes, videoUrl, photos, audioClips, aiSummary: aiResult });
-  }, [myNotes, videoUrl, photos, audioClips, aiResult, s.id]);
+    saveFieldData(s.id, { scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrl, audioClips, aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult });
+  }, [scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrl, audioClips, aiScopeResult, aiAddonResult, s.id]);
 
   // ── PHOTO HANDLING ──────────────────────────────────────────────────
-  const processPhoto = (file) => {
+  const processPhoto = (file, section = "scope") => {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
-        const MAX = 800;
+        const MAX = 1600;
         let w = img.width, h = img.height;
         if (w > MAX) { h = h * MAX / w; w = MAX; }
+        if (h > MAX) { w = w * MAX / h; h = MAX; }
         const c = document.createElement("canvas");
         c.width = w; c.height = h;
         c.getContext("2d").drawImage(img, 0, 0, w, h);
-        setPhotos(prev => [...prev, { dataUrl: c.toDataURL("image/jpeg", 0.7), ts: Date.now() }]);
+        const photo = { dataUrl: c.toDataURL("image/jpeg", 0.80), ts: Date.now() };
+        if (section === "addon") setAddonPhotos(prev => [...prev, photo]);
+        else setScopePhotos(prev => [...prev, photo]);
       };
       img.src = ev.target.result;
     };
     reader.readAsDataURL(file);
   };
-  const handlePhotos = (e) => {
-    const files = Array.from(e.target.files || []);
-    files.forEach(f => processPhoto(f));
-    e.target.value = "";
+  const handleScopePhotos = (e) => { Array.from(e.target.files || []).forEach(f => processPhoto(f, "scope")); e.target.value = ""; };
+  const handleAddonPhotos = (e) => { Array.from(e.target.files || []).forEach(f => processPhoto(f, "addon")); e.target.value = ""; };
+  const removeScopePhoto = (i) => setScopePhotos(prev => prev.filter((_, j) => j !== i));
+  const removeAddonPhoto = (i) => setAddonPhotos(prev => prev.filter((_, j) => j !== i));
+  const removePhoto = (i, section) => {
+    if (section === "addon") setAddonPhotos(prev => prev.filter((_, j) => j !== i));
+    else setScopePhotos(prev => prev.filter((_, j) => j !== i));
   };
-  const removePhoto = (i) => setPhotos(prev => prev.filter((_, j) => j !== i));
   const handleMarkupSave = (dataUrl) => {
-    setPhotos(prev => prev.map((p, i) => i === markupIdx ? { ...p, dataUrl } : p));
+    if (markupSection === "addon") setAddonPhotos(prev => prev.map((p, i) => i === markupIdx ? { ...p, dataUrl } : p));
+    else setScopePhotos(prev => prev.map((p, i) => i === markupIdx ? { ...p, dataUrl } : p));
     setMarkupIdx(null);
   };
 
@@ -141,40 +155,62 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline }) {
   // Camera view — rapid capture mode
   if (showCamera) {
     return <CameraView
-      onPhoto={(dataUrl) => setPhotos(prev => [...prev, { dataUrl, ts: Date.now() }])}
+      onPhoto={(dataUrl) => {
+        const photo = { dataUrl, ts: Date.now() };
+        if (cameraSection === "addon") setAddonPhotos(prev => [...prev, photo]);
+        else setScopePhotos(prev => [...prev, photo]);
+      }}
       onClose={() => setShowCamera(false)}
     />;
   }
 
-  if (markupIdx !== null && photos[markupIdx]) {
-    return <PhotoMarkup photoDataUrl={photos[markupIdx].dataUrl} onSave={handleMarkupSave} onCancel={() => setMarkupIdx(null)} />;
+  if (markupIdx !== null) {
+    const photos = markupSection === "addon" ? addonPhotos : scopePhotos;
+    if (photos[markupIdx]) {
+      return <PhotoMarkup photoDataUrl={photos[markupIdx].dataUrl} onSave={handleMarkupSave} onCancel={() => setMarkupIdx(null)} />;
+    }
   }
 
-  // ── GEMINI AI SUMMARY ─────────────────────────────────────────────────
-  const generateSummary = async () => {
-    if (!GEMINI_KEY) { setAiResult("Add VITE_GEMINI_KEY to .env"); return; }
-    setAiLoading(true);
+  // ── GEMINI AI ───────────────────────────────────────────────────────
+
+  const callGemini = async (prompt) => {
+    const res = await fetch(`${GEMINI_URL}?key=${GEMINI_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+    });
+    const data = await res.json();
+    return data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response.";
+  };
+
+  const generateScopeSummary = async () => {
+    if (!GEMINI_KEY) { setAiScopeResult("Add VITE_GEMINI_KEY to .env"); return; }
+    setAiScopeLoading(true);
     try {
-      const prompt = `You are an arborist's field assistant. Summarize these field notes into a structured estimate summary. Include: species/trees observed, conditions found, recommended treatments, and a rough job value estimate if enough info exists. Be concise and professional.
+      const text = await callGemini(`You are an ISA-certified arborist's field assistant. Summarize these field notes into a structured estimate summary. Include: species/trees observed, conditions found, recommended treatments, equipment needed, and a rough job value estimate if enough info exists. Be concise and professional.
 
 Client: ${s.cn}
 Address: ${s.addr}
 Job notes from office: ${s.notes || "None"}
-My field notes: ${myNotes || "None"}
-Constraints: ${s.constraint || "None"}`;
+Scope notes: ${scopeNotes || "None"}
+Constraints: ${s.constraint || "None"}`);
+      setAiScopeResult(text);
+    } catch(e) { setAiScopeResult("Error: " + e.message); }
+    setAiScopeLoading(false);
+  };
 
-      const res = await fetch(`${GEMINI_URL}?key=${GEMINI_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-      });
-      const data = await res.json();
-      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
-      setAiResult(text);
-    } catch(e) {
-      setAiResult("Error: " + e.message);
-    }
-    setAiLoading(false);
+  const generateAddonEmail = async () => {
+    if (!GEMINI_KEY) { setAiAddonResult("Add VITE_GEMINI_KEY to .env"); return; }
+    setAiAddonLoading(true);
+    try {
+      const text = await callGemini(`You are an ISA-certified arborist writing a professional but warm email to a homeowner. Based on these additional findings discovered during a site visit, compose a brief email explaining each issue, why it matters, and what you recommend. Keep it friendly and non-alarming. Sign as Jason from Monster Tree Service of Rochester.
+
+Client first name: ${(s.cn || "").split(" ")[0]}
+Add-on findings: ${addonNotes || "None"}
+Property: ${s.addr || ""}`);
+      setAiAddonResult(text);
+    } catch(e) { setAiAddonResult("Error: " + e.message); }
+    setAiAddonLoading(false);
   };
 
   // ── YOUTUBE UPLOAD ──────────────────────────────────────────────────────
@@ -287,74 +323,98 @@ Constraints: ${s.constraint || "None"}`;
           </div>
         )}
 
-        {/* ── MY NOTES + AUDIO ──────────────────────────────────────── */}
+        {/* ── SCOPE ────────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
-          <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>MY NOTES</div>
-          <textarea
-            ref={notesRef}
-            value={myNotes}
-            onChange={e => setMyNotes(e.target.value)}
-            placeholder="Dictate or type field observations..."
-            rows={5}
-            style={{
-              width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,
-              background:"#0e1525",border:"1px solid #1a2540",color:"#e0e8f0",
-              fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none",
-            }}
-          />
+          <div style={{fontSize:11,fontWeight:700,color:"#039BE5",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>SCOPE</div>
+          <textarea value={scopeNotes} onChange={e => setScopeNotes(e.target.value)} placeholder="Equipment, treatments, what you're quoting..." rows={4}
+            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1525",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}} />
 
-          {/* Audio recorder */}
-          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
+          {/* Scope AI */}
+          <div style={{display:"flex",gap:6,marginTop:6}}>
+            <button onClick={generateScopeSummary} disabled={aiScopeLoading} style={{padding:"8px 14px",borderRadius:8,background:"rgba(127,119,221,.1)",border:"1px solid rgba(127,119,221,.2)",color:aiScopeLoading?"#5a5080":"#9a90e0",fontSize:11,fontWeight:700,cursor:aiScopeLoading?"default":"pointer"}}>{aiScopeLoading ? "..." : "✨ Summarize"}</button>
+            {aiScopeResult && <button onClick={()=>navigator.clipboard?.writeText(aiScopeResult)} style={{padding:"8px 10px",borderRadius:8,background:"rgba(3,155,229,.06)",border:"1px solid rgba(3,155,229,.12)",color:"#6a8aB0",fontSize:11,fontWeight:700,cursor:"pointer"}}>📋</button>}
+          </div>
+          {aiScopeResult && <div style={{fontSize:12,color:"#a0b0c8",lineHeight:1.6,marginTop:8,whiteSpace:"pre-wrap",padding:10,borderRadius:8,background:"rgba(127,119,221,.04)",border:"1px solid rgba(127,119,221,.1)"}}>{aiScopeResult}</div>}
+
+          {/* Scope photos */}
+          {scopePhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
+            {scopePhotos.map((p, i) => (
+              <div key={i} style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
+                <img src={p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("scope");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
+                <button onClick={e=>{e.stopPropagation();removeScopePhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",color:"#ff6666",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+                <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
+                  <div onClick={()=>{setMarkupIdx(i);setMarkupSection("scope");}} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#ccc",fontSize:10,fontWeight:700,cursor:"pointer"}}>✏️</div>
+                  <a href={p.dataUrl} download={`scope_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#ccc",fontSize:10,fontWeight:700,cursor:"pointer",textDecoration:"none"}}>⬇</a>
+                </div>
+              </div>
+            ))}
+          </div>}
+          <input ref={scopeLibRef} type="file" accept="image/*" multiple onChange={handleScopePhotos} style={{display:"none"}} />
+          <div style={{display:"flex",gap:6,marginTop:8}}>
+            <button onClick={()=>{setCameraSection("scope");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}>📷 Camera</button>
+            <button onClick={()=>scopeLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}>📁 Library</button>
+          </div>
+        </div>
+
+        {/* ── ADD-ON ──────────────────────────────────────────────────── */}
+        <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>ADD-ON</div>
+          <textarea value={addonNotes} onChange={e => setAddonNotes(e.target.value)} placeholder="Additional findings — box tree moth, dead limb over driveway, etc..." rows={3}
+            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1525",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}} />
+
+          {/* Add-on AI */}
+          <div style={{display:"flex",gap:6,marginTop:6}}>
+            <button onClick={generateAddonEmail} disabled={aiAddonLoading} style={{padding:"8px 14px",borderRadius:8,background:"rgba(255,138,101,.08)",border:"1px solid rgba(255,138,101,.2)",color:aiAddonLoading?"#804840":"#FF8A65",fontSize:11,fontWeight:700,cursor:aiAddonLoading?"default":"pointer"}}>{aiAddonLoading ? "..." : "✨ Draft email"}</button>
+            {aiAddonResult && <>
+              <button onClick={()=>navigator.clipboard?.writeText(aiAddonResult)} style={{padding:"8px 10px",borderRadius:8,background:"rgba(3,155,229,.06)",border:"1px solid rgba(3,155,229,.12)",color:"#6a8aB0",fontSize:11,fontWeight:700,cursor:"pointer"}}>📋</button>
+              <button onClick={()=>{const email=s.email||"";const subj=encodeURIComponent(`Additional findings at ${s.addr||"your property"} — MTS Rochester`);const body=encodeURIComponent(aiAddonResult);window.open(`mailto:${email}?subject=${subj}&body=${body}`,"_self");}} style={{padding:"8px 10px",borderRadius:8,background:"rgba(51,182,121,.06)",border:"1px solid rgba(51,182,121,.15)",color:"#33B679",fontSize:11,fontWeight:700,cursor:"pointer"}}>📧 Send</button>
+            </>}
+          </div>
+          {aiAddonResult && <div style={{fontSize:12,color:"#c8a090",lineHeight:1.6,marginTop:8,whiteSpace:"pre-wrap",padding:10,borderRadius:8,background:"rgba(255,138,101,.04)",border:"1px solid rgba(255,138,101,.1)"}}>{aiAddonResult}</div>}
+
+          {/* Add-on photos */}
+          {addonPhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
+            {addonPhotos.map((p, i) => (
+              <div key={i} style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
+                <img src={p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("addon");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
+                <button onClick={e=>{e.stopPropagation();removeAddonPhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",color:"#ff6666",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+                <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
+                  <div onClick={()=>{setMarkupIdx(i);setMarkupSection("addon");}} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#ccc",fontSize:10,fontWeight:700,cursor:"pointer"}}>✏️</div>
+                  <a href={p.dataUrl} download={`addon_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#ccc",fontSize:10,fontWeight:700,cursor:"pointer",textDecoration:"none"}}>⬇</a>
+                </div>
+              </div>
+            ))}
+          </div>}
+          <input ref={addonLibRef} type="file" accept="image/*" multiple onChange={handleAddonPhotos} style={{display:"none"}} />
+          <div style={{display:"flex",gap:6,marginTop:8}}>
+            <button onClick={()=>{setCameraSection("addon");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}>📷 Camera</button>
+            <button onClick={()=>addonLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}>📁 Library</button>
+          </div>
+        </div>
+
+        {/* ── VOICE MEMO ──────────────────────────────────────────────── */}
+        <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
             {!recording ? (
               <button onClick={startRecording} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 16px",borderRadius:8,background:"rgba(255,59,48,.1)",border:"1px solid rgba(255,59,48,.25)",color:"#FF3B30",fontSize:12,fontWeight:700,cursor:"pointer"}}>
-                <span style={{width:10,height:10,borderRadius:5,background:"#FF3B30",display:"inline-block"}}/>
-                Record voice memo
+                <span style={{width:10,height:10,borderRadius:5,background:"#FF3B30",display:"inline-block"}}/>Record
               </button>
             ) : (
               <button onClick={stopRecording} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 16px",borderRadius:8,background:"rgba(255,59,48,.2)",border:"1px solid rgba(255,59,48,.4)",color:"#FF3B30",fontSize:12,fontWeight:700,cursor:"pointer",animation:"pulse 1s infinite"}}>
-                <span style={{width:10,height:10,borderRadius:2,background:"#FF3B30",display:"inline-block"}}/>
-                Stop · {fmtDur(recDuration)}
+                <span style={{width:10,height:10,borderRadius:2,background:"#FF3B30",display:"inline-block"}}/>Stop · {fmtDur(recDuration)}
               </button>
             )}
           </div>
           <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
-
-          {/* Audio clips */}
-          {audioClips.length > 0 && (
-            <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4}}>
-              {audioClips.map((clip, i) => (
-                <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderRadius:8,background:"#0e1525",border:"1px solid #1a2540"}}>
-                  <button onClick={() => playAudio(i)} style={{width:28,height:28,borderRadius:14,background:playingIdx===i?"rgba(255,59,48,.15)":"rgba(3,155,229,.1)",border:"none",color:playingIdx===i?"#FF3B30":"#039BE5",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{playingIdx===i?"■":"▶"}</button>
-                  <div style={{flex:1,fontSize:11,color:"#6a7a90"}}>Voice memo · {clip.duration ? fmtDur(clip.duration) : "—"}</div>
-                  <button onClick={() => removeAudio(i)} style={{padding:"3px 8px",borderRadius:6,background:"rgba(200,60,60,.1)",border:"1px solid rgba(200,60,60,.2)",color:"#e06060",fontSize:10,fontWeight:700,cursor:"pointer"}}>✕</button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* ── PHOTOS ────────────────────────────────────────────────── */}
-        <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
-          <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>PHOTOS</div>
-          {photos.length > 0 && (
-            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
-              {photos.map((p, i) => (
-                <div key={i} style={{position:"relative",width:110,height:110,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
-                  <img src={p.dataUrl} alt="" onClick={() => setMarkupIdx(i)} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
-                  <button onClick={(e) => { e.stopPropagation(); removePhoto(i); }} style={{position:"absolute",top:3,right:3,width:18,height:18,borderRadius:9,background:"rgba(0,0,0,.7)",border:"none",color:"#ff6666",fontSize:10,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
-                  <div style={{position:"absolute",bottom:3,left:3,display:"flex",gap:3}}>
-                    <div onClick={() => setMarkupIdx(i)} style={{padding:"2px 5px",borderRadius:4,background:"rgba(0,0,0,.65)",color:"#ccc",fontSize:8,fontWeight:700,cursor:"pointer"}}>✏️</div>
-                    <a href={p.dataUrl} download={`mts_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"2px 5px",borderRadius:4,background:"rgba(0,0,0,.65)",color:"#ccc",fontSize:8,fontWeight:700,cursor:"pointer",textDecoration:"none"}}>⬇</a>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          <input ref={libraryRef} type="file" accept="image/*" multiple onChange={handlePhotos} style={{display:"none"}} />
-          <div style={{display:"flex",gap:6}}>
-            <button onClick={() => setShowCamera(true)} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:13,fontWeight:600,cursor:"pointer"}}>📷 Camera</button>
-            <button onClick={() => libraryRef.current?.click()} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:13,fontWeight:600,cursor:"pointer"}}>📁 Library</button>
-          </div>
+          {audioClips.length > 0 && <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4}}>
+            {audioClips.map((clip, i) => (
+              <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderRadius:8,background:"#0e1525",border:"1px solid #1a2540"}}>
+                <button onClick={() => playAudio(i)} style={{width:28,height:28,borderRadius:14,background:playingIdx===i?"rgba(255,59,48,.15)":"rgba(3,155,229,.1)",border:"none",color:playingIdx===i?"#FF3B30":"#039BE5",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{playingIdx===i?"■":"▶"}</button>
+                <div style={{flex:1,fontSize:11,color:"#6a7a90"}}>Memo · {clip.duration ? fmtDur(clip.duration) : "—"}</div>
+                <button onClick={() => removeAudio(i)} style={{padding:"3px 8px",borderRadius:6,background:"rgba(200,60,60,.1)",border:"1px solid rgba(200,60,60,.2)",color:"#e06060",fontSize:10,fontWeight:700,cursor:"pointer"}}>✕</button>
+              </div>
+            ))}
+          </div>}
         </div>
 
         {/* ── VIDEO ─────────────────────────────────────────────────── */}
@@ -366,32 +426,14 @@ Constraints: ${s.constraint || "None"}`;
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:11,color:"#a0b0c0",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{videoUrl}</div>
               </div>
-              <button onClick={() => setShowVideoInput(true)} style={{padding:"4px 10px",borderRadius:6,background:"#1a2240",border:"1px solid #2a3560",color:"#5a6580",fontSize:10,fontWeight:700,cursor:"pointer"}}>Edit</button>
               <button onClick={() => { setVideoUrl(""); setShowVideoInput(false); }} style={{padding:"4px 10px",borderRadius:6,background:"rgba(200,60,60,.1)",border:"1px solid rgba(200,60,60,.2)",color:"#e06060",fontSize:10,fontWeight:700,cursor:"pointer"}}>✕</button>
-            </div>
-          ) : showVideoInput ? (
-            <div>
-              <input type="url" value={videoUrl} onChange={e => setVideoUrl(e.target.value)} placeholder="Paste YouTube link..." style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1525",border:"1px solid #2a3560",color:"#e0e8f0",fontSize:13,fontFamily:B,outline:"none"}} />
-              <button onClick={() => setShowVideoInput(false)} style={{marginTop:6,padding:"6px 14px",borderRadius:6,background:"#1a2240",border:"1px solid #2a3560",color:"#90a8c0",fontSize:11,fontWeight:700,cursor:"pointer"}}>Done</button>
             </div>
           ) : (
             <div style={{display:"flex",gap:6}}>
               <input ref={ytFileRef} type="file" accept="video/*" onChange={handleYtFile} style={{display:"none"}} />
-              <button onClick={() => ytFileRef.current?.click()} disabled={ytUploading} style={{flex:1,padding:"14px 0",borderRadius:10,background:"rgba(255,0,0,.06)",border:"1px dashed rgba(255,0,0,.2)",color:ytUploading?"#804040":"#cc4040",fontSize:13,fontWeight:600,cursor:ytUploading?"default":"pointer"}}>{ytUploading ? "Uploading..." : "🎬 Upload to YouTube"}</button>
+              <button onClick={() => ytFileRef.current?.click()} disabled={ytUploading} style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(255,0,0,.06)",border:"1px dashed rgba(255,0,0,.2)",color:ytUploading?"#804040":"#cc4040",fontSize:12,fontWeight:600,cursor:ytUploading?"default":"pointer"}}>{ytUploading ? "Uploading..." : "🎬 Upload to YouTube"}</button>
             </div>
           )}
-        </div>
-
-        {/* ── AI ASSIST ─────────────────────────────────────────────── */}
-        <div style={{padding:"12px 16px"}}>
-          <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>AI ASSIST</div>
-          <div style={{padding:"14px",borderRadius:10,background:"linear-gradient(135deg, rgba(127,119,221,.06), rgba(3,155,229,.06))",border:"1px solid rgba(127,119,221,.15)"}}>
-            {aiResult && <div style={{fontSize:12,color:"#a0b0c8",lineHeight:1.6,marginBottom:10,whiteSpace:"pre-wrap"}}>{aiResult}</div>}
-            <div style={{display:"flex",gap:6}}>
-              <button onClick={generateSummary} disabled={aiLoading} style={{padding:"10px 16px",borderRadius:8,background:"rgba(127,119,221,.12)",border:"1px solid rgba(127,119,221,.25)",color:aiLoading?"#5a5080":"#9a90e0",fontSize:12,fontWeight:700,cursor:aiLoading?"default":"pointer"}}>{aiLoading ? "Generating..." : aiResult ? "✨ Regenerate" : "✨ Generate summary"}</button>
-              {aiResult && <button onClick={()=>{navigator.clipboard?.writeText(aiResult);}} style={{padding:"10px 12px",borderRadius:8,background:"rgba(3,155,229,.08)",border:"1px solid rgba(3,155,229,.15)",color:"#6a8aB0",fontSize:12,fontWeight:700,cursor:"pointer"}}>📋 Copy</button>}
-            </div>
-          </div>
         </div>
 
       </div>
