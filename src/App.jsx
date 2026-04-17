@@ -315,7 +315,7 @@ export default function App() {
       }
     }
     if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
-    setUndoToast({ id, cn: stop?.cn || "Stop" });
+    setUndoToast({ id, cn: stop?.cn || "Stop", stop });
     undoToastTimer.current = setTimeout(() => setUndoToast(null), 10000);
   };
   const undoToastAction = () => {
@@ -324,6 +324,8 @@ export default function App() {
     setUndoStack(u => u.slice(0,-1));
     // Remove from pipeline
     const pl = loadPipeline(); delete pl[undoToast.id]; savePipeline(pl);
+    // Reopen onsite screen with the stop
+    if (undoToast.stop) setOnsiteStop(undoToast.stop);
     if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
     setUndoToast(null);
   };
@@ -391,11 +393,16 @@ export default function App() {
   });
 
   // ── SIGN IN ──────────────────────────────────────────────────────────────
+  // Register service worker for PWA
+  useEffect(() => {
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+  }, []);
+
   if (!token) return (
     <div style={{height:"100dvh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0a0c12",fontFamily:"'Oswald','DM Sans',system-ui,sans-serif",color:"#f0f4fa",padding:20}}>
       <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=DM+Sans:wght@500;700;800&display=swap" rel="stylesheet"/>
-      <div style={{fontSize:32,fontWeight:900,letterSpacing:2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif"}}>MTS</div>
-      <div style={{fontSize:13,color:"#5a6580",marginBottom:32,fontWeight:500}}>Field Route</div>
+      <div style={{fontSize:28,fontWeight:900,letterSpacing:3,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif"}}>MTS FIELD SALES</div>
+      <div style={{fontSize:12,color:"#5a6580",marginBottom:32,fontWeight:500,letterSpacing:1}}>Monster Tree Service of Rochester</div>
       <button onClick={initAuth} style={{padding:"16px 40px",borderRadius:12,background:"#1a2240",border:"1px solid #2a3560",color:"#f0f4fa",fontSize:16,fontWeight:700,cursor:"pointer",letterSpacing:.5}}>Sign in with Google</button>
       {error && <div style={{marginTop:16,color:"#ff5555",fontSize:12}}>{error}</div>}
     </div>
