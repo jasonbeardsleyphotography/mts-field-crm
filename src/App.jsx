@@ -6,11 +6,10 @@ import OnsiteWindow from "./OnsiteWindow";
 import Pipeline, { savePipeline, loadPipeline } from "./Pipeline";
 import { saveAppState, loadAppState, saveFieldToDrive, onSyncStatus } from "./driveSync";
 import {
-  IconArrowLeft, IconArrowRight, IconNavigation, IconMessageSquare, IconVolume2,
+  IconArrowLeft, IconNavigation, IconMessageSquare, IconVolume2,
   IconClipboard, IconX, IconRotateCcw, IconRefresh, IconReorder, IconUndo,
   IconPlus, IconSearch, IconTrash, IconChevronDown, IconChevronRight,
-  IconCloud, IconCloudOff, IconCheckCircle, IconEdit, IconPhone, IconMail,
-  IconRotateCcw as IconRevision2
+  IconCloud, IconCloudOff, IconCheckCircle, IconEdit, IconPhone, IconMail
 } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
