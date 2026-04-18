@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import PhotoMarkup from "./PhotoMarkup";
 import CameraView from "./CameraView";
 import { saveFieldToDrive, loadFieldFromDrive } from "./driveSync";
-import { IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconYoutube, IconMail, IconX, IconZap, IconClipboard, IconRevision } from "./icons";
+import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconYoutube, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconRotateCcw, IconArrowRight, IconLock } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
@@ -349,31 +349,31 @@ Property: ${s.addr || ""}`);
   };
 
   return (
-    <div style={{position:"fixed",inset:0,zIndex:100,background:"#0a0c12",display:"flex",flexDirection:"column",fontFamily:B,color:"#f0f4fa",overflow:"hidden"}}>
+    <div style={{position:"fixed",inset:0,zIndex:100,background:"#0a0b10",display:"flex",flexDirection:"column",fontFamily:B,color:"#f0f4fa",overflow:"hidden"}}>
 
       {/* ── HEADER ────────────────────────────────────────────────────── */}
-      <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0}}>
-        <button onClick={onBack} style={{padding:"6px 12px",borderRadius:8,background:"transparent",border:"1px solid #2a3560",color:"#90a8c0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}>← ROUTE</button>
+      <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"#0d0f18",borderBottom:"1px solid #1a2030",flexShrink:0}}>
+        <button onClick={onBack} style={{padding:"6px 12px",borderRadius:8,background:"transparent",border:"1px solid #2a3560",color:"#90a8c0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}} style={{display:"flex",alignItems:"center",gap:4,...{}}}><IconArrowLeft size={13} color="#90a8c0"/>Route</button>
         <div style={{flex:1,minWidth:0,textAlign:"center"}}>
           <div style={{fontSize:15,fontWeight:600,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.cn}</div>
         </div>
-        <button onClick={()=>setIsRevision(!isRevision)} title="Mark as revision" style={{padding:"6px 8px",borderRadius:8,background:isRevision?"rgba(255,107,157,.15)":"transparent",border:isRevision?"1px solid rgba(255,107,157,.3)":"1px solid #2a3560",color:isRevision?"#FF6B9D":"#3a4a60",fontSize:14,cursor:"pointer",flexShrink:0}}>🔄</button>
-        <button onClick={onDone} style={{padding:"6px 12px",borderRadius:8,background:"#33B679",border:"none",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}>DONE →</button>
+        <button onClick={()=>setIsRevision(!isRevision)} title="Mark as revision" style={{padding:"6px 8px",borderRadius:8,background:isRevision?"rgba(255,107,157,.15)":"transparent",border:isRevision?"1px solid rgba(255,107,157,.3)":"1px solid #2a3560",color:isRevision?"#FF6B9D":"#3a4a60",fontSize:14,cursor:"pointer",flexShrink:0}}><IconRotateCcw size={15} color={isRevision?"#FF6B9D":"#3a4a60"}/></button>
+        <button onClick={onDone} style={{padding:"6px 12px",borderRadius:8,background:"#10B981",border:"none",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}>DONE →</button>
       </div>
 
       {/* ── SCROLLABLE BODY ────────────────────────────────────────────── */}
       <div onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
         style={{flex:1,overflowY:"auto",paddingBottom:"max(80px,calc(70px + env(safe-area-inset-bottom)))",transform:`translateX(${swipeX}px)`,transition:swiping?"none":"transform .25s"}}>
 
-        {cloudLoading && <div style={{padding:"12px 16px",background:"rgba(3,155,229,.06)",borderBottom:"1px solid rgba(3,155,229,.1)",fontSize:12,color:"#5a8ab0",display:"flex",gap:8,alignItems:"center"}}>
-          <span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>⟳</span> Loading from cloud...
+        {cloudLoading && <div style={{padding:"12px 16px",background:"rgba(59,130,246,.06)",borderBottom:"1px solid rgba(59,130,246,.1)",fontSize:12,color:"#5a8ab0",display:"flex",gap:8,alignItems:"center"}}>
+          <span style={{animation:"spin 1s linear infinite",display:"flex"}}><IconRefresh size={13} color="#5a8ab0"/></span> Loading from cloud...
           <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
         </div>}
 
-        {swipeX < -30 && <div style={{position:"fixed",top:"50%",right:12,transform:"translateY(-50%)",padding:"10px 14px",borderRadius:10,background:"rgba(51,182,121,.15)",border:"1px solid rgba(51,182,121,.3)",color:"#33B679",fontSize:12,fontWeight:800,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",opacity:Math.min(Math.abs(swipeX)/120,1),zIndex:102}}>→ PIPELINE</div>}
+        {swipeX < -30 && <div style={{position:"fixed",top:"50%",right:12,transform:"translateY(-50%)",padding:"10px 14px",borderRadius:10,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:12,fontWeight:800,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",opacity:Math.min(Math.abs(swipeX)/120,1),zIndex:102}}>→ PIPELINE</div>}
 
         {/* Address + contact */}
-        <div style={{padding:"10px 16px",background:"#0d1018",borderBottom:"1px solid #1a2030"}}>
+        <div style={{padding:"10px 16px",background:"#0d0f18",borderBottom:"1px solid #1a2030"}}>
           <div style={{fontSize:12,color:"#96a2b4",fontFamily:F,textTransform:"uppercase",letterSpacing:1}}>{s.addr}</div>
           <div style={{fontSize:11,color:"#4a5a70",marginTop:2}}>
             {s.window && <span style={{marginRight:8}}>{s.window}</span>}
@@ -381,8 +381,8 @@ Property: ${s.addr || ""}`);
             {s.constraint && <span style={{marginLeft:8,color:"#FF80AB"}}>{s.constraint}</span>}
           </div>
           <div style={{display:"flex",gap:12,marginTop:6,flexWrap:"wrap"}}>
-            {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none"}}>📞 {s.phone}</a>}
-            {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none"}}>✉️ {s.email}</a>}
+            {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4}}><IconPhone size={12} color="#a0b8d0"/>{s.phone}</a>}
+            {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4}}><IconMail size={12} color="#a0b8d0"/>{s.email}</a>}
           </div>
         </div>
 
@@ -392,7 +392,7 @@ Property: ${s.addr || ""}`);
             <button onClick={()=>setJobNotesOpen(!jobNotesOpen)} style={{width:"100%",padding:"10px 16px",background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
               <span style={{transform:jobNotesOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7,color:"#4a5a70"}}>▶</span>
               <span style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F}}>JOB NOTES</span>
-              <span style={{fontSize:8,color:"#3a4a60"}}>🔒</span>
+              <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="#3a4a60" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             </button>
             {jobNotesOpen && <div style={{padding:"0 16px 12px",fontSize:13,color:"#8898a8",lineHeight:1.6}}>{s.notes}</div>}
           </div>
@@ -401,16 +401,16 @@ Property: ${s.addr || ""}`);
         {/* ── SCOPE ────────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
-            <div style={{fontSize:11,fontWeight:700,color:"#039BE5",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,flex:1}}>SCOPE</div>
-            <button onClick={()=>setScopeNotes(scopeNotes.toUpperCase())} style={{padding:"3px 8px",borderRadius:4,background:"rgba(3,155,229,.06)",border:"1px solid rgba(3,155,229,.15)",color:"#039BE5",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F}}>AA</button>
+            <div style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,flex:1}}>SCOPE</div>
+            <button onClick={()=>setScopeNotes(scopeNotes.toUpperCase())} style={{padding:"3px 8px",borderRadius:4,background:"rgba(59,130,246,.06)",border:"1px solid rgba(59,130,246,.15)",color:"#3B82F6",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F}}>AA</button>
           </div>
           <textarea value={scopeNotes} onChange={e => setScopeNotes(e.target.value)} placeholder="Equipment, treatments, what you're quoting..." rows={6}
-            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1525",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}} />
+            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}} />
 
           {/* Scope AI */}
           <div style={{display:"flex",gap:6,marginTop:6}}>
             <button onClick={generateScopeSummary} disabled={aiScopeLoading} style={{padding:"8px 14px",borderRadius:8,background:"rgba(127,119,221,.1)",border:"1px solid rgba(127,119,221,.2)",color:aiScopeLoading?"#5a5080":"#9a90e0",fontSize:11,fontWeight:700,cursor:aiScopeLoading?"default":"pointer"}}>{aiScopeLoading ? "..." : "<><IconSparkles size={13}/><span style={{marginLeft:4,fontSize:11}}>Summarize</span></>"}</button>
-            {aiScopeResult && <button onClick={()=>navigator.clipboard?.writeText(aiScopeResult)} style={{padding:"8px 10px",borderRadius:8,background:"rgba(3,155,229,.06)",border:"1px solid rgba(3,155,229,.12)",color:"#6a8aB0",fontSize:11,fontWeight:700,cursor:"pointer"}}<IconClipboard size={13} /></button>}
+            {aiScopeResult && <button onClick={()=>navigator.clipboard?.writeText(aiScopeResult)} style={{padding:"8px 10px",borderRadius:8,background:"rgba(59,130,246,.06)",border:"1px solid rgba(59,130,246,.12)",color:"#6a8aB0",fontSize:11,fontWeight:700,cursor:"pointer"}}<IconClipboard size={13} /></button>}
           </div>
           {aiScopeResult && <div style={{fontSize:12,color:"#a0b0c8",lineHeight:1.6,marginTop:8,whiteSpace:"pre-wrap",padding:10,borderRadius:8,background:"rgba(127,119,221,.04)",border:"1px solid rgba(127,119,221,.1)"}}>{aiScopeResult}</div>}
 
@@ -429,8 +429,8 @@ Property: ${s.addr || ""}`);
           </div>}
           <input ref={scopeLibRef} type="file" accept="image/*" multiple onChange={handleScopePhotos} style={{display:"none"}} />
           <div style={{display:"flex",gap:6,marginTop:8}}>
-            <button onClick={()=>{setCameraSection("scope");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}><><IconCamera size={14}/><span style={{marginLeft:5,fontSize:11}}>Camera</span></></button>
-            <button onClick={()=>scopeLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}><><IconImage size={14}/><span style={{marginLeft:5,fontSize:11}}>Library</span></></button>
+            <button onClick={()=>{setCameraSection("scope");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}><><IconCamera size={14}/><span style={{marginLeft:5,fontSize:11}}>Camera</span></></button>
+            <button onClick={()=>scopeLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}><><IconImage size={14}/><span style={{marginLeft:5,fontSize:11}}>Library</span></></button>
           </div>
         </div>
 
@@ -441,14 +441,14 @@ Property: ${s.addr || ""}`);
             <button onClick={()=>setAddonNotes(addonNotes.toUpperCase())} style={{padding:"3px 8px",borderRadius:4,background:"rgba(255,138,101,.06)",border:"1px solid rgba(255,138,101,.15)",color:"#FF8A65",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F}}>AA</button>
           </div>
           <textarea value={addonNotes} onChange={e => setAddonNotes(e.target.value)} placeholder="Additional findings — box tree moth, dead limb over driveway, etc..." rows={3}
-            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1525",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}} />
+            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}} />
 
           {/* Add-on AI */}
           <div style={{display:"flex",gap:6,marginTop:6}}>
             <button onClick={generateAddonEmail} disabled={aiAddonLoading} style={{padding:"8px 14px",borderRadius:8,background:"rgba(255,138,101,.08)",border:"1px solid rgba(255,138,101,.2)",color:aiAddonLoading?"#804840":"#FF8A65",fontSize:11,fontWeight:700,cursor:aiAddonLoading?"default":"pointer"}}>{aiAddonLoading ? "..." : "<><IconMail size={13}/><span style={{marginLeft:4,fontSize:11}}>Draft email</span></>"}</button>
             {aiAddonResult && <>
-              <button onClick={()=>navigator.clipboard?.writeText(aiAddonResult)} style={{padding:"8px 10px",borderRadius:8,background:"rgba(3,155,229,.06)",border:"1px solid rgba(3,155,229,.12)",color:"#6a8aB0",fontSize:11,fontWeight:700,cursor:"pointer"}}<IconClipboard size={13} /></button>
-              <button onClick={()=>{const email=s.email||"";const subj=encodeURIComponent(`Additional findings at ${s.addr||"your property"} — MTS Rochester`);const body=encodeURIComponent(aiAddonResult);window.open(`mailto:${email}?subject=${subj}&body=${body}`,"_self");}} style={{padding:"8px 10px",borderRadius:8,background:"rgba(51,182,121,.06)",border:"1px solid rgba(51,182,121,.15)",color:"#33B679",fontSize:11,fontWeight:700,cursor:"pointer"}}><><IconMail size={13}/><span style={{marginLeft:4,fontSize:11}}>Send</span></></button>
+              <button onClick={()=>navigator.clipboard?.writeText(aiAddonResult)} style={{padding:"8px 10px",borderRadius:8,background:"rgba(59,130,246,.06)",border:"1px solid rgba(59,130,246,.12)",color:"#6a8aB0",fontSize:11,fontWeight:700,cursor:"pointer"}}<IconClipboard size={13} /></button>
+              <button onClick={()=>{const email=s.email||"";const subj=encodeURIComponent(`Additional findings at ${s.addr||"your property"} — MTS Rochester`);const body=encodeURIComponent(aiAddonResult);window.open(`mailto:${email}?subject=${subj}&body=${body}`,"_self");}} style={{padding:"8px 10px",borderRadius:8,background:"rgba(16,185,129,.06)",border:"1px solid rgba(16,185,129,.15)",color:"#10B981",fontSize:11,fontWeight:700,cursor:"pointer"}}><><IconMail size={13}/><span style={{marginLeft:4,fontSize:11}}>Send</span></></button>
             </>}
           </div>
           {aiAddonResult && <div style={{fontSize:12,color:"#c8a090",lineHeight:1.6,marginTop:8,whiteSpace:"pre-wrap",padding:10,borderRadius:8,background:"rgba(255,138,101,.04)",border:"1px solid rgba(255,138,101,.1)"}}>{aiAddonResult}</div>}
@@ -468,8 +468,8 @@ Property: ${s.addr || ""}`);
           </div>}
           <input ref={addonLibRef} type="file" accept="image/*" multiple onChange={handleAddonPhotos} style={{display:"none"}} />
           <div style={{display:"flex",gap:6,marginTop:8}}>
-            <button onClick={()=>{setCameraSection("addon");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}><><IconCamera size={14}/><span style={{marginLeft:5,fontSize:11}}>Camera</span></></button>
-            <button onClick={()=>addonLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}><><IconImage size={14}/><span style={{marginLeft:5,fontSize:11}}>Library</span></></button>
+            <button onClick={()=>{setCameraSection("addon");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}><><IconCamera size={14}/><span style={{marginLeft:5,fontSize:11}}>Camera</span></></button>
+            <button onClick={()=>addonLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}><><IconImage size={14}/><span style={{marginLeft:5,fontSize:11}}>Library</span></></button>
           </div>
         </div>
 
@@ -489,8 +489,8 @@ Property: ${s.addr || ""}`);
           <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
           {audioClips.length > 0 && <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4}}>
             {audioClips.map((clip, i) => (
-              <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderRadius:8,background:"#0e1525",border:"1px solid #1a2540"}}>
-                <button onClick={() => playAudio(i)} style={{width:28,height:28,borderRadius:14,background:playingIdx===i?"rgba(255,59,48,.15)":"rgba(3,155,229,.1)",border:"none",color:playingIdx===i?"#FF3B30":"#039BE5",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{playingIdx===i?"■":"▶"}</button>
+              <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540"}}>
+                <button onClick={() => playAudio(i)} style={{width:28,height:28,borderRadius:14,background:playingIdx===i?"rgba(255,59,48,.15)":"rgba(59,130,246,.1)",border:"none",color:playingIdx===i?"#FF3B30":"#3B82F6",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{playingIdx===i?"■":"▶"}</button>
                 <div style={{flex:1,fontSize:11,color:"#6a7a90"}}>Memo · {clip.duration ? fmtDur(clip.duration) : "—"}</div>
                 <button onClick={() => removeAudio(i)} style={{padding:"3px 8px",borderRadius:6,background:"rgba(200,60,60,.1)",border:"1px solid rgba(200,60,60,.2)",color:"#e06060",fontSize:10,fontWeight:700,cursor:"pointer"}}><IconX size={12} /></button>
               </div>
@@ -505,7 +505,7 @@ Property: ${s.addr || ""}`);
           {/* Title rename modal */}
           {ytPendingFile && <div style={{marginBottom:8,padding:10,borderRadius:8,background:"rgba(255,0,0,.05)",border:"1px solid rgba(255,0,0,.15)"}}>
             <div style={{fontSize:11,color:"#cc6060",marginBottom:6,fontWeight:600}}>Name this video before uploading:</div>
-            <input value={ytTitle} onChange={e=>setYtTitle(e.target.value)} style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,background:"#0e1525",border:"1px solid #2a3560",color:"#e0e8f0",fontSize:13,fontFamily:B,outline:"none",marginBottom:6}} />
+            <input value={ytTitle} onChange={e=>setYtTitle(e.target.value)} style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,background:"#0e1120",border:"1px solid #2a3560",color:"#e0e8f0",fontSize:13,fontFamily:B,outline:"none",marginBottom:6}} />
             <div style={{display:"flex",gap:6}}>
               <button onClick={()=>setYtPendingFile(null)} style={{flex:1,padding:"8px 0",borderRadius:6,background:"transparent",border:"1px solid #2a3560",color:"#5a6580",fontSize:12,cursor:"pointer"}}>Cancel</button>
               <button onClick={confirmYtUpload} style={{flex:2,padding:"8px 0",borderRadius:6,background:"rgba(255,0,0,.12)",border:"1px solid rgba(255,0,0,.25)",color:"#cc4040",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
@@ -519,7 +519,7 @@ Property: ${s.addr || ""}`);
             {videoUrls.map((url, idx) => {
               const vid = getYtId(url);
               return (
-                <div key={idx} style={{borderRadius:8,background:"#0e1525",border:"1px solid #1a2540",overflow:"hidden"}}>
+                <div key={idx} style={{borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",overflow:"hidden"}}>
                   {vid && <img src={`https://img.youtube.com/vi/${vid}/mqdefault.jpg`} alt="" style={{width:"100%",height:90,objectFit:"cover"}} />}
                   <div style={{padding:"6px 8px",display:"flex",alignItems:"center",gap:6}}>
                     <div style={{fontSize:9,color:"#5a6890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{url}</div>
@@ -531,7 +531,7 @@ Property: ${s.addr || ""}`);
                           "text/plain": new Blob([url], {type:"text/plain"}),
                         })]).catch(()=>navigator.clipboard?.writeText(url));
                       } else { navigator.clipboard?.writeText(url); }
-                    }} style={{padding:"4px 8px",borderRadius:5,background:"rgba(3,155,229,.08)",border:"1px solid rgba(3,155,229,.2)",color:"#5a90b0",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Copy link</button>
+                    }} style={{padding:"4px 8px",borderRadius:5,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#5a90b0",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Copy link</button>
                     <button onClick={()=>setVideoUrls(prev=>prev.filter((_,i)=>i!==idx))} style={{padding:"4px 6px",borderRadius:5,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.15)",color:"#e06060",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}>
                       <IconX size={10} color="#e06060" />
                     </button>
@@ -551,15 +551,15 @@ Property: ${s.addr || ""}`);
       </div>
 
       {/* ── STICKY BOTTOM BAR ──────────────────────────────────────── */}
-      <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"10px 16px",background:"#0d1018",borderTop:"1px solid #1a2030",display:"flex",gap:8,paddingBottom:"max(10px,env(safe-area-inset-bottom))",zIndex:101}}>
-        {s.phone && <button onClick={() => window.open(`sms:${s.phone.replace(/\D/g,"")}`,"_self")} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#1a2240",border:"1px solid #2a3560",color:"#a0b8d0",fontSize:13,fontWeight:700,cursor:"pointer"}}>💬</button>}
-        {s.addr && <button onClick={() => { window.location.href = `comgooglemaps://?daddr=${encodeURIComponent(s.addr)}&directionsmode=driving`; }} style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:13,fontWeight:700,cursor:"pointer"}}>🧭</button>}
+      <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"10px 16px",background:"#0d0f18",borderTop:"1px solid #1a2030",display:"flex",gap:8,paddingBottom:"max(10px,env(safe-area-inset-bottom))",zIndex:101}}>
+        {s.phone && <button onClick={() => window.open(`sms:${s.phone.replace(/\D/g,"")}`,"_self")} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#1a2035",border:"1px solid #2a3560",color:"#a0b8d0",fontSize:13,fontWeight:700,cursor:"pointer"}}><IconMessageSquare size={16} color="#a0b8d0"/></button>}
+        {s.addr && <button onClick={() => { window.location.href = `comgooglemaps://?daddr=${encodeURIComponent(s.addr)}&directionsmode=driving`; }} style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",fontSize:13,fontWeight:700,cursor:"pointer"}}><IconNavigation size={16} color="#3B82F6"/></button>}
         {!declineConfirm ? (
-          <button onClick={() => setDeclineConfirm(true)} style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.2)",color:"#a06060",fontSize:12,fontWeight:700,cursor:"pointer"}}>✕ Decline</button>
+          <button onClick={() => setDeclineConfirm(true)} style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.2)",color:"#a06060",fontSize:12,fontWeight:700,cursor:"pointer"}} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,...{}}}><IconX size={14} color="#a06060"/>Decline</button>
         ) : (
           <button onClick={() => { setDeclineConfirm(false); onDecline(); }} style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(200,60,60,.2)",border:"1px solid rgba(200,60,60,.4)",color:"#FF5555",fontSize:12,fontWeight:800,cursor:"pointer",animation:"pulse 1s infinite"}}>Confirm decline?</button>
         )}
-        <button onClick={onDone} style={{flex:2,padding:"12px 0",borderRadius:10,background:"rgba(51,182,121,.15)",border:"1px solid rgba(51,182,121,.25)",color:"#33B679",fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>✓ DONE</button>
+        <button onClick={onDone} style={{flex:2,padding:"12px 0",borderRadius:10,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.25)",color:"#10B981",fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,...{}}}><IconCheckCircle size={16} color="#10B981"/>DONE</button>
       </div>
     </div>
   );
