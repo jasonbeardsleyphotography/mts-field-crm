@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import PhotoMarkup from "./PhotoMarkup";
 import CameraView from "./CameraView";
 import { saveFieldToDrive, loadFieldFromDrive } from "./driveSync";
+import { IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconYoutube, IconMail, IconX, IconZap, IconClipboard, IconRevision } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
@@ -44,6 +45,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
   const [aiAddonLoading, setAiAddonLoading] = useState(false);
   const [declineConfirm, setDeclineConfirm] = useState(false);
   const [jobNotesOpen, setJobNotesOpen] = useState(false);
+  const [isRevision, setIsRevision] = useState(false);
   const [swipeX, setSwipeX] = useState(0);
   const [swiping, setSwiping] = useState(false);
   const swipeStartX = useRef(0);
@@ -332,12 +334,13 @@ Property: ${s.addr || ""}`);
     <div style={{position:"fixed",inset:0,zIndex:100,background:"#0a0c12",display:"flex",flexDirection:"column",fontFamily:B,color:"#f0f4fa",overflow:"hidden"}}>
 
       {/* ── HEADER ────────────────────────────────────────────────────── */}
-      <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0,paddingTop:"max(10px,env(safe-area-inset-top))"}}>
-        <button onClick={onBack} style={{padding:"6px 14px",borderRadius:8,background:"transparent",border:"1px solid #2a3560",color:"#90a8c0",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5}}>← ROUTE</button>
+      <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0}}>
+        <button onClick={onBack} style={{padding:"6px 12px",borderRadius:8,background:"transparent",border:"1px solid #2a3560",color:"#90a8c0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}>← ROUTE</button>
         <div style={{flex:1,minWidth:0,textAlign:"center"}}>
-          <div style={{fontSize:16,fontWeight:600,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.cn}</div>
+          <div style={{fontSize:15,fontWeight:600,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.cn}</div>
         </div>
-        <button onClick={onDone} style={{padding:"6px 14px",borderRadius:8,background:"#33B679",border:"none",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5}}>DONE →</button>
+        <button onClick={()=>setIsRevision(!isRevision)} title="Mark as revision" style={{padding:"6px 8px",borderRadius:8,background:isRevision?"rgba(255,107,157,.15)":"transparent",border:isRevision?"1px solid rgba(255,107,157,.3)":"1px solid #2a3560",color:isRevision?"#FF6B9D":"#3a4a60",fontSize:14,cursor:"pointer",flexShrink:0}}>🔄</button>
+        <button onClick={onDone} style={{padding:"6px 12px",borderRadius:8,background:"#33B679",border:"none",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}>DONE →</button>
       </div>
 
       {/* ── SCROLLABLE BODY ────────────────────────────────────────────── */}
@@ -388,8 +391,8 @@ Property: ${s.addr || ""}`);
 
           {/* Scope AI */}
           <div style={{display:"flex",gap:6,marginTop:6}}>
-            <button onClick={generateScopeSummary} disabled={aiScopeLoading} style={{padding:"8px 14px",borderRadius:8,background:"rgba(127,119,221,.1)",border:"1px solid rgba(127,119,221,.2)",color:aiScopeLoading?"#5a5080":"#9a90e0",fontSize:11,fontWeight:700,cursor:aiScopeLoading?"default":"pointer"}}>{aiScopeLoading ? "..." : "✨ Summarize"}</button>
-            {aiScopeResult && <button onClick={()=>navigator.clipboard?.writeText(aiScopeResult)} style={{padding:"8px 10px",borderRadius:8,background:"rgba(3,155,229,.06)",border:"1px solid rgba(3,155,229,.12)",color:"#6a8aB0",fontSize:11,fontWeight:700,cursor:"pointer"}}>📋</button>}
+            <button onClick={generateScopeSummary} disabled={aiScopeLoading} style={{padding:"8px 14px",borderRadius:8,background:"rgba(127,119,221,.1)",border:"1px solid rgba(127,119,221,.2)",color:aiScopeLoading?"#5a5080":"#9a90e0",fontSize:11,fontWeight:700,cursor:aiScopeLoading?"default":"pointer"}}>{aiScopeLoading ? "..." : "<><IconSparkles size={13}/><span style={{marginLeft:4,fontSize:11}}>Summarize</span></>"}</button>
+            {aiScopeResult && <button onClick={()=>navigator.clipboard?.writeText(aiScopeResult)} style={{padding:"8px 10px",borderRadius:8,background:"rgba(3,155,229,.06)",border:"1px solid rgba(3,155,229,.12)",color:"#6a8aB0",fontSize:11,fontWeight:700,cursor:"pointer"}}<IconClipboard size={13} /></button>}
           </div>
           {aiScopeResult && <div style={{fontSize:12,color:"#a0b0c8",lineHeight:1.6,marginTop:8,whiteSpace:"pre-wrap",padding:10,borderRadius:8,background:"rgba(127,119,221,.04)",border:"1px solid rgba(127,119,221,.1)"}}>{aiScopeResult}</div>}
 
@@ -398,18 +401,18 @@ Property: ${s.addr || ""}`);
             {scopePhotos.map((p, i) => (
               <div key={i} style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
                 <img src={p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("scope");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
-                <button onClick={e=>{e.stopPropagation();removeScopePhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",color:"#ff6666",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+                <button onClick={e=>{e.stopPropagation();removeScopePhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",color:"#ff6666",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} /></button>
                 <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
-                  <div onClick={()=>{setMarkupIdx(i);setMarkupSection("scope");}} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#ccc",fontSize:10,fontWeight:700,cursor:"pointer"}}>✏️</div>
-                  <a href={p.dataUrl} download={`scope_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#ccc",fontSize:10,fontWeight:700,cursor:"pointer",textDecoration:"none"}}>⬇</a>
+                  <div onClick={()=>{setMarkupIdx(i);setMarkupSection("scope");}} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#ccc",fontSize:10,fontWeight:700,cursor:"pointer"}}><IconPen size={10} /></div>
+                  <a href={p.dataUrl} download={`scope_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#ccc",fontSize:10,fontWeight:700,cursor:"pointer",textDecoration:"none"}}><IconDownload size={11} /></a>
                 </div>
               </div>
             ))}
           </div>}
           <input ref={scopeLibRef} type="file" accept="image/*" multiple onChange={handleScopePhotos} style={{display:"none"}} />
           <div style={{display:"flex",gap:6,marginTop:8}}>
-            <button onClick={()=>{setCameraSection("scope");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}>📷 Camera</button>
-            <button onClick={()=>scopeLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}>📁 Library</button>
+            <button onClick={()=>{setCameraSection("scope");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}><><IconCamera size={14}/><span style={{marginLeft:5,fontSize:11}}>Camera</span></></button>
+            <button onClick={()=>scopeLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}><><IconImage size={14}/><span style={{marginLeft:5,fontSize:11}}>Library</span></></button>
           </div>
         </div>
 
@@ -424,10 +427,10 @@ Property: ${s.addr || ""}`);
 
           {/* Add-on AI */}
           <div style={{display:"flex",gap:6,marginTop:6}}>
-            <button onClick={generateAddonEmail} disabled={aiAddonLoading} style={{padding:"8px 14px",borderRadius:8,background:"rgba(255,138,101,.08)",border:"1px solid rgba(255,138,101,.2)",color:aiAddonLoading?"#804840":"#FF8A65",fontSize:11,fontWeight:700,cursor:aiAddonLoading?"default":"pointer"}}>{aiAddonLoading ? "..." : "✨ Draft email"}</button>
+            <button onClick={generateAddonEmail} disabled={aiAddonLoading} style={{padding:"8px 14px",borderRadius:8,background:"rgba(255,138,101,.08)",border:"1px solid rgba(255,138,101,.2)",color:aiAddonLoading?"#804840":"#FF8A65",fontSize:11,fontWeight:700,cursor:aiAddonLoading?"default":"pointer"}}>{aiAddonLoading ? "..." : "<><IconMail size={13}/><span style={{marginLeft:4,fontSize:11}}>Draft email</span></>"}</button>
             {aiAddonResult && <>
-              <button onClick={()=>navigator.clipboard?.writeText(aiAddonResult)} style={{padding:"8px 10px",borderRadius:8,background:"rgba(3,155,229,.06)",border:"1px solid rgba(3,155,229,.12)",color:"#6a8aB0",fontSize:11,fontWeight:700,cursor:"pointer"}}>📋</button>
-              <button onClick={()=>{const email=s.email||"";const subj=encodeURIComponent(`Additional findings at ${s.addr||"your property"} — MTS Rochester`);const body=encodeURIComponent(aiAddonResult);window.open(`mailto:${email}?subject=${subj}&body=${body}`,"_self");}} style={{padding:"8px 10px",borderRadius:8,background:"rgba(51,182,121,.06)",border:"1px solid rgba(51,182,121,.15)",color:"#33B679",fontSize:11,fontWeight:700,cursor:"pointer"}}>📧 Send</button>
+              <button onClick={()=>navigator.clipboard?.writeText(aiAddonResult)} style={{padding:"8px 10px",borderRadius:8,background:"rgba(3,155,229,.06)",border:"1px solid rgba(3,155,229,.12)",color:"#6a8aB0",fontSize:11,fontWeight:700,cursor:"pointer"}}<IconClipboard size={13} /></button>
+              <button onClick={()=>{const email=s.email||"";const subj=encodeURIComponent(`Additional findings at ${s.addr||"your property"} — MTS Rochester`);const body=encodeURIComponent(aiAddonResult);window.open(`mailto:${email}?subject=${subj}&body=${body}`,"_self");}} style={{padding:"8px 10px",borderRadius:8,background:"rgba(51,182,121,.06)",border:"1px solid rgba(51,182,121,.15)",color:"#33B679",fontSize:11,fontWeight:700,cursor:"pointer"}}><><IconMail size={13}/><span style={{marginLeft:4,fontSize:11}}>Send</span></></button>
             </>}
           </div>
           {aiAddonResult && <div style={{fontSize:12,color:"#c8a090",lineHeight:1.6,marginTop:8,whiteSpace:"pre-wrap",padding:10,borderRadius:8,background:"rgba(255,138,101,.04)",border:"1px solid rgba(255,138,101,.1)"}}>{aiAddonResult}</div>}
@@ -437,18 +440,18 @@ Property: ${s.addr || ""}`);
             {addonPhotos.map((p, i) => (
               <div key={i} style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
                 <img src={p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("addon");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
-                <button onClick={e=>{e.stopPropagation();removeAddonPhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",color:"#ff6666",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+                <button onClick={e=>{e.stopPropagation();removeAddonPhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",color:"#ff6666",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} /></button>
                 <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
-                  <div onClick={()=>{setMarkupIdx(i);setMarkupSection("addon");}} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#ccc",fontSize:10,fontWeight:700,cursor:"pointer"}}>✏️</div>
-                  <a href={p.dataUrl} download={`addon_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#ccc",fontSize:10,fontWeight:700,cursor:"pointer",textDecoration:"none"}}>⬇</a>
+                  <div onClick={()=>{setMarkupIdx(i);setMarkupSection("addon");}} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#ccc",fontSize:10,fontWeight:700,cursor:"pointer"}}><IconPen size={10} /></div>
+                  <a href={p.dataUrl} download={`addon_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#ccc",fontSize:10,fontWeight:700,cursor:"pointer",textDecoration:"none"}}><IconDownload size={11} /></a>
                 </div>
               </div>
             ))}
           </div>}
           <input ref={addonLibRef} type="file" accept="image/*" multiple onChange={handleAddonPhotos} style={{display:"none"}} />
           <div style={{display:"flex",gap:6,marginTop:8}}>
-            <button onClick={()=>{setCameraSection("addon");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}>📷 Camera</button>
-            <button onClick={()=>addonLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}>📁 Library</button>
+            <button onClick={()=>{setCameraSection("addon");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}><><IconCamera size={14}/><span style={{marginLeft:5,fontSize:11}}>Camera</span></></button>
+            <button onClick={()=>addonLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1525",border:"1px dashed #1a2540",color:"#5a7090",fontSize:12,fontWeight:600,cursor:"pointer"}}><><IconImage size={14}/><span style={{marginLeft:5,fontSize:11}}>Library</span></></button>
           </div>
         </div>
 
@@ -471,7 +474,7 @@ Property: ${s.addr || ""}`);
               <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderRadius:8,background:"#0e1525",border:"1px solid #1a2540"}}>
                 <button onClick={() => playAudio(i)} style={{width:28,height:28,borderRadius:14,background:playingIdx===i?"rgba(255,59,48,.15)":"rgba(3,155,229,.1)",border:"none",color:playingIdx===i?"#FF3B30":"#039BE5",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{playingIdx===i?"■":"▶"}</button>
                 <div style={{flex:1,fontSize:11,color:"#6a7a90"}}>Memo · {clip.duration ? fmtDur(clip.duration) : "—"}</div>
-                <button onClick={() => removeAudio(i)} style={{padding:"3px 8px",borderRadius:6,background:"rgba(200,60,60,.1)",border:"1px solid rgba(200,60,60,.2)",color:"#e06060",fontSize:10,fontWeight:700,cursor:"pointer"}}>✕</button>
+                <button onClick={() => removeAudio(i)} style={{padding:"3px 8px",borderRadius:6,background:"rgba(200,60,60,.1)",border:"1px solid rgba(200,60,60,.2)",color:"#e06060",fontSize:10,fontWeight:700,cursor:"pointer"}}><IconX size={12} /></button>
               </div>
             ))}
           </div>}
@@ -486,12 +489,12 @@ Property: ${s.addr || ""}`);
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:11,color:"#a0b0c0",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{videoUrl}</div>
               </div>
-              <button onClick={() => { setVideoUrl(""); setShowVideoInput(false); }} style={{padding:"4px 10px",borderRadius:6,background:"rgba(200,60,60,.1)",border:"1px solid rgba(200,60,60,.2)",color:"#e06060",fontSize:10,fontWeight:700,cursor:"pointer"}}>✕</button>
+              <button onClick={() => { setVideoUrl(""); setShowVideoInput(false); }} style={{padding:"4px 10px",borderRadius:6,background:"rgba(200,60,60,.1)",border:"1px solid rgba(200,60,60,.2)",color:"#e06060",fontSize:10,fontWeight:700,cursor:"pointer"}}><IconX size={12} /></button>
             </div>
           ) : (
             <div style={{display:"flex",gap:6}}>
               <input ref={ytFileRef} type="file" accept="video/*" onChange={handleYtFile} style={{display:"none"}} />
-              <button onClick={() => ytFileRef.current?.click()} disabled={ytUploading} style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(255,0,0,.06)",border:"1px dashed rgba(255,0,0,.2)",color:ytUploading?"#804040":"#cc4040",fontSize:12,fontWeight:600,cursor:ytUploading?"default":"pointer"}}>{ytUploading ? "Uploading..." : "🎬 Upload to YouTube"}</button>
+              <button onClick={() => ytFileRef.current?.click()} disabled={ytUploading} style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(255,0,0,.06)",border:"1px dashed rgba(255,0,0,.2)",color:ytUploading?"#804040":"#cc4040",fontSize:12,fontWeight:600,cursor:ytUploading?"default":"pointer"}}>{ytUploading ? "Uploading..." : "<><IconYoutube size={14}/><span style={{marginLeft:5,fontSize:11}}>Upload video</span></>"}</button>
             </div>
           )}
         </div>

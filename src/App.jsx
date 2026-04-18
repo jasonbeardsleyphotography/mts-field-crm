@@ -5,6 +5,12 @@ import SwipeCard from "./SwipeCard";
 import OnsiteWindow from "./OnsiteWindow";
 import Pipeline, { savePipeline, loadPipeline } from "./Pipeline";
 import { saveAppState, loadAppState, saveFieldToDrive, onSyncStatus } from "./driveSync";
+import {
+  IconArrowLeft, IconNavigation, IconMessageSquare, IconVolume2, IconVolumeX,
+  IconClipboard, IconX, IconRotateCcw, IconRefresh, IconReorder, IconUndo,
+  IconPlus, IconSearch, IconTrash, IconChevronDown, IconChevronRight,
+  IconCloud, IconCloudOff, IconCheckCircle
+} from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS FIELD ROUTE — Main App
@@ -110,6 +116,21 @@ export default function App() {
   const undoToastTimer = useRef(null);
   const [view, setView] = useState(() => lsGet("mts-view", "route"));
   const [pipelineSearch, setPipelineSearch] = useState("");
+  const [routeSearch, setRouteSearch] = useState("");
+  const [routeSearchOpen, setRouteSearchOpen] = useState(false);
+
+  // Fix iOS keyboard dismiss causing content to hide behind notch
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const onResize = () => {
+      document.documentElement.style.setProperty("--vvh", `${vv.height}px`);
+    };
+    vv.addEventListener("resize", onResize);
+    vv.addEventListener("scroll", onResize);
+    onResize();
+    return () => { vv.removeEventListener("resize", onResize); vv.removeEventListener("scroll", onResize); };
+  }, []);
 
   // Persist view state so tab resume doesn't reset
   useEffect(() => { lsSet("mts-view", view); }, [view]);
@@ -277,6 +298,24 @@ export default function App() {
   const completed = useMemo(() => stops.filter(s => dismissed[s.id]).sort((a, b) => (dismissed[b.id] || 0) - (dismissed[a.id] || 0)), [stops, dismissed]);
   const mapStops = useMemo(() => active.filter(s => s.isTask), [active]);
 
+  // Route search filter
+  const filteredActive = useMemo(() => {
+    if (!routeSearch.trim()) return active;
+    const q = routeSearch.toLowerCase();
+    return active.filter(s => (s.cn||"").toLowerCase().includes(q) || (s.addr||"").toLowerCase().includes(q) || (s.jn||"").includes(q));
+  }, [active, routeSearch]);
+
+  // Delete a stop entirely (no pipeline, no restore)
+  const deleteStop = (id) => {
+    setDismissed(p => ({...p, [id]: Date.now()}));
+    setExpanded(null);
+    // Remove from ordIds so it stays gone
+    setOrdIds(prev => {
+      const order = prev[dayKey] || [];
+      return { ...prev, [dayKey]: order.filter(i => i !== id) };
+    });
+  };
+
   // ── ACTIONS ──────────────────────────────────────────────────────────────
   const openOnsite = (stop) => { setOnsiteStop(stop); setExpanded(null); };
   const [declineConfirm, setDeclineConfirm] = useState(null); // stop id awaiting confirm
@@ -345,13 +384,47 @@ export default function App() {
   };
 
   // ── TEXT-TO-SPEECH ──────────────────────────────────────────────────────
-  const speakStop = (s) => {
-    if (!window.speechSynthesis) return;
-    if (window.speechSynthesis.speaking) { window.speechSynthesis.cancel(); return; }
+  const ttsAudioRef = useRef(null);
+  const speakStop = async (s) => {
+    // Stop if already playing
+    if (ttsAudioRef.current && !ttsAudioRef.current.paused) {
+      ttsAudioRef.current.pause();
+      ttsAudioRef.current = null;
+      return;
+    }
     const text = s.notes || "No notes available.";
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = 0.85;
-    window.speechSynthesis.speak(u);
+    const geminiKey = import.meta.env.VITE_GEMINI_KEY;
+
+    if (geminiKey) {
+      // Use Gemini TTS — routes through CarPlay via <audio> element
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: `Read this aloud clearly and slowly: ${text}` }] }],
+            generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } } } }
+          }),
+        });
+        const data = await res.json();
+        const audioB64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (audioB64) {
+          const blob = new Blob([Uint8Array.from(atob(audioB64), c => c.charCodeAt(0))], { type: "audio/mp3" });
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          ttsAudioRef.current = audio;
+          audio.play();
+          return;
+        }
+      } catch(e) { /* fall through to speechSynthesis */ }
+    }
+    // Fallback: speechSynthesis (phone speaker only)
+    if (window.speechSynthesis) {
+      if (window.speechSynthesis.speaking) { window.speechSynthesis.cancel(); return; }
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 0.85;
+      window.speechSynthesis.speak(u);
+    }
   };
 
   const handleReorderTap = (idx) => {
@@ -424,6 +497,7 @@ export default function App() {
 .mts-body{display:flex;flex-direction:column;flex:1;overflow:hidden}
 .mts-map{flex-shrink:0;border-bottom:1px solid #1a2030}
 .mts-list{flex:1;overflow-y:auto}
+@keyframes spin{to{transform:rotate(360deg)}}
 @media(min-width:768px){
   .mts-body{flex-direction:row}
   .mts-map{width:45%;min-width:320px;max-width:500px;border-bottom:none;border-right:1px solid #1a2030;overflow:hidden;display:flex;flex-direction:column}
@@ -438,14 +512,26 @@ export default function App() {
       {/* ── HEADER ─────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:5,padding:"8px 10px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0}}>
         <button onClick={()=>setView(view==="route"?"pipeline":"route")} style={{padding:"6px 10px",borderRadius:8,background:"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:14,letterSpacing:2,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#33B679",transition:"color .2s"}}>{view==="route"?"MTS FIELD SALES":"MTS PIPELINE"}</button>
-        <div style={{width:6,height:6,borderRadius:3,background:syncIndicator==="syncing"?"#F6BF26":syncIndicator==="success"?"#33B679":syncIndicator==="error"?"#FF5555":"transparent",transition:"background .3s",flexShrink:0}} title={syncIndicator}/>
+        {syncIndicator !== "idle" && (
+          <button onClick={() => { if (syncIndicator === "error") triggerCloudSync(); }}
+            title={syncIndicator === "error" ? "Sync failed — tap to retry" : syncIndicator === "syncing" ? "Syncing..." : "Synced"}
+            style={{background:"none",border:"none",cursor:syncIndicator==="error"?"pointer":"default",padding:0,flexShrink:0}}>
+            {syncIndicator === "error" ? <IconCloudOff size={14} color="#FF5555" /> : syncIndicator === "syncing" ? <IconCloud size={14} color="#F6BF26" /> : <IconCloud size={14} color="#33B679" />}
+          </button>
+        )}
         {view === "route" && <>
         <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"6px 12px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0c12",color:"#f0f4fa",fontSize:11,fontWeight:600,cursor:"pointer",outline:"none",appearance:"auto",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
           {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
         </select>
         <div style={{flex:1}}/>
-        <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}} style={{padding:"6px 12px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"#1a2240",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#2a3560"}`,color:reorderMode?"#c8a0e8":"#5a6580",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>{reorderMode?"✕ DONE":"↕ REORDER"}</button>
-        <button onClick={undo} disabled={!undoStack.length} style={{padding:"6px 12px",borderRadius:8,background:undoStack.length?"#1a2240":"transparent",border:`1px solid ${undoStack.length?"#2a3560":"#1a2030"}`,color:undoStack.length?"#f0f4fa":"#2a3050",fontSize:11,fontWeight:600,cursor:undoStack.length?"pointer":"default",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>↩ UNDO</button>
+        <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}} style={{padding:"6px 10px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"#1a2240",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#2a3560"}`,color:reorderMode?"#c8a0e8":"#5a6580",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:5}}>
+          <IconReorder size={14} color={reorderMode?"#c8a0e8":"#5a6580"} />
+          {reorderMode?"DONE":"REORDER"}
+        </button>
+        <button onClick={undo} disabled={!undoStack.length} style={{padding:"6px 10px",borderRadius:8,background:undoStack.length?"#1a2240":"transparent",border:`1px solid ${undoStack.length?"#2a3560":"#1a2030"}`,color:undoStack.length?"#f0f4fa":"#2a3050",fontSize:11,fontWeight:600,cursor:undoStack.length?"pointer":"default",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:5}}>
+          <IconUndo size={14} color={undoStack.length?"#f0f4fa":"#2a3050"} />
+          UNDO
+        </button>
         </>}
         {view === "pipeline" && <>
           <div style={{flex:1}}/>
@@ -480,7 +566,7 @@ export default function App() {
       <div className="scr mts-list" style={{paddingBottom:"max(12px,env(safe-area-inset-bottom))"}}>
         {active.length === 0 && <div style={{padding:40,textAlign:"center",color:"#2a3050",fontSize:14,fontWeight:600}}>No stops</div>}
 
-        {(()=>{ let taskNum = 0; return active.map((s, idx) => {
+        {(()=>{ let taskNum = 0; return filteredActive.map((s, idx) => {
           if (s.isTask) taskNum++;
           const isNext = idx === 0 && !reorderMode && s.isTask;
           const isExp = expanded === s.id && !reorderMode;
@@ -530,36 +616,60 @@ export default function App() {
                 {s.notes && <div style={{fontSize:13,color:"#a0b0c0",lineHeight:1.6,marginBottom:10,fontWeight:500}}>{s.notes}</div>}
                 {s.phone && <div style={{fontSize:13,color:"#a0b8d0",marginBottom:3,fontWeight:600}}>📞 {s.phone}</div>}
                 {s.email && <div style={{fontSize:13,color:"#a0b8d0",marginBottom:8,fontWeight:600}}>✉️ {s.email}</div>}
-                <div style={{display:"flex",gap:6,marginTop:4}}>
-                  {s.phone && <button onClick={()=>{setTextSheet(s);setOtwMinutes(null);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#a0b8d0",fontSize:13,fontWeight:700,cursor:"pointer"}}>💬</button>}
-                  {s.addr && <button onClick={()=>navigate(s.addr)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:13,fontWeight:700,cursor:"pointer"}}>🧭</button>}
-                  {s.notes && <button onClick={()=>speakStop(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(100,80,200,.08)",border:"1px solid rgba(100,80,200,.2)",color:"#8a80c0",fontSize:13,fontWeight:700,cursor:"pointer"}}>🔊</button>}
-                  <button onClick={()=>openOnsite(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(51,182,121,.06)",border:"1px solid rgba(51,182,121,.15)",color:"#33B679",fontSize:13,fontWeight:700,cursor:"pointer"}}>📋</button>
-                  {declineConfirm !== s.id ? (
-                    <button onClick={()=>setDeclineConfirm(s.id)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(200,60,60,.06)",border:"1px solid rgba(200,60,60,.15)",color:"#a06060",fontSize:13,fontWeight:700,cursor:"pointer"}}>✕</button>
-                  ) : (
-                    <button onClick={()=>decline(s.id)} style={{flex:1.5,padding:"10px 0",borderRadius:8,background:"rgba(200,60,60,.15)",border:"1px solid rgba(200,60,60,.3)",color:"#FF5555",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",textTransform:"uppercase"}}>CONFIRM?</button>
-                  )}
-                </div>
+                {declineConfirm === s.id ? (
+                  <button onClick={()=>decline(s.id)} style={{width:"100%",padding:"11px 0",marginTop:4,borderRadius:8,background:"rgba(200,60,60,.15)",border:"1px solid rgba(200,60,60,.3)",color:"#FF5555",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",animation:"pulse 1s infinite"}}>✕ CONFIRM DECLINE?</button>
+                ) : (
+                  <div style={{display:"flex",gap:6,marginTop:4}}>
+                    {s.phone && <button onClick={()=>{setTextSheet(s);setOtwMinutes(null);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconMessageSquare size={16} color="#a0b8d0"/></button>}
+                    {s.addr && <button onClick={()=>navigate(s.addr)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconNavigation size={16} color="#039BE5"/></button>}
+                    {s.notes && <button onClick={()=>speakStop(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(100,80,200,.08)",border:"1px solid rgba(100,80,200,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconVolume2 size={16} color="#8a80c0"/></button>}
+                    <button onClick={()=>openOnsite(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(51,182,121,.06)",border:"1px solid rgba(51,182,121,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconClipboard size={16} color="#33B679"/></button>
+                    <button onClick={()=>setDeclineConfirm(s.id)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(200,60,60,.06)",border:"1px solid rgba(200,60,60,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={16} color="#a06060"/></button>
+                    {!s.isTask && <button onClick={()=>deleteStop(s.id)} title="Delete permanently" style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(100,100,100,.06)",border:"1px solid rgba(100,100,100,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconTrash size={16} color="#4a5a70"/></button>}
+                  </div>
+                )}
               </div>}
             </div>
           </SwipeCard>;
         }); })()}
 
         {/* ── BOTTOM BAR ────────────────────────────────────────────── */}
-        <div style={{borderTop:"1px solid #1a2030",display:"flex",alignItems:"center",padding:"4px 8px",gap:4,flexShrink:0,background:"#0a0c10"}}>
-          {completed.length>0 ? (
-            <button onClick={()=>setCompletedOpen(!completedOpen)} style={{padding:"8px 10px",background:"transparent",border:"none",color:"#33B679",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
-              <span style={{transform:completedOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7}}>▶</span>
-              ✓ {completed.length}
+        <div style={{borderTop:"1px solid #1a2030",flexShrink:0,background:"#0a0c10"}}>
+          {/* Search row */}
+          {routeSearchOpen && <div style={{padding:"6px 8px",borderBottom:"1px solid #0e1218",display:"flex",gap:6,alignItems:"center"}}>
+            <input value={routeSearch} onChange={e=>setRouteSearch(e.target.value)} autoFocus placeholder="Search clients, addresses..." style={{flex:1,padding:"6px 10px",borderRadius:8,background:"#0e1525",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:12,fontFamily:"'DM Sans',system-ui",outline:"none"}} />
+            <button onClick={()=>{setRouteSearchOpen(false);setRouteSearch("");}} style={{padding:"6px 8px",borderRadius:6,background:"transparent",border:"none",color:"#4a5a70",fontSize:12,cursor:"pointer"}}>✕</button>
+          </div>}
+          <div style={{display:"flex",alignItems:"center",padding:"4px 8px",gap:4}}>
+            {completed.length>0 ? (
+              <button onClick={()=>{
+                const next = !completedOpen;
+                setCompletedOpen(next);
+                if (next) setTimeout(() => {
+                  const el = document.getElementById("mts-completed-list");
+                  if (el) el.scrollIntoView({ behavior:"smooth", block:"start" });
+                }, 80);
+              }} style={{padding:"8px 10px",background:"transparent",border:"none",color:"#33B679",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
+                <span style={{transform:completedOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7}}>▶</span>
+                ✓ {completed.length}
+              </button>
+            ) : <div style={{width:8}}/>}
+            <div style={{flex:1}}/>
+            <button onClick={()=>setRouteSearchOpen(!routeSearchOpen)} style={{padding:"7px",borderRadius:8,background:routeSearchOpen?"rgba(3,155,229,.12)":"transparent",border:"1px solid #1a2030",color:routeSearchOpen?"#039BE5":"#3a4a60",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <IconSearch size={15} color={routeSearchOpen?"#039BE5":"#3a4a60"} />
             </button>
-          ) : <div style={{width:8}}/>}
-          <div style={{flex:1}}/>
-          <button onClick={load} disabled={loading} style={{padding:"6px 10px",borderRadius:8,background:"#1a2240",border:"1px solid #1a2030",color:loading?"#2a3050":"#5a6580",fontSize:11,fontWeight:700,cursor:loading?"default":"pointer"}}>↻ Refresh</button>
-          {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"6px 10px",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",fontSize:11,fontWeight:700,cursor:"pointer"}}>🧭 All</button>}
-          <button onClick={()=>setAddStopOpen(true)} style={{padding:"6px 10px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#3a4a60",fontSize:11,fontWeight:600,cursor:"pointer"}}>+ Add</button>
+            <button onClick={load} disabled={loading} style={{padding:"7px",borderRadius:8,background:"#1a2240",border:"1px solid #1a2030",color:loading?"#2a3050":"#5a6580",cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <IconRefresh size={15} color={loading?"#2a3050":"#5a6580"} style={{animation:loading?"spin 1s linear infinite":undefined}} />
+            </button>
+            {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"7px",borderRadius:8,background:"rgba(3,155,229,.1)",border:"1px solid rgba(3,155,229,.2)",color:"#039BE5",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <IconNavigation size={15} color="#039BE5" />
+            </button>}
+            <button onClick={()=>setAddStopOpen(true)} style={{padding:"7px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#3a4a60",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <IconPlus size={15} color="#3a4a60" />
+            </button>
+          </div>
         </div>
-        {completedOpen && completed.length > 0 && <div >
+        {completedOpen && completed.length > 0 && <div id="mts-completed-list">
           {completed.map(s => (
             <div key={s.id} style={{padding:"10px 16px",borderBottom:"1px solid #0a0e16",display:"flex",alignItems:"center",gap:10}}>
               <div style={{width:24,height:24,borderRadius:"50%",background:s.color+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff"}}>✓</div>
@@ -574,6 +684,11 @@ export default function App() {
         </div>}
       </div>
       </div>{/* end mts-body */}
+
+      {/* ── SIGN OUT (hidden footer) ────────────────────────────────── */}
+      <div style={{borderTop:"1px solid #0e1218",padding:"4px 12px",display:"flex",justifyContent:"flex-end",background:"#080a10",flexShrink:0}}>
+        <button onClick={()=>{ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} }} style={{background:"none",border:"none",color:"#2a3050",fontSize:9,cursor:"pointer",padding:"2px 4px",fontFamily:"'DM Sans',system-ui",letterSpacing:0.5}}>sign out</button>
+      </div>
 
       {/* ── ADD STOP POPUP ─────────────────────────────────────────── */}
       {addStopOpen && <div onClick={()=>{setAddStopOpen(false);setAddStopAddr("");setAddStopName("");}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>

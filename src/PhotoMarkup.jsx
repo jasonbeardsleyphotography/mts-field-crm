@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { IconArrowUpRight, IconEraser, IconUndo, IconX } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Photo Markup
@@ -325,13 +326,21 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
         background:"#111", borderBottom:"1px solid #2a2a2a", flexShrink:0,
         paddingTop:"max(8px, env(safe-area-inset-top))",
       }}>
-        <button onClick={onCancel} style={{padding:"6px 14px",borderRadius:8,background:"transparent",border:"1px solid #3a3a3a",color:"#aaa",fontSize:13,fontWeight:600,cursor:"pointer"}}>Cancel</button>
+        <button onClick={onCancel} style={{padding:"7px 12px",borderRadius:8,background:"transparent",border:"1px solid #3a3a3a",color:"#aaa",fontSize:12,fontWeight:500,cursor:"pointer",letterSpacing:0.5}}>Cancel</button>
         <div style={{flex:1}}/>
-        <button onClick={()=>{setArrowMode(!arrowMode);if(!arrowMode)setEraserMode(false);}} style={{padding:"6px 14px",borderRadius:8,background:arrowMode?"rgba(0,122,255,.2)":"transparent",border:`1px solid ${arrowMode?"#007AFF":"#3a3a3a"}`,color:arrowMode?"#007AFF":"#aaa",fontSize:13,fontWeight:600,cursor:"pointer"}}>→ Arrow</button>
-        <button onClick={()=>{setEraserMode(!eraserMode);if(!eraserMode)setArrowMode(false);}} style={{padding:"6px 14px",borderRadius:8,background:eraserMode?"rgba(255,100,100,.2)":"transparent",border:`1px solid ${eraserMode?"#ff6b6b":"#3a3a3a"}`,color:eraserMode?"#ff6b6b":"#aaa",fontSize:13,fontWeight:600,cursor:"pointer"}}>⌫ Eraser</button>
-        <button onClick={undo} disabled={!strokes.length} style={{padding:"6px 14px",borderRadius:8,background:"transparent",border:"1px solid #3a3a3a",color:strokes.length?"#fff":"#3a3a3a",fontSize:13,fontWeight:600,cursor:"pointer"}}>↩ Undo</button>
-        <button onClick={clearAll} disabled={!strokes.length} style={{padding:"6px 14px",borderRadius:8,background:"transparent",border:"1px solid #3a3a3a",color:strokes.length?"#ff6b6b":"#3a3a3a",fontSize:13,fontWeight:600,cursor:"pointer"}}>Clear</button>
-        <button onClick={handleSave} style={{padding:"6px 14px",borderRadius:8,background:"#007AFF",border:"none",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}}>Done</button>
+        <button onClick={()=>{setArrowMode(!arrowMode);if(!arrowMode)setEraserMode(false);}} title="Arrow mode" style={{padding:"8px 10px",borderRadius:8,background:arrowMode?"rgba(0,122,255,.2)":"transparent",border:`1px solid ${arrowMode?"#007AFF":"#3a3a3a"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:5,color:arrowMode?"#007AFF":"#aaa",fontSize:11}}>
+          <IconArrowUpRight size={15} color={arrowMode?"#007AFF":"#aaa"} /> Arrow
+        </button>
+        <button onClick={()=>{setEraserMode(!eraserMode);if(!eraserMode)setArrowMode(false);}} title="Erase stroke" style={{padding:"8px 10px",borderRadius:8,background:eraserMode?"rgba(255,100,100,.2)":"transparent",border:`1px solid ${eraserMode?"#ff6b6b":"#3a3a3a"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:5,color:eraserMode?"#ff6b6b":"#aaa",fontSize:11}}>
+          <IconEraser size={15} color={eraserMode?"#ff6b6b":"#aaa"} /> Erase
+        </button>
+        <button onClick={undo} disabled={!strokes.length} title="Undo last stroke" style={{padding:"8px 10px",borderRadius:8,background:"transparent",border:"1px solid #3a3a3a",cursor:strokes.length?"pointer":"default",display:"flex",alignItems:"center",opacity:strokes.length?1:.3}}>
+          <IconUndo size={15} color="#fff" />
+        </button>
+        <button onClick={clearAll} disabled={!strokes.length} title="Clear all" style={{padding:"8px 10px",borderRadius:8,background:"transparent",border:"1px solid #3a3a3a",cursor:strokes.length?"pointer":"default",display:"flex",alignItems:"center",opacity:strokes.length?1:.3}}>
+          <IconX size={15} color="#ff6b6b" />
+        </button>
+        <button onClick={handleSave} style={{padding:"7px 14px",borderRadius:8,background:"#007AFF",border:"none",color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer",letterSpacing:0.5}}>Done</button>
       </div>
 
       {/* ── CANVAS ───────────────────────────────────────────────────── */}
