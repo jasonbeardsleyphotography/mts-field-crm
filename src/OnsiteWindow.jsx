@@ -39,6 +39,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
   const [playingIdx, setPlayingIdx] = useState(null);
   const [ytUploading, setYtUploading] = useState(false);
   const ytFileRef = useRef(null);
+  const [ytPendingFile, setYtPendingFile] = useState(null); // file waiting for title confirm
+  const [ytTitle, setYtTitle] = useState("");
   const [aiScopeResult, setAiScopeResult] = useState(fd.aiScopeSummary || "");
   const [aiAddonResult, setAiAddonResult] = useState(fd.aiAddonEmail || "");
   const [aiScopeLoading, setAiScopeLoading] = useState(false);
@@ -258,17 +260,17 @@ Property: ${s.addr || ""}`);
   };
 
   // ── YOUTUBE UPLOAD ──────────────────────────────────────────────────────
-  const uploadToYouTube = async (file) => {
+  const uploadToYouTube = async (file, customTitle) => {
     if (!file) return;
     setYtUploading(true);
     try {
-      // Get fresh Google token from localStorage
       const tokenData = JSON.parse(localStorage.getItem("mts-token") || "null");
       const tok = tokenData?.token;
       if (!tok) { alert("Sign in required"); setYtUploading(false); return; }
 
+      const title = customTitle || `${s.cn} - ${s.addr || "Property"}`;
       const metadata = {
-        snippet: { title: `${s.cn} - ${s.addr || "Property"}`, description: `Field visit: ${s.cn}\n${s.addr}\n${new Date().toLocaleDateString()}`, categoryId: "22" },
+        snippet: { title, description: `Field visit: ${s.cn}\n${s.addr}\n${new Date().toLocaleDateString()}`, categoryId: "22" },
         status: { privacyStatus: "unlisted" },
       };
 
@@ -309,8 +311,19 @@ Property: ${s.addr || ""}`);
 
   const handleYtFile = (e) => {
     const file = e.target.files?.[0];
-    if (file) uploadToYouTube(file);
+    if (file) {
+      // Show title editor before uploading
+      setYtTitle(`${s.cn} - ${s.addr || "Property"} - ${new Date().toLocaleDateString()}`);
+      setYtPendingFile(file);
+    }
     e.target.value = "";
+  };
+
+  const confirmYtUpload = () => {
+    if (ytPendingFile) {
+      uploadToYouTube(ytPendingFile, ytTitle);
+      setYtPendingFile(null);
+    }
   };
 
   const F = "'Oswald',sans-serif";
@@ -483,18 +496,49 @@ Property: ${s.addr || ""}`);
         {/* ── VIDEO ─────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
           <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>VIDEO</div>
-          {videoUrl && !showVideoInput ? (
-            <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px",borderRadius:10,background:"#0e1525",border:"1px solid #1a2540"}}>
-              {ytId && <img src={`https://img.youtube.com/vi/${ytId}/default.jpg`} alt="" style={{width:56,height:42,borderRadius:6,objectFit:"cover"}} />}
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:11,color:"#a0b0c0",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{videoUrl}</div>
-              </div>
-              <button onClick={() => { setVideoUrl(""); setShowVideoInput(false); }} style={{padding:"4px 10px",borderRadius:6,background:"rgba(200,60,60,.1)",border:"1px solid rgba(200,60,60,.2)",color:"#e06060",fontSize:10,fontWeight:700,cursor:"pointer"}}><IconX size={12} /></button>
+
+          {/* Title rename modal */}
+          {ytPendingFile && <div style={{marginBottom:8,padding:10,borderRadius:8,background:"rgba(255,0,0,.05)",border:"1px solid rgba(255,0,0,.15)"}}>
+            <div style={{fontSize:11,color:"#cc6060",marginBottom:6,fontWeight:600}}>Name this video before uploading:</div>
+            <input value={ytTitle} onChange={e=>setYtTitle(e.target.value)} style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,background:"#0e1525",border:"1px solid #2a3560",color:"#e0e8f0",fontSize:13,fontFamily:B,outline:"none",marginBottom:6}} />
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>setYtPendingFile(null)} style={{flex:1,padding:"8px 0",borderRadius:6,background:"transparent",border:"1px solid #2a3560",color:"#5a6580",fontSize:12,cursor:"pointer"}}>Cancel</button>
+              <button onClick={confirmYtUpload} style={{flex:2,padding:"8px 0",borderRadius:6,background:"rgba(255,0,0,.12)",border:"1px solid rgba(255,0,0,.25)",color:"#cc4040",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+                <IconYoutube size={13} color="#cc4040" /> Upload
+              </button>
             </div>
-          ) : (
+          </div>}
+
+          {videoUrl && !ytPendingFile ? (
+            <div style={{borderRadius:10,background:"#0e1525",border:"1px solid #1a2540",overflow:"hidden"}}>
+              {ytId && <img src={`https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`} alt="" style={{width:"100%",height:120,objectFit:"cover"}} />}
+              <div style={{padding:"8px 10px",display:"flex",alignItems:"center",gap:8}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:10,color:"#6a7890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{videoUrl}</div>
+                </div>
+                {/* Copy as hyperlink — pastes as "Link to Video Review" in rich text */}
+                <button onClick={() => {
+                  const html = `<a href="${videoUrl}">Link to Video Review</a>`;
+                  if (navigator.clipboard?.write) {
+                    navigator.clipboard.write([new ClipboardItem({
+                      "text/html": new Blob([html], { type: "text/html" }),
+                      "text/plain": new Blob([videoUrl], { type: "text/plain" }),
+                    })]).catch(() => navigator.clipboard?.writeText(videoUrl));
+                  } else {
+                    navigator.clipboard?.writeText(videoUrl);
+                  }
+                }} style={{padding:"5px 10px",borderRadius:6,background:"rgba(3,155,229,.08)",border:"1px solid rgba(3,155,229,.2)",color:"#5a90b0",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Copy link</button>
+                <button onClick={() => setVideoUrl("")} style={{padding:"5px 8px",borderRadius:6,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.15)",color:"#e06060",cursor:"pointer",display:"flex",alignItems:"center"}}>
+                  <IconX size={11} color="#e06060" />
+                </button>
+              </div>
+            </div>
+          ) : !ytPendingFile && (
             <div style={{display:"flex",gap:6}}>
               <input ref={ytFileRef} type="file" accept="video/*" onChange={handleYtFile} style={{display:"none"}} />
-              <button onClick={() => ytFileRef.current?.click()} disabled={ytUploading} style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(255,0,0,.06)",border:"1px dashed rgba(255,0,0,.2)",color:ytUploading?"#804040":"#cc4040",fontSize:12,fontWeight:600,cursor:ytUploading?"default":"pointer"}}>{ytUploading ? "Uploading..." : "<><IconYoutube size={14}/><span style={{marginLeft:5,fontSize:11}}>Upload video</span></>"}</button>
+              <button onClick={() => ytFileRef.current?.click()} disabled={ytUploading} style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(255,0,0,.06)",border:"1px dashed rgba(255,0,0,.2)",color:ytUploading?"#804040":"#cc4040",fontSize:12,fontWeight:600,cursor:ytUploading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                {ytUploading ? "Uploading..." : <><IconYoutube size={14} color="#cc4040" /><span>Upload video</span></>}
+              </button>
             </div>
           )}
         </div>
