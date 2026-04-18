@@ -409,8 +409,8 @@ Property: ${s.addr || ""}`);
 
           {/* Scope AI */}
           <div style={{display:"flex",gap:6,marginTop:6}}>
-            <button onClick={generateScopeSummary} disabled={aiScopeLoading} style={{padding:"8px 14px",borderRadius:8,background:"rgba(127,119,221,.1)",border:"1px solid rgba(127,119,221,.2)",color:aiScopeLoading?"#5a5080":"#9a90e0",fontSize:11,fontWeight:700,cursor:aiScopeLoading?"default":"pointer"}}>{aiScopeLoading ? "..." : "<><IconSparkles size={13}/><span style={{marginLeft:4,fontSize:11}}>Summarize</span></>"}</button>
-            {aiScopeResult && <button onClick={()=>navigator.clipboard?.writeText(aiScopeResult)} style={{padding:"8px 10px",borderRadius:8,background:"rgba(59,130,246,.06)",border:"1px solid rgba(59,130,246,.12)",color:"#6a8aB0",fontSize:11,fontWeight:700,cursor:"pointer"}}<IconClipboard size={13} /></button>}
+            <button onClick={generateScopeSummary} disabled={aiScopeLoading} style={{padding:"8px 14px",borderRadius:8,background:"rgba(127,119,221,.1)",border:"1px solid rgba(127,119,221,.2)",color:aiScopeLoading?"#5a5080":"#9a90e0",fontSize:11,fontWeight:700,cursor:aiScopeLoading?"default":"pointer",display:"flex",alignItems:"center",gap:4}}>{aiScopeLoading ? "..." : <><IconSparkles size={13}/>Summarize</>}</button>
+            {aiScopeResult && <button onClick={()=>navigator.clipboard?.writeText(aiScopeResult)} style={{padding:"8px 10px",borderRadius:8,background:"rgba(59,130,246,.06)",border:"1px solid rgba(59,130,246,.12)",color:"#6a8aB0",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center"}}><IconClipboard size={13} /></button>}
           </div>
           {aiScopeResult && <div style={{fontSize:12,color:"#a0b0c8",lineHeight:1.6,marginTop:8,whiteSpace:"pre-wrap",padding:10,borderRadius:8,background:"rgba(127,119,221,.04)",border:"1px solid rgba(127,119,221,.1)"}}>{aiScopeResult}</div>}
 
@@ -445,10 +445,10 @@ Property: ${s.addr || ""}`);
 
           {/* Add-on AI */}
           <div style={{display:"flex",gap:6,marginTop:6}}>
-            <button onClick={generateAddonEmail} disabled={aiAddonLoading} style={{padding:"8px 14px",borderRadius:8,background:"rgba(255,138,101,.08)",border:"1px solid rgba(255,138,101,.2)",color:aiAddonLoading?"#804840":"#FF8A65",fontSize:11,fontWeight:700,cursor:aiAddonLoading?"default":"pointer"}}>{aiAddonLoading ? "..." : "<><IconMail size={13}/><span style={{marginLeft:4,fontSize:11}}>Draft email</span></>"}</button>
+            <button onClick={generateAddonEmail} disabled={aiAddonLoading} style={{padding:"8px 14px",borderRadius:8,background:"rgba(255,138,101,.08)",border:"1px solid rgba(255,138,101,.2)",color:aiAddonLoading?"#804840":"#FF8A65",fontSize:11,fontWeight:700,cursor:aiAddonLoading?"default":"pointer",display:"flex",alignItems:"center",gap:4}}>{aiAddonLoading ? "..." : <><IconMail size={13}/>Draft email</>}</button>
             {aiAddonResult && <>
-              <button onClick={()=>navigator.clipboard?.writeText(aiAddonResult)} style={{padding:"8px 10px",borderRadius:8,background:"rgba(59,130,246,.06)",border:"1px solid rgba(59,130,246,.12)",color:"#6a8aB0",fontSize:11,fontWeight:700,cursor:"pointer"}}<IconClipboard size={13} /></button>
-              <button onClick={()=>{const email=s.email||"";const subj=encodeURIComponent(`Additional findings at ${s.addr||"your property"} — MTS Rochester`);const body=encodeURIComponent(aiAddonResult);window.open(`mailto:${email}?subject=${subj}&body=${body}`,"_self");}} style={{padding:"8px 10px",borderRadius:8,background:"rgba(16,185,129,.06)",border:"1px solid rgba(16,185,129,.15)",color:"#10B981",fontSize:11,fontWeight:700,cursor:"pointer"}}><><IconMail size={13}/><span style={{marginLeft:4,fontSize:11}}>Send</span></></button>
+              <button onClick={()=>navigator.clipboard?.writeText(aiAddonResult)} style={{padding:"8px 10px",borderRadius:8,background:"rgba(59,130,246,.06)",border:"1px solid rgba(59,130,246,.12)",color:"#6a8aB0",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center"}}><IconClipboard size={13} /></button>
+              <button onClick={()=>{const email=s.email||"";const subj=encodeURIComponent(`Additional findings at ${s.addr||"your property"} — MTS Rochester`);const body=encodeURIComponent(aiAddonResult);window.open(`mailto:${email}?subject=${subj}&body=${body}`,"_self");}} style={{padding:"8px 10px",borderRadius:8,background:"rgba(16,185,129,.06)",border:"1px solid rgba(16,185,129,.15)",color:"#10B981",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}><IconMail size={13}/>Send</button>
             </>}
           </div>
           {aiAddonResult && <div style={{fontSize:12,color:"#c8a090",lineHeight:1.6,marginTop:8,whiteSpace:"pre-wrap",padding:10,borderRadius:8,background:"rgba(255,138,101,.04)",border:"1px solid rgba(255,138,101,.1)"}}>{aiAddonResult}</div>}
