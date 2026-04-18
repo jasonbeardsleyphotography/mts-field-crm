@@ -1,3 +1,4 @@
+import { IconFire, IconRevision, IconPause, IconMail, IconX, IconCheckCircle, IconPhone, IconTrash, IconEdit, IconClipboard, IconSingleops, IconVideo, IconStar, IconCamera } from "./icons";
 import { useState, useEffect, useMemo, useCallback } from "react";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -9,9 +10,9 @@ import { useState, useEffect, useMemo, useCallback } from "react";
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const STAGES = [
-  { id: "estimate_needed", label: "Estimate needed", short: "Estimate", color: "#039BE5", bg: "rgba(3,155,229,.1)" },
+  { id: "estimate_needed", label: "Estimate needed", short: "Estimate", color: "#3B82F6", bg: "rgba(59,130,246,.1)" },
   { id: "waiting", label: "Waiting", short: "Waiting", color: "#8E24AA", bg: "rgba(142,36,170,.1)" },
-  { id: "strong", label: "Strong", short: "Strong", color: "#33B679", bg: "rgba(51,182,121,.1)" },
+  { id: "strong", label: "Strong", short: "Strong", color: "#10B981", bg: "rgba(16,185,129,.1)" },
   { id: "weak", label: "Weak", short: "Weak", color: "#FF8A65", bg: "rgba(255,138,101,.1)" },
   { id: "follow_up", label: "Follow up", short: "Follow up", color: "#F6BF26", bg: "rgba(246,191,38,.1)" },
   { id: "sold", label: "Sold", short: "Sold", color: "#0B8043", bg: "rgba(11,128,67,.1)" },
@@ -43,7 +44,7 @@ const F = "'Oswald',sans-serif";
 // ═════════════════════════════════════════════════════════════════════════════
 export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) {
   const [pipeline, setPipeline] = useState(() => loadPipeline());
-  const [activeTab, setActiveTab] = useState("all");
+  const [activeTab, setActiveTab] = useState("estimate_needed");
   const [selectedCard, setSelectedCard] = useState(null);
   const [dragId, setDragId] = useState(null);
   const [selectMode, setSelectMode] = useState(false);
@@ -198,7 +199,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
     const fd = loadFieldData(card.id);
     const photoCount = (fd.scopePhotos || fd.photos || []).length + (fd.addonPhotos || []).length;
     const hasNotes = !!(fd.scopeNotes || fd.myNotes || fd.addonNotes);
-    const hasVideo = !!(fd.videoUrl);
+    const hasVideo = !!(fd.videoUrls?.length || fd.videoUrl);
     const isSelected = !!selected[card.id];
     const isDeclined = card.stage === "declined";
 
@@ -213,9 +214,9 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
         }}
         style={{
           padding: compact ? "10px 12px" : "12px 14px",
-          background: isSelected ? "rgba(3,155,229,.08)" : card.hot ? "rgba(255,160,0,.04)" : "#0d1018",
+          background: isSelected ? "rgba(59,130,246,.08)" : card.hot ? "rgba(255,160,0,.05)" : "#0e1020",
           borderBottom: "1px solid #0e1220",
-          borderLeft: `3px solid ${isSelected ? "#039BE5" : card.hot ? "#FFB300" : stage?.color || "#555"}`,
+          borderLeft: `4px solid ${isSelected ? "#3B82F6" : card.hot ? "#FFB300" : stage?.color || "#555"}`,
           cursor: "pointer",
           transition: "background .15s",
           opacity: isDeclined && !selectMode ? 0.6 : 1,
@@ -223,12 +224,12 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
       >
         {/* Top row */}
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          {selectMode && <div style={{width:22,height:22,borderRadius:6,border:`2px solid ${isSelected?"#039BE5":"#2a3560"}`,background:isSelected?"#039BE5":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:12,color:"#fff",fontWeight:800}}>{isSelected?"✓":""}</div>}
+          {selectMode && <div style={{width:22,height:22,borderRadius:6,border:`2px solid ${isSelected?"#3B82F6":"#252d47"}`,background:isSelected?"#3B82F6":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:12,color:"#fff",fontWeight:800}}>{isSelected && <IconCheckCircle size={13} color="#fff"/>}</div>}
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:compact?14:15,fontWeight:600,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-              {card.hot && <span style={{color:"#FFB300",marginRight:4}}>🔥</span>}
-              {card.revision && <span style={{color:"#FF6B9D",marginRight:4}}>🔄</span>}
-              {card.pauseUntil && Date.now() < card.pauseUntil && <span style={{color:"#8a96a8",marginRight:4}}>⏸</span>}
+              {card.hot && <IconFire size={12} color="#FFB300" style={{marginRight:3,flexShrink:0}}/>}
+              {card.revision && <IconRevision size={12} color="#FF6B9D" style={{marginRight:3,flexShrink:0}}/>}
+              {card.pauseUntil && Date.now() < card.pauseUntil && <IconPause size={12} color="#8a96a8" style={{marginRight:3,flexShrink:0}}/>}
               {card.cn}
             </div>
             {card.addr && <div style={{fontSize:11,color:"#6a7890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1,fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{card.addr}</div>}
@@ -241,23 +242,23 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
 
         {/* Indicators */}
         {!selectMode && <div style={{display:"flex",gap:6,marginTop:6,alignItems:"center"}}>
-          {photoCount > 0 && <span style={{fontSize:10,color:"#5a6580"}}>📷 {photoCount}</span>}
-          {hasNotes && <span style={{fontSize:10,color:"#5a6580"}}>📝</span>}
-          {hasVideo && <span style={{fontSize:10,color:"#5a6580"}}>🎬</span>}
-          {card.jn && <button onClick={e=>{e.stopPropagation();openSingleOps(card.jn);}} style={{fontSize:10,color:"#039BE5",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}>SO #{card.jn} 📋</button>}
+          {photoCount > 0 && <span style={{display:"flex",alignItems:"center",gap:2,fontSize:10,color:"#5a6580"}}><IconCamera size={11} color="#5a6580"/>{photoCount}</span>}
+          {hasNotes && <IconEdit size={11} color="#5a6580"/>}
+          {hasVideo && <IconVideo size={11} color="#5a6580"/>}
+          {card.jn && <button onClick={e=>{e.stopPropagation();openSingleOps(card.jn);}} style={{fontSize:10,color:"#3B82F6",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}>SO #{card.jn}</button>}
           <div style={{flex:1}}/>
           <div style={{position:"relative"}}>
             {card.pauseUntil && Date.now() < card.pauseUntil ? (
-              <button onClick={e=>{e.stopPropagation();unpause(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:"rgba(138,150,168,.12)",border:"1px solid rgba(138,150,168,.25)",color:"#8a96a8",fontSize:9,cursor:"pointer",fontWeight:600}}>⏸ {Math.ceil((card.pauseUntil - Date.now()) / (24*60*60*1000))}d</button>
+              <button onClick={e=>{e.stopPropagation();unpause(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:"rgba(138,150,168,.12)",border:"1px solid rgba(138,150,168,.25)",color:"#8a96a8",fontSize:9,cursor:"pointer",fontWeight:600}}><span style={{display:"flex",alignItems:"center",gap:3}}><IconPause size={10} color="#8a96a8"/>{Math.ceil((card.pauseUntil - Date.now()) / (24*60*60*1000))}d</span></button>
             ) : (
-              <button onClick={e=>{e.stopPropagation();setPauseMenu(pauseMenu===card.id?null:card.id);}} style={{padding:"2px 6px",borderRadius:4,background:pauseMenu===card.id?"rgba(138,150,168,.12)":"transparent",border:"1px solid #1a2030",color:"#2a3050",fontSize:10,cursor:"pointer"}}>⏸</button>
+              <button onClick={e=>{e.stopPropagation();setPauseMenu(pauseMenu===card.id?null:card.id);}} style={{padding:"2px 6px",borderRadius:4,background:pauseMenu===card.id?"rgba(138,150,168,.12)":"transparent",border:"1px solid #1a2030",color:"#2a3050",fontSize:10,cursor:"pointer"}}><IconPause size={12} color={pauseMenu===card.id?"#8a96a8":"#2a3050"}/></button>
             )}
-            {pauseMenu === card.id && <div style={{position:"absolute",top:"100%",right:0,marginTop:4,background:"#0d1018",border:"1px solid #1a2540",borderRadius:8,padding:4,zIndex:30,display:"flex",gap:3}}>
+            {pauseMenu === card.id && <div style={{position:"absolute",top:"100%",right:0,marginTop:4,background:"#0d0f18",border:"1px solid #1a2540",borderRadius:8,padding:4,zIndex:30,display:"flex",gap:3}}>
               {[3,7,14].map(d => <button key={d} onClick={e=>{e.stopPropagation();pauseFor(card.id,d);}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(138,150,168,.08)",border:"1px solid #1a2540",color:"#8a96a8",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>{d}d</button>)}
             </div>}
           </div>
-          <button onClick={e=>{e.stopPropagation();toggleHot(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:card.hot?"rgba(255,179,0,.12)":"transparent",border:card.hot?"1px solid rgba(255,179,0,.3)":"1px solid #1a2030",color:card.hot?"#FFB300":"#2a3050",fontSize:10,cursor:"pointer"}}>🔥</button>
-          <button onClick={e=>{e.stopPropagation();toggleRevision(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:card.revision?"rgba(255,107,157,.12)":"transparent",border:card.revision?"1px solid rgba(255,107,157,.3)":"1px solid #1a2030",color:card.revision?"#FF6B9D":"#2a3050",fontSize:10,cursor:"pointer"}}>🔄</button>
+          <button onClick={e=>{e.stopPropagation();toggleHot(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:card.hot?"rgba(255,179,0,.12)":"transparent",border:card.hot?"1px solid rgba(255,179,0,.3)":"1px solid #1a2030",color:card.hot?"#FFB300":"#2a3050",fontSize:10,cursor:"pointer"}}><IconFire size={13} color={card.hot?"#FFB300":"#2a3050"}/></button>
+          <button onClick={e=>{e.stopPropagation();toggleRevision(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:card.revision?"rgba(255,107,157,.12)":"transparent",border:card.revision?"1px solid rgba(255,107,157,.3)":"1px solid #1a2030",color:card.revision?"#FF6B9D":"#2a3050",fontSize:10,cursor:"pointer"}}><IconRevision size={13} color={card.revision?"#FF6B9D":"#2a3050"}/></button>
         </div>}
       </div>
     );
@@ -271,14 +272,14 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
     return (
       <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
         {/* Select toggle */}
-        <div style={{display:"flex",gap:6,padding:"6px 10px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0,alignItems:"center"}}>
+        <div style={{display:"flex",gap:6,padding:"6px 10px",background:"#0d0f18",borderBottom:"1px solid #1a2030",flexShrink:0,alignItems:"center"}}>
           <div style={{flex:1}}/>
-          <button onClick={()=>{setSelectMode(!selectMode);setSelected({});}} style={{padding:"5px 10px",borderRadius:8,background:selectMode?"rgba(3,155,229,.15)":"#1a2240",border:`1px solid ${selectMode?"rgba(3,155,229,.3)":"#2a3560"}`,color:selectMode?"#039BE5":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}>{selectMode?"✕ Done":"Select"}</button>
+          <button onClick={()=>{setSelectMode(!selectMode);setSelected({});}} style={{padding:"5px 10px",borderRadius:8,background:selectMode?"rgba(59,130,246,.15)":"#1a2035",border:`1px solid ${selectMode?"rgba(59,130,246,.3)":"#252d47"}`,color:selectMode?"#3B82F6":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}>{selectMode ? <><IconX size={13}/>Done</> : "Select"}</span></button>
         </div>
 
         {/* Tabs */}
-        <div style={{display:"flex",overflowX:"auto",borderBottom:"1px solid #1a2030",flexShrink:0,background:"#0d1018"}}>
-          <button onClick={()=>setActiveTab("all")} style={{padding:"8px 14px",fontSize:11,fontWeight:activeTab==="all"?700:500,color:activeTab==="all"?"#039BE5":"#4a5a70",borderBottom:activeTab==="all"?"2px solid #039BE5":"2px solid transparent",background:"transparent",border:"none",borderBottomStyle:"solid",cursor:"pointer",whiteSpace:"nowrap",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>All ({allCards.length})</button>
+        <div style={{display:"flex",overflowX:"auto",borderBottom:"1px solid #1a2030",flexShrink:0,background:"#0d0f18"}}>
+          <button onClick={()=>setActiveTab("all")} style={{padding:"8px 14px",fontSize:11,fontWeight:activeTab==="all"?700:500,color:activeTab==="all"?"#3B82F6":"#4a5a70",borderBottom:activeTab==="all"?"2px solid #039BE5":"2px solid transparent",background:"transparent",border:"none",borderBottomStyle:"solid",cursor:"pointer",whiteSpace:"nowrap",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>All ({allCards.length})</button>
           {STAGES.map(st => {
             const count = (cardsByStage[st.id] || []).length;
             return <button key={st.id} onClick={()=>setActiveTab(st.id)} style={{padding:"8px 12px",fontSize:11,fontWeight:activeTab===st.id?700:500,color:activeTab===st.id?st.color:"#4a5a70",borderBottom:activeTab===st.id?`2px solid ${st.color}`:"2px solid transparent",background:"transparent",border:"none",borderBottomStyle:"solid",cursor:"pointer",whiteSpace:"nowrap",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",position:"relative"}}>
@@ -289,7 +290,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
         </div>
 
         {/* Summary */}
-        <div style={{padding:"6px 14px",background:"#0a0c12",borderBottom:"1px solid #1a2030",display:"flex",gap:12,alignItems:"center",flexShrink:0}}>
+        <div style={{padding:"6px 14px",background:"#0a0b10",borderBottom:"1px solid #1a2030",display:"flex",gap:12,alignItems:"center",flexShrink:0}}>
           <span style={{fontSize:14,fontWeight:600,color:"#f0f4fa"}}>{sorted.length} cards</span>
           {(cardsByStage.weak || []).length > 0 && <span style={{fontSize:11,color:"#FF8A65",fontWeight:600}}>{cardsByStage.weak.length} stale</span>}
         </div>
@@ -297,7 +298,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
         {/* Follow-up reminder banner */}
         {dueForFollowUp.length > 0 && !selectMode && <div style={{padding:"8px 14px",background:"rgba(246,191,38,.06)",borderBottom:"1px solid rgba(246,191,38,.15)",display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontSize:12,color:"#F6BF26",fontWeight:600,flex:1}}>{dueForFollowUp.length} card{dueForFollowUp.length>1?"s":""} waiting 2+ days — follow up?</span>
-          <button onClick={()=>{setSelectMode(true);const sel={};dueForFollowUp.forEach(c=>{sel[c.id]=true;});setSelected(sel);}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>📧 Select all</button>
+          <button onClick={()=>{setSelectMode(true);const sel={};dueForFollowUp.forEach(c=>{sel[c.id]=true;});setSelected(sel);}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}><span style={{display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#F6BF26"/>Select all</span></button>
         </div>}
 
         {/* Card list */}
@@ -308,10 +309,10 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
 
         {/* Select mode action bar */}
         {selectMode && selectedCount > 0 && (
-          <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"10px 16px",background:"#0d1018",borderTop:"1px solid #1a2030",display:"flex",gap:8,alignItems:"center",paddingBottom:"max(10px,env(safe-area-inset-bottom))",zIndex:50}}>
+          <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"10px 16px",background:"#0d0f18",borderTop:"1px solid #1a2030",display:"flex",gap:8,alignItems:"center",paddingBottom:"max(10px,env(safe-area-inset-bottom))",zIndex:50}}>
             <span style={{fontSize:12,color:"#90a8c0",fontWeight:600}}>{selectedCount} selected</span>
             <div style={{flex:1}}/>
-            <button onClick={()=>setEmailSheet(true)} style={{padding:"8px 16px",borderRadius:8,background:"rgba(3,155,229,.12)",border:"1px solid rgba(3,155,229,.25)",color:"#039BE5",fontSize:12,fontWeight:700,cursor:"pointer"}}>📧 Email</button>
+            <button onClick={()=>setEmailSheet(true)} style={{padding:"8px 16px",borderRadius:8,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:12,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#3B82F6"/>Email</span></button>
             <button onClick={()=>{selectedCards.forEach(c=>moveCard(c.id,"follow_up"));setSelected({});setSelectMode(false);}} style={{padding:"8px 12px",borderRadius:8,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>→ Follow up</button>
           </div>
         )}
@@ -323,10 +324,10 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
   const desktopView = () => (
     <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
       {/* Select toggle */}
-      <div style={{display:"flex",gap:6,padding:"6px 10px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0,alignItems:"center"}}>
+      <div style={{display:"flex",gap:6,padding:"6px 10px",background:"#0d0f18",borderBottom:"1px solid #1a2030",flexShrink:0,alignItems:"center"}}>
         <div style={{flex:1}}/>
-        <button onClick={()=>{setSelectMode(!selectMode);setSelected({});}} style={{padding:"5px 10px",borderRadius:8,background:selectMode?"rgba(3,155,229,.15)":"#1a2240",border:`1px solid ${selectMode?"rgba(3,155,229,.3)":"#2a3560"}`,color:selectMode?"#039BE5":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}>{selectMode?"✕ Done":"Select"}</button>
-        {selectMode && selectedCount > 0 && <button onClick={()=>setEmailSheet(true)} style={{padding:"5px 10px",borderRadius:8,background:"rgba(3,155,229,.12)",border:"1px solid rgba(3,155,229,.25)",color:"#039BE5",fontSize:11,fontWeight:700,cursor:"pointer"}}>📧 {selectedCount} selected</button>}
+        <button onClick={()=>{setSelectMode(!selectMode);setSelected({});}} style={{padding:"5px 10px",borderRadius:8,background:selectMode?"rgba(59,130,246,.15)":"#1a2035",border:`1px solid ${selectMode?"rgba(59,130,246,.3)":"#252d47"}`,color:selectMode?"#3B82F6":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}>{selectMode ? <><IconX size={13}/>Done</> : "Select"}</span></button>
+        {selectMode && selectedCount > 0 && <button onClick={()=>setEmailSheet(true)} style={{padding:"5px 10px",borderRadius:8,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#3B82F6"/>{selectedCount} selected</span></button>}
       </div>
       <div style={{display:"flex",flex:1,overflow:"hidden",gap:0}}>
         {STAGES.map(st => {
@@ -334,7 +335,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
           return (
             <div key={st.id} onDragOver={onDragOver} onDrop={e => onDrop(e, st.id)}
               style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",borderRight:"1px solid #1a2030"}}>
-              <div style={{padding:"8px 10px",background:"#0d1018",borderBottom:"1px solid #1a2030",flexShrink:0}}>
+              <div style={{padding:"8px 10px",background:"#0d0f18",borderBottom:"1px solid #1a2030",flexShrink:0}}>
                 <div style={{display:"flex",alignItems:"center",gap:6}}>
                   <div style={{width:8,height:8,borderRadius:4,background:st.color,flexShrink:0}}/>
                   <span style={{fontSize:11,fontWeight:600,color:st.color,fontFamily:F,textTransform:"uppercase",letterSpacing:1,flex:1}}>{st.label}</span>
@@ -362,26 +363,26 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
         const fd = loadFieldData(card.id);
         const stage = STAGES.find(st => st.id === card.stage);
         const isDeclined = card.stage === "declined";
-        const ytId = (fd.videoUrl || "").match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
+        // ytId moved inline per-video
         return <div onClick={() => setDetailCard(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",backdropFilter:"blur(6px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:10,overflowY:"auto"}}>
-          <div onClick={e => e.stopPropagation()} style={{background:"#0d1018",border:"1px solid #1a2030",borderRadius:14,width:"100%",maxWidth:700,maxHeight:"90vh",overflowY:"auto",padding:0}}>
+          <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:14,width:"100%",maxWidth:700,maxHeight:"90vh",overflowY:"auto",padding:0}}>
 
             {/* Header */}
-            <div style={{padding:"16px 20px",background:"#0a0c12",borderBottom:"1px solid #1a2030",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:1}}>
+            <div style={{padding:"16px 20px",background:"#0a0b10",borderBottom:"1px solid #1a2030",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:1}}>
               <div style={{flex:1}}>
-                <div style={{fontSize:20,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.5}}>{card.hot && "🔥 "}{card.cn}</div>
+                <div style={{fontSize:20,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.5}}>{card.hot && <IconFire size={16} color="#FFB300" style={{marginRight:6,flexShrink:0}}/>}{card.cn}</div>
                 {card.addr && <div style={{fontSize:13,color:"#8a96a8",fontFamily:F,textTransform:"uppercase",letterSpacing:1,marginTop:2}}>{card.addr}</div>}
               </div>
               <span style={{padding:"4px 12px",borderRadius:99,background:stage?.bg,color:stage?.color,fontSize:12,fontWeight:700,fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{stage?.label}</span>
-              <button onClick={() => setDetailCard(null)} style={{width:32,height:32,borderRadius:8,background:"#1a2240",border:"1px solid #2a3560",color:"#5a6580",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+              <button onClick={() => setDetailCard(null)} style={{width:32,height:32,borderRadius:8,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
             </div>
 
             <div style={{padding:"16px 20px"}}>
               {/* Contact */}
               <div style={{display:"flex",gap:16,marginBottom:16,flexWrap:"wrap"}}>
-                {card.phone && <div style={{fontSize:14,color:"#a0b8d0"}}>📞 <a href={`tel:${card.phone.replace(/\D/g,"")}`} style={{color:"#a0b8d0"}}>{card.phone}</a></div>}
-                {card.email && <div style={{fontSize:14,color:"#a0b8d0"}}>✉️ <a href={`mailto:${card.email}`} style={{color:"#a0b8d0"}}>{card.email}</a></div>}
-                {card.jn && <button onClick={() => openSingleOps(card.jn)} style={{fontSize:14,color:"#039BE5",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}>SingleOps #{card.jn} 📋</button>}
+                {card.phone && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconPhone size={14} color="#a0b8d0"/><a href={`tel:${card.phone.replace(/\D/g,"")}`} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.phone}</a></div>}
+                {card.email && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconMail size={14} color="#a0b8d0"/><a href={`mailto:${card.email}`} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.email}</a></div>}
+                {card.jn && <button onClick={() => openSingleOps(card.jn)} style={{fontSize:14,color:"#3B82F6",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}><span style={{display:"flex",alignItems:"center",gap:4}}>SingleOps #{card.jn}<IconClipboard size={12} color="#3B82F6"/></span></button>}
               </div>
 
               {/* Job notes */}
@@ -392,7 +393,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
 
               {/* Scope section */}
               {(fd.scopeNotes || fd.myNotes) && <div style={{marginBottom:16}}>
-                <div style={{fontSize:12,fontWeight:700,color:"#039BE5",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>SCOPE</div>
+                <div style={{fontSize:12,fontWeight:700,color:"#3B82F6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>SCOPE</div>
                 <div style={{fontSize:14,color:"#b0b8c8",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{fd.scopeNotes || fd.myNotes}</div>
               </div>}
 
@@ -403,7 +404,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
 
               {/* Scope photos */}
               {((fd.scopePhotos || fd.photos || []).length > 0) && <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#039BE5",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>SCOPE PHOTOS ({(fd.scopePhotos || fd.photos).length})</div>
+                <div style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>SCOPE PHOTOS ({(fd.scopePhotos || fd.photos).length})</div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:8}}>
                   {(fd.scopePhotos || fd.photos).map((p, i) => (
                     <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
@@ -439,15 +440,21 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
               </div>}
 
               {/* Video */}
-              {fd.videoUrl && <div style={{marginBottom:16}}>
+              {(fd.videoUrls?.length || fd.videoUrl) && <div style={{marginBottom:16}}>
                 <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>VIDEO</div>
-                {ytId ? (
-                  <div style={{position:"relative",paddingBottom:"56.25%",borderRadius:10,overflow:"hidden"}}>
-                    <iframe src={`https://www.youtube.com/embed/${ytId}`} style={{position:"absolute",inset:0,width:"100%",height:"100%",border:"none"}} allowFullScreen />
-                  </div>
-                ) : (
-                  <a href={fd.videoUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:14,color:"#6a8aB0"}}>{fd.videoUrl}</a>
-                )}
+                {(fd.videoUrls || (fd.videoUrl ? [fd.videoUrl] : [])).map((url, i) => {
+                  const vid = url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
+                  return <div key={i} style={{marginBottom:8}}>
+                    {vid ? (
+                      <div style={{position:"relative",paddingBottom:"56.25%",borderRadius:10,overflow:"hidden"}}>
+                        <iframe src={`https://www.youtube.com/embed/${vid}`} style={{position:"absolute",inset:0,width:"100%",height:"100%",border:"none"}} allowFullScreen />
+                      </div>
+                    ) : (
+                      <a href={url} target="_blank" rel="noopener noreferrer" style={{fontSize:14,color:"#6a8aB0"}}>{url}</a>
+                    )}
+                    <button onClick={()=>{const html=`<a href="${url}">Link to Video Review</a>`;if(navigator.clipboard?.write){navigator.clipboard.write([new ClipboardItem({"text/html":new Blob([html],{type:"text/html"}),"text/plain":new Blob([url],{type:"text/plain"})})]).catch(()=>navigator.clipboard?.writeText(url));}else{navigator.clipboard?.writeText(url);}}} style={{marginTop:6,padding:"5px 12px",borderRadius:6,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#5a90b0",fontSize:10,fontWeight:600,cursor:"pointer"}}>Copy link</button>
+                  </div>;
+                })}
               </div>}
 
               {/* Audio clips */}
@@ -477,16 +484,16 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
 
       {/* ── EMAIL TEMPLATE SHEET ──────────────────────────────────────── */}
       {emailSheet && <div onClick={()=>{setEmailSheet(false);setEmailPreview(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:emailPreview?"center":"flex-end",justifyContent:"center",padding:emailPreview?20:0}}>
-        <div onClick={e=>e.stopPropagation()} style={{background:"#0d1018",border:"1px solid #1a2030",borderRadius:emailPreview?14:"14px 14px 0 0",padding:18,maxWidth:480,width:"100%",paddingBottom:emailPreview?18:"max(18px,env(safe-area-inset-bottom))"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:emailPreview?14:"14px 14px 0 0",padding:18,maxWidth:480,width:"100%",paddingBottom:emailPreview?18:"max(18px,env(safe-area-inset-bottom))"}}>
 
           {!emailPreview ? <>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
               <span style={{fontSize:15,fontWeight:700,color:"#f0f4fa",flex:1,fontFamily:F,letterSpacing:1,textTransform:"uppercase"}}>Email {selectedCount} clients</span>
-              <button onClick={()=>{setEmailSheet(false);}} style={{width:28,height:28,borderRadius:6,background:"#1a2240",border:"1px solid #2a3560",color:"#5a6580",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+              <button onClick={()=>{setEmailSheet(false);}} style={{width:28,height:28,borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
             </div>
             <div style={{fontSize:11,color:"#5a6580",marginBottom:10}}>Choose a template — each email will be personalized with the client's name.</div>
             {EMAIL_TEMPLATES.map(t => (
-              <button key={t.id} onClick={()=>setEmailPreview(t)} style={{width:"100%",padding:"12px 14px",marginBottom:6,borderRadius:8,background:"#0e1525",border:"1px solid #1a2540",cursor:"pointer",textAlign:"left"}}>
+              <button key={t.id} onClick={()=>setEmailPreview(t)} style={{width:"100%",padding:"12px 14px",marginBottom:6,borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",cursor:"pointer",textAlign:"left"}}>
                 <div style={{fontSize:13,fontWeight:700,color:"#a0b8d0"}}>{t.label}</div>
                 <div style={{fontSize:11,color:"#4a5a70",marginTop:2}}>{t.subject}</div>
               </button>
@@ -497,12 +504,12 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
               <span style={{fontSize:13,fontWeight:700,color:"#f0f4fa",flex:1}}>{emailPreview.label}</span>
             </div>
             <div style={{fontSize:11,color:"#5a6580",marginBottom:6}}>Preview for {selectedCards[0]?.cn || "—"}:</div>
-            <div style={{padding:"10px 12px",borderRadius:8,background:"#0e1525",border:"1px solid #1a2540",marginBottom:10}}>
+            <div style={{padding:"10px 12px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",marginBottom:10}}>
               <div style={{fontSize:11,color:"#6a8aB0",marginBottom:4,fontWeight:600}}>Subject: {emailPreview.subject}</div>
               <div style={{fontSize:12,color:"#8898a8",lineHeight:1.5,whiteSpace:"pre-wrap"}}>{emailPreview.body.replace(/\{firstName\}/g, (selectedCards[0]?.cn || "").split(" ")[0])}</div>
             </div>
             <div style={{fontSize:10,color:"#4a5a70",marginBottom:10}}>Will send to: {selectedCards.map(c => c.email || "(no email)").join(", ")}</div>
-            <button onClick={()=>sendBulkEmail(emailPreview)} style={{width:"100%",padding:"12px 0",borderRadius:8,background:"rgba(3,155,229,.15)",border:"1px solid rgba(3,155,229,.25)",color:"#039BE5",fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:1,textTransform:"uppercase"}}>📧 SEND {selectedCount} EMAILS</button>
+            <button onClick={()=>sendBulkEmail(emailPreview)} style={{width:"100%",padding:"12px 0",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:1,textTransform:"uppercase"}}><span style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconMail size={15} color="#3B82F6"/>SEND {selectedCount} EMAILS</span></button>
             <div style={{fontSize:10,color:"#3a4a60",marginTop:6,textAlign:"center"}}>Opens each in Outlook — tap Send on each one</div>
           </>}
         </div>
