@@ -145,6 +145,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
   const [arrowPreview, setArrowPreview] = useState(null);
   const [arrowMode, setArrowMode] = useState(false);
   const [eraserMode, setEraserMode] = useState(false);
+  const [canvasPinchScale, setCanvasPinchScale] = useState(1);
 
   // Load image
   useEffect(() => {
@@ -322,29 +323,49 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
 
       {/* ── TOP BAR ──────────────────────────────────────────────────── */}
       <div style={{
-        display:"flex", alignItems:"center", gap:8, padding:"8px 12px",
+        display:"flex", alignItems:"center", gap:6, padding:"8px 10px",
         background:"#111", borderBottom:"1px solid #2a2a2a", flexShrink:0,
         paddingTop:"max(8px, env(safe-area-inset-top))",
       }}>
-        <button onClick={onCancel} style={{padding:"7px 12px",borderRadius:8,background:"transparent",border:"1px solid #3a3a3a",color:"#aaa",fontSize:12,fontWeight:500,cursor:"pointer",letterSpacing:0.5}}>Cancel</button>
+        <button onClick={onCancel} style={{padding:"7px 11px",borderRadius:8,background:"transparent",border:"1px solid #3a3a3a",color:"#aaa",fontSize:11,cursor:"pointer"}}>Cancel</button>
         <div style={{flex:1}}/>
-        <button onClick={()=>{setArrowMode(!arrowMode);if(!arrowMode)setEraserMode(false);}} title="Arrow mode" style={{padding:"8px 10px",borderRadius:8,background:arrowMode?"rgba(0,122,255,.2)":"transparent",border:`1px solid ${arrowMode?"#007AFF":"#3a3a3a"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:5,color:arrowMode?"#007AFF":"#aaa",fontSize:11}}>
-          <IconArrowUpRight size={15} color={arrowMode?"#007AFF":"#aaa"} /> Arrow
+        <button onClick={()=>{setArrowMode(!arrowMode);if(!arrowMode)setEraserMode(false);}} title="Arrow" style={{padding:"8px",borderRadius:8,background:arrowMode?"rgba(0,122,255,.2)":"transparent",border:`1px solid ${arrowMode?"#007AFF":"#3a3a3a"}`,cursor:"pointer",display:"flex",alignItems:"center"}}>
+          <IconArrowUpRight size={16} color={arrowMode?"#007AFF":"#aaa"} />
         </button>
-        <button onClick={()=>{setEraserMode(!eraserMode);if(!eraserMode)setArrowMode(false);}} title="Erase stroke" style={{padding:"8px 10px",borderRadius:8,background:eraserMode?"rgba(255,100,100,.2)":"transparent",border:`1px solid ${eraserMode?"#ff6b6b":"#3a3a3a"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:5,color:eraserMode?"#ff6b6b":"#aaa",fontSize:11}}>
-          <IconEraser size={15} color={eraserMode?"#ff6b6b":"#aaa"} /> Erase
+        <button onClick={()=>{setEraserMode(!eraserMode);if(!eraserMode)setArrowMode(false);}} title="Erase" style={{padding:"8px",borderRadius:8,background:eraserMode?"rgba(255,100,100,.2)":"transparent",border:`1px solid ${eraserMode?"#ff6b6b":"#3a3a3a"}`,cursor:"pointer",display:"flex",alignItems:"center"}}>
+          <IconEraser size={16} color={eraserMode?"#ff6b6b":"#aaa"} />
         </button>
-        <button onClick={undo} disabled={!strokes.length} title="Undo last stroke" style={{padding:"8px 10px",borderRadius:8,background:"transparent",border:"1px solid #3a3a3a",cursor:strokes.length?"pointer":"default",display:"flex",alignItems:"center",opacity:strokes.length?1:.3}}>
-          <IconUndo size={15} color="#fff" />
+        <button onClick={undo} disabled={!strokes.length} title="Undo" style={{padding:"8px",borderRadius:8,background:"transparent",border:"1px solid #3a3a3a",cursor:strokes.length?"pointer":"default",display:"flex",alignItems:"center",opacity:strokes.length?1:.3}}>
+          <IconUndo size={16} color="#fff" />
         </button>
-        <button onClick={clearAll} disabled={!strokes.length} title="Clear all" style={{padding:"8px 10px",borderRadius:8,background:"transparent",border:"1px solid #3a3a3a",cursor:strokes.length?"pointer":"default",display:"flex",alignItems:"center",opacity:strokes.length?1:.3}}>
-          <IconX size={15} color="#ff6b6b" />
-        </button>
-        <button onClick={handleSave} style={{padding:"7px 14px",borderRadius:8,background:"#007AFF",border:"none",color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer",letterSpacing:0.5}}>Done</button>
+        <button onClick={handleSave} style={{padding:"7px 14px",borderRadius:8,background:"#007AFF",border:"none",color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer"}}>Done</button>
       </div>
 
       {/* ── CANVAS ───────────────────────────────────────────────────── */}
-      <div ref={containerRef} style={{flex:1, display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden", padding:8}}>
+      <div ref={containerRef} style={{flex:1, display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden", padding:8, touchAction:"none"}}
+        onTouchStart={e => {
+          if (e.touches.length === 2) {
+            // Pinch start — store initial distance
+            e.preventDefault();
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+            containerRef.current._pinchDist = Math.sqrt(dx*dx + dy*dy);
+            containerRef.current._pinchScale = canvasPinchScale;
+          }
+        }}
+        onTouchMove={e => {
+          if (e.touches.length === 2) {
+            e.preventDefault();
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            const initDist = containerRef.current._pinchDist || dist;
+            const initScale = containerRef.current._pinchScale || 1;
+            const next = Math.max(1, Math.min(5, initScale * (dist / initDist)));
+            setCanvasPinchScale(next);
+          }
+        }}
+      >
         {canvasSize.w > 0 && (
           <canvas
             ref={canvasRef}
@@ -357,7 +378,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
             onMouseMove={moveDraw}
             onMouseUp={endDraw}
             onMouseLeave={endDraw}
-            style={{ width: canvasSize.w, height: canvasSize.h, borderRadius:4, touchAction:"none" }}
+            style={{ width: canvasSize.w * canvasPinchScale, height: canvasSize.h * canvasPinchScale, borderRadius:4, touchAction:"none", transformOrigin:"center center" }}
           />
         )}
         {!imgLoaded && <div style={{color:"#5a5a5a",fontSize:14}}>Loading...</div>}
@@ -369,7 +390,6 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
         paddingBottom:"max(10px, env(safe-area-inset-bottom))", flexShrink:0,
       }}>
         {/* Hint */}
-        <div style={{textAlign:"center",fontSize:10,color:"#3a4a5a",marginBottom:8,fontWeight:500}}>Draw straight to auto-create arrows</div>
 
         {/* Colors */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:10}}>
