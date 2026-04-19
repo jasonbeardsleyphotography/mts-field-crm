@@ -186,8 +186,55 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
 
   const fmtDur = (s) => `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
 
-  // YouTube thumbnail
+  // YouTube thumbnail + ID helpers
   const getYtId = (url) => url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
+
+  // ── YOUTUBE DELETE ──────────────────────────────────────────────────
+  const deleteYouTubeVideo = async (url, idx) => {
+    const videoId = getYtId(url);
+    if (!videoId) {
+      // No valid YT ID — just remove from app
+      setVideoUrls(prev => prev.filter((_, i) => i !== idx));
+      return;
+    }
+
+    const tokenData = JSON.parse(localStorage.getItem("mts-token") || "null");
+    const tok = tokenData?.token || token;
+    if (!tok) {
+      alert("Not signed in — can't delete from YouTube.");
+      return;
+    }
+
+    const confirmed = window.confirm("Delete this video from YouTube AND remove it from the app?");
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch(
+        `https://www.googleapis.com/youtube/v3/videos?id=${videoId}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${tok}` },
+        }
+      );
+
+      if (res.ok || res.status === 204) {
+        // 204 No Content = success
+        setVideoUrls(prev => prev.filter((_, i) => i !== idx));
+      } else if (res.status === 404) {
+        // Already deleted on YouTube — clean it up in the app anyway
+        setVideoUrls(prev => prev.filter((_, i) => i !== idx));
+      } else {
+        const err = await res.text();
+        console.error("YouTube delete failed:", err);
+        alert("Could not delete from YouTube. Removing from app only.");
+        setVideoUrls(prev => prev.filter((_, i) => i !== idx));
+      }
+    } catch(e) {
+      console.warn("YouTube delete error:", e);
+      alert("Network error — removing from app only.");
+      setVideoUrls(prev => prev.filter((_, i) => i !== idx));
+    }
+  };
 
   // ── MARKUP OVERLAY ──────────────────────────────────────────────────
   // Camera view — rapid capture mode
@@ -532,7 +579,8 @@ Property: ${s.addr || ""}`);
                         })]).catch(()=>navigator.clipboard?.writeText(url));
                       } else { navigator.clipboard?.writeText(url); }
                     }} style={{padding:"4px 8px",borderRadius:5,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#5a90b0",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Copy link</button>
-                    <button onClick={()=>setVideoUrls(prev=>prev.filter((_,i)=>i!==idx))} style={{padding:"4px 6px",borderRadius:5,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.15)",color:"#e06060",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}>
+                    {/* DELETE — removes from app AND from YouTube */}
+                    <button onClick={() => deleteYouTubeVideo(url, idx)} style={{padding:"4px 6px",borderRadius:5,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.15)",color:"#e06060",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}>
                       <IconX size={10} color="#e06060" />
                     </button>
                   </div>
