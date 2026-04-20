@@ -41,7 +41,7 @@ const COLORS = [
 const SIZES = [3, 6, 10];           // brush sizes in CSS pixels at scale=1
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 5;
-const INIT_SCALE = 0.5;             // "Camera default zoom of 0.5x on open"
+const INIT_SCALE = 1;               // fit-to-screen on open
 const MAX_BACKING = 4096;           // cap canvas backing dimension (memory)
 const DOUBLE_TAP_MS = 280;
 const DOUBLE_TAP_RADIUS = 30;
@@ -97,15 +97,27 @@ function buildArrowStroke(info, color, size) {
 // Caller is responsible for ctx.scale() before invoking these.
 
 function drawFreehand(ctx, stroke, lineWidth) {
-  if (stroke.points.length < 2) return;
+  const pts = stroke.points;
+  if (pts.length < 2) return;
   ctx.beginPath();
   ctx.strokeStyle = stroke.color;
   ctx.lineWidth = lineWidth;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-  for (let i = 1; i < stroke.points.length; i++) {
-    ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+  ctx.moveTo(pts[0].x, pts[0].y);
+  if (pts.length === 2) {
+    ctx.lineTo(pts[1].x, pts[1].y);
+  } else {
+    // Quadratic-midpoint smoothing: each interior point becomes a control
+    // point, and the curve passes through the midpoint to the next control.
+    // Produces a soft, natural freehand feel (vs. jagged lineTo segments).
+    for (let i = 1; i < pts.length - 1; i++) {
+      const mx = (pts[i].x + pts[i + 1].x) / 2;
+      const my = (pts[i].y + pts[i + 1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+    }
+    const last = pts[pts.length - 1];
+    ctx.lineTo(last.x, last.y);
   }
   ctx.stroke();
 }
@@ -143,11 +155,19 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
   const imgRef       = useRef(null);
   const containerRef = useRef(null);
 
-  // Tool state
-  const [color, setColor]           = useState(COLORS[0].hex);
-  const [brushSize, setBrushSize]   = useState(SIZES[1]);
+  // Tool state (persisted across sessions)
+  const [color, setColor]           = useState(() => {
+    try { return localStorage.getItem("pm.color") || COLORS[0].hex; } catch { return COLORS[0].hex; }
+  });
+  const [brushSize, setBrushSize]   = useState(() => {
+    try { return Number(localStorage.getItem("pm.brushSize")) || SIZES[1]; } catch { return SIZES[1]; }
+  });
   const [arrowMode, setArrowMode]   = useState(false);
   const [eraserMode, setEraserMode] = useState(false);
+
+  // Persist tool preferences
+  useEffect(() => { try { localStorage.setItem("pm.color", color); } catch {} }, [color]);
+  useEffect(() => { try { localStorage.setItem("pm.brushSize", String(brushSize)); } catch {} }, [brushSize]);
 
   // Strokes (in image-natural coordinates)
   const [strokes, setStrokes]             = useState([]);
@@ -204,13 +224,10 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
       const s = Math.min(cw / imgDims.w, ch / imgDims.h);
       const fw = Math.floor(imgDims.w * s);
       const fh = Math.floor(imgDims.h * s);
-      setFit(prevFit => {
-        if (prevFit.w !== fw || prevFit.h !== fh) {
-          // Re-center (preserve zoom level) after rotation/resize.
-          setView(v => centerView(v.scale, cw, ch, fw, fh));
-        }
-        return { w: fw, h: fh };
-      });
+      setFit({ w: fw, h: fh });
+      // Re-center at current zoom level. Works for both first-load (scale=INIT_SCALE)
+      // and rotation (preserves user's current zoom).
+      setView(v => centerView(v.scale, cw, ch, fw, fh));
     };
 
     recompute();
@@ -525,7 +542,6 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
       onPointerMove={onPointerMove}
       onPointerUp={endPointer}
       onPointerCancel={endPointer}
-      onPointerLeave={endPointer}
     >
 
       {/* ── CANVAS ─────────────────────────────────────────────────────── */}
