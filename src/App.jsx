@@ -19,7 +19,7 @@ import {
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const CAL_BASE = "https://www.googleapis.com/calendar/v3/calendars/primary";
-const SCOPES = "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/youtube";
+const SCOPES = "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/youtube https://www.googleapis.com/auth/contacts";
 
 // ── HELPERS ──────────────────────────────────────────────────────────────────
 function getBusinessDays(n) {
@@ -114,6 +114,55 @@ export default function App() {
   const [onsiteStop, setOnsiteStop] = useState(null); // stop object when onsite window open
   const [undoToast, setUndoToast] = useState(null); // {id, cn, timer}
   const undoToastTimer = useRef(null);
+  const [contactPrompt, setContactPrompt] = useState(null);
+  const [contactSaving, setContactSaving] = useState(false);
+  const [contactResult, setContactResult] = useState(null);
+
+  const saveContactFromPrompt = async (card) => {
+    if (!token || !card) return;
+    setContactSaving(true);
+    const [givenName, ...rest] = (card.cn || "Unknown").split(" ");
+    const familyName = rest.join(" ");
+    const body = {
+      names: [{ givenName, familyName }],
+      ...(card.phone ? { phoneNumbers: [{ value: card.phone, type: "mobile" }] } : {}),
+      ...(card.email ? { emailAddresses: [{ value: card.email }] } : {}),
+      ...(card.addr  ? { addresses: [{ formattedValue: card.addr, type: "home" }] } : {}),
+      ...(card.jn    ? { biographies: [{ value: `MTS Rochester — Job #${card.jn}`, contentType: "TEXT_PLAIN" }] } : {}),
+    };
+    try {
+      if (card.phone) {
+        const raw = (card.phone || "").replace(/\D/g, "");
+        const sr = await fetch(
+          `https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(card.phone)}&readMask=names,phoneNumbers,emailAddresses,metadata&pageSize=5`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const sd = await sr.json();
+        const existing = sd.results?.find(r =>
+          (r.person?.phoneNumbers || []).some(p => p.value?.replace(/\D/g,"") === raw)
+        );
+        if (existing?.person?.resourceName) {
+          const rn = existing.person.resourceName;
+          const mask = ["names", card.phone && "phoneNumbers", card.email && "emailAddresses", card.addr && "addresses"].filter(Boolean).join(",");
+          await fetch(`https://people.googleapis.com/v1/${rn}:updateContact?updatePersonFields=${mask}`, {
+            method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ ...body, etag: existing.person.etag }),
+          });
+          setContactResult("updated"); setContactSaving(false);
+          setTimeout(() => { setContactPrompt(null); setContactResult(null); }, 2500);
+          return;
+        }
+      }
+      await fetch("https://people.googleapis.com/v1/people:createContact", {
+        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      setContactResult("saved");
+    } catch(e) { setContactResult("error"); }
+    setContactSaving(false);
+    setTimeout(() => { setContactPrompt(null); setContactResult(null); }, 2500);
+  };
+
   const [view, setView] = useState(() => lsGet("mts-view", "route"));
   const [pipelineSearch, setPipelineSearch] = useState("");
   const [routeSearch, setRouteSearch] = useState("");
@@ -356,6 +405,10 @@ export default function App() {
     if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
     setUndoToast({ id, cn: stop?.cn || "Stop", stop });
     undoToastTimer.current = setTimeout(() => setUndoToast(null), 10000);
+    // Offer to save contact to Google Contacts if they have a phone or email
+    if (stop && (stop.phone || stop.email)) {
+      setTimeout(() => setContactPrompt(stop), 1500);
+    }
   };
   const undoToastAction = () => {
     if (!undoToast) return;
@@ -385,15 +438,44 @@ export default function App() {
 
   // ── TEXT-TO-SPEECH ──────────────────────────────────────────────────────
   const ttsAudioRef = useRef(null);
+  const ttsCtxRef = useRef(null); // AudioContext — unlocked during user gesture
+  const ttsSafetyTimer = useRef(null);
   const [ttsSpeaking, setTtsSpeaking] = useState(false);
+
+  const resetTts = () => {
+    setTtsSpeaking(false);
+    ttsAudioRef.current = null;
+    if (ttsCtxRef.current) { ttsCtxRef.current.close().catch(()=>{}); ttsCtxRef.current = null; }
+    if (ttsSafetyTimer.current) { clearTimeout(ttsSafetyTimer.current); ttsSafetyTimer.current = null; }
+  };
+
   const speakStop = async (s) => {
+    // If already playing — stop it
     if (ttsAudioRef.current && !ttsAudioRef.current.paused) {
-      ttsAudioRef.current.pause(); ttsAudioRef.current = null; setTtsSpeaking(false); return;
+      ttsAudioRef.current.pause(); resetTts(); return;
     }
-    if (window.speechSynthesis?.speaking) { window.speechSynthesis.cancel(); setTtsSpeaking(false); return; }
+    if (ttsCtxRef.current?.state === "running") { resetTts(); return; }
+    if (window.speechSynthesis?.speaking) { window.speechSynthesis.cancel(); resetTts(); return; }
+    if (ttsSpeaking) { resetTts(); return; }
+
     const text = s.notes || "No notes available.";
     const geminiKey = import.meta.env.VITE_GEMINI_KEY;
     setTtsSpeaking(true);
+
+    // Safety timeout — force reset after 90s no matter what
+    if (ttsSafetyTimer.current) clearTimeout(ttsSafetyTimer.current);
+    ttsSafetyTimer.current = setTimeout(() => resetTts(), 90000);
+
+    // ── KEY CarPlay fix: unlock AudioContext NOW, inside the user gesture ──
+    // iOS/CarPlay requires audio context to be created & resumed in a user tap.
+    // After an await, the gesture context is lost — but AudioContext stays unlocked.
+    let audioCtx = null;
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      ttsCtxRef.current = audioCtx;
+      if (audioCtx.state === "suspended") await audioCtx.resume();
+    } catch(e) {}
+
     if (geminiKey) {
       try {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
@@ -402,24 +484,47 @@ export default function App() {
         });
         const data = await res.json();
         const audioB64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        if (audioB64) {
+        if (audioB64 && audioCtx) {
+          try {
+            // Decode and play via AudioContext — works through CarPlay
+            const arrayBuffer = Uint8Array.from(atob(audioB64), c => c.charCodeAt(0)).buffer;
+            const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+            const source = audioCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioCtx.destination);
+            source.onended = () => resetTts();
+            ttsAudioRef.current = { paused: false, pause: () => { source.stop(); } };
+            source.start(0);
+            return;
+          } catch(e) {
+            // AudioContext decode failed — fall through to Audio element
+          }
+          // Fallback: Audio element (may not route through CarPlay)
           const blob = new Blob([Uint8Array.from(atob(audioB64), c => c.charCodeAt(0))], { type: "audio/mp3" });
           const audio = new Audio(URL.createObjectURL(blob));
+          audio.setAttribute("playsinline", "");
           ttsAudioRef.current = audio;
-          audio.onended = () => { setTtsSpeaking(false); ttsAudioRef.current = null; };
-          audio.play(); return;
+          audio.onended = () => resetTts();
+          audio.onerror = () => resetTts();
+          audio.play().catch(() => resetTts());
+          return;
         }
-      } catch(e) {}
+      } catch(e) {
+        // Gemini failed — fall through to speechSynthesis
+      }
     }
+
     // iOS-safe speechSynthesis fallback
     if (window.speechSynthesis) {
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 0.85;
-      u.onend = () => setTtsSpeaking(false);
-      u.onerror = () => setTtsSpeaking(false);
+      u.onend = () => resetTts();
+      u.onerror = () => resetTts();
       const voices = window.speechSynthesis.getVoices();
       if (voices.length) window.speechSynthesis.speak(u);
       else { window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.speak(u); }
+    } else {
+      resetTts();
     }
   };
 
@@ -507,8 +612,8 @@ export default function App() {
       `}</style>
 
       {/* ── HEADER ─────────────────────────────────────────────────────── */}
-      <div style={{display:"flex",alignItems:"center",gap:6,padding:"10px 12px",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
-        <button onClick={()=>setView(view==="route"?"pipeline":"route")} style={{padding:"6px 10px",borderRadius:8,background:"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:14,letterSpacing:2,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#10B981",transition:"color .2s"}}>{view==="route"?"MTS FIELD SALES":"MTS PIPELINE"}</button>
+      <div style={{display:"flex",alignItems:"center",gap:6,padding:"8px 12px",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
+        <button onClick={()=>setView(view==="route"?"pipeline":"route")} style={{padding:"5px 10px",borderRadius:8,background:"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:13,letterSpacing:2,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#10B981",transition:"color .2s"}}>{view==="route"?"MTS FIELD":"MTS PIPELINE"}</button>
         {syncIndicator !== "idle" && (
           <button onClick={() => { if (syncIndicator === "error") triggerCloudSync(); }}
             title={syncIndicator === "error" ? "Sync failed — tap to retry" : syncIndicator === "syncing" ? "Syncing..." : "Synced"}
@@ -517,22 +622,13 @@ export default function App() {
           </button>
         )}
         {view === "route" && <>
-        <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"6px 12px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0b10",color:"#f0f4fa",fontSize:11,fontWeight:600,cursor:"pointer",outline:"none",appearance:"auto",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
-          {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
-        </select>
-        <div style={{flex:1}}/>
-        <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}} style={{padding:"6px 10px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"#1a2035",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#252d47"}`,color:reorderMode?"#c8a0e8":"#5a6580",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:5}}>
-          <IconReorder size={14} color={reorderMode?"#c8a0e8":"#5a6580"} />
-          {reorderMode?"DONE":"REORDER"}
-        </button>
-        <button onClick={undo} disabled={!undoStack.length} style={{padding:"6px 10px",borderRadius:8,background:undoStack.length?"#1a2035":"transparent",border:`1px solid ${undoStack.length?"#252d47":"#1a1f2e"}`,color:undoStack.length?"#f0f4fa":"#2a3050",fontSize:11,fontWeight:600,cursor:undoStack.length?"pointer":"default",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:5}}>
-          <IconUndo size={14} color={undoStack.length?"#f0f4fa":"#2a3050"} />
-          UNDO
-        </button>
+          <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"5px 10px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0b10",color:"#f0f4fa",fontSize:11,fontWeight:600,cursor:"pointer",outline:"none",appearance:"auto",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
+            {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
+          </select>
         </>}
         {view === "pipeline" && <>
           <div style={{flex:1}}/>
-          <input value={pipelineSearch} onChange={e=>setPipelineSearch(e.target.value)} placeholder="Search..." style={{maxWidth:180,padding:"6px 10px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:12,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none"}} />
+          <input value={pipelineSearch} onChange={e=>setPipelineSearch(e.target.value)} placeholder="Search..." style={{maxWidth:180,padding:"5px 10px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:12,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none"}} />
         </>}
       </div>
 
@@ -682,10 +778,33 @@ export default function App() {
       </div>
       </div>{/* end mts-body */}
 
-      {/* ── SIGN OUT (hidden footer) ────────────────────────────────── */}
-      <div style={{borderTop:"1px solid #0e1218",padding:"4px 12px",display:"flex",justifyContent:"flex-end",background:"#080a10",flexShrink:0}}>
-        <button onClick={()=>{ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} }} style={{background:"none",border:"none",color:"#2a3050",fontSize:9,cursor:"pointer",padding:"2px 4px",fontFamily:"'DM Sans',system-ui",letterSpacing:0.5}}>sign out</button>
-      </div>
+      {/* ── BOTTOM BAR ──────────────────────────────────────────────── */}
+      {view === "route" && <div style={{borderTop:"1px solid #0e1520",padding:"5px 10px",paddingBottom:"max(5px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",gap:6,background:"#080a10",flexShrink:0}}>
+        {/* Reorder */}
+        <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}}
+          style={{display:"flex",alignItems:"center",gap:4,padding:"5px 10px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"transparent",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#1a2035"}`,color:reorderMode?"#c8a0e8":"#3a4a60",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
+          <IconReorder size={13} color={reorderMode?"#c8a0e8":"#3a4a60"}/>{reorderMode?"DONE":"REORDER"}
+        </button>
+        {/* Undo */}
+        <button onClick={undo} disabled={!undoStack.length}
+          style={{display:"flex",alignItems:"center",gap:4,padding:"5px 10px",borderRadius:8,background:"transparent",border:`1px solid ${undoStack.length?"#1a2035":"transparent"}`,color:undoStack.length?"#5a6580":"#1a2035",fontSize:10,fontWeight:700,cursor:undoStack.length?"pointer":"default",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
+          <IconUndo size={13} color={undoStack.length?"#5a6580":"#1a2035"}/>UNDO
+        </button>
+        <div style={{flex:1}}/>
+        {/* Sign out — icon only */}
+        <button onClick={()=>{ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} }}
+          title="Sign out"
+          style={{width:28,height:28,borderRadius:8,background:"transparent",border:"1px solid #1a2035",color:"#2a3050",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>
+          ⏏
+        </button>
+      </div>}
+      {view === "pipeline" && <div style={{borderTop:"1px solid #0e1520",padding:"5px 10px",paddingBottom:"max(5px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"flex-end",background:"#080a10",flexShrink:0}}>
+        <button onClick={()=>{ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} }}
+          title="Sign out"
+          style={{width:28,height:28,borderRadius:8,background:"transparent",border:"1px solid #1a2035",color:"#2a3050",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>
+          ⏏
+        </button>
+      </div>}
 
       {/* ── ADD STOP POPUP ─────────────────────────────────────────── */}
       {addStopOpen && <div onClick={()=>{setAddStopOpen(false);setAddStopAddr("");setAddStopName("");}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
@@ -710,7 +829,7 @@ export default function App() {
       </>}{/* end route view */}
 
       {/* ── PIPELINE VIEW ──────────────────────────────────────────── */}
-      {view === "pipeline" && <Pipeline onSwitchToRoute={() => setView("route")} search={pipelineSearch} onCloudSync={triggerCloudSync} />}
+      {view === "pipeline" && <Pipeline onSwitchToRoute={() => setView("route")} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} />}
 
       {/* ── TEXT SHEET ─────────────────────────────────────────────────── */}
       {textSheet && <div onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
@@ -752,6 +871,18 @@ export default function App() {
         onDone={() => markDone(onsiteStop.id)}
         onDecline={() => { decline(onsiteStop.id); setOnsiteStop(null); }}
       />}
+
+      {/* ── CONTACT PROMPT ─────────────────────────────────────────── */}
+      {contactPrompt && !contactResult && <div style={{position:"fixed",bottom:undoToast?"56px":"0",left:0,right:0,padding:"10px 16px",paddingBottom:undoToast?"10px":"max(10px,env(safe-area-inset-bottom))",background:"#0d1a2a",borderTop:"1px solid rgba(59,130,246,.3)",display:"flex",alignItems:"center",gap:10,zIndex:151,transition:"bottom .2s"}}>
+        <span style={{fontSize:13,color:"#90c0f0",flex:1}}>💾 Save <strong>{(contactPrompt.cn||"").split(" ")[0]}</strong> to Google Contacts?</span>
+        <button onClick={() => saveContactFromPrompt(contactPrompt)} disabled={contactSaving} style={{padding:"6px 14px",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.3)",color:"#3B82F6",fontSize:12,fontWeight:700,cursor:contactSaving?"default":"pointer"}}>{contactSaving?"Saving…":"Save"}</button>
+        <button onClick={() => setContactPrompt(null)} style={{padding:"6px 10px",borderRadius:6,background:"transparent",border:"none",color:"#4a6080",cursor:"pointer",display:"flex",alignItems:"center"}}><IconX size={14} color="#4a6080"/></button>
+      </div>}
+      {contactResult && <div style={{position:"fixed",bottom:undoToast?"56px":"0",left:0,right:0,padding:"10px 16px",paddingBottom:undoToast?"10px":"max(10px,env(safe-area-inset-bottom))",background:contactResult==="error"?"#1a0d0d":"#0d1a14",borderTop:`1px solid ${contactResult==="error"?"rgba(200,60,60,.3)":"rgba(16,185,129,.3)"}`,display:"flex",alignItems:"center",gap:10,zIndex:151}}>
+        <span style={{fontSize:13,color:contactResult==="error"?"#e06060":contactResult==="updated"?"#60c090":"#10B981",flex:1}}>
+          {contactResult==="error"?"✗ Contact save failed":contactResult==="updated"?"✓ Contact updated in Google":"✓ Contact saved to Google"}
+        </span>
+      </div>}
 
       {/* ── UNDO TOAST ─────────────────────────────────────────────── */}
       {undoToast && <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"10px 16px",paddingBottom:"max(10px,env(safe-area-inset-bottom))",background:"#1a2a20",borderTop:"1px solid rgba(16,185,129,.3)",display:"flex",alignItems:"center",gap:10,zIndex:150}}>

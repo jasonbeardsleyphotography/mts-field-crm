@@ -1,5 +1,6 @@
 import { IconFire, IconRevision, IconPause, IconMail, IconX, IconCheckCircle, IconPhone, IconTrash, IconEdit, IconClipboard, IconSingleops, IconVideo, IconStar, IconCamera } from "./icons";
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { loadFieldFromDrive } from "./driveSync";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Pipeline
@@ -10,14 +11,80 @@ import { useState, useEffect, useMemo, useCallback } from "react";
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const STAGES = [
-  { id: "estimate_needed", label: "Estimate needed", short: "Estimate", color: "#3B82F6", bg: "rgba(59,130,246,.1)" },
-  { id: "waiting", label: "Waiting", short: "Waiting", color: "#8E24AA", bg: "rgba(142,36,170,.1)" },
-  { id: "strong", label: "Strong", short: "Strong", color: "#10B981", bg: "rgba(16,185,129,.1)" },
-  { id: "weak", label: "Weak", short: "Weak", color: "#FF8A65", bg: "rgba(255,138,101,.1)" },
-  { id: "follow_up", label: "Follow up", short: "Follow up", color: "#F6BF26", bg: "rgba(246,191,38,.1)" },
-  { id: "sold", label: "Sold", short: "Sold", color: "#0B8043", bg: "rgba(11,128,67,.1)" },
-  { id: "declined", label: "Declined", short: "Declined", color: "#616161", bg: "rgba(97,97,97,.1)" },
+  { id: "estimate_needed", label: "Estimate needed", short: "Estimate", color: "#039BE5", bg: "rgba(3,155,229,.1)" },
+  { id: "waiting",         label: "Waiting",         short: "Waiting",  color: "#8E24AA", bg: "rgba(142,36,170,.1)" },
+  { id: "strong",          label: "Strong",           short: "Strong",   color: "#33B679", bg: "rgba(51,182,121,.1)" },
+  { id: "weak",            label: "Weak",             short: "Weak",     color: "#E67C73", bg: "rgba(230,124,115,.1)" },
+  { id: "follow_up",       label: "Follow up",        short: "Follow up",color: "#F6BF26", bg: "rgba(246,191,38,.1)" },
+  { id: "sold",            label: "Sold",             short: "Sold",     color: "#0B8043", bg: "rgba(11,128,67,.1)" },
+  { id: "declined",        label: "Declined",         short: "Declined", color: "#616161", bg: "rgba(97,97,97,.1)" },
 ];
+
+// Google Calendar colorId for each pipeline stage
+const STAGE_CAL_COLOR = {
+  estimate_needed: "7",  // Peacock  #039BE5
+  waiting:         "3",  // Grape    #8E24AA
+  strong:          "2",  // Sage     #33B679
+  weak:            "4",  // Flamingo #E67C73
+  follow_up:       "5",  // Banana   #F6BF26
+  sold:            "10", // Basil    #0B8043
+  declined:        "8",  // Graphite #616161
+};
+
+async function pushCalendarColor(eventId, stage, token) {
+  if (!token || !eventId || eventId.startsWith("local-")) return;
+  const colorId = STAGE_CAL_COLOR[stage];
+  if (!colorId) return;
+  try {
+    await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+      { method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ colorId }) }
+    );
+  } catch(e) { console.warn("Calendar color push failed:", e); }
+}
+
+async function pushToGoogleContacts(card, token) {
+  if (!token || !card) return { success: false };
+  const [givenName, ...rest] = (card.cn || "Unknown").split(" ");
+  const familyName = rest.join(" ");
+  const body = {
+    names: [{ givenName, familyName }],
+    ...(card.phone ? { phoneNumbers: [{ value: card.phone, type: "mobile" }] } : {}),
+    ...(card.email ? { emailAddresses: [{ value: card.email }] } : {}),
+    ...(card.addr  ? { addresses: [{ formattedValue: card.addr, type: "home" }] } : {}),
+    ...(card.jn    ? { biographies: [{ value: `MTS Rochester — Job #${card.jn}`, contentType: "TEXT_PLAIN" }] } : {}),
+  };
+  try {
+    // Search for existing contact by phone first
+    if (card.phone) {
+      const raw = (card.phone || "").replace(/\D/g, "");
+      const sr = await fetch(
+        `https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(card.phone)}&readMask=names,phoneNumbers,emailAddresses,metadata&pageSize=5`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const sd = await sr.json();
+      const existing = sd.results?.find(r =>
+        (r.person?.phoneNumbers || []).some(p => p.value?.replace(/\D/g, "") === raw)
+      );
+      if (existing?.person?.resourceName) {
+        const rn = existing.person.resourceName;
+        const mask = ["names", card.phone && "phoneNumbers", card.email && "emailAddresses", card.addr && "addresses"].filter(Boolean).join(",");
+        await fetch(
+          `https://people.googleapis.com/v1/${rn}:updateContact?updatePersonFields=${mask}`,
+          { method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ ...body, etag: existing.person.etag }) }
+        );
+        return { success: true, action: "updated" };
+      }
+    }
+    await fetch("https://people.googleapis.com/v1/people:createContact", {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return { success: true, action: "created" };
+  } catch(e) { console.warn("Contact push failed:", e); return { success: false }; }
+}
 
 const PIPELINE_KEY = "mts-pipeline";
 const FIELD_KEY = id => `mts-field-${id}`;
@@ -27,12 +94,21 @@ const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
 const SINGLEOPS_URL = "https://app.singleops.com/jobs";
 
 const EMAIL_TEMPLATES = [
-  { id: "followup", label: "Follow-up reminder", subject: "Following up on your estimate — MTS Rochester",
-    body: "Hi {firstName},\n\nI wanted to follow up on the estimate we provided for work at your property. If you have any questions or would like to move forward, please don't hesitate to reach out.\n\nThank you,\nJason\nMonster Tree Service of Rochester" },
-  { id: "proposal", label: "Proposal nudge", subject: "Your tree care proposal — MTS Rochester",
-    body: "Hi {firstName},\n\nJust checking in to see if you had a chance to review the proposal we sent over. I'm happy to answer any questions or make adjustments.\n\nBest,\nJason\nMonster Tree Service of Rochester" },
-  { id: "seasonal", label: "Seasonal reminder", subject: "Seasonal tree care reminder — MTS Rochester",
-    body: "Hi {firstName},\n\nAs we head into the next season, I wanted to reach out about the tree care needs we discussed at your property. Now is a great time to schedule this work.\n\nFeel free to call or text me anytime.\n\nJason\nMonster Tree Service of Rochester" },
+  { id: "checkin", label: "Quick check-in", subject: "Quick question about your estimate — Jason @ Monster Tree",
+    body: "Hey {firstName}!\n\nJason with Monster Tree Service of Rochester here. Just wanted to pop in and make sure you got everything you needed from the proposal we sent over.\n\nAny questions at all? Happy to jump on a quick call or answer by email — whatever's easier for you. No pressure whatsoever.\n\nTalk soon,\nJason\nMonster Tree Service of Rochester" },
+  { id: "followup", label: "Friendly follow-up", subject: "Following up on your tree care estimate — MTS Rochester",
+    body: "Hi {firstName},\n\nJason from Monster Tree Service of Rochester here. Just following up on the estimate we put together for your property — wanted to make sure you had everything you need to make a decision.\n\nIf anything was unclear or if you'd like to talk through options, I'm just a text or call away. No rush at all on my end!\n\nBest,\nJason\nMonster Tree Service of Rochester" },
+  { id: "seasonal", label: "Seasonal / schedule heads-up", subject: "Our schedule is filling in — MTS Rochester",
+    body: "Hey {firstName},\n\nJason with Monster Tree here! Just wanted to give you a heads-up that our schedule is starting to fill in for the season. I didn't want you to miss your window if the tree work is still on your radar.\n\nNo pressure at all — just keeping you in the loop. If you have any questions or want to move forward, feel free to reach out anytime.\n\nThanks,\nJason\nMonster Tree Service of Rochester" },
+];
+
+const SMS_TEMPLATES = [
+  { id: "sms_checkin", label: "Quick check-in",
+    body: "Hey {firstName}, Jason with Monster Tree here! Just checking in to see if you had a chance to look over your proposal. Any questions at all? Happy to help 🌳" },
+  { id: "sms_followup", label: "Friendly follow-up",
+    body: "Hi {firstName}! Jason from MTS Rochester. Wanted to make sure the proposal came through okay. No rush — just here if you need anything!" },
+  { id: "sms_seasonal", label: "Schedule heads-up",
+    body: "Hey {firstName}, Jason with Monster Tree here. Just a heads up — our schedule is starting to fill in for the season. Didn't want you to miss your window if you're still interested! No pressure, just keeping you posted 🌿" },
 ];
 
 function loadPipeline() { try { return JSON.parse(localStorage.getItem(PIPELINE_KEY)) || {}; } catch(e) { return {}; } }
@@ -42,7 +118,7 @@ function loadFieldData(id) { try { return JSON.parse(localStorage.getItem(FIELD_
 const F = "'Oswald',sans-serif";
 
 // ═════════════════════════════════════════════════════════════════════════════
-export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) {
+export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, token }) {
   const [pipeline, setPipeline] = useState(() => loadPipeline());
   const [activeTab, setActiveTab] = useState("estimate_needed");
   const [selectedCard, setSelectedCard] = useState(null);
@@ -50,13 +126,73 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState({}); // {id: true}
   const [emailSheet, setEmailSheet] = useState(false);
-  const [emailPreview, setEmailPreview] = useState(null); // template object
-  const [pauseMenu, setPauseMenu] = useState(null); // card id showing pause options
-  const [detailCard, setDetailCard] = useState(null); // full detail popup
+  const [emailPreview, setEmailPreview] = useState(null);
+  const [pauseMenu, setPauseMenu] = useState(null);
+  const [detailCard, setDetailCard] = useState(null);
+  const [pipelineSheet, setPipelineSheet] = useState(null); // {card, type:'email'|'sms'}
+  const [fieldCache, setFieldCache] = useState({}); // Drive-loaded field data cache
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [editFields, setEditFields] = useState({}); // editable overrides for detail popup
+  const [contactSave, setContactSave] = useState({}); // {[cardId]: 'saving'|'saved'|'error'}
+
+  // Save edited field data back to localStorage (and Drive if token available)
+  const saveEditedField = useCallback((id, key, value) => {
+    setEditFields(prev => ({ ...prev, [id]: { ...(prev[id] || {}), [key]: value } }));
+    const current = loadFieldData(id);
+    const updated = { ...current, [key]: value };
+    saveFieldData(id, updated);
+    if (token) {
+      if (window._pipelineFieldSync) clearTimeout(window._pipelineFieldSync);
+      window._pipelineFieldSync = setTimeout(() => {
+        import('./driveSync').then(({ saveFieldToDrive }) => saveFieldToDrive(token, id, updated).catch(() => {}));
+      }, 2000);
+    }
+  }, [token]);
 
   // Persist
   useEffect(() => { savePipeline(pipeline); }, [pipeline]);
   useEffect(() => { if (onCloudSync) onCloudSync(); }, [pipeline]);
+
+  // ── LOAD FIELD DATA FROM DRIVE WHEN DETAIL OPENS ───────────────────────
+  useEffect(() => {
+    if (!detailCard || !token) return;
+    const id = detailCard.id;
+    const local = loadFieldData(id);
+    const hasLocal = !!(local.scopeNotes || local.myNotes || local.addonNotes ||
+      (local.scopePhotos || local.photos || []).length ||
+      (local.addonPhotos || []).length ||
+      local.videoUrls?.length || local.videoUrl ||
+      local.audioClips?.length);
+    // Always try Drive to get freshest data (especially cross-device)
+    setDetailLoading(true);
+    loadFieldFromDrive(token, id).then(cloud => {
+      if (cloud && Object.keys(cloud).length > 0) {
+        // Merge: Drive wins on text/AI, but keep whichever photo array is longer
+        const merged = {
+          ...local,
+          ...cloud,
+          scopePhotos: (cloud.scopePhotos || cloud.photos || []).length >= (local.scopePhotos || local.photos || []).length
+            ? (cloud.scopePhotos || cloud.photos || [])
+            : (local.scopePhotos || local.photos || []),
+          addonPhotos: (cloud.addonPhotos || []).length >= (local.addonPhotos || []).length
+            ? (cloud.addonPhotos || [])
+            : (local.addonPhotos || []),
+          audioClips: (cloud.audioClips || []).length >= (local.audioClips || []).length
+            ? (cloud.audioClips || [])
+            : (local.audioClips || []),
+          videoUrls: cloud.videoUrls?.length ? cloud.videoUrls : (local.videoUrls || (local.videoUrl ? [local.videoUrl] : [])),
+        };
+        setFieldCache(prev => ({ ...prev, [id]: merged }));
+      } else if (hasLocal) {
+        setFieldCache(prev => ({ ...prev, [id]: local }));
+      }
+      setDetailLoading(false);
+    }).catch(() => {
+      // Fall back to localStorage
+      if (hasLocal) setFieldCache(prev => ({ ...prev, [id]: local }));
+      setDetailLoading(false);
+    });
+  }, [detailCard?.id, token]);
 
   // ── AUTO-AGING ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -94,7 +230,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
       if (groups[card.stage]) groups[card.stage].push(card);
     });
     Object.keys(groups).forEach(k => {
-      groups[k].sort((a, b) => (b.hot ? 1 : 0) - (a.hot ? 1 : 0) || (b.addedAt || 0) - (a.addedAt || 0));
+      groups[k].sort((a, b) => (b.hot ? 1 : 0) - (a.hot ? 1 : 0) || (a.addedAt || 0) - (b.addedAt || 0));
     });
     return groups;
   }, [pipeline]);
@@ -115,13 +251,14 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
     return (card.cn || "").toLowerCase().includes(q) || (card.addr || "").toLowerCase().includes(q) || (card.jn || "").includes(q);
   }, [search]);
 
-  // Move card to stage
+  // Move card to stage + push color to Google Calendar
   const moveCard = useCallback((id, newStage) => {
     setPipeline(prev => ({
       ...prev,
       [id]: { ...prev[id], stage: newStage, stageChangedAt: Date.now(), autoDeclined: false },
     }));
-  }, []);
+    if (token) pushCalendarColor(id, newStage, token);
+  }, [token]);
 
   // Reactivate = move from declined back to estimate_needed
   const reactivate = useCallback((id) => {
@@ -173,23 +310,31 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
   const selectedCards = useMemo(() => Object.keys(selected).map(id => pipeline[id]).filter(Boolean), [selected, pipeline]);
   const selectedCount = selectedCards.length;
 
-  // ── BULK EMAIL ──────────────────────────────────────────────────────────
+  // ── BULK EMAIL + SMS ────────────────────────────────────────
   const sendBulkEmail = (template) => {
     selectedCards.forEach((card, i) => {
       const firstName = (card.cn || "").split(" ")[0];
       const body = template.body.replace(/\{firstName\}/g, firstName);
-      const subject = template.subject;
       const email = card.email || "";
       if (!email) return;
-      // Stagger mailto opens slightly so browser doesn't block them
       setTimeout(() => {
-        window.open(`mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_self");
+        window.open(`mailto:${email}?subject=${encodeURIComponent(template.subject)}&body=${encodeURIComponent(body)}`, "_self");
       }, i * 800);
     });
-    setEmailPreview(null);
-    setEmailSheet(false);
-    setSelectMode(false);
-    setSelected({});
+    setEmailPreview(null); setEmailSheet(false); setSelectMode(false); setSelected({});
+  };
+
+  const sendBulkSms = (template) => {
+    selectedCards.forEach((card, i) => {
+      const firstName = (card.cn || "").split(" ")[0];
+      const body = template.body.replace(/\{firstName\}/g, firstName);
+      const phone = (card.phone || "").replace(/\D/g, "");
+      if (!phone) return;
+      setTimeout(() => {
+        window.open(`sms:${phone}&body=${encodeURIComponent(body)}`, "_self");
+      }, i * 1200);
+    });
+    setPipelineSheet(null); setSelectMode(false); setSelected({});
   };
 
   // ── RENDER CARD ─────────────────────────────────────────────────────────
@@ -247,6 +392,9 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
           {hasVideo && <IconVideo size={11} color="#5a6580"/>}
           {card.jn && <button onClick={e=>{e.stopPropagation();openSingleOps(card.jn);}} style={{fontSize:10,color:"#3B82F6",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}>SO #{card.jn}</button>}
           <div style={{flex:1}}/>
+          {/* Quick email + SMS shortcuts */}
+          {card.email && <button onClick={e=>{e.stopPropagation();setPipelineSheet({card,type:"email"});}} style={{padding:"2px 7px",borderRadius:4,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",fontSize:9,fontWeight:700,cursor:"pointer"}}>✉</button>}
+          {card.phone && <button onClick={e=>{e.stopPropagation();setPipelineSheet({card,type:"sms"});}} style={{padding:"2px 7px",borderRadius:4,background:"rgba(16,185,129,.08)",border:"1px solid rgba(16,185,129,.2)",color:"#10B981",fontSize:9,fontWeight:700,cursor:"pointer"}}>💬</button>}
           <div style={{position:"relative"}}>
             {card.pauseUntil && Date.now() < card.pauseUntil ? (
               <button onClick={e=>{e.stopPropagation();unpause(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:"rgba(138,150,168,.12)",border:"1px solid rgba(138,150,168,.25)",color:"#8a96a8",fontSize:9,cursor:"pointer",fontWeight:600}}><span style={{display:"flex",alignItems:"center",gap:3}}><IconPause size={10} color="#8a96a8"/>{Math.ceil((card.pauseUntil - Date.now()) / (24*60*60*1000))}d</span></button>
@@ -267,7 +415,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
   // ── MOBILE: List + Tabs ──────────────────────────────────────────────────
   const mobileView = () => {
     const filtered = activeTab === "all" ? allCards : (cardsByStage[activeTab] || []);
-    const sorted = [...filtered].filter(searchFilter).sort((a, b) => (b.hot ? 1 : 0) - (a.hot ? 1 : 0) || (b.addedAt || 0) - (a.addedAt || 0));
+    const sorted = [...filtered].filter(searchFilter).sort((a, b) => (b.hot ? 1 : 0) - (a.hot ? 1 : 0) || (a.addedAt || 0) - (b.addedAt || 0));
 
     return (
       <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
@@ -313,6 +461,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
             <span style={{fontSize:12,color:"#90a8c0",fontWeight:600}}>{selectedCount} selected</span>
             <div style={{flex:1}}/>
             <button onClick={()=>setEmailSheet(true)} style={{padding:"8px 16px",borderRadius:8,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:12,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#3B82F6"/>Email</span></button>
+            <button onClick={()=>setPipelineSheet({card:null,type:"sms_bulk"})} style={{padding:"8px 16px",borderRadius:8,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.2)",color:"#10B981",fontSize:12,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}>💬 Text</span></button>
             <button onClick={()=>{selectedCards.forEach(c=>moveCard(c.id,"follow_up"));setSelected({});setSelectMode(false);}} style={{padding:"8px 12px",borderRadius:8,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>→ Follow up</button>
           </div>
         )}
@@ -360,10 +509,13 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
       {/* ── FULL CARD DETAIL POPUP ──────────────────────────────────── */}
       {detailCard && (() => {
         const card = detailCard;
-        const fd = loadFieldData(card.id);
+        const baseFd = fieldCache[card.id] || loadFieldData(card.id);
+        const overrides = editFields[card.id] || {};
+        const fd = { ...baseFd, ...overrides };
         const stage = STAGES.find(st => st.id === card.stage);
         const isDeclined = card.stage === "declined";
-        // ytId moved inline per-video
+        const B = "'DM Sans',system-ui,sans-serif";
+        const editStyle = (color) => ({width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"rgba(255,255,255,.03)",border:`1px solid ${color}30`,color,fontSize:14,fontFamily:B,lineHeight:1.7,resize:"vertical",outline:"none",minHeight:80});
         return <div onClick={() => setDetailCard(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",backdropFilter:"blur(6px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:10,overflowY:"auto"}}>
           <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:14,width:"100%",maxWidth:700,maxHeight:"90vh",overflowY:"auto",padding:0}}>
 
@@ -373,6 +525,8 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
                 <div style={{fontSize:20,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.5}}>{card.hot && <IconFire size={16} color="#FFB300" style={{marginRight:6,flexShrink:0}}/>}{card.cn}</div>
                 {card.addr && <div style={{fontSize:13,color:"#8a96a8",fontFamily:F,textTransform:"uppercase",letterSpacing:1,marginTop:2}}>{card.addr}</div>}
               </div>
+              {detailLoading && <div style={{fontSize:10,color:"#3B82F6",fontWeight:600,display:"flex",alignItems:"center",gap:4}}><span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>↻</span> syncing</div>}
+              <button onClick={() => { setDetailCard(null); onSwitchToRoute(); }} style={{padding:"4px 10px",borderRadius:6,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",flexShrink:0}}>← Route</button>
               <span style={{padding:"4px 12px",borderRadius:99,background:stage?.bg,color:stage?.color,fontSize:12,fontWeight:700,fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{stage?.label}</span>
               <button onClick={() => setDetailCard(null)} style={{width:32,height:32,borderRadius:8,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
             </div>
@@ -383,6 +537,19 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
                 {card.phone && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconPhone size={14} color="#a0b8d0"/><a href={`tel:${card.phone.replace(/\D/g,"")}`} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.phone}</a></div>}
                 {card.email && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconMail size={14} color="#a0b8d0"/><a href={`mailto:${card.email}`} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.email}</a></div>}
                 {card.jn && <button onClick={() => openSingleOps(card.jn)} style={{fontSize:14,color:"#3B82F6",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}><span style={{display:"flex",alignItems:"center",gap:4}}>SingleOps #{card.jn}<IconClipboard size={12} color="#3B82F6"/></span></button>}
+                {token && (card.phone || card.email) && (() => {
+                  const cs = contactSave[card.id];
+                  return (
+                    <button onClick={async () => {
+                      setContactSave(prev => ({...prev, [card.id]: "saving"}));
+                      const result = await pushToGoogleContacts(card, token);
+                      setContactSave(prev => ({...prev, [card.id]: result.success ? (result.action === "updated" ? "updated" : "saved") : "error"}));
+                      setTimeout(() => setContactSave(prev => ({...prev, [card.id]: null})), 3000);
+                    }} disabled={cs === "saving"} style={{padding:"4px 12px",borderRadius:6,background:cs==="saved"||cs==="updated"?"rgba(16,185,129,.12)":cs==="error"?"rgba(200,60,60,.1)":"rgba(59,130,246,.08)",border:`1px solid ${cs==="saved"||cs==="updated"?"rgba(16,185,129,.3)":cs==="error"?"rgba(200,60,60,.2)":"rgba(59,130,246,.2)"}`,color:cs==="saved"||cs==="updated"?"#10B981":cs==="error"?"#e06060":"#3B82F6",fontSize:12,fontWeight:700,cursor:cs==="saving"?"default":"pointer",whiteSpace:"nowrap"}}>
+                      {cs==="saving"?"Saving…":cs==="saved"?"✓ Saved":cs==="updated"?"✓ Updated":cs==="error"?"✗ Failed":"💾 Save Contact"}
+                    </button>
+                  );
+                })()}
               </div>
 
               {/* Job notes */}
@@ -394,12 +561,12 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
               {/* Scope section */}
               {(fd.scopeNotes || fd.myNotes) && <div style={{marginBottom:16}}>
                 <div style={{fontSize:12,fontWeight:700,color:"#3B82F6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>SCOPE</div>
-                <div style={{fontSize:14,color:"#b0b8c8",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{fd.scopeNotes || fd.myNotes}</div>
+                <textarea value={fd.scopeNotes || fd.myNotes || ""} onChange={e => saveEditedField(card.id, "scopeNotes", e.target.value)} style={editStyle("#b0b8c8")} />
               </div>}
 
               {fd.aiScopeSummary && <div style={{marginBottom:16}}>
                 <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>AI SCOPE SUMMARY</div>
-                <div style={{fontSize:14,color:"#a0b0c8",lineHeight:1.6,whiteSpace:"pre-wrap",padding:12,borderRadius:10,background:"rgba(127,119,221,.06)",border:"1px solid rgba(127,119,221,.12)"}}>{fd.aiScopeSummary}</div>
+                <textarea value={fd.aiScopeSummary} onChange={e => saveEditedField(card.id, "aiScopeSummary", e.target.value)} style={editStyle("#a0b0c8")} />
               </div>}
 
               {/* Scope photos */}
@@ -418,12 +585,12 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
               {/* Add-on section */}
               {fd.addonNotes && <div style={{marginBottom:16}}>
                 <div style={{fontSize:12,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>ADD-ON</div>
-                <div style={{fontSize:14,color:"#c8b0a0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{fd.addonNotes}</div>
+                <textarea value={fd.addonNotes} onChange={e => saveEditedField(card.id, "addonNotes", e.target.value)} style={editStyle("#c8b0a0")} />
               </div>}
 
               {fd.aiAddonEmail && <div style={{marginBottom:16}}>
                 <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>AI ADD-ON EMAIL</div>
-                <div style={{fontSize:14,color:"#c8a090",lineHeight:1.6,whiteSpace:"pre-wrap",padding:12,borderRadius:10,background:"rgba(255,138,101,.04)",border:"1px solid rgba(255,138,101,.1)"}}>{fd.aiAddonEmail}</div>
+                <textarea value={fd.aiAddonEmail} onChange={e => saveEditedField(card.id, "aiAddonEmail", e.target.value)} style={editStyle("#c8a090")} />
               </div>}
 
               {/* Add-on photos */}
@@ -514,6 +681,64 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync }) 
           </>}
         </div>
       </div>}
+      {/* ── PIPELINE MESSAGE SHEET (per-card email/sms + bulk sms) ─────── */}
+      {pipelineSheet && (() => {
+        const isBulk = pipelineSheet.type === "sms_bulk";
+        const isSms = pipelineSheet.type === "sms" || isBulk;
+        const card = pipelineSheet.card;
+        const firstName = card ? (card.cn || "").split(" ")[0] : null;
+        const templates = isSms ? SMS_TEMPLATES : EMAIL_TEMPLATES;
+        const title = isBulk
+          ? `Text ${selectedCount} clients`
+          : isSms
+            ? `Text ${firstName}`
+            : `Email ${firstName}`;
+        return (
+          <div onClick={()=>setPipelineSheet(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+            <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:"14px 14px 0 0",padding:18,maxWidth:480,width:"100%",paddingBottom:"max(18px,env(safe-area-inset-bottom))"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+                <span style={{fontSize:15,fontWeight:700,color:"#f0f4fa",flex:1,fontFamily:F,letterSpacing:1,textTransform:"uppercase"}}>{title}</span>
+                {!isBulk && card && (isSms ? card.phone : card.email) && <span style={{fontSize:11,color:"#5a6580"}}>{isSms ? card.phone : card.email}</span>}
+                <button onClick={()=>setPipelineSheet(null)} style={{width:28,height:28,borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={13} color="#5a6580"/></button>
+              </div>
+              {isBulk && <div style={{fontSize:11,color:"#5a6580",marginBottom:10}}>Choose a template — each message will be personalized with the client's name.</div>}
+              {templates.map(t => (
+                <button key={t.id} onClick={() => {
+                  if (isBulk) {
+                    sendBulkSms(t);
+                  } else if (isSms) {
+                    const phone = (card.phone || "").replace(/\D/g,"");
+                    const body = t.body.replace(/\{firstName\}/g, firstName);
+                    window.open(`sms:${phone}&body=${encodeURIComponent(body)}`, "_self");
+                    setPipelineSheet(null);
+                  } else {
+                    const body = t.body.replace(/\{firstName\}/g, firstName);
+                    window.open(`mailto:${card.email}?subject=${encodeURIComponent(t.subject)}&body=${encodeURIComponent(body)}`, "_self");
+                    setPipelineSheet(null);
+                  }
+                }} style={{width:"100%",padding:"12px 14px",marginBottom:8,borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",cursor:"pointer",textAlign:"left"}}>
+                  <div style={{fontSize:13,fontWeight:700,color:isSms?"#10B981":"#a0b8d0"}}>{t.label}</div>
+                  <div style={{fontSize:11,color:"#4a5a70",marginTop:3,lineHeight:1.4}}>{t.body.replace(/\{firstName\}/g, firstName || "[Name]").slice(0,90)}…</div>
+                </button>
+              ))}
+              {/* Custom / blank */}
+              {!isBulk && <button onClick={()=>{
+                if (isSms) {
+                  const phone = (card.phone||"").replace(/\D/g,"");
+                  window.open(`sms:${phone}`,"_self");
+                } else {
+                  window.open(`mailto:${card.email}`,"_self");
+                }
+                setPipelineSheet(null);
+              }} style={{width:"100%",padding:"10px 14px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",cursor:"pointer",textAlign:"left"}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#5a6580"}}>Custom</div>
+                <div style={{fontSize:11,color:"#3a4a60",marginTop:2}}>Open blank {isSms?"message":"email"}</div>
+              </button>}
+            </div>
+          </div>
+        );
+      })()}
+
     </div>
   );
 }
