@@ -4,7 +4,7 @@ import RouteMap, { AM_COLOR, PM_COLOR } from "./RouteMap";
 import SwipeCard from "./SwipeCard";
 import OnsiteWindow from "./OnsiteWindow";
 import Pipeline, { savePipeline, loadPipeline } from "./Pipeline";
-import { saveAppState, loadAppState, saveFieldToDrive, onSyncStatus } from "./driveSync";
+import { saveAppState, loadAppState, saveFieldToDrive, loadFieldFromDrive, listFieldFiles, onSyncStatus } from "./driveSync";
 import {
   IconArrowLeft, IconNavigation, IconMessageSquare, IconVolume2,
   IconClipboard, IconX, IconRotateCcw, IconRefresh, IconReorder, IconUndo,
@@ -278,19 +278,54 @@ export default function App() {
     })();
   }, [token]);
 
-  // Sync dismissed + pipeline to Drive whenever dismissed changes
+  // Sync dismissed + pipeline + ALL field data to Drive
   const cloudSyncTimer = useRef(null);
-  const triggerCloudSync = useCallback(() => {
+  const triggerCloudSync = useCallback(async (immediate = false) => {
     if (!token) return;
-    if (cloudSyncTimer.current) clearTimeout(cloudSyncTimer.current);
-    // Debounce: wait 2s after last change before syncing
-    cloudSyncTimer.current = setTimeout(() => {
+    const run = async () => {
       const pl = loadPipeline();
-      saveAppState(token, pl, dismissed).catch(() => {});
-    }, 2000);
+      // Save app state (pipeline + dismissed)
+      await saveAppState(token, pl, dismissed).catch(() => {});
+      // Walk localStorage for all field data and push to Drive
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith("mts-field-")) {
+            const id = key.slice("mts-field-".length);
+            const fd = JSON.parse(localStorage.getItem(key) || "{}");
+            if (fd && Object.keys(fd).length > 0) {
+              await saveFieldToDrive(token, id, fd).catch(() => {});
+            }
+          }
+        }
+      } catch(e) { console.warn("Field sync walk failed:", e); }
+    };
+    if (immediate) { await run(); return; }
+    if (cloudSyncTimer.current) clearTimeout(cloudSyncTimer.current);
+    cloudSyncTimer.current = setTimeout(run, 2000);
   }, [token, dismissed]);
 
   useEffect(() => { triggerCloudSync(); }, [dismissed, triggerCloudSync]);
+
+  // ── PULL FROM DRIVE: pull all field files into localStorage ───────────────
+  const pullFromDrive = useCallback(async () => {
+    if (!token) return;
+    try {
+      const { listFieldFiles, loadFieldFromDrive } = await import("./driveSync");
+      const files = await listFieldFiles(token);
+      for (const f of (files || [])) {
+        const id = f.name.replace(/\.json$/, "");
+        const data = await loadFieldFromDrive(token, id);
+        if (data && Object.keys(data).length > 0) {
+          localStorage.setItem(`mts-field-${id}`, JSON.stringify(data));
+        }
+      }
+      // Also refresh pipeline from Drive
+      const state = await loadAppState(token);
+      if (state?.pipeline) localStorage.setItem("mts-pipeline", JSON.stringify(state.pipeline));
+      if (state?.dismissed) setDismissed(state.dismissed);
+    } catch(e) { console.warn("Pull from Drive failed:", e); }
+  }, [token]);
 
   // ── PARSE ────────────────────────────────────────────────────────────────
   const dayKey = businessDays[selDay]?.toDateString();
@@ -405,9 +440,9 @@ export default function App() {
     if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
     setUndoToast({ id, cn: stop?.cn || "Stop", stop });
     undoToastTimer.current = setTimeout(() => setUndoToast(null), 10000);
-    // Offer to save contact to Google Contacts if they have a phone or email
-    if (stop && (stop.phone || stop.email)) {
-      setTimeout(() => setContactPrompt(stop), 1500);
+    // Auto-save to Google Contacts silently
+    if (stop && (stop.phone || stop.email) && token) {
+      saveContactFromPrompt(stop).catch(() => {});
     }
   };
   const undoToastAction = () => {
@@ -614,12 +649,20 @@ export default function App() {
       {/* ── HEADER ─────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:6,padding:"8px 12px",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
         <button onClick={()=>setView(view==="route"?"pipeline":"route")} style={{padding:"5px 10px",borderRadius:8,background:"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:13,letterSpacing:2,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#10B981",transition:"color .2s"}}>{view==="route"?"MTS FIELD":"MTS PIPELINE"}</button>
-        {syncIndicator !== "idle" && (
-          <button onClick={() => { if (syncIndicator === "error") triggerCloudSync(); }}
-            title={syncIndicator === "error" ? "Sync failed — tap to retry" : syncIndicator === "syncing" ? "Syncing..." : "Synced"}
-            style={{background:"none",border:"none",cursor:syncIndicator==="error"?"pointer":"default",padding:0,flexShrink:0}}>
-            {syncIndicator === "error" ? <IconCloudOff size={14} color="#FF5555" /> : syncIndicator === "syncing" ? <IconCloud size={14} color="#F6BF26" /> : <IconCloud size={14} color="#10B981" />}
-          </button>
+        {token && (
+          <div style={{display:"flex",gap:4,alignItems:"center"}}>
+            <button onClick={() => triggerCloudSync(true)}
+              title="Push all local data to Drive"
+              style={{background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",cursor:"pointer",padding:"4px 8px",borderRadius:6,display:"flex",alignItems:"center",gap:4,fontSize:10,color:syncIndicator==="syncing"?"#F6BF26":syncIndicator==="error"?"#FF5555":"#10B981",fontWeight:700,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>
+              {syncIndicator === "syncing" ? <IconCloud size={12} color="#F6BF26"/> : syncIndicator==="error" ? <IconCloudOff size={12} color="#FF5555"/> : <IconCloud size={12} color="#10B981"/>}
+              {syncIndicator === "syncing" ? "Sync…" : "↑ Push"}
+            </button>
+            <button onClick={pullFromDrive}
+              title="Pull all data from Drive (overwrites local)"
+              style={{background:"rgba(138,150,168,.08)",border:"1px solid rgba(138,150,168,.2)",cursor:"pointer",padding:"4px 8px",borderRadius:6,display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#8a96a8",fontWeight:700,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>
+              ↓ Pull
+            </button>
+          </div>
         )}
         {view === "route" && <>
           <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"5px 10px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0b10",color:"#f0f4fa",fontSize:11,fontWeight:600,cursor:"pointer",outline:"none",appearance:"auto",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
@@ -872,12 +915,7 @@ export default function App() {
         onDecline={() => { decline(onsiteStop.id); setOnsiteStop(null); }}
       />}
 
-      {/* ── CONTACT PROMPT ─────────────────────────────────────────── */}
-      {contactPrompt && !contactResult && <div style={{position:"fixed",bottom:undoToast?"56px":"0",left:0,right:0,padding:"10px 16px",paddingBottom:undoToast?"10px":"max(10px,env(safe-area-inset-bottom))",background:"#0d1a2a",borderTop:"1px solid rgba(59,130,246,.3)",display:"flex",alignItems:"center",gap:10,zIndex:151,transition:"bottom .2s"}}>
-        <span style={{fontSize:13,color:"#90c0f0",flex:1}}>💾 Save <strong>{(contactPrompt.cn||"").split(" ")[0]}</strong> to Google Contacts?</span>
-        <button onClick={() => saveContactFromPrompt(contactPrompt)} disabled={contactSaving} style={{padding:"6px 14px",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.3)",color:"#3B82F6",fontSize:12,fontWeight:700,cursor:contactSaving?"default":"pointer"}}>{contactSaving?"Saving…":"Save"}</button>
-        <button onClick={() => setContactPrompt(null)} style={{padding:"6px 10px",borderRadius:6,background:"transparent",border:"none",color:"#4a6080",cursor:"pointer",display:"flex",alignItems:"center"}}><IconX size={14} color="#4a6080"/></button>
-      </div>}
+      {/* ── CONTACT AUTO-SAVE RESULT BANNER ────────────────────────── */}
       {contactResult && <div style={{position:"fixed",bottom:undoToast?"56px":"0",left:0,right:0,padding:"10px 16px",paddingBottom:undoToast?"10px":"max(10px,env(safe-area-inset-bottom))",background:contactResult==="error"?"#1a0d0d":"#0d1a14",borderTop:`1px solid ${contactResult==="error"?"rgba(200,60,60,.3)":"rgba(16,185,129,.3)"}`,display:"flex",alignItems:"center",gap:10,zIndex:151}}>
         <span style={{fontSize:13,color:contactResult==="error"?"#e06060":contactResult==="updated"?"#60c090":"#10B981",flex:1}}>
           {contactResult==="error"?"✗ Contact save failed":contactResult==="updated"?"✓ Contact updated in Google":"✓ Contact saved to Google"}
