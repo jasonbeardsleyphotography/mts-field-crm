@@ -99,7 +99,7 @@ export async function saveFieldToDrive(token, eventId, fieldData) {
     const rootId = await findOrCreateFolder(token, FOLDER_NAME);
     const fid = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
     // Include full field data including photos as base64
-    await saveJson(token, `${eventId}.json`, fieldData);
+    await saveJson(token, `${eventId}.json`, fid, fieldData);
   } catch(e) {
     console.warn("Drive field save failed:", e);
   }
@@ -111,4 +111,16 @@ export async function loadFieldFromDrive(token, eventId) {
     const fid = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
     return await loadJson(token, `${eventId}.json`, fid);
   } catch(e) { return null; }
+}
+
+// List all field data files in the Drive field folder (for pull-from-Drive)
+export async function listFieldFiles(token) {
+  try {
+    const rootId = await findOrCreateFolder(token, FOLDER_NAME);
+    const fid = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
+    const q = `'${fid}' in parents and trashed=false and mimeType='application/json'`;
+    const r = await driveReq(token, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name)&spaces=drive&pageSize=1000`);
+    const d = await r.json();
+    return d.files || [];
+  } catch(e) { console.warn("List field files failed:", e); return []; }
 }
