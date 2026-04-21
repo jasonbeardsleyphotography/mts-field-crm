@@ -255,29 +255,6 @@ export default function App() {
   const [syncIndicator, setSyncIndicator] = useState("idle");
   useEffect(() => { return onSyncStatus(setSyncIndicator); }, []);
 
-  useEffect(() => {
-    if (!token) return;
-    (async () => {
-      try {
-        const cloud = await loadAppState(token);
-        if (cloud) {
-          // Merge pipeline: cloud wins
-          if (cloud.pipeline && Object.keys(cloud.pipeline).length > 0) {
-            const local = loadPipeline();
-            const merged = { ...local, ...cloud.pipeline };
-            savePipeline(merged);
-          }
-          // Merge dismissed: cloud wins, keep local-only
-          if (cloud.dismissed) {
-            setDismissed(prev => ({ ...prev, ...cloud.dismissed }));
-          }
-        }
-      } catch(e) {
-        console.warn("Cloud pull failed:", e);
-      }
-    })();
-  }, [token]);
-
   // ══════════════════════════════════════════════════════════════════════
   // AUTO-SYNC: pull from Drive on mount + poll + on visibility change
   // Push: debounced on any local change
@@ -316,15 +293,33 @@ export default function App() {
       const drive = await fullSyncFromDrive(token);
       // Merge app state if Drive is newer than what we have
       if (drive.pipeline) {
-        const localState = lsGet("mts-pipeline", {});
-        const localSavedAt = localState._savedAt || 0;
-        if (drive.stateSavedAt > localSavedAt) {
-          localStorage.setItem("mts-pipeline", JSON.stringify(drive.pipeline));
+        // Merge pipeline card-by-card: newest stageChangedAt wins per card
+        const local = loadPipeline();
+        let changed = false;
+        const merged = { ...local };
+        for (const [id, driveCard] of Object.entries(drive.pipeline)) {
+          const localCard = local[id];
+          const driveTs = driveCard.stageChangedAt || driveCard.addedAt || 0;
+          const localTs = localCard?.stageChangedAt || localCard?.addedAt || 0;
+          if (!localCard || driveTs > localTs) {
+            merged[id] = driveCard;
+            changed = true;
+          }
         }
+        if (changed) savePipeline(merged);
       }
       if (drive.dismissed) {
-        // Merge dismissed: union of both sets
-        setDismissed(prev => ({ ...drive.dismissed, ...prev }));
+        // Safe merge: only keep Drive dismissed entries that are newer than local
+        // This prevents old Drive data from re-dismissing stops you've already un-dismissed
+        setDismissed(prev => {
+          const merged = { ...prev };
+          for (const [id, driveTs] of Object.entries(drive.dismissed)) {
+            const localTs = prev[id] || 0;
+            // Only accept Drive entry if it's strictly newer, or local has none
+            if (driveTs > localTs) merged[id] = driveTs;
+          }
+          return merged;
+        });
       }
       // Merge field data
       const changed = mergeFieldDataFromDrive(drive.fieldData);
