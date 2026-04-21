@@ -2,10 +2,17 @@ import { useState, useEffect, useRef } from "react";
 import PhotoMarkup from "./PhotoMarkup";
 import CameraView from "./CameraView";
 import { saveFieldToDrive, loadFieldFromDrive } from "./driveSync";
-import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconMic, IconYoutube, IconMail, IconX, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconRotateCcw } from "./icons";
+import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconYoutube, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconRotateCcw, IconSend } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MTS — Onsite Window
+   Full-screen data capture for a client stop. Opens via swipe-right.
+   Saves continuously to localStorage. "← Route" returns without marking done.
+   "Done →" moves card to pipeline.
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 const FIELD_KEY = id => `mts-field-${id}`;
 function loadFieldData(id) { try { return JSON.parse(localStorage.getItem(FIELD_KEY(id))) || {}; } catch(e) { return {}; } }
@@ -14,21 +21,27 @@ function saveFieldData(id, data) { try { localStorage.setItem(FIELD_KEY(id), JSO
 export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token }) {
   const s = stop;
   const fd = loadFieldData(s.id);
+  // Backward compat: migrate old myNotes/photos to scope
   const [scopeNotes, setScopeNotes] = useState(fd.scopeNotes || fd.myNotes || "");
   const [addonNotes, setAddonNotes] = useState(fd.addonNotes || "");
   const [scopePhotos, setScopePhotos] = useState(fd.scopePhotos || fd.photos || []);
   const [addonPhotos, setAddonPhotos] = useState(fd.addonPhotos || []);
+  // Support multiple video uploads — stored as array
   const [videoUrls, setVideoUrls] = useState(fd.videoUrls || (fd.videoUrl ? [fd.videoUrl] : []));
   const [audioClips, setAudioClips] = useState(fd.audioClips || []);
   const [cloudLoading, setCloudLoading] = useState(false);
   const [markupIdx, setMarkupIdx] = useState(null);
-  const [markupSection, setMarkupSection] = useState("scope");
+  const [markupSection, setMarkupSection] = useState("scope"); // which photo array to edit
   const [showCamera, setShowCamera] = useState(false);
   const [cameraSection, setCameraSection] = useState("scope");
   const [recording, setRecording] = useState(false);
   const [recDuration, setRecDuration] = useState(0);
   const [playingIdx, setPlayingIdx] = useState(null);
-  const [ytUploadCount, setYtUploadCount] = useState(0);
+  const ytFileRef = useRef(null);
+  const [aiScopeResult, setAiScopeResult] = useState(fd.aiScopeSummary || "");
+  const [aiAddonResult, setAiAddonResult] = useState(fd.aiAddonEmail || "");
+  const [aiScopeLoading, setAiScopeLoading] = useState(false);
+  const [aiAddonLoading, setAiAddonLoading] = useState(false);
   const [declineConfirm, setDeclineConfirm] = useState(false);
   const [jobNotesOpen, setJobNotesOpen] = useState(false);
   const [isRevision, setIsRevision] = useState(false);
@@ -43,33 +56,25 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
   const chunksRef = useRef([]);
   const recTimerRef = useRef(null);
   const audioElRef = useRef(null);
-  const ytFileRef = useRef(null);
-  const mountedRef = useRef(true);
-  const stopIdRef = useRef(s.id);
+  const notesRef = useRef(null);
 
-  // Issue #1: reset scroll/zoom on unmount so route screen isn't left zoomed
-  useEffect(() => {
-    mountedRef.current = true;
-    stopIdRef.current = s.id;
-    return () => {
-      mountedRef.current = false;
-      setTimeout(() => { try { window.scrollTo(0, 0); } catch(e) {} }, 80);
-    };
-  }, [s.id]);
+  // Reset scroll on unmount so route screen isn't left zoomed
+  useEffect(() => { return () => { setTimeout(() => { try { window.scrollTo(0,0); } catch(e){} }, 80); }; }, []);
 
   // Auto-save on every change — local + Drive
   useEffect(() => {
-    const data = { scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, savedAt: Date.now() };
+    const data = { scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult };
     saveFieldData(s.id, data);
+    // Sync to Drive (debounced via timer)
     if (token) {
       if (window._fieldSyncTimer) clearTimeout(window._fieldSyncTimer);
       window._fieldSyncTimer = setTimeout(() => {
         saveFieldToDrive(token, s.id, data).catch(() => {});
       }, 3000);
     }
-  }, [scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, s.id]);
+  }, [scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeResult, aiAddonResult, s.id]);
 
-  // If localStorage is empty, pull from Drive
+  // If localStorage is empty (desktop), pull from Drive
   useEffect(() => {
     const hasLocal = !!(fd.scopeNotes || fd.myNotes || fd.addonNotes || (fd.scopePhotos || fd.photos || []).length);
     if (!hasLocal && token) {
@@ -82,6 +87,9 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
           if (cloud.addonPhotos) setAddonPhotos(cloud.addonPhotos);
           if (cloud.videoUrls) setVideoUrls(cloud.videoUrls); else if (cloud.videoUrl) setVideoUrls([cloud.videoUrl]);
           if (cloud.audioClips) setAudioClips(cloud.audioClips);
+          if (cloud.aiScopeSummary) setAiScopeResult(cloud.aiScopeSummary);
+          if (cloud.aiAddonEmail) setAiAddonResult(cloud.aiAddonEmail);
+          // Save to local for next time
           saveFieldData(s.id, cloud);
         }
         setCloudLoading(false);
@@ -115,6 +123,10 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
   const handleAddonPhotos = (e) => { Array.from(e.target.files || []).forEach(f => processPhoto(f, "addon")); e.target.value = ""; };
   const removeScopePhoto = (i) => setScopePhotos(prev => prev.filter((_, j) => j !== i));
   const removeAddonPhoto = (i) => setAddonPhotos(prev => prev.filter((_, j) => j !== i));
+  const removePhoto = (i, section) => {
+    if (section === "addon") setAddonPhotos(prev => prev.filter((_, j) => j !== i));
+    else setScopePhotos(prev => prev.filter((_, j) => j !== i));
+  };
   const handleMarkupSave = (dataUrl) => {
     if (markupSection === "addon") setAddonPhotos(prev => prev.map((p, i) => i === markupIdx ? { ...p, dataUrl } : p));
     else setScopePhotos(prev => prev.map((p, i) => i === markupIdx ? { ...p, dataUrl } : p));
@@ -143,7 +155,9 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
       setRecording(true);
       let sec = 0;
       recTimerRef.current = setInterval(() => { sec++; setRecDuration(sec); }, 1000);
-    } catch(e) { console.warn("Mic access denied", e); }
+    } catch(e) {
+      console.warn("Mic access denied", e);
+    }
   };
 
   const stopRecording = () => {
@@ -155,8 +169,13 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
   };
 
   const removeAudio = (i) => setAudioClips(prev => prev.filter((_, j) => j !== i));
+
   const playAudio = (i) => {
-    if (playingIdx === i) { audioElRef.current?.pause(); setPlayingIdx(null); return; }
+    if (playingIdx === i) {
+      audioElRef.current?.pause();
+      setPlayingIdx(null);
+      return;
+    }
     if (audioElRef.current) audioElRef.current.pause();
     const a = new Audio(audioClips[i].dataUrl);
     a.onended = () => setPlayingIdx(null);
@@ -164,92 +183,61 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
     audioElRef.current = a;
     setPlayingIdx(i);
   };
+
   const fmtDur = (s) => `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
 
-  // ── YOUTUBE ──────────────────────────────────────────────────────────
+  // YouTube thumbnail + ID helpers
   const getYtId = (url) => url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
 
+  // ── YOUTUBE DELETE ──────────────────────────────────────────────────
   const deleteYouTubeVideo = async (url, idx) => {
     const videoId = getYtId(url);
-    if (!videoId) { setVideoUrls(prev => prev.filter((_, i) => i !== idx)); return; }
+    if (!videoId) {
+      // No valid YT ID — just remove from app
+      setVideoUrls(prev => prev.filter((_, i) => i !== idx));
+      return;
+    }
+
     const tokenData = JSON.parse(localStorage.getItem("mts-token") || "null");
     const tok = tokenData?.token || token;
-    if (!tok) { alert("Not signed in — can't delete from YouTube."); return; }
-    if (!window.confirm("Delete this video from YouTube AND remove it from the app?")) return;
+    if (!tok) {
+      alert("Not signed in — can't delete from YouTube.");
+      return;
+    }
+
+    const confirmed = window.confirm("Delete this video from YouTube AND remove it from the app?");
+    if (!confirmed) return;
+
     try {
-      const res = await fetch(`https://www.googleapis.com/youtube/v3/videos?id=${videoId}`, {
-        method: "DELETE", headers: { Authorization: `Bearer ${tok}` },
-      });
-      if (res.ok || res.status === 204 || res.status === 404) {
+      const res = await fetch(
+        `https://www.googleapis.com/youtube/v3/videos?id=${videoId}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${tok}` },
+        }
+      );
+
+      if (res.ok || res.status === 204) {
+        // 204 No Content = success
+        setVideoUrls(prev => prev.filter((_, i) => i !== idx));
+      } else if (res.status === 404) {
+        // Already deleted on YouTube — clean it up in the app anyway
         setVideoUrls(prev => prev.filter((_, i) => i !== idx));
       } else {
+        const err = await res.text();
+        console.error("YouTube delete failed:", err);
         alert("Could not delete from YouTube. Removing from app only.");
         setVideoUrls(prev => prev.filter((_, i) => i !== idx));
       }
-    } catch(e) { setVideoUrls(prev => prev.filter((_, i) => i !== idx)); }
-  };
-
-  // Issue #3: background upload — non-blocking, continues after DONE
-  // Issue #4: title only, no description (privacy)
-  // Issue #5: auto-upload on file select, no naming prompt
-  const uploadToYouTube = async (file, title) => {
-    if (!file || !title) return;
-    if (mountedRef.current) setYtUploadCount(n => n + 1);
-    try {
-      const tokenData = JSON.parse(localStorage.getItem("mts-token") || "null");
-      const tok = tokenData?.token || token;
-      if (!tok) { if (mountedRef.current) setYtUploadCount(n => n - 1); return; }
-      const metadata = { snippet: { title }, status: { privacyStatus: "unlisted" } };
-      const initRes = await fetch("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
-        body: JSON.stringify(metadata),
-      });
-      const uploadUrl = initRes.headers.get("Location");
-      if (uploadUrl) {
-        const uploadRes = await fetch(uploadUrl, {
-          method: "PUT",
-          headers: { "Content-Type": file.type || "video/mp4" },
-          body: file,
-        });
-        const result = await uploadRes.json();
-        if (result.id) {
-          const ytUrl = `https://youtu.be/${result.id}`;
-          const saved = loadFieldData(stopIdRef.current);
-          const existing = saved.videoUrls || (saved.videoUrl ? [saved.videoUrl] : []);
-          saveFieldData(stopIdRef.current, { ...saved, videoUrls: [...existing, ytUrl], savedAt: Date.now() });
-          if (mountedRef.current) setVideoUrls(prev => [...prev, ytUrl]);
-        }
-      }
-    } catch(e) { console.warn("YouTube upload failed:", e); }
-    if (mountedRef.current) setYtUploadCount(n => n - 1);
-  };
-
-  const handleYtFile = (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const lastName = (s.cn || "").split(" ").pop();
-      const jobPart = s.jn ? ` #${s.jn}` : "";
-      const datePart = new Date().toLocaleDateString("en-US", {month:"2-digit",day:"2-digit",year:"numeric"});
-      const suffix = videoUrls.length > 0 ? ` (${videoUrls.length + 1})` : "";
-      uploadToYouTube(file, `${lastName}${jobPart} ${datePart}${suffix}`);
+    } catch(e) {
+      console.warn("YouTube delete error:", e);
+      alert("Network error — removing from app only.");
+      setVideoUrls(prev => prev.filter((_, i) => i !== idx));
     }
-    e.target.value = "";
   };
 
-  const F = "'Oswald',sans-serif";
-  const B = "'DM Sans',system-ui,sans-serif";
-
-  const onTouchStart = (e) => { swipeStartX.current = e.touches[0].clientX; swipeStartY.current = e.touches[0].clientY; swipeDir.current = null; setSwiping(true); };
-  const onTouchMove = (e) => {
-    if (!swiping) return;
-    const dx = e.touches[0].clientX - swipeStartX.current;
-    const dy = e.touches[0].clientY - swipeStartY.current;
-    if (swipeDir.current === null && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) swipeDir.current = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
-    if (swipeDir.current === "h" && dx < 0) setSwipeX(dx);
-  };
-  const onTouchEnd = () => { if (swipeX < -120) onDone(); setSwipeX(0); setSwiping(false); swipeDir.current = null; };
-
+  // ── MARKUP OVERLAY ──────────────────────────────────────────────────
+  // Camera view — rapid capture mode
   if (showCamera) {
     return <CameraView
       onPhoto={(dataUrl) => {
@@ -267,6 +255,73 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
       return <PhotoMarkup photoDataUrl={photos[markupIdx].dataUrl} onSave={handleMarkupSave} onCancel={() => setMarkupIdx(null)} />;
     }
   }
+
+  // ── GEMINI AI ───────────────────────────────────────────────────────
+
+  const callGemini = async (prompt) => {
+    const res = await fetch(`${GEMINI_URL}?key=${GEMINI_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+    });
+    const data = await res.json();
+    return data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response.";
+  };
+
+  const generateScopeSummary = async () => {
+    if (!GEMINI_KEY) { setAiScopeResult("Add VITE_GEMINI_KEY to .env"); return; }
+    setAiScopeLoading(true);
+    try {
+      const text = await callGemini(`You are an ISA-certified arborist's field assistant. Summarize these field notes into a structured estimate summary. Include: species/trees observed, conditions found, recommended treatments, equipment needed, and a rough job value estimate if enough info exists. Be concise and professional.
+
+Client: ${s.cn}
+Address: ${s.addr}
+Job notes from office: ${s.notes || "None"}
+Scope notes: ${scopeNotes || "None"}
+Constraints: ${s.constraint || "None"}`);
+      setAiScopeResult(text);
+    } catch(e) { setAiScopeResult("Error: " + e.message); }
+    setAiScopeLoading(false);
+  };
+
+  const generateAddonEmail = async () => {
+    if (!GEMINI_KEY) { setAiAddonResult("Add VITE_GEMINI_KEY to .env"); return; }
+    setAiAddonLoading(true);
+    try {
+      const text = await callGemini(`You are an ISA-certified arborist writing a professional, educational email to a homeowner. Based on these additional findings discovered during a site visit:
+
+1. For each issue found, write a brief educational paragraph explaining what it is, why it matters for tree/plant health, and what treatments or recommendations exist.
+2. Reference science-based information — cite Cornell Cooperative Extension, Northeast university extension resources, or ISA best practices where relevant. Use phrases like "According to Cornell Extension research..." or "ISA best management practices recommend..."
+3. NEVER use the word "chemical" — instead use "treatments," "applications," "plant healthcare solutions," or "recommendations."
+4. Tone should be educational but down-to-earth — like a knowledgeable neighbor explaining things, not a textbook.
+5. Keep it warm and professional. Do not be alarming.
+6. End with a brief recommendation and offer to discuss further.
+7. Sign as Jason from Monster Tree Service of Rochester.
+
+Client first name: ${(s.cn || "").split(" ")[0]}
+Add-on findings: ${addonNotes || "None"}
+Property: ${s.addr || ""}`);
+      setAiAddonResult(text);
+    } catch(e) { setAiAddonResult("Error: " + e.message); }
+    setAiAddonLoading(false);
+  };
+
+  const F = "'Oswald',sans-serif";
+  const B = "'DM Sans',system-ui,sans-serif";
+
+  // Swipe left on body → pipeline
+  const onTouchStart = (e) => { swipeStartX.current = e.touches[0].clientX; swipeStartY.current = e.touches[0].clientY; swipeDir.current = null; setSwiping(true); };
+  const onTouchMove = (e) => {
+    if (!swiping) return;
+    const dx = e.touches[0].clientX - swipeStartX.current;
+    const dy = e.touches[0].clientY - swipeStartY.current;
+    if (swipeDir.current === null && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) swipeDir.current = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
+    if (swipeDir.current === "h" && dx < 0) setSwipeX(dx);
+  };
+  const onTouchEnd = () => {
+    if (swipeX < -120) onDone();
+    setSwipeX(0); setSwiping(false); swipeDir.current = null;
+  };
 
   return (
     <div style={{position:"fixed",inset:0,zIndex:100,background:"#0a0b10",display:"flex",flexDirection:"column",fontFamily:B,color:"#f0f4fa",overflow:"hidden"}}>
@@ -319,12 +374,12 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
         )}
 
         {/* ── SCOPE ────────────────────────────────────────────────────── */}
-        {/* Issue #8-AI: NO AI buttons in onsite screen */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
           <div style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>SCOPE</div>
           <textarea value={scopeNotes} onChange={e => setScopeNotes(e.target.value)} placeholder="Equipment, treatments, what you're quoting..." rows={6}
-            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:16,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}}
-            onBlur={() => { try { window.scrollTo(0, 0); } catch(e) {} }} />
+            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}}  onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
+
+          {/* Scope photos */}
           {scopePhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
             {scopePhotos.map((p, i) => (
               <div key={i} style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
@@ -343,18 +398,19 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
               <IconCamera size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Camera</span>
             </button>
             <button onClick={()=>scopeLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
-              <IconCamera size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
+              <IconImage size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
             </button>
           </div>
         </div>
 
         {/* ── ADD-ON ──────────────────────────────────────────────────── */}
-        {/* Issue #8-AI: NO AI buttons in onsite screen */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
           <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>ADD-ON</div>
           <textarea value={addonNotes} onChange={e => setAddonNotes(e.target.value)} placeholder="Additional findings — box tree moth, dead limb over driveway, etc..." rows={3}
-            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:16,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}}
-            onBlur={() => { try { window.scrollTo(0, 0); } catch(e) {} }} />
+            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}}  onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
+
+          {/* Add-on photos */}
           {addonPhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
             {addonPhotos.map((p, i) => (
               <div key={i} style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
@@ -373,7 +429,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
               <IconCamera size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Camera</span>
             </button>
             <button onClick={()=>addonLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
-              <IconCamera size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
+              <IconImage size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
             </button>
           </div>
         </div>
@@ -404,12 +460,12 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
         </div>
 
         {/* ── VIDEO ─────────────────────────────────────────────────── */}
-        {/* Issue #3: background upload badge | Issue #4: no description | Issue #5: no naming prompt */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
-          <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5,display:"flex",alignItems:"center",gap:8}}>
-            VIDEO
-            {ytUploadCount > 0 && <span style={{fontSize:9,color:"#F6BF26",fontWeight:700,padding:"1px 8px",borderRadius:10,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)"}}>↑ Uploading{ytUploadCount > 1 ? ` (${ytUploadCount})` : ""}…</span>}
-          </div>
+          <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>VIDEO{ytUploadCount > 0 && <span style={{fontSize:9,color:"#F6BF26",fontWeight:700,padding:"1px 8px",borderRadius:10,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.2)",marginLeft:6}}>↑ Uploading…</span>}</div>
+
+          {/* Title rename modal */}
+
+          {/* Uploaded videos list */}
           {videoUrls.length > 0 && <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
             {videoUrls.map((url, idx) => {
               const vid = getYtId(url);
@@ -427,6 +483,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
                         })]).catch(()=>navigator.clipboard?.writeText(url));
                       } else { navigator.clipboard?.writeText(url); }
                     }} style={{padding:"4px 8px",borderRadius:5,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#5a90b0",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Copy link</button>
+                    {/* DELETE — removes from app AND from YouTube */}
                     <button onClick={() => deleteYouTubeVideo(url, idx)} style={{padding:"4px 6px",borderRadius:5,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.15)",color:"#e06060",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}>
                       <IconX size={10} color="#e06060" />
                     </button>
@@ -435,6 +492,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
               );
             })}
           </div>}
+
+          {/* Upload button — always visible */}
           <input ref={ytFileRef} type="file" accept="video/*" onChange={handleYtFile} style={{display:"none"}} />
           <button onClick={() => ytFileRef.current?.click()} style={{width:"100%",padding:"10px 0",borderRadius:8,background:"rgba(255,0,0,.06)",border:"1px dashed rgba(255,0,0,.2)",color:"#cc4040",fontSize:12,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
             <IconYoutube size={14} color="#cc4040"/><span>{videoUrls.length > 0 ? `Add another video (${videoUrls.length + 1})` : "Upload video"}</span>
@@ -445,7 +504,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
 
       {/* ── STICKY BOTTOM BAR ──────────────────────────────────────── */}
       <div style={{flexShrink:0,padding:"10px 16px",paddingBottom:"max(10px,env(safe-area-inset-bottom))",background:"#0d0f18",borderTop:"1px solid #1a1f2e",display:"flex",gap:8,zIndex:101}}>
-        {s.phone && <button onClick={() => window.open(`sms:${s.phone.replace(/\D/g,"")}`, "_self")} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#1a2035",border:"1px solid #252d47",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconMessageSquare size={18} color="#a0b8d0"/></button>}
+        {s.phone && <button onClick={() => window.open(`sms:${s.phone.replace(/\D/g,"")}`,"_self")} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#1a2035",border:"1px solid #252d47",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconMessageSquare size={18} color="#a0b8d0"/></button>}
         {s.addr && <button onClick={() => { window.location.href = `comgooglemaps://?daddr=${encodeURIComponent(s.addr)}&directionsmode=driving`; }} style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconNavigation size={18} color="#3B82F6"/></button>}
         {!declineConfirm ? (
           <button onClick={() => setDeclineConfirm(true)} style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><IconX size={15} color="#a06060"/><span style={{fontSize:11,color:"#a06060",fontWeight:700}}>Decline</span></button>
@@ -455,5 +514,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
         <button onClick={onDone} style={{flex:2,padding:"12px 0",borderRadius:10,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconCheckCircle size={18} color="#10B981"/><span style={{fontSize:13,color:"#10B981",fontWeight:800,fontFamily:F,letterSpacing:0.5}}>DONE</span></button>
       </div>
     </div>
+  </div>
   );
 }

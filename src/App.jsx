@@ -4,7 +4,7 @@ import RouteMap, { AM_COLOR, PM_COLOR } from "./RouteMap";
 import SwipeCard from "./SwipeCard";
 import OnsiteWindow from "./OnsiteWindow";
 import Pipeline, { savePipeline, loadPipeline } from "./Pipeline";
-import { saveAppState, loadAppState, saveFieldToDrive, loadFieldFromDrive, listFieldFiles, fullSyncFromDrive, onSyncStatus } from "./driveSync";
+import { saveAppState, loadAppState, saveFieldToDrive, loadFieldFromDrive, listFieldFiles, onSyncStatus } from "./driveSync";
 import {
   IconArrowLeft, IconNavigation, IconMessageSquare, IconVolume2,
   IconClipboard, IconX, IconRotateCcw, IconRefresh, IconReorder, IconUndo,
@@ -255,138 +255,107 @@ export default function App() {
   const [syncIndicator, setSyncIndicator] = useState("idle");
   useEffect(() => { return onSyncStatus(setSyncIndicator); }, []);
 
-  // ══════════════════════════════════════════════════════════════════════
-  // AUTO-SYNC: pull from Drive on mount + poll + on visibility change
-  // Push: debounced on any local change
-  // ══════════════════════════════════════════════════════════════════════
-
-  // Track last known Drive modifiedTimes to only pull files that changed
-  const lastSyncRef = useRef({ state: 0, fields: {} }); // {state: timestamp, fields: {id: modifiedTime}}
-  const [lastSyncTime, setLastSyncTime] = useState(0);
-
-  // Merge Drive field data into localStorage — newest savedAt wins
-  const mergeFieldDataFromDrive = useCallback((fieldData) => {
-    let changeCount = 0;
-    for (const [id, remoteData] of Object.entries(fieldData || {})) {
-      const localRaw = localStorage.getItem(`mts-field-${id}`);
-      let local = null;
-      try { local = localRaw ? JSON.parse(localRaw) : null; } catch(e) {}
-      const localSavedAt = local?.savedAt || 0;
-      const remoteSavedAt = remoteData?.savedAt || 0;
-      // Only overwrite if remote is strictly newer, OR no local data exists
-      if (!local || remoteSavedAt > localSavedAt) {
-        // Strip the _modifiedTime helper field before storing
-        const { _modifiedTime, ...clean } = remoteData;
-        localStorage.setItem(`mts-field-${id}`, JSON.stringify(clean));
-        changeCount++;
-      }
-    }
-    return changeCount;
-  }, []);
-
-  // Full pull from Drive — called on mount, visibility, interval
-  const doFullPull = useCallback(async (silent = true) => {
-    if (!token) return;
-    if (!silent) setAutoPulling(true);
-    try {
-      const drive = await fullSyncFromDrive(token);
-      // Merge app state if Drive is newer than what we have
-      if (drive.pipeline) {
-        // Merge pipeline card-by-card: newest stageChangedAt wins per card
-        const local = loadPipeline();
-        let changed = false;
-        const merged = { ...local };
-        for (const [id, driveCard] of Object.entries(drive.pipeline)) {
-          const localCard = local[id];
-          const driveTs = driveCard.stageChangedAt || driveCard.addedAt || 0;
-          const localTs = localCard?.stageChangedAt || localCard?.addedAt || 0;
-          if (!localCard || driveTs > localTs) {
-            merged[id] = driveCard;
-            changed = true;
-          }
-        }
-        if (changed) savePipeline(merged);
-      }
-      if (drive.dismissed) {
-        // Safe merge: only keep Drive dismissed entries that are newer than local
-        // This prevents old Drive data from re-dismissing stops you've already un-dismissed
-        setDismissed(prev => {
-          const merged = { ...prev };
-          for (const [id, driveTs] of Object.entries(drive.dismissed)) {
-            const localTs = prev[id] || 0;
-            // Only accept Drive entry if it's strictly newer, or local has none
-            if (driveTs > localTs) merged[id] = driveTs;
-          }
-          return merged;
-        });
-      }
-      // Merge field data
-      const changed = mergeFieldDataFromDrive(drive.fieldData);
-      setLastSyncTime(Date.now());
-      if (changed > 0) {
-        // Force Pipeline/OnsiteWindow to re-read — bump a counter or reload
-        // The simplest approach: dispatch a custom event
-        window.dispatchEvent(new CustomEvent("mts-field-synced", { detail: { count: changed } }));
-      }
-    } catch(e) { console.warn("Auto-pull failed:", e); }
-    if (!silent) setAutoPulling(false);
-  }, [token, mergeFieldDataFromDrive]);
-
-  // On token present: initial pull + setup polling + visibility listener
   useEffect(() => {
     if (!token) return;
-    // Immediate pull on mount
-    doFullPull(false);
-    // Poll every 30 seconds while tab is visible
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible") doFullPull(true);
-    }, 30000);
-    // Pull when tab becomes visible again (e.g., user switches back from another app)
-    const onVisible = () => {
-      if (document.visibilityState === "visible") doFullPull(true);
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("focus", onVisible);
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("focus", onVisible);
-    };
-  }, [token, doFullPull]);
+    (async () => {
+      try {
+        const cloud = await loadAppState(token);
+        if (cloud) {
+          // Merge pipeline: cloud wins
+          if (cloud.pipeline && Object.keys(cloud.pipeline).length > 0) {
+            const local = loadPipeline();
+            const merged = { ...local, ...cloud.pipeline };
+            savePipeline(merged);
+          }
+          // Merge dismissed: cloud wins, keep local-only
+          if (cloud.dismissed) {
+            setDismissed(prev => ({ ...prev, ...cloud.dismissed }));
+          }
+        }
+      } catch(e) {
+        console.warn("Cloud pull failed:", e);
+      }
+    })();
+  }, [token]);
 
-  // Auto-push: whenever pipeline or dismissed changes, push to Drive (debounced)
-  const pushTimer = useRef(null);
+  // ── SYNC: push + pull Drive data ────────────────────────────────────────
+  const cloudSyncTimer = useRef(null);
+  const [lastSyncTime, setLastSyncTime] = useState(0);
+  const [syncPulling, setSyncPulling] = useState(false);
+
   const triggerCloudSync = useCallback(async (immediate = false) => {
     if (!token) return;
     const run = async () => {
-      const pl = loadPipeline();
-      await saveAppState(token, pl, dismissed).catch(() => {});
-      // Walk localStorage and push any field data that has local changes
-      // (We only push — Drive data is only overwritten by newer savedAt)
-      try {
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && key.startsWith("mts-field-")) {
+      await saveAppState(token, loadPipeline(), dismissed).catch(() => {});
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith("mts-field-")) {
+          try {
             const id = key.slice("mts-field-".length);
             const fd = JSON.parse(localStorage.getItem(key) || "{}");
-            if (fd && Object.keys(fd).length > 0) {
-              // Only push if savedAt exists (means there was a real edit)
-              await saveFieldToDrive(token, id, fd).catch(() => {});
-            }
-          }
+            if (Object.keys(fd).length > 0) await saveFieldToDrive(token, id, fd).catch(() => {});
+          } catch(e) {}
         }
-      } catch(e) { console.warn("Field sync walk failed:", e); }
+      }
     };
     if (immediate) { await run(); return; }
-    if (pushTimer.current) clearTimeout(pushTimer.current);
-    pushTimer.current = setTimeout(run, 2000);
+    if (cloudSyncTimer.current) clearTimeout(cloudSyncTimer.current);
+    cloudSyncTimer.current = setTimeout(run, 2000);
   }, [token, dismissed]);
 
   useEffect(() => { triggerCloudSync(); }, [dismissed, triggerCloudSync]);
 
-  // Manual pull (for the button)
-  const pullFromDrive = useCallback(() => doFullPull(false), [doFullPull]);
+  const pullFromDrive = useCallback(async () => {
+    if (!token) return;
+    setSyncPulling(true);
+    try {
+      const state = await loadAppState(token);
+      if (state?.pipeline) {
+        const local = loadPipeline();
+        const merged = { ...local };
+        for (const [id, dc] of Object.entries(state.pipeline)) {
+          const lc = local[id];
+          if (!lc || (dc.stageChangedAt||0) > (lc.stageChangedAt||0)) merged[id] = dc;
+        }
+        savePipeline(merged);
+      }
+      if (state?.dismissed) {
+        setDismissed(prev => {
+          const m = { ...prev };
+          for (const [id, ts] of Object.entries(state.dismissed)) {
+            if (ts > (prev[id]||0)) m[id] = ts;
+          }
+          return m;
+        });
+      }
+      const files = await listFieldFiles(token);
+      for (const f of (files || [])) {
+        const id = f.name.replace(/\.json$/, "");
+        const local = localStorage.getItem(`mts-field-${id}`);
+        const localTs = local ? (JSON.parse(local).savedAt||0) : 0;
+        const remoteTs = f.modifiedTime ? new Date(f.modifiedTime).getTime() : 0;
+        if (!local || remoteTs > localTs) {
+          const data = await loadFieldFromDrive(token, id);
+          if (data) localStorage.setItem(`mts-field-${id}`, JSON.stringify(data));
+        }
+      }
+      setLastSyncTime(Date.now());
+      window.dispatchEvent(new CustomEvent("mts-field-synced"));
+    } catch(e) { console.warn("Pull failed:", e); }
+    setSyncPulling(false);
+  }, [token]);
 
+  useEffect(() => {
+    if (!token) return;
+    const t = setTimeout(() => pullFromDrive(), 3000);
+    return () => clearTimeout(t);
+  }, [token]);
+
+  useEffect(() => {
+    const fn = () => { if (document.visibilityState === "visible" && token) pullFromDrive(); };
+    document.addEventListener("visibilitychange", fn);
+    return () => document.removeEventListener("visibilitychange", fn);
+  }, [token, pullFromDrive]);
 
   // ── PARSE ────────────────────────────────────────────────────────────────
   const dayKey = businessDays[selDay]?.toDateString();
@@ -501,9 +470,9 @@ export default function App() {
     if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
     setUndoToast({ id, cn: stop?.cn || "Stop", stop });
     undoToastTimer.current = setTimeout(() => setUndoToast(null), 10000);
-    // Auto-save to Google Contacts silently
-    if (stop && (stop.phone || stop.email) && token) {
-      saveContactFromPrompt(stop).catch(() => {});
+    // Offer to save contact to Google Contacts if they have a phone or email
+    if (stop && (stop.phone || stop.email)) {
+      setTimeout(() => setContactPrompt(stop), 1500);
     }
   };
   const undoToastAction = () => {
@@ -550,21 +519,18 @@ export default function App() {
     if (ttsCtxRef.current?.state === "running") { resetTts(); return; }
     if (window.speechSynthesis?.speaking) { window.speechSynthesis.cancel(); resetTts(); return; }
     if (ttsSpeaking) { resetTts(); return; }
-
     const text = stop.notes || "No notes available.";
     const geminiKey = import.meta.env.VITE_GEMINI_KEY;
     setTtsSpeaking(true);
     if (ttsSafetyTimer.current) clearTimeout(ttsSafetyTimer.current);
     ttsSafetyTimer.current = setTimeout(() => resetTts(), 90000);
-
-    // CarPlay fix: unlock AudioContext NOW in user gesture tap BEFORE any await
+    // CarPlay fix: unlock AudioContext inside the user gesture, before any await
     let audioCtx = null;
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       ttsCtxRef.current = audioCtx;
       if (audioCtx.state === "suspended") await audioCtx.resume();
     } catch(e) {}
-
     if (geminiKey) {
       try {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
@@ -572,37 +538,32 @@ export default function App() {
           body: JSON.stringify({ contents: [{ parts: [{ text: `Read this aloud clearly at a comfortable pace: ${text}` }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } } } } }),
         });
         const data = await res.json();
-        const audioB64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        if (audioB64 && audioCtx) {
+        const b64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (b64 && audioCtx) {
           try {
-            const buf = await audioCtx.decodeAudioData(Uint8Array.from(atob(audioB64), c => c.charCodeAt(0)).buffer);
+            const buf = await audioCtx.decodeAudioData(Uint8Array.from(atob(b64), x => x.charCodeAt(0)).buffer);
             const src = audioCtx.createBufferSource();
-            src.buffer = buf;
-            src.connect(audioCtx.destination);
+            src.buffer = buf; src.connect(audioCtx.destination);
             src.onended = () => resetTts();
             ttsAudioRef.current = { paused: false, pause: () => { try { src.stop(); } catch(e){} } };
-            src.start(0);
-            return;
+            src.start(0); return;
           } catch(e) {}
-          const blob = new Blob([Uint8Array.from(atob(audioB64), c => c.charCodeAt(0))], { type: "audio/mp3" });
+          const blob = new Blob([Uint8Array.from(atob(b64), x => x.charCodeAt(0))], { type: "audio/mp3" });
           const audio = new Audio(URL.createObjectURL(blob));
           audio.setAttribute("playsinline", "");
           ttsAudioRef.current = audio;
-          audio.onended = () => resetTts();
-          audio.onerror = () => resetTts();
-          audio.play().catch(() => resetTts());
-          return;
+          audio.onended = () => resetTts(); audio.onerror = () => resetTts();
+          audio.play().catch(() => resetTts()); return;
         }
       } catch(e) {}
     }
-
     if (window.speechSynthesis) {
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 0.85; u.onend = () => resetTts(); u.onerror = () => resetTts();
       const voices = window.speechSynthesis.getVoices();
       if (voices.length) window.speechSynthesis.speak(u);
-      else { window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.speak(u); }
-    } else { resetTts(); }
+      else window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.speak(u);
+    } else resetTts();
   };
 
   const handleReorderTap = (idx) => {
@@ -691,30 +652,12 @@ export default function App() {
       {/* ── HEADER ─────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:6,padding:"8px 12px",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
         <button onClick={()=>setView(view==="route"?"pipeline":"route")} style={{padding:"5px 10px",borderRadius:8,background:"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:13,letterSpacing:2,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#10B981",transition:"color .2s"}}>{view==="route"?"MTS FIELD":"MTS PIPELINE"}</button>
-        {token && (() => {
-          const now = Date.now();
-          const since = lastSyncTime ? Math.floor((now - lastSyncTime) / 1000) : null;
-          const label = syncPulling || syncIndicator === "syncing"
-            ? "Syncing…"
-            : syncIndicator === "error"
-              ? "Retry"
-              : since === null ? "Sync"
-                : since < 60 ? `✓ ${since}s`
-                  : since < 3600 ? `✓ ${Math.floor(since/60)}m`
-                    : "✓ Synced";
-          const color = syncIndicator === "syncing" || syncPulling ? "#F6BF26"
-            : syncIndicator === "error" ? "#FF5555"
-              : "#10B981";
-          return (
-            <button
-              onClick={async () => { await triggerCloudSync(true); await pullFromDrive(); }}
-              title="Tap to force sync now"
-              style={{background:"rgba(255,255,255,.03)",border:`1px solid ${color}30`,cursor:"pointer",padding:"4px 10px",borderRadius:6,display:"flex",alignItems:"center",gap:5,fontSize:10,color,fontWeight:700,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>
-              {syncIndicator === "error" ? <IconCloudOff size={12} color={color}/> : <IconCloud size={12} color={color}/>}
-              {label}
-            </button>
-          );
-        })()}
+        {token && <button onClick={() => { triggerCloudSync(true); pullFromDrive(); }}
+          title="Tap to sync"
+          style={{background:"none",border:"none",cursor:"pointer",padding:"2px 6px",display:"flex",alignItems:"center",gap:3}}>
+          {syncIndicator==="error" ? <IconCloudOff size={13} color="#FF5555"/> : (syncIndicator==="syncing"||syncPulling) ? <IconCloud size={13} color="#F6BF26"/> : <IconCloud size={13} color="#10B981"/>}
+          {lastSyncTime>0 && <span style={{fontSize:9,color:"#3a5060",fontFamily:"'Oswald',sans-serif"}}>{Math.floor((Date.now()-lastSyncTime)/60000)<1?"now":`${Math.floor((Date.now()-lastSyncTime)/60000)}m`}</span>}
+        </button>}
         {view === "route" && <>
           <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"5px 10px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0b10",color:"#f0f4fa",fontSize:11,fontWeight:600,cursor:"pointer",outline:"none",appearance:"auto",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
             {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
@@ -733,7 +676,6 @@ export default function App() {
 
       {/* ── MAP ────────────────────────────────────────────────────────── */}
       <div className="mts-map">
-
         {reorderMode && <div style={{padding:"5px 12px",background:"rgba(142,36,170,.08)",borderTop:"1px solid rgba(142,36,170,.15)",display:"flex",alignItems:"center",gap:8}}>
           {moving !== null ? <>
             <div style={{width:10,height:10,borderRadius:10,background:active[moving]?.color||"#8E24AA"}}/>
@@ -871,26 +813,18 @@ export default function App() {
 
       {/* ── BOTTOM BAR ──────────────────────────────────────────────── */}
       {view === "route" && <div style={{borderTop:"1px solid #0e1520",padding:"2px 10px",paddingBottom:"max(2px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",gap:6,background:"#080a10",flexShrink:0,minHeight:38}}>
-        {/* Undo — left */}
         <button onClick={undo} disabled={!undoStack.length}
           style={{display:"flex",alignItems:"center",gap:4,padding:"7px 12px",borderRadius:8,background:"transparent",border:`1px solid ${undoStack.length?"#1a2035":"transparent"}`,color:undoStack.length?"#5a6580":"#1a2035",fontSize:11,fontWeight:700,cursor:undoStack.length?"pointer":"default",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
           <IconUndo size={14} color={undoStack.length?"#5a6580":"#1a2035"}/>UNDO
         </button>
         <div style={{flex:1}}/>
-        {/* Reorder — right */}
         <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}}
           style={{display:"flex",alignItems:"center",gap:4,padding:"7px 12px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"transparent",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#1a2035"}`,color:reorderMode?"#c8a0e8":"#3a4a60",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
           <IconReorder size={14} color={reorderMode?"#c8a0e8":"#3a4a60"}/>{reorderMode?"DONE":"REORDER"}
         </button>
-        {/* Sign out — arrow-left-start-on-rectangle */}
-        <button onClick={()=>{ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} }}
-          title="Sign out"
+        <button onClick={()=>{ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} }} title="Sign out"
           style={{marginLeft:4,width:32,height:32,borderRadius:8,background:"transparent",border:"1px solid #1a2035",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#3a4a60" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-            <polyline points="16 17 21 12 16 7"/>
-            <line x1="21" y1="12" x2="9" y2="12"/>
-          </svg>
+          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#3a4a60" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         </button>
       </div>}
       {view === "pipeline" && <div style={{borderTop:"1px solid #0e1520",padding:"5px 10px",paddingBottom:"max(5px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"flex-end",background:"#080a10",flexShrink:0}}>
@@ -967,7 +901,12 @@ export default function App() {
         onDecline={() => { decline(onsiteStop.id); setOnsiteStop(null); }}
       />}
 
-      {/* ── CONTACT AUTO-SAVE RESULT BANNER ────────────────────────── */}
+      {/* ── CONTACT PROMPT ─────────────────────────────────────────── */}
+      {contactPrompt && !contactResult && <div style={{position:"fixed",bottom:undoToast?"56px":"0",left:0,right:0,padding:"10px 16px",paddingBottom:undoToast?"10px":"max(10px,env(safe-area-inset-bottom))",background:"#0d1a2a",borderTop:"1px solid rgba(59,130,246,.3)",display:"flex",alignItems:"center",gap:10,zIndex:151,transition:"bottom .2s"}}>
+        <span style={{fontSize:13,color:"#90c0f0",flex:1}}>💾 Save <strong>{(contactPrompt.cn||"").split(" ")[0]}</strong> to Google Contacts?</span>
+        <button onClick={() => saveContactFromPrompt(contactPrompt)} disabled={contactSaving} style={{padding:"6px 14px",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.3)",color:"#3B82F6",fontSize:12,fontWeight:700,cursor:contactSaving?"default":"pointer"}}>{contactSaving?"Saving…":"Save"}</button>
+        <button onClick={() => setContactPrompt(null)} style={{padding:"6px 10px",borderRadius:6,background:"transparent",border:"none",color:"#4a6080",cursor:"pointer",display:"flex",alignItems:"center"}}><IconX size={14} color="#4a6080"/></button>
+      </div>}
       {contactResult && <div style={{position:"fixed",bottom:undoToast?"56px":"0",left:0,right:0,padding:"10px 16px",paddingBottom:undoToast?"10px":"max(10px,env(safe-area-inset-bottom))",background:contactResult==="error"?"#1a0d0d":"#0d1a14",borderTop:`1px solid ${contactResult==="error"?"rgba(200,60,60,.3)":"rgba(16,185,129,.3)"}`,display:"flex",alignItems:"center",gap:10,zIndex:151}}>
         <span style={{fontSize:13,color:contactResult==="error"?"#e06060":contactResult==="updated"?"#60c090":"#10B981",flex:1}}>
           {contactResult==="error"?"✗ Contact save failed":contactResult==="updated"?"✓ Contact updated in Google":"✓ Contact saved to Google"}
@@ -982,96 +921,4 @@ export default function App() {
       </div>}
     </div>
   );
-}  // ── SYNC: push local data to Drive ─────────────────────────────────────
-  const cloudSyncTimer = useRef(null);
-  const [lastSyncTime, setLastSyncTime] = useState(0);
-  const [syncPulling, setSyncPulling] = useState(false);
-
-  const triggerCloudSync = useCallback(async (immediate = false) => {
-    if (!token) return;
-    const run = async () => {
-      const pl = loadPipeline();
-      await saveAppState(token, pl, dismissed).catch(() => {});
-      // Push all field data
-      try {
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && key.startsWith("mts-field-")) {
-            const id = key.slice("mts-field-".length);
-            const fd = JSON.parse(localStorage.getItem(key) || "{}");
-            if (fd && Object.keys(fd).length > 0) {
-              await saveFieldToDrive(token, id, fd).catch(() => {});
-            }
-          }
-        }
-      } catch(e) {}
-    };
-    if (immediate) { await run(); return; }
-    if (cloudSyncTimer.current) clearTimeout(cloudSyncTimer.current);
-    cloudSyncTimer.current = setTimeout(run, 2000);
-  }, [token, dismissed]);
-
-  useEffect(() => { triggerCloudSync(); }, [dismissed, triggerCloudSync]);
-
-  // Pull from Drive into localStorage (manual or on-open)
-  const pullFromDrive = useCallback(async () => {
-    if (!token) return;
-    setSyncPulling(true);
-    try {
-      const state = await loadAppState(token);
-      if (state?.pipeline) {
-        const local = loadPipeline();
-        const merged = { ...local };
-        for (const [id, driveCard] of Object.entries(state.pipeline)) {
-          const localCard = local[id];
-          const driveTs = driveCard.stageChangedAt || driveCard.addedAt || 0;
-          const localTs = localCard?.stageChangedAt || localCard?.addedAt || 0;
-          if (!localCard || driveTs > localTs) merged[id] = driveCard;
-        }
-        savePipeline(merged);
-      }
-      if (state?.dismissed) {
-        setDismissed(prev => {
-          const merged = { ...prev };
-          for (const [id, driveTs] of Object.entries(state.dismissed)) {
-            if (driveTs > (prev[id] || 0)) merged[id] = driveTs;
-          }
-          return merged;
-        });
-      }
-      // Pull field data
-      const files = await listFieldFiles(token);
-      for (const f of (files || [])) {
-        const id = f.name.replace(/\.json$/, "");
-        const localRaw = localStorage.getItem(`mts-field-${id}`);
-        const localSavedAt = localRaw ? (JSON.parse(localRaw).savedAt || 0) : 0;
-        if (!localRaw || (f.modifiedTime && new Date(f.modifiedTime).getTime() > localSavedAt)) {
-          const data = await loadFieldFromDrive(token, id);
-          if (data && Object.keys(data).length > 0) {
-            localStorage.setItem(`mts-field-${id}`, JSON.stringify(data));
-          }
-        }
-      }
-      setLastSyncTime(Date.now());
-      window.dispatchEvent(new CustomEvent("mts-field-synced"));
-    } catch(e) { console.warn("Pull failed:", e); }
-    setSyncPulling(false);
-  }, [token]);
-
-  // Pull on mount (once, after calendar loads)
-  useEffect(() => {
-    if (!token) return;
-    const t = setTimeout(() => pullFromDrive(), 3000);
-    return () => clearTimeout(t);
-  }, [token]);
-
-  // Pull when tab becomes visible after being hidden
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === "visible" && token) pullFromDrive();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [token, pullFromDrive]);
-
-
+}
