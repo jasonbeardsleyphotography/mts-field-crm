@@ -5,11 +5,12 @@ import SwipeCard from "./SwipeCard";
 import OnsiteWindow from "./OnsiteWindow";
 import Pipeline, { savePipeline, loadPipeline } from "./Pipeline";
 import { saveAppState, loadAppState, saveFieldToDrive, loadFieldFromDrive, listFieldFiles, onSyncStatus } from "./driveSync";
+import { loadField, saveField, listFieldIds } from "./fieldStore";
 import {
   IconArrowLeft, IconNavigation, IconMessageSquare, IconVolume2,
   IconClipboard, IconX, IconRotateCcw, IconRefresh, IconReorder, IconUndo,
   IconPlus, IconSearch, IconTrash, IconChevronDown, IconChevronRight,
-  IconCloud, IconCloudOff, IconCheckCircle, IconEdit, IconPhone, IconMail
+  IconCloud, IconCloudOff, IconCheckCircle, IconEdit, IconPhone, IconMail, IconClock
 } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -117,6 +118,16 @@ export default function App() {
   const [contactPrompt, setContactPrompt] = useState(null);
   const [contactSaving, setContactSaving] = useState(false);
   const [contactResult, setContactResult] = useState(null);
+
+  // ── LAST CONTACT TRACKING ──────────────────────────────────────────────
+  // Every phone tap, SMS send, email open writes a timestamp keyed by stop id.
+  // Used by UI to show "called 2h ago" etc. instead of just stage-changed-at.
+  const [lastContact, setLastContact] = useState(() => lsGet("mts-lastcontact", {}));
+  useEffect(() => { lsSet("mts-lastcontact", lastContact); }, [lastContact]);
+  const markContact = useCallback((id, kind) => {
+    if (!id) return;
+    setLastContact(prev => ({ ...prev, [id]: { at: Date.now(), kind } }));
+  }, []);
 
   const saveContactFromPrompt = async (card) => {
     if (!token || !card) return;
@@ -271,6 +282,17 @@ export default function App() {
           if (cloud.dismissed) {
             setDismissed(prev => ({ ...prev, ...cloud.dismissed }));
           }
+          // Merge lastContact per-id, newest wins (cloud wins on ties)
+          if (cloud.lastContact) {
+            setLastContact(prev => {
+              const m = { ...prev };
+              for (const [id, lc] of Object.entries(cloud.lastContact)) {
+                const existing = prev[id];
+                if (!existing || (lc?.at || 0) >= (existing.at || 0)) m[id] = lc;
+              }
+              return m;
+            });
+          }
         }
       } catch(e) {
         console.warn("Cloud pull failed:", e);
@@ -286,24 +308,28 @@ export default function App() {
   const triggerCloudSync = useCallback(async (immediate = false) => {
     if (!token) return;
     const run = async () => {
-      await saveAppState(token, loadPipeline(), dismissed).catch(() => {});
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith("mts-field-")) {
+      await saveAppState(token, loadPipeline(), dismissed, lastContact).catch(() => {});
+      // Iterate IndexedDB for field data — localStorage now only holds a
+      // slim mirror that omits base64 photo/audio bytes, so reading from
+      // there would push an empty shell to Drive and silently erase media.
+      try {
+        const ids = await listFieldIds();
+        for (const id of ids) {
           try {
-            const id = key.slice("mts-field-".length);
-            const fd = JSON.parse(localStorage.getItem(key) || "{}");
-            if (Object.keys(fd).length > 0) await saveFieldToDrive(token, id, fd).catch(() => {});
-          } catch(e) {}
+            const fd = await loadField(id);
+            if (fd && Object.keys(fd).length > 0) {
+              await saveFieldToDrive(token, id, fd).catch(() => {});
+            }
+          } catch {}
         }
-      }
+      } catch {}
     };
     if (immediate) { await run(); return; }
     if (cloudSyncTimer.current) clearTimeout(cloudSyncTimer.current);
     cloudSyncTimer.current = setTimeout(run, 2000);
-  }, [token, dismissed]);
+  }, [token, dismissed, lastContact]);
 
-  useEffect(() => { triggerCloudSync(); }, [dismissed, triggerCloudSync]);
+  useEffect(() => { triggerCloudSync(); }, [dismissed, lastContact, triggerCloudSync]);
 
   const pullFromDrive = useCallback(async () => {
     if (!token) return;
@@ -328,15 +354,25 @@ export default function App() {
           return m;
         });
       }
+      if (state?.lastContact) {
+        setLastContact(prev => {
+          const m = { ...prev };
+          for (const [id, lc] of Object.entries(state.lastContact)) {
+            const existing = prev[id];
+            if (!existing || (lc?.at || 0) > (existing.at || 0)) m[id] = lc;
+          }
+          return m;
+        });
+      }
       const files = await listFieldFiles(token);
       for (const f of (files || [])) {
         const id = f.name.replace(/\.json$/, "");
-        const local = localStorage.getItem(`mts-field-${id}`);
-        const localTs = local ? (JSON.parse(local).savedAt||0) : 0;
+        const localData = await loadField(id);
+        const localTs = localData?.savedAt || 0;
         const remoteTs = f.modifiedTime ? new Date(f.modifiedTime).getTime() : 0;
-        if (!local || remoteTs > localTs) {
+        if (localTs === 0 || remoteTs > localTs) {
           const data = await loadFieldFromDrive(token, id);
-          if (data) localStorage.setItem(`mts-field-${id}`, JSON.stringify(data));
+          if (data) await saveField(id, data).catch(() => {});
         }
       }
       setLastSyncTime(Date.now());
@@ -433,6 +469,7 @@ export default function App() {
   // ── ACTIONS ──────────────────────────────────────────────────────────────
   const openOnsite = (stop) => { setOnsiteStop(stop); setExpanded(null); };
   const [declineConfirm, setDeclineConfirm] = useState(null); // stop id awaiting confirm
+  const [signOutConfirm, setSignOutConfirm] = useState(false);
   const [addStopOpen, setAddStopOpen] = useState(false);
   const [addStopAddr, setAddStopAddr] = useState("");
   const [addStopName, setAddStopName] = useState("");
@@ -461,10 +498,13 @@ export default function App() {
         hot: false,
       };
       savePipeline(pl);
-      // Also sync field data to Drive
+      // Also sync field data to Drive — read from IDB so base64 media is included
       if (token) {
-        const fd = lsGet(`mts-field-${id}`, {});
-        if (Object.keys(fd).length > 0) saveFieldToDrive(token, id, fd).catch(() => {});
+        loadField(id).then(fd => {
+          if (fd && Object.keys(fd).length > 0) {
+            saveFieldToDrive(token, id, fd).catch(() => {});
+          }
+        });
       }
     }
     if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
@@ -614,9 +654,36 @@ export default function App() {
   });
 
   // ── SIGN IN ──────────────────────────────────────────────────────────────
-  // Register service worker for PWA
+  // Register service worker for PWA + listen for new deploys.
+  // When Vite builds a new bundle, the service worker sees new assets and
+  // installs a new version. We detect that, skip-waiting it, and reload so
+  // the user is on the latest code without manual cache clears.
   useEffect(() => {
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+    if (!("serviceWorker" in navigator)) return;
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
+    navigator.serviceWorker.register("/sw.js").then(reg => {
+      // Check for updates on load + every 30 min.
+      const check = () => reg.update().catch(() => {});
+      check();
+      const iv = setInterval(check, 30 * 60 * 1000);
+      reg.addEventListener("updatefound", () => {
+        const nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener("statechange", () => {
+          if (nw.state === "installed" && navigator.serviceWorker.controller) {
+            // A new version is ready and there's an existing controller —
+            // activate the new SW. The controllerchange handler above will reload.
+            nw.postMessage("SKIP_WAITING");
+          }
+        });
+      });
+      return () => clearInterval(iv);
+    }).catch(() => {});
   }, []);
 
   if (!token) return (
@@ -660,7 +727,20 @@ export default function App() {
 
       {/* ── HEADER ─────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:6,padding:"8px 12px",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
-        <button onClick={()=>setView(view==="route"?"pipeline":"route")} style={{padding:"5px 10px",borderRadius:8,background:"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:13,letterSpacing:2,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#10B981",transition:"color .2s"}}>{view==="route"?"MTS FIELD":"MTS PIPELINE"}</button>
+        {/* Segmented pill switch — ROUTE | PIPELINE */}
+        <div style={{display:"flex",background:"#0a0b10",border:"1px solid #1a2035",borderRadius:10,padding:2,flexShrink:0}}>
+          <button onClick={()=>setView("route")} style={{padding:"5px 12px",borderRadius:8,background:view==="route"?"#1a2035":"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:12,letterSpacing:1.5,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#4a5a70",transition:"all .15s"}}>Route</button>
+          <button onClick={()=>setView("pipeline")} style={{padding:"5px 12px",borderRadius:8,background:view==="pipeline"?"#1a2035":"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:12,letterSpacing:1.5,textTransform:"uppercase",color:view==="pipeline"?"#10B981":"#4a5a70",transition:"all .15s",display:"flex",alignItems:"center",gap:4}}>
+            Pipeline
+            {(() => {
+              try {
+                const pl = JSON.parse(localStorage.getItem("mts-pipeline") || "{}");
+                const hot = Object.values(pl).filter(c => c.hot && c.stage !== "declined" && c.stage !== "sold").length;
+                return hot > 0 ? <span style={{fontSize:9,padding:"1px 5px",borderRadius:999,background:"rgba(255,179,0,.2)",color:"#FFB300",fontWeight:800}}>{hot}🔥</span> : null;
+              } catch { return null; }
+            })()}
+          </button>
+        </div>
         {token && <button onClick={() => { triggerCloudSync(true); pullFromDrive(); }}
           title="Tap to sync"
           style={{background:"none",border:"none",cursor:"pointer",padding:"2px 6px",display:"flex",alignItems:"center",gap:3}}>
@@ -740,7 +820,8 @@ export default function App() {
                 {s.isTask && s.window && <span style={{padding:"3px 8px",borderRadius:6,fontSize:11,fontWeight:900,color:isAM?"#66BB6A":"#64B5F6",background:winBg,border:`1px solid ${winColor}40`,flexShrink:0,letterSpacing:1,fontFamily:"'Oswald',sans-serif",textTransform:"uppercase"}}>{s.window}</span>}
                 {s.isTask && s.db && <span style={{padding:"3px 6px",borderRadius:6,fontSize:10,fontWeight:900,color:"#FFD54F",background:"rgba(255,213,79,.12)",border:"1px solid rgba(255,213,79,.3)",flexShrink:0,letterSpacing:1,fontFamily:"'Oswald',sans-serif"}}>DB</span>}
                 {!s.isTask && s.timeLabel && <span style={{padding:"3px 8px",borderRadius:6,fontSize:10,fontWeight:700,color:"#9a8cc0",background:"rgba(100,80,160,.1)",border:"1px solid rgba(100,80,160,.2)",flexShrink:0}}>{s.timeLabel}</span>}
-                {!reorderMode && s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} onClick={e=>e.stopPropagation()} style={{padding:"5px 10px",borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#90a8c0",fontSize:12,textDecoration:"none",fontWeight:700,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}><IconPhone size={13} color="#90a8c0"/></a>}
+                {!reorderMode && s.phone && <button onClick={e=>{e.stopPropagation();setTextSheet(s);setOtwMinutes(null);}} title="On the way text" style={{padding:"5px 8px",borderRadius:6,background:"rgba(246,191,38,.08)",border:"1px solid rgba(246,191,38,.2)",color:"#F6BF26",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}><IconClock size={13} color="#F6BF26"/></button>}
+                {!reorderMode && s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} onClick={e=>{e.stopPropagation();markContact(s.id,"call");}} style={{padding:"5px 10px",borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#90a8c0",fontSize:12,textDecoration:"none",fontWeight:700,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}><IconPhone size={13} color="#90a8c0"/></a>}
               </div>
 
               {s.constraint && <div style={{marginTop:6,marginLeft:isNext?50:44,padding:"4px 10px",borderRadius:6,background:"rgba(255,80,160,.12)",border:"1px solid rgba(255,80,160,.25)",color:"#FF80AB",fontSize:12,fontWeight:800,display:"inline-block",letterSpacing:0.3,fontFamily:"'Oswald','DM Sans',sans-serif",textTransform:"uppercase"}}>{s.constraint}</div>}
@@ -748,6 +829,13 @@ export default function App() {
               {s.titleContext && !reorderMode && <div style={{marginTop:4,marginLeft:isNext?50:44,fontSize:12,color:"#b0b8c8",lineHeight:1.5,fontStyle:"italic",fontWeight:500}}>{s.titleContext}</div>}
 
               {isExp && <div onClick={e=>e.stopPropagation()} style={{marginTop:12,marginLeft:isNext?50:44,paddingTop:12,borderTop:"1px solid #1a2030"}}>
+                {lastContact[s.id] && (() => {
+                  const lc = lastContact[s.id];
+                  const mins = Math.floor((Date.now() - lc.at) / 60000);
+                  const label = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : mins < 1440 ? `${Math.floor(mins/60)}h ago` : `${Math.floor(mins/1440)}d ago`;
+                  const kindLabel = lc.kind === "sms" ? "Texted" : lc.kind === "call" ? "Called" : lc.kind === "email" ? "Emailed" : "Contacted";
+                  return <div style={{fontSize:11,color:"#64B5F6",marginBottom:8,fontWeight:600,fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>{kindLabel} · {label}</div>;
+                })()}
                 {s.notes && <div style={{fontSize:13,color:"#a0b0c0",lineHeight:1.6,marginBottom:10,fontWeight:500}}>{s.notes}</div>}
                 {s.phone && <div style={{fontSize:13,color:"#a0b8d0",marginBottom:3,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><IconPhone size={13} color="#a0b8d0"/>{s.phone}</div>}
                 {s.email && <div style={{fontSize:13,color:"#a0b8d0",marginBottom:8,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#a0b8d0"/>{s.email}</div>}
@@ -831,15 +919,18 @@ export default function App() {
           style={{display:"flex",alignItems:"center",gap:4,padding:"7px 12px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"transparent",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#1a2035"}`,color:reorderMode?"#c8a0e8":"#3a4a60",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
           <IconReorder size={14} color={reorderMode?"#c8a0e8":"#3a4a60"}/>{reorderMode?"DONE":"REORDER"}
         </button>
-        <button onClick={()=>{ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} }} title="Sign out"
-          style={{marginLeft:4,width:32,height:32,borderRadius:8,background:"transparent",border:"1px solid #1a2035",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#3a4a60" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <button
+          onClick={()=>{ if(signOutConfirm){ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
+          title={signOutConfirm ? "Tap again to confirm sign out" : "Sign out"}
+          style={{marginLeft:4,width:40,height:40,borderRadius:8,background:signOutConfirm?"rgba(255,85,85,.15)":"transparent",border:`1px solid ${signOutConfirm?"rgba(255,85,85,.4)":"#1a2035"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s"}}>
+          <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={signOutConfirm?"#FF5555":"#3a4a60"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         </button>
       </div>}
       {view === "pipeline" && <div style={{borderTop:"1px solid #0e1520",padding:"5px 10px",paddingBottom:"max(5px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"flex-end",background:"#080a10",flexShrink:0}}>
-        <button onClick={()=>{ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} }}
-          title="Sign out"
-          style={{width:28,height:28,borderRadius:8,background:"transparent",border:"1px solid #1a2035",color:"#2a3050",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>
+        <button
+          onClick={()=>{ if(signOutConfirm){ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
+          title={signOutConfirm ? "Tap again to confirm sign out" : "Sign out"}
+          style={{width:40,height:40,borderRadius:8,background:signOutConfirm?"rgba(255,85,85,.15)":"transparent",border:`1px solid ${signOutConfirm?"rgba(255,85,85,.4)":"#1a2035"}`,color:signOutConfirm?"#FF5555":"#2a3050",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,transition:"all .15s"}}>
           ⏏
         </button>
       </div>}
@@ -867,7 +958,7 @@ export default function App() {
       </>}{/* end route view */}
 
       {/* ── PIPELINE VIEW ──────────────────────────────────────────── */}
-      {view === "pipeline" && <Pipeline onSwitchToRoute={(cardId) => { setView("route"); if (cardId) { setDismissed(prev => { const n={...prev}; delete n[cardId]; return n; }); const pl=loadPipeline(); delete pl[cardId]; savePipeline(pl); } }} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} />}
+      {view === "pipeline" && <Pipeline onSwitchToRoute={(cardId) => { setView("route"); if (cardId) { setDismissed(prev => { const n={...prev}; delete n[cardId]; return n; }); const pl=loadPipeline(); delete pl[cardId]; savePipeline(pl); } }} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} lastContact={lastContact} markContact={markContact} />}
 
       {/* ── TEXT SHEET ─────────────────────────────────────────────────── */}
       {textSheet && <div onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
@@ -878,7 +969,7 @@ export default function App() {
             <button onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{width:28,height:28,borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={13} color="#5a6580"/></button>
           </div>
 
-          <button onClick={()=>{window.open(`sms:${textSheet.phone.replace(/\D/g,"")}`,"_self");setTextSheet(null);}} style={{width:"100%",padding:"12px 14px",marginBottom:8,borderRadius:8,background:"#1a2035",border:"1px solid #2a3560",cursor:"pointer",textAlign:"left"}}>
+          <button onClick={()=>{window.open(`sms:${textSheet.phone.replace(/\D/g,"")}`,"_self");markContact(textSheet.id,"sms");setTextSheet(null);}} style={{width:"100%",padding:"12px 14px",marginBottom:8,borderRadius:8,background:"#1a2035",border:"1px solid #2a3560",cursor:"pointer",textAlign:"left"}}>
             <div style={{fontSize:12,fontWeight:700,color:"#90a8c0"}}>Custom</div>
             <div style={{fontSize:11,color:"#5a6580",marginTop:2}}>Open blank message</div>
           </button>
@@ -892,6 +983,7 @@ export default function App() {
                     const fn = (textSheet.cn||"").split(" ")[0];
                     const msg = `Hi there ${fn}, this is Jason with Monster Tree Service, and I'm just reaching out to let you know that I'm headed toward your property and I'm about ${txt} away.`;
                     window.open(`sms:${textSheet.phone.replace(/\D/g,"")}&body=${encodeURIComponent(msg)}`,"_self");
+                    markContact(textSheet.id,"sms");
                     setTextSheet(null); setOtwMinutes(null);
                   }} style={{flex:"1 0 30%",padding:"10px 0",borderRadius:8,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",fontSize:13,fontWeight:800,cursor:"pointer",textAlign:"center"}}>{label}</button>
                 ))}

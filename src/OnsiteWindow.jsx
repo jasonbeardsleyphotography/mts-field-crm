@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import PhotoMarkup from "./PhotoMarkup";
 import CameraView from "./CameraView";
 import { saveFieldToDrive, loadFieldFromDrive } from "./driveSync";
+import { loadField, saveField, peekField, primeField } from "./fieldStore";
 import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconYoutube, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconRotateCcw, IconSend } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
@@ -10,17 +11,15 @@ const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemi
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Onsite Window
    Full-screen data capture for a client stop. Opens via swipe-right.
-   Saves continuously to localStorage. "← Route" returns without marking done.
-   "Done →" moves card to pipeline.
+   Saves continuously to IndexedDB (via fieldStore). "← Route" returns
+   without marking done. "Done →" moves card to pipeline.
    ═══════════════════════════════════════════════════════════════════════════ */
-
-const FIELD_KEY = id => `mts-field-${id}`;
-function loadFieldData(id) { try { return JSON.parse(localStorage.getItem(FIELD_KEY(id))) || {}; } catch(e) { return {}; } }
-function saveFieldData(id, data) { try { localStorage.setItem(FIELD_KEY(id), JSON.stringify(data)); } catch(e) {} }
 
 export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token }) {
   const s = stop;
-  const fd = loadFieldData(s.id);
+  // Synchronous peek for initial state — returns {} or the localStorage
+  // mirror if one exists. The real async load runs below and hydrates.
+  const fd = peekField(s.id);
   // Backward compat: migrate old myNotes/photos to scope
   const [scopeNotes, setScopeNotes] = useState(fd.scopeNotes || fd.myNotes || "");
   const [addonNotes, setAddonNotes] = useState(fd.addonNotes || "");
@@ -65,10 +64,16 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
   // Reset scroll on unmount so route screen isn't left zoomed
   useEffect(() => { return () => { setTimeout(() => { try { window.scrollTo(0,0); } catch(e){} }, 80); }; }, []);
 
-  // Auto-save on every change — local + Drive
+  // Auto-save on every change — IndexedDB (local) + Drive.
+  // Emit "mts-field-synced" so Pipeline's field-summary memo refreshes if the
+  // user flips to Pipeline with OnsiteWindow already open.
   useEffect(() => {
     const data = { scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult };
-    saveFieldData(s.id, data);
+    // Prime the sync peek so Pipeline sees fresh data immediately, then
+    // asynchronously persist to IDB.
+    primeField(s.id, data);
+    saveField(s.id, data).catch(() => {});
+    try { window.dispatchEvent(new CustomEvent("mts-field-synced")); } catch {}
     // Sync to Drive (debounced via timer)
     if (token) {
       if (window._fieldSyncTimer) clearTimeout(window._fieldSyncTimer);
@@ -77,6 +82,30 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
       }, 3000);
     }
   }, [scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeResult, aiAddonResult, s.id]);
+
+  // On mount (or when stop changes), hydrate from IndexedDB.
+  // If peekField returned empty we'll get the data here; if it had a
+  // localStorage-mirror value we'll still get the fresher IDB read.
+  useEffect(() => {
+    let dead = false;
+    loadField(s.id).then(data => {
+      if (dead || !data || Object.keys(data).length === 0) return;
+      primeField(s.id, data);
+      // Only overwrite local state if the user hasn't typed anything yet.
+      // Otherwise we'd clobber in-progress edits — unlikely but possible if
+      // the user opens a stop, starts typing, then the load resolves late.
+      if (!scopeNotes && (data.scopeNotes || data.myNotes)) setScopeNotes(data.scopeNotes || data.myNotes || "");
+      if (!addonNotes && data.addonNotes) setAddonNotes(data.addonNotes);
+      if (scopePhotos.length === 0 && (data.scopePhotos || data.photos)) setScopePhotos(data.scopePhotos || data.photos || []);
+      if (addonPhotos.length === 0 && data.addonPhotos) setAddonPhotos(data.addonPhotos);
+      if (videoUrls.length === 0 && (data.videoUrls || data.videoUrl)) setVideoUrls(data.videoUrls || (data.videoUrl ? [data.videoUrl] : []));
+      if (audioClips.length === 0 && data.audioClips) setAudioClips(data.audioClips);
+      if (!aiScopeResult && data.aiScopeSummary) setAiScopeResult(data.aiScopeSummary);
+      if (!aiAddonResult && data.aiAddonEmail) setAiAddonResult(data.aiAddonEmail);
+    });
+    return () => { dead = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.id]);
 
   // If localStorage is empty (desktop), pull from Drive
   useEffect(() => {
@@ -93,8 +122,9 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
           if (cloud.audioClips) setAudioClips(cloud.audioClips);
           if (cloud.aiScopeSummary) setAiScopeResult(cloud.aiScopeSummary);
           if (cloud.aiAddonEmail) setAiAddonResult(cloud.aiAddonEmail);
-          // Save to local for next time
-          saveFieldData(s.id, cloud);
+          // Save to IndexedDB for next time
+          saveField(s.id, cloud).catch(() => {});
+          primeField(s.id, cloud);
         }
         setCloudLoading(false);
       }).catch(() => setCloudLoading(false));
@@ -336,9 +366,11 @@ Property: ${s.addr || ""}`);
         const result = await uploadRes.json();
         if (result.id) {
           const ytUrl = `https://youtu.be/${result.id}`;
-          const saved = loadFieldData(stopIdRef.current);
+          const saved = await loadField(stopIdRef.current);
           const existing = saved.videoUrls || (saved.videoUrl ? [saved.videoUrl] : []);
-          saveFieldData(stopIdRef.current, { ...saved, videoUrls: [...existing, ytUrl], savedAt: Date.now() });
+          const next = { ...saved, videoUrls: [...existing, ytUrl], savedAt: Date.now() };
+          primeField(stopIdRef.current, next);
+          await saveField(stopIdRef.current, next).catch(() => {});
           if (mountedRef.current) setVideoUrls(prev => [...prev, ytUrl]);
         }
       }
@@ -385,6 +417,12 @@ Property: ${s.addr || ""}`);
           <div style={{fontSize:15,fontWeight:600,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.cn}</div>
         </div>
         <button onClick={()=>setIsRevision(!isRevision)} title="Revision" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"6px 8px",borderRadius:8,background:isRevision?"rgba(255,107,157,.15)":"transparent",border:isRevision?"1px solid rgba(255,107,157,.3)":"1px solid #252d47",cursor:"pointer",flexShrink:0}}><IconRotateCcw size={15} color={isRevision?"#FF6B9D":"#3a4a60"}/></button>
+        {/* Decline — moved from bottom bar so it can't be hit when reaching for DONE */}
+        {!declineConfirm ? (
+          <button onClick={()=>setDeclineConfirm(true)} title="Decline lead" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"6px 8px",borderRadius:8,background:"transparent",border:"1px solid #252d47",cursor:"pointer",flexShrink:0}}><IconX size={15} color="#a06060"/></button>
+        ) : (
+          <button onClick={()=>{setDeclineConfirm(false);onDecline();}} style={{display:"flex",alignItems:"center",gap:4,padding:"6px 10px",borderRadius:8,background:"rgba(200,60,60,.2)",border:"1px solid rgba(200,60,60,.4)",color:"#FF5555",fontSize:10,fontWeight:800,cursor:"pointer",animation:"pulse 1s infinite",flexShrink:0,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Confirm?</button>
+        )}
         <button onClick={onDone} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:8,background:"#10B981",border:"none",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}><IconCheckCircle size={13} color="#fff"/>DONE</button>
       </div>
 
@@ -453,11 +491,24 @@ Property: ${s.addr || ""}`);
               <IconImage size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
             </button>
           </div>
+
+          {/* AI Scope Summary */}
+          <button onClick={generateScopeSummary} disabled={aiScopeLoading || !scopeNotes.trim()} style={{width:"100%",marginTop:8,padding:"10px 12px",borderRadius:8,background:aiScopeLoading?"rgba(59,130,246,.08)":scopeNotes.trim()?"rgba(59,130,246,.12)":"transparent",border:`1px solid ${scopeNotes.trim()?"rgba(59,130,246,.3)":"#1a2030"}`,color:scopeNotes.trim()?"#3B82F6":"#2a3050",fontSize:12,fontWeight:700,cursor:aiScopeLoading?"default":scopeNotes.trim()?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",gap:6,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
+            <IconSparkles size={14} color={scopeNotes.trim()?"#3B82F6":"#2a3050"}/>
+            {aiScopeLoading ? "Generating..." : aiScopeResult ? "Regenerate Summary" : "Generate Summary"}
+          </button>
+          {aiScopeResult && <div style={{marginTop:8,padding:"10px 12px",borderRadius:8,background:"rgba(59,130,246,.04)",border:"1px solid rgba(59,130,246,.15)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+              <span style={{fontSize:10,fontWeight:700,color:"#3B82F6",letterSpacing:1,textTransform:"uppercase",fontFamily:F,flex:1}}>AI Summary</span>
+              <button onClick={()=>{navigator.clipboard?.writeText(aiScopeResult).catch(()=>{});}} style={{padding:"3px 8px",borderRadius:5,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",fontSize:10,fontWeight:700,cursor:"pointer"}}>Copy</button>
+              <button onClick={()=>setAiScopeResult("")} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #1a2030",color:"#4a5a70",cursor:"pointer",display:"flex",alignItems:"center"}}><IconX size={10} color="#4a5a70"/></button>
+            </div>
+            <textarea value={aiScopeResult} onChange={e=>setAiScopeResult(e.target.value)} rows={6} style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,background:"rgba(255,255,255,.02)",border:"1px solid rgba(59,130,246,.15)",color:"#a0b8d0",fontSize:13,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}} />
+          </div>}
         </div>
 
         {/* ── ADD-ON ──────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
-          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
           <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>ADD-ON</div>
           <textarea value={addonNotes} onChange={e => setAddonNotes(e.target.value)} placeholder="Additional findings — box tree moth, dead limb over driveway, etc..." rows={3}
             style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}}  onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
@@ -484,6 +535,25 @@ Property: ${s.addr || ""}`);
               <IconImage size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
             </button>
           </div>
+
+          {/* AI Add-On Email */}
+          <button onClick={generateAddonEmail} disabled={aiAddonLoading || !addonNotes.trim()} style={{width:"100%",marginTop:8,padding:"10px 12px",borderRadius:8,background:aiAddonLoading?"rgba(255,138,101,.08)":addonNotes.trim()?"rgba(255,138,101,.12)":"transparent",border:`1px solid ${addonNotes.trim()?"rgba(255,138,101,.3)":"#1a2030"}`,color:addonNotes.trim()?"#FF8A65":"#2a3050",fontSize:12,fontWeight:700,cursor:aiAddonLoading?"default":addonNotes.trim()?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",gap:6,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
+            <IconSparkles size={14} color={addonNotes.trim()?"#FF8A65":"#2a3050"}/>
+            {aiAddonLoading ? "Generating..." : aiAddonResult ? "Regenerate Email" : "Generate Email"}
+          </button>
+          {aiAddonResult && <div style={{marginTop:8,padding:"10px 12px",borderRadius:8,background:"rgba(255,138,101,.04)",border:"1px solid rgba(255,138,101,.15)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+              <span style={{fontSize:10,fontWeight:700,color:"#FF8A65",letterSpacing:1,textTransform:"uppercase",fontFamily:F,flex:1}}>AI Follow-up Email</span>
+              <button onClick={()=>{
+                const subject = `Additional findings from your estimate — Monster Tree Service`;
+                const emailTo = s.email || "";
+                window.open(`mailto:${emailTo}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(aiAddonResult)}`, "_self");
+              }} style={{padding:"3px 8px",borderRadius:5,background:"rgba(255,138,101,.08)",border:"1px solid rgba(255,138,101,.25)",color:"#FF8A65",fontSize:10,fontWeight:700,cursor:"pointer"}}>Send</button>
+              <button onClick={()=>{navigator.clipboard?.writeText(aiAddonResult).catch(()=>{});}} style={{padding:"3px 8px",borderRadius:5,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",fontSize:10,fontWeight:700,cursor:"pointer"}}>Copy</button>
+              <button onClick={()=>setAiAddonResult("")} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #1a2030",color:"#4a5a70",cursor:"pointer",display:"flex",alignItems:"center"}}><IconX size={10} color="#4a5a70"/></button>
+            </div>
+            <textarea value={aiAddonResult} onChange={e=>setAiAddonResult(e.target.value)} rows={8} style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:6,background:"rgba(255,255,255,.02)",border:"1px solid rgba(255,138,101,.15)",color:"#c8b0a0",fontSize:13,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}} />
+          </div>}
         </div>
 
         {/* ── VOICE MEMO ──────────────────────────────────────────────── */}
@@ -556,16 +626,11 @@ Property: ${s.addr || ""}`);
 
       {/* ── STICKY BOTTOM BAR ──────────────────────────────────────── */}
       <div style={{flexShrink:0,padding:"10px 16px",paddingBottom:"max(10px,env(safe-area-inset-bottom))",background:"#0d0f18",borderTop:"1px solid #1a1f2e",display:"flex",gap:8,zIndex:101}}>
+        {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#1a2035",border:"1px solid #252d47",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",textDecoration:"none"}}><IconPhone size={18} color="#a0b8d0"/></a>}
         {s.phone && <button onClick={() => window.open(`sms:${s.phone.replace(/\D/g,"")}`,"_self")} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#1a2035",border:"1px solid #252d47",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconMessageSquare size={18} color="#a0b8d0"/></button>}
         {s.addr && <button onClick={() => { window.location.href = `comgooglemaps://?daddr=${encodeURIComponent(s.addr)}&directionsmode=driving`; }} style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconNavigation size={18} color="#3B82F6"/></button>}
-        {!declineConfirm ? (
-          <button onClick={() => setDeclineConfirm(true)} style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><IconX size={15} color="#a06060"/><span style={{fontSize:11,color:"#a06060",fontWeight:700}}>Decline</span></button>
-        ) : (
-          <button onClick={() => { setDeclineConfirm(false); onDecline(); }} style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(200,60,60,.2)",border:"1px solid rgba(200,60,60,.4)",color:"#FF5555",fontSize:11,fontWeight:800,cursor:"pointer",animation:"pulse 1s infinite"}}>Confirm?</button>
-        )}
-        <button onClick={onDone} style={{flex:2,padding:"12px 0",borderRadius:10,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconCheckCircle size={18} color="#10B981"/><span style={{fontSize:13,color:"#10B981",fontWeight:800,fontFamily:F,letterSpacing:0.5}}>DONE</span></button>
+        <button onClick={onDone} style={{flex:3,padding:"12px 0",borderRadius:10,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconCheckCircle size={18} color="#10B981"/><span style={{fontSize:13,color:"#10B981",fontWeight:800,fontFamily:F,letterSpacing:0.5}}>DONE</span></button>
       </div>
     </div>
-  </div>
   );
 }

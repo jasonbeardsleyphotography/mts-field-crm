@@ -151,9 +151,10 @@ function distToSegment(px, py, x1, y1, x2, y2) {
 // ═════════════════════════════════════════════════════════════════════════════
 
 export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
-  const canvasRef    = useRef(null);
-  const imgRef       = useRef(null);
-  const containerRef = useRef(null);
+  const baseCanvasRef    = useRef(null);  // image + committed strokes (static)
+  const overlayCanvasRef = useRef(null);  // current stroke / arrow preview (dynamic)
+  const imgRef           = useRef(null);
+  const containerRef     = useRef(null);
 
   // Tool state (persisted across sessions)
   const [color, setColor]           = useState(() => {
@@ -169,10 +170,19 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
   useEffect(() => { try { localStorage.setItem("pm.color", color); } catch {} }, [color]);
   useEffect(() => { try { localStorage.setItem("pm.brushSize", String(brushSize)); } catch {} }, [brushSize]);
 
-  // Strokes (in image-natural coordinates)
-  const [strokes, setStrokes]             = useState([]);
-  const [currentStroke, setCurrentStroke] = useState(null);
-  const [arrowPreview, setArrowPreview]   = useState(null);
+  // Committed strokes in image-natural coords (drives base canvas)
+  const [strokes, setStrokes]   = useState([]);
+
+  // Force-refresh hook for the stroke counter badge, without pulling
+  // currentStroke into React state (which would re-render on every move).
+  const [, forceUpdate] = useState(0);
+
+  // Active stroke + arrow preview live in refs — mutated in pointer handlers,
+  // flushed to the overlay canvas via rAF. No React renders per frame.
+  const currentStrokeRef = useRef(null);
+  const arrowPreviewRef  = useRef(null);
+  const overlayDirty     = useRef(false);
+  const rafId            = useRef(0);
 
   // Image / viewport
   const [imgLoaded, setImgLoaded] = useState(false);
@@ -245,7 +255,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
   // getBoundingClientRect reflects CSS transforms, so this stays correct at
   // any zoom/pan level.
   const clientToImage = useCallback((clientX, clientY) => {
-    const c = canvasRef.current;
+    const c = baseCanvasRef.current;
     if (!c) return { x: 0, y: 0 };
     const r = c.getBoundingClientRect();
     if (r.width === 0 || r.height === 0) return { x: 0, y: 0 };
@@ -254,38 +264,69 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
     return { x: nx * imgDims.w, y: ny * imgDims.h };
   }, [imgDims.w, imgDims.h]);
 
-  // ── REDRAW ─────────────────────────────────────────────────────────────────
+  // ── BASE REDRAW (image + committed strokes) ────────────────────────────────
+  // Runs only when strokes, image, or canvas dimensions change — NOT during
+  // active drawing. This is the "expensive" render (drawImage on a 4k canvas
+  // plus all strokes) and it needs to happen rarely.
   useEffect(() => {
-    const c = canvasRef.current, img = imgRef.current;
+    const c = baseCanvasRef.current, img = imgRef.current;
     if (!c || !img || !backing.w || !backing.h) return;
     const ctx = c.getContext("2d");
-
-    // Reset transform, clear, then scale so we can draw in image coords.
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
-    const bs = backing.w / imgDims.w; // backing-scale (uniform, aspect preserved)
+    const bs = backing.w / imgDims.w;
     ctx.scale(bs, bs);
-
-    // Image at natural size.
     ctx.drawImage(img, 0, 0, imgDims.w, imgDims.h);
 
-    // Brush size is chosen in CSS px at scale=1. Convert to image px so stored
-    // strokes render at the intended visual thickness.
     const cssToImg = fit.w > 0 ? imgDims.w / fit.w : 1;
-
     strokes.forEach(s => {
       const lw = s.size * cssToImg;
       if (s.type === "arrow") drawArrow(ctx, s, lw);
       else                    drawFreehand(ctx, s, lw);
     });
+  }, [strokes, backing.w, backing.h, imgDims.w, imgDims.h, fit.w]);
 
-    if (arrowPreview) {
-      drawArrow(ctx, arrowPreview, arrowPreview.size * cssToImg);
+  // ── OVERLAY REDRAW (active stroke + arrow preview) ────────────────────────
+  // Runs every animation frame while a stroke is in progress. Only touches
+  // the thin overlay canvas, so cost is proportional to stroke length, not
+  // image size.
+  const renderOverlay = useCallback(() => {
+    rafId.current = 0;
+    overlayDirty.current = false;
+    const c = overlayCanvasRef.current;
+    if (!c || !backing.w || !backing.h) return;
+    const ctx = c.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, c.width, c.height);
+
+    const cs = currentStrokeRef.current;
+    const ap = arrowPreviewRef.current;
+    if (!cs && !ap) return;
+
+    const bs = backing.w / imgDims.w;
+    ctx.scale(bs, bs);
+    const cssToImg = fit.w > 0 ? imgDims.w / fit.w : 1;
+
+    if (cs && cs.points.length >= 2) {
+      drawFreehand(ctx, cs, cs.size * cssToImg);
     }
-    if (currentStroke && currentStroke.points.length >= 2) {
-      drawFreehand(ctx, currentStroke, currentStroke.size * cssToImg);
+    if (ap) {
+      drawArrow(ctx, ap, ap.size * cssToImg);
     }
-  }, [strokes, currentStroke, arrowPreview, backing.w, backing.h, imgDims.w, imgDims.h, fit.w]);
+  }, [backing.w, backing.h, imgDims.w, imgDims.h, fit.w]);
+
+  const scheduleOverlay = useCallback(() => {
+    if (overlayDirty.current) return;
+    overlayDirty.current = true;
+    if (rafId.current) return;
+    rafId.current = requestAnimationFrame(renderOverlay);
+  }, [renderOverlay]);
+
+  // Clear overlay when dependencies that affect rendering change
+  useEffect(() => { scheduleOverlay(); }, [backing.w, backing.h, fit.w, scheduleOverlay]);
+
+  // Cancel any pending frame on unmount
+  useEffect(() => () => { if (rafId.current) cancelAnimationFrame(rafId.current); }, []);
 
   // ── VIEW HELPERS ───────────────────────────────────────────────────────────
 
@@ -395,17 +436,20 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
         return;
       }
       drawingRef.current = true;
-      setArrowPreview(null);
-      setCurrentStroke({
+      arrowPreviewRef.current = null;
+      currentStrokeRef.current = {
         type: "freehand",
         points: [pImg],
         color, size: brushSize,
-      });
+      };
+      forceUpdate(n => n + 1); // flip strokes-count badge
+      scheduleOverlay();
     } else if (count === 2) {
       // Second finger down → abandon any current stroke, enter pinch gesture.
       if (drawingRef.current) {
         drawingRef.current = false;
-        setCurrentStroke(null);
+        currentStrokeRef.current = null;
+        scheduleOverlay();
       }
       const [p1, p2] = [...pointersRef.current.values()];
       const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
@@ -430,9 +474,10 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const count = pointersRef.current.size;
 
-    if (count === 1 && drawingRef.current && currentStroke) {
+    if (count === 1 && drawingRef.current && currentStrokeRef.current) {
       const pImg = clientToImage(e.clientX, e.clientY);
-      setCurrentStroke(prev => prev ? { ...prev, points: [...prev.points, pImg] } : prev);
+      currentStrokeRef.current.points.push(pImg);
+      scheduleOverlay();
     } else if (count === 2 && gestureRef.current) {
       const [p1, p2] = [...pointersRef.current.values()];
       const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
@@ -463,25 +508,35 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
 
     if (remaining === 0 && drawingRef.current) {
       drawingRef.current = false;
-      if (!currentStroke) return;
+      const cs = currentStrokeRef.current;
+      if (!cs) return;
 
-      if (currentStroke.points.length < 2) {
-        setCurrentStroke(null);
+      if (cs.points.length < 2) {
+        currentStrokeRef.current = null;
+        scheduleOverlay();
+        forceUpdate(n => n + 1);
         return;
       }
 
-      const arrowInfo = arrowMode ? analyzeStroke(currentStroke.points) : null;
+      const arrowInfo = arrowMode ? analyzeStroke(cs.points) : null;
       if (arrowInfo) {
-        const arrow = buildArrowStroke(arrowInfo, currentStroke.color, currentStroke.size);
-        setArrowPreview(arrow);
-        setCurrentStroke(null);
+        const arrow = buildArrowStroke(arrowInfo, cs.color, cs.size);
+        arrowPreviewRef.current = arrow;
+        currentStrokeRef.current = null;
+        scheduleOverlay();
+        forceUpdate(n => n + 1);
+        // Brief preview flash, then commit to base layer
         setTimeout(() => {
+          arrowPreviewRef.current = null;
+          scheduleOverlay();
           setStrokes(prev => [...prev, arrow]);
-          setArrowPreview(null);
         }, 120);
       } else {
-        setStrokes(prev => [...prev, currentStroke]);
-        setCurrentStroke(null);
+        // Commit freehand stroke to base layer. Clear overlay first so the
+        // stroke doesn't briefly double-render (base + overlay) on flush.
+        currentStrokeRef.current = null;
+        scheduleOverlay();
+        setStrokes(prev => [...prev, cs]);
       }
     }
   };
@@ -544,10 +599,10 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
       onPointerCancel={endPointer}
     >
 
-      {/* ── CANVAS ─────────────────────────────────────────────────────── */}
+      {/* ── CANVAS (base = image + committed strokes) ─────────────────── */}
       {fit.w > 0 && backing.w > 0 && (
         <canvas
-          ref={canvasRef}
+          ref={baseCanvasRef}
           width={backing.w}
           height={backing.h}
           style={{
@@ -558,6 +613,26 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
             transformOrigin: "0 0",
             willChange: "transform",
             imageRendering: "auto",
+            touchAction: "none",
+          }}
+        />
+      )}
+
+      {/* ── CANVAS (overlay = active stroke only) ────────────────────── */}
+      {fit.w > 0 && backing.w > 0 && (
+        <canvas
+          ref={overlayCanvasRef}
+          width={backing.w}
+          height={backing.h}
+          style={{
+            position: "absolute",
+            left: 0, top: 0,
+            width: fit.w, height: fit.h,
+            transform: `translate3d(${view.tx}px, ${view.ty}px, 0) scale(${view.scale})`,
+            transformOrigin: "0 0",
+            willChange: "transform",
+            imageRendering: "auto",
+            pointerEvents: "none",   // base canvas receives pointer events
             touchAction: "none",
           }}
         />

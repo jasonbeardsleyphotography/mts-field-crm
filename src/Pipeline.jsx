@@ -1,6 +1,7 @@
 import { IconFire, IconRevision, IconPause, IconMail, IconX, IconCheckCircle, IconPhone, IconTrash, IconEdit, IconClipboard, IconSingleops, IconVideo, IconStar, IconCamera } from "./icons";
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { loadFieldFromDrive } from "./driveSync";
+import { loadFieldFromDrive, saveFieldToDrive } from "./driveSync";
+import { loadField, saveField, peekField, primeField } from "./fieldStore";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Pipeline
@@ -11,13 +12,13 @@ import { loadFieldFromDrive } from "./driveSync";
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const STAGES = [
-  { id: "estimate_needed", label: "Estimate needed", short: "Estimate", color: "#039BE5", bg: "rgba(3,155,229,.1)" },
-  { id: "waiting",         label: "Waiting",         short: "Waiting",  color: "#8E24AA", bg: "rgba(142,36,170,.1)" },
-  { id: "strong",          label: "Strong",           short: "Strong",   color: "#33B679", bg: "rgba(51,182,121,.1)" },
-  { id: "weak",            label: "Weak",             short: "Weak",     color: "#E67C73", bg: "rgba(230,124,115,.1)" },
-  { id: "follow_up",       label: "Follow up",        short: "Follow up",color: "#F6BF26", bg: "rgba(246,191,38,.1)" },
-  { id: "sold",            label: "Sold",             short: "Sold",     color: "#0B8043", bg: "rgba(11,128,67,.1)" },
-  { id: "declined",        label: "Declined",         short: "Declined", color: "#616161", bg: "rgba(97,97,97,.1)" },
+  { id: "estimate_needed", label: "Estimate needed", short: "Estimate", letter: "E", color: "#039BE5", bg: "rgba(3,155,229,.1)" },
+  { id: "waiting",         label: "Waiting",         short: "Waiting",  letter: "W", color: "#8E24AA", bg: "rgba(142,36,170,.1)" },
+  { id: "strong",          label: "Strong",          short: "Strong",   letter: "S", color: "#33B679", bg: "rgba(51,182,121,.1)" },
+  { id: "weak",            label: "Weak",            short: "Weak",     letter: "K", color: "#E67C73", bg: "rgba(230,124,115,.1)" },
+  { id: "follow_up",       label: "Follow up",       short: "Follow up",letter: "F", color: "#F6BF26", bg: "rgba(246,191,38,.1)" },
+  { id: "sold",            label: "Sold",            short: "Sold",     letter: "✓", color: "#0B8043", bg: "rgba(11,128,67,.1)" },
+  { id: "declined",        label: "Declined",        short: "Declined", letter: "D", color: "#616161", bg: "rgba(97,97,97,.1)" },
 ];
 
 // Google Calendar colorId for each pipeline stage
@@ -90,8 +91,8 @@ const PIPELINE_KEY = "mts-pipeline";
 const FIELD_KEY = id => `mts-field-${id}`;
 const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
 
-// SingleOps: no direct URL mapping, so copy job # and open search
-const SINGLEOPS_URL = "https://app.singleops.com/jobs";
+// SingleOps direct search — deep link with job number pre-filled
+const SINGLEOPS_URL = "https://app.singleops.com/jobs?search=";
 
 const EMAIL_TEMPLATES = [
   { id: "checkin", label: "Quick check-in", subject: "Quick question about your estimate — Jason @ Monster Tree",
@@ -113,12 +114,11 @@ const SMS_TEMPLATES = [
 
 function loadPipeline() { try { return JSON.parse(localStorage.getItem(PIPELINE_KEY)) || {}; } catch(e) { return {}; } }
 function savePipeline(data) { try { localStorage.setItem(PIPELINE_KEY, JSON.stringify(data)); } catch(e) {} }
-function loadFieldData(id) { try { return JSON.parse(localStorage.getItem(FIELD_KEY(id))) || {}; } catch(e) { return {}; } }
 
 const F = "'Oswald',sans-serif";
 
 // ═════════════════════════════════════════════════════════════════════════════
-export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, token }) {
+export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, token, lastContact = {}, markContact = () => {} }) {
   const [pipeline, setPipeline] = useState(() => loadPipeline());
   const [activeTab, setActiveTab] = useState("estimate_needed");
   const [selectedCard, setSelectedCard] = useState(null);
@@ -135,16 +135,17 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   const [editFields, setEditFields] = useState({}); // editable overrides for detail popup
   const [contactSave, setContactSave] = useState({}); // {[cardId]: 'saving'|'saved'|'error'}
 
-  // Save edited field data back to localStorage (and Drive if token available)
+  // Save edited field data to IndexedDB (and Drive if token available)
   const saveEditedField = useCallback((id, key, value) => {
     setEditFields(prev => ({ ...prev, [id]: { ...(prev[id] || {}), [key]: value } }));
-    const current = loadFieldData(id);
+    const current = peekField(id);
     const updated = { ...current, [key]: value };
-    saveFieldData(id, updated);
+    primeField(id, updated);
+    saveField(id, updated).catch(() => {});
     if (token) {
       if (window._pipelineFieldSync) clearTimeout(window._pipelineFieldSync);
       window._pipelineFieldSync = setTimeout(() => {
-        import('./driveSync').then(({ saveFieldToDrive }) => saveFieldToDrive(token, id, updated).catch(() => {}));
+        saveFieldToDrive(token, id, updated).catch(() => {});
       }, 2000);
     }
   }, [token]);
@@ -157,69 +158,93 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   useEffect(() => {
     if (!detailCard || !token) return;
     const id = detailCard.id;
-    const local = loadFieldData(id);
-    const hasLocal = !!(local.scopeNotes || local.myNotes || local.addonNotes ||
-      (local.scopePhotos || local.photos || []).length ||
-      (local.addonPhotos || []).length ||
-      local.videoUrls?.length || local.videoUrl ||
-      local.audioClips?.length);
-    // Always try Drive to get freshest data (especially cross-device)
+    let dead = false;
     setDetailLoading(true);
-    loadFieldFromDrive(token, id).then(cloud => {
-      if (cloud && Object.keys(cloud).length > 0) {
-        // Merge: Drive wins on text/AI, but keep whichever photo array is longer
-        const merged = {
-          ...local,
-          ...cloud,
-          scopePhotos: (cloud.scopePhotos || cloud.photos || []).length >= (local.scopePhotos || local.photos || []).length
-            ? (cloud.scopePhotos || cloud.photos || [])
-            : (local.scopePhotos || local.photos || []),
-          addonPhotos: (cloud.addonPhotos || []).length >= (local.addonPhotos || []).length
-            ? (cloud.addonPhotos || [])
-            : (local.addonPhotos || []),
-          audioClips: (cloud.audioClips || []).length >= (local.audioClips || []).length
-            ? (cloud.audioClips || [])
-            : (local.audioClips || []),
-          videoUrls: cloud.videoUrls?.length ? cloud.videoUrls : (local.videoUrls || (local.videoUrl ? [local.videoUrl] : [])),
-        };
-        setFieldCache(prev => ({ ...prev, [id]: merged }));
-      } else if (hasLocal) {
-        setFieldCache(prev => ({ ...prev, [id]: local }));
+    (async () => {
+      const local = await loadField(id);
+      if (dead) return;
+      const hasLocal = !!(local.scopeNotes || local.myNotes || local.addonNotes ||
+        (local.scopePhotos || local.photos || []).length ||
+        (local.addonPhotos || []).length ||
+        local.videoUrls?.length || local.videoUrl ||
+        local.audioClips?.length);
+      // Always try Drive to get freshest data (especially cross-device)
+      try {
+        const cloud = await loadFieldFromDrive(token, id);
+        if (dead) return;
+        if (cloud && Object.keys(cloud).length > 0) {
+          // Merge: Drive wins on text/AI, but keep whichever photo array is longer
+          const merged = {
+            ...local,
+            ...cloud,
+            scopePhotos: (cloud.scopePhotos || cloud.photos || []).length >= (local.scopePhotos || local.photos || []).length
+              ? (cloud.scopePhotos || cloud.photos || [])
+              : (local.scopePhotos || local.photos || []),
+            addonPhotos: (cloud.addonPhotos || []).length >= (local.addonPhotos || []).length
+              ? (cloud.addonPhotos || [])
+              : (local.addonPhotos || []),
+            audioClips: (cloud.audioClips || []).length >= (local.audioClips || []).length
+              ? (cloud.audioClips || [])
+              : (local.audioClips || []),
+            videoUrls: cloud.videoUrls?.length ? cloud.videoUrls : (local.videoUrls || (local.videoUrl ? [local.videoUrl] : [])),
+          };
+          primeField(id, merged);
+          setFieldCache(prev => ({ ...prev, [id]: merged }));
+        } else if (hasLocal) {
+          setFieldCache(prev => ({ ...prev, [id]: local }));
+        }
+      } catch {
+        if (hasLocal) setFieldCache(prev => ({ ...prev, [id]: local }));
       }
-      setDetailLoading(false);
-    }).catch(() => {
-      // Fall back to localStorage
-      if (hasLocal) setFieldCache(prev => ({ ...prev, [id]: local }));
-      setDetailLoading(false);
-    });
+      if (!dead) setDetailLoading(false);
+    })();
+    return () => { dead = true; };
   }, [detailCard?.id, token]);
 
   // ── AUTO-AGING ──────────────────────────────────────────────────────────
+  // Runs on mount, on interval (every 5 min when tab visible), and when the
+  // tab becomes visible again — catches cards that entered 'waiting' after
+  // mount and ages them without requiring a full reload.
   useEffect(() => {
-    const now = Date.now();
-    let changed = false;
-    const updated = { ...pipeline };
-    Object.keys(updated).forEach(id => {
-      const card = updated[id];
-      if (card.pauseUntil && now < card.pauseUntil) return;
-      if (card.pauseUntil && now >= card.pauseUntil) {
-        updated[id] = { ...card, pauseUntil: null, stageChangedAt: now };
-        changed = true;
-        return;
-      }
-      const age = now - (card.stageChangedAt || card.addedAt || now);
-      if (card.stage === "waiting" && age > THREE_DAYS) {
-        updated[id] = { ...card, stage: "weak", stageChangedAt: now };
-        changed = true;
-      } else if (card.stage === "weak" && age > THREE_DAYS) {
-        updated[id] = { ...card, stage: "declined", stageChangedAt: now, autoDeclined: true };
-        changed = true;
-      } else if (card.stage === "follow_up" && age > THREE_DAYS) {
-        updated[id] = { ...card, stage: "declined", stageChangedAt: now, autoDeclined: true };
-        changed = true;
-      }
-    });
-    if (changed) setPipeline(updated);
+    const ageCards = () => {
+      const now = Date.now();
+      let changed = false;
+      setPipeline(prev => {
+        const updated = { ...prev };
+        Object.keys(updated).forEach(id => {
+          const card = updated[id];
+          if (card.pauseUntil && now < card.pauseUntil) return;
+          if (card.pauseUntil && now >= card.pauseUntil) {
+            updated[id] = { ...card, pauseUntil: null, stageChangedAt: now };
+            changed = true;
+            return;
+          }
+          const age = now - (card.stageChangedAt || card.addedAt || now);
+          if (card.stage === "waiting" && age > THREE_DAYS) {
+            updated[id] = { ...card, stage: "weak", stageChangedAt: now };
+            changed = true;
+          } else if (card.stage === "weak" && age > THREE_DAYS) {
+            updated[id] = { ...card, stage: "declined", stageChangedAt: now, autoDeclined: true };
+            changed = true;
+          } else if (card.stage === "follow_up" && age > THREE_DAYS) {
+            updated[id] = { ...card, stage: "declined", stageChangedAt: now, autoDeclined: true };
+            changed = true;
+          }
+        });
+        return changed ? updated : prev;
+      });
+    };
+
+    ageCards();
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") ageCards();
+    }, 5 * 60 * 1000);
+    const onVisible = () => { if (document.visibilityState === "visible") ageCards(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   // Cards grouped by stage
@@ -236,6 +261,52 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   }, [pipeline]);
 
   const allCards = useMemo(() => Object.values(pipeline), [pipeline]);
+
+  // Precomputed per-card field summary — uses fieldStore.peekField (sync).
+  // If a card's data isn't in the peek mirror yet, we kick off an async
+  // IDB load below which primes the mirror and bumps the version.
+  const [fieldSummaryVersion, setFieldSummaryVersion] = useState(0);
+  useEffect(() => {
+    const bump = () => setFieldSummaryVersion(v => v + 1);
+    window.addEventListener("mts-field-synced", bump);
+    return () => window.removeEventListener("mts-field-synced", bump);
+  }, []);
+
+  // Hydrate missing cards from IndexedDB. Runs whenever the card set changes.
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      let hydrated = false;
+      for (const card of allCards) {
+        const existing = peekField(card.id);
+        if (existing && Object.keys(existing).length > 0) continue;
+        try {
+          const fresh = await loadField(card.id);
+          if (dead) return;
+          if (fresh && Object.keys(fresh).length > 0) {
+            primeField(card.id, fresh);
+            hydrated = true;
+          }
+        } catch {}
+      }
+      if (hydrated && !dead) setFieldSummaryVersion(v => v + 1);
+    })();
+    return () => { dead = true; };
+  }, [allCards]);
+
+  const fieldSummaryMap = useMemo(() => {
+    const m = {};
+    for (const card of allCards) {
+      const fd = peekField(card.id);
+      m[card.id] = {
+        photoCount: (fd.scopePhotos || fd.photos || []).length + (fd.addonPhotos || []).length,
+        hasNotes: !!(fd.scopeNotes || fd.myNotes || fd.addonNotes),
+        hasVideo: !!(fd.videoUrls?.length || fd.videoUrl),
+      };
+    }
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allCards, fieldSummaryVersion]);
 
   // Cards in waiting for 2+ days (due for follow-up nudge)
   const dueForFollowUp = useMemo(() => {
@@ -293,11 +364,20 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
     return d === 0 ? "today" : d === 1 ? "1d" : `${d}d`;
   };
 
-  // Copy job # and open SingleOps
+  // Format a lastContact entry into "Called · 2h ago" style.
+  // Returns null if no contact recorded.
+  const formatContact = (lc) => {
+    if (!lc || !lc.at) return null;
+    const mins = Math.floor((Date.now() - lc.at) / 60000);
+    const ago = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : mins < 1440 ? `${Math.floor(mins/60)}h ago` : `${Math.floor(mins/1440)}d ago`;
+    const kind = lc.kind === "sms" ? "Texted" : lc.kind === "call" ? "Called" : lc.kind === "email" ? "Emailed" : "Contacted";
+    return `${kind} · ${ago}`;
+  };
+
+  // Open SingleOps job with search pre-filled
   const openSingleOps = (jn) => {
     if (!jn) return;
-    navigator.clipboard?.writeText(jn).catch(() => {});
-    window.open(SINGLEOPS_URL, "_blank");
+    window.open(`${SINGLEOPS_URL}${encodeURIComponent(jn)}`, "_blank");
   };
 
   // Desktop drag
@@ -319,6 +399,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
       if (!email) return;
       setTimeout(() => {
         window.open(`mailto:${email}?subject=${encodeURIComponent(template.subject)}&body=${encodeURIComponent(body)}`, "_self");
+        markContact(card.id, "email");
       }, i * 800);
     });
     setEmailPreview(null); setEmailSheet(false); setSelectMode(false); setSelected({});
@@ -332,6 +413,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
       if (!phone) return;
       setTimeout(() => {
         window.open(`sms:${phone}&body=${encodeURIComponent(body)}`, "_self");
+        markContact(card.id, "sms");
       }, i * 1200);
     });
     setPipelineSheet(null); setSelectMode(false); setSelected({});
@@ -341,10 +423,8 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   const renderCard = (card, compact) => {
     if (!searchFilter(card)) return null;
     const stage = STAGES.find(s => s.id === card.stage);
-    const fd = loadFieldData(card.id);
-    const photoCount = (fd.scopePhotos || fd.photos || []).length + (fd.addonPhotos || []).length;
-    const hasNotes = !!(fd.scopeNotes || fd.myNotes || fd.addonNotes);
-    const hasVideo = !!(fd.videoUrls?.length || fd.videoUrl);
+    const summary = fieldSummaryMap[card.id] || { photoCount: 0, hasNotes: false, hasVideo: false };
+    const { photoCount, hasNotes, hasVideo } = summary;
     const isSelected = !!selected[card.id];
     const isDeclined = card.stage === "declined";
 
@@ -380,7 +460,15 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
             {card.addr && <div style={{fontSize:11,color:"#6a7890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1,fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{card.addr}</div>}
           </div>
           <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0}}>
-            {!compact && <span style={{fontSize:10,padding:"2px 8px",borderRadius:99,background:stage?.bg,color:stage?.color,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>{stage?.label}</span>}
+            {!compact && <span style={{fontSize:10,padding:"2px 4px 2px 3px",borderRadius:99,background:stage?.bg,color:stage?.color,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",display:"inline-flex",alignItems:"center",gap:5}}>
+              <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:14,height:14,borderRadius:7,background:stage?.color,color:"#fff",fontSize:9,fontWeight:800}}>{stage?.letter}</span>
+              <span style={{paddingRight:6}}>{stage?.label}</span>
+            </span>}
+            {compact && <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:16,height:16,borderRadius:8,background:stage?.color,color:"#fff",fontSize:10,fontWeight:800}}>{stage?.letter}</span>}
+            {(() => {
+              const lc = formatContact(lastContact[card.id]);
+              return lc ? <span style={{fontSize:9,color:"#64B5F6",fontWeight:600,fontFamily:F,letterSpacing:0.3,textTransform:"uppercase"}}>{lc}</span> : null;
+            })()}
             <span style={{fontSize:10,color:card.stage==="weak"?"#FF8A65":"#4a5a70"}}>{daysSince(card.stageChangedAt || card.addedAt)}</span>
           </div>
         </div>
@@ -509,7 +597,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
       {/* ── FULL CARD DETAIL POPUP ──────────────────────────────────── */}
       {detailCard && (() => {
         const card = detailCard;
-        const baseFd = fieldCache[card.id] || loadFieldData(card.id);
+        const baseFd = fieldCache[card.id] || peekField(card.id);
         const overrides = editFields[card.id] || {};
         const fd = { ...baseFd, ...overrides };
         const stage = STAGES.find(st => st.id === card.stage);
@@ -524,6 +612,10 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
               <div style={{flex:1}}>
                 <div style={{fontSize:20,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.5}}>{card.hot && <IconFire size={16} color="#FFB300" style={{marginRight:6,flexShrink:0}}/>}{card.cn}</div>
                 {card.addr && <div style={{fontSize:13,color:"#8a96a8",fontFamily:F,textTransform:"uppercase",letterSpacing:1,marginTop:2}}>{card.addr}</div>}
+                {(() => {
+                  const lc = formatContact(lastContact[card.id]);
+                  return lc ? <div style={{fontSize:11,color:"#64B5F6",marginTop:4,fontWeight:600,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>{lc}</div> : null;
+                })()}
               </div>
               {detailLoading && <div style={{fontSize:10,color:"#3B82F6",fontWeight:600,display:"flex",alignItems:"center",gap:4}}><span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>↻</span> syncing</div>}
               <button onClick={() => { setDetailCard(null); onSwitchToRoute(card.id); }} style={{padding:"4px 10px",borderRadius:6,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",flexShrink:0}}>← Route</button>
@@ -534,8 +626,8 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
             <div style={{padding:"16px 20px"}}>
               {/* Contact */}
               <div style={{display:"flex",gap:16,marginBottom:16,flexWrap:"wrap"}}>
-                {card.phone && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconPhone size={14} color="#a0b8d0"/><a href={`tel:${card.phone.replace(/\D/g,"")}`} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.phone}</a></div>}
-                {card.email && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconMail size={14} color="#a0b8d0"/><a href={`mailto:${card.email}`} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.email}</a></div>}
+                {card.phone && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconPhone size={14} color="#a0b8d0"/><a href={`tel:${card.phone.replace(/\D/g,"")}`} onClick={()=>markContact(card.id,"call")} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.phone}</a></div>}
+                {card.email && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconMail size={14} color="#a0b8d0"/><a href={`mailto:${card.email}`} onClick={()=>markContact(card.id,"email")} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.email}</a></div>}
                 {card.jn && <button onClick={() => openSingleOps(card.jn)} style={{fontSize:14,color:"#3B82F6",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}><span style={{display:"flex",alignItems:"center",gap:4}}>SingleOps #{card.jn}<IconClipboard size={12} color="#3B82F6"/></span></button>}
                 {token && (card.phone || card.email) && (() => {
                   const cs = contactSave[card.id];
@@ -710,10 +802,12 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
                     const phone = (card.phone || "").replace(/\D/g,"");
                     const body = t.body.replace(/\{firstName\}/g, firstName);
                     window.open(`sms:${phone}&body=${encodeURIComponent(body)}`, "_self");
+                    markContact(card.id, "sms");
                     setPipelineSheet(null);
                   } else {
                     const body = t.body.replace(/\{firstName\}/g, firstName);
                     window.open(`mailto:${card.email}?subject=${encodeURIComponent(t.subject)}&body=${encodeURIComponent(body)}`, "_self");
+                    markContact(card.id, "email");
                     setPipelineSheet(null);
                   }
                 }} style={{width:"100%",padding:"12px 14px",marginBottom:8,borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",cursor:"pointer",textAlign:"left"}}>
@@ -726,8 +820,10 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
                 if (isSms) {
                   const phone = (card.phone||"").replace(/\D/g,"");
                   window.open(`sms:${phone}`,"_self");
+                  markContact(card.id, "sms");
                 } else {
                   window.open(`mailto:${card.email}`,"_self");
+                  markContact(card.id, "email");
                 }
                 setPipelineSheet(null);
               }} style={{width:"100%",padding:"10px 14px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",cursor:"pointer",textAlign:"left"}}>

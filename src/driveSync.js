@@ -69,11 +69,11 @@ async function loadJson(token, fileName, folderId) {
 
 // ── APP STATE: pipeline + dismissed ──────────────────────────────────────────
 
-export async function saveAppState(token, pipeline, dismissed) {
+export async function saveAppState(token, pipeline, dismissed, lastContact) {
   setSyncStatus("syncing");
   try {
     const rootId = await findOrCreateFolder(token, FOLDER_NAME);
-    await saveJson(token, STATE_FILE, rootId, { pipeline, dismissed, savedAt: Date.now() });
+    await saveJson(token, STATE_FILE, rootId, { pipeline, dismissed, lastContact: lastContact || {}, savedAt: Date.now() });
     setSyncStatus("success");
     setTimeout(() => setSyncStatus("idle"), 3000);
   } catch(e) {
