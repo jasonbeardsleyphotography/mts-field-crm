@@ -526,8 +526,8 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
         const isDeclined = card.stage === "declined";
         const B = "'DM Sans',system-ui,sans-serif";
         const editStyle = (color) => ({width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"rgba(255,255,255,.03)",border:`1px solid ${color}30`,color,fontSize:14,fontFamily:B,lineHeight:1.7,resize:"vertical",outline:"none",minHeight:80});
-        return <div style={{position:"fixed",inset:0,background:"#0d0f18",zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-          <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:0,width:"100%",height:"100%",overflowY:"auto",padding:0,display:"flex",flexDirection:"column"}}>
+        return <div style={{position:"fixed",inset:0,background:"#0a0b10",zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",width:"100%",height:"100%",overflowY:"auto",padding:0,display:"flex",flexDirection:"column"}}>
 
             {/* Header */}
             <div style={{padding:"16px 20px",background:"#0a0b10",borderBottom:"1px solid #1a2030",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:1}}>
@@ -541,7 +541,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
               <button onClick={() => setDetailCard(null)} style={{width:32,height:32,borderRadius:8,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
             </div>
 
-            <div style={{padding:"16px 20px"}}>
+            <div style={{padding:"16px 20px",flex:1,overflowY:"auto"}}>
               {/* Contact */}
               <div style={{display:"flex",gap:16,marginBottom:16,flexWrap:"wrap"}}>
                 {card.phone && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconPhone size={14} color="#a0b8d0"/><a href={`tel:${card.phone.replace(/\D/g,"")}`} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.phone}</a></div>}

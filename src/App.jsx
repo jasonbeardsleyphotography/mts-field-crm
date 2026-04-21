@@ -263,7 +263,6 @@ export default function App() {
   // Track last known Drive modifiedTimes to only pull files that changed
   const lastSyncRef = useRef({ state: 0, fields: {} }); // {state: timestamp, fields: {id: modifiedTime}}
   const [lastSyncTime, setLastSyncTime] = useState(0);
-  const [autoPulling, setAutoPulling] = useState(false);
 
   // Merge Drive field data into localStorage — newest savedAt wins
   const mergeFieldDataFromDrive = useCallback((fieldData) => {
@@ -558,9 +557,7 @@ export default function App() {
     if (ttsSafetyTimer.current) clearTimeout(ttsSafetyTimer.current);
     ttsSafetyTimer.current = setTimeout(() => resetTts(), 90000);
 
-    // CarPlay fix: create and unlock AudioContext NOW inside the user gesture tap.
-    // After any await, iOS considers the gesture chain broken — but AudioContext
-    // created here stays unlocked and routes through CarPlay correctly.
+    // CarPlay fix: unlock AudioContext NOW in user gesture tap BEFORE any await
     let audioCtx = null;
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -586,9 +583,7 @@ export default function App() {
             ttsAudioRef.current = { paused: false, pause: () => { try { src.stop(); } catch(e){} } };
             src.start(0);
             return;
-          } catch(e) {
-            // AudioContext decode failed — fall through to Audio element
-          }
+          } catch(e) {}
           const blob = new Blob([Uint8Array.from(atob(audioB64), c => c.charCodeAt(0))], { type: "audio/mp3" });
           const audio = new Audio(URL.createObjectURL(blob));
           audio.setAttribute("playsinline", "");
@@ -598,19 +593,71 @@ export default function App() {
           audio.play().catch(() => resetTts());
           return;
         }
-      } catch(e) { /* fall through */ }
+      } catch(e) {}
     }
 
     if (window.speechSynthesis) {
       const u = new SpeechSynthesisUtterance(text);
-      u.rate = 0.85;
-      u.onend = () => resetTts();
-      u.onerror = () => resetTts();
+      u.rate = 0.85; u.onend = () => resetTts(); u.onerror = () => resetTts();
       const voices = window.speechSynthesis.getVoices();
       if (voices.length) window.speechSynthesis.speak(u);
       else { window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.speak(u); }
     } else { resetTts(); }
   };
+
+  const handleReorderTap = (idx) => {
+    if (!reorderMode) return;
+    if (moving === null) {
+      setMoving(idx); setExpanded(null);
+    } else if (moving === idx) {
+      setMoving(null);
+    } else {
+      const activeIds = active.map(s => s.id);
+      const prevOrder = [...(ordIds[dayKey] || currentOrder)];
+      const fromId = activeIds[moving];
+      const toId = activeIds[idx];
+      const fullOrder = [...prevOrder];
+      const fromIdx = fullOrder.indexOf(fromId);
+      fullOrder.splice(fromIdx, 1);
+      const toIdx = fullOrder.indexOf(toId);
+      fullOrder.splice(moving < idx ? toIdx + 1 : toIdx, 0, fromId);
+      setUndoStack(u => [...u, {type:"reorder", prevOrder}]);
+      setOrdIds(prev => ({...prev, [dayKey]: fullOrder}));
+      setMoving(null);
+    }
+  };
+
+  // ── NAV ALL — with waypoints + current location as origin ──────────────
+  const navAll = useCallback(() => {
+    const addrs = mapStops.filter(s=>s.addr).map(s=>s.addr);
+    if (!addrs.length) return;
+    if (addrs.length === 1) { navigate(addrs[0]); return; }
+    // saddr= blank uses device GPS as origin
+    const chain = addrs.map(a => encodeURIComponent(a)).join("+to:");
+    window.location.href = `comgooglemaps://?saddr=&daddr=${chain}&directionsmode=driving`;
+  }, [mapStops]);
+  const hasStopsWithAddr = mapStops.some(s => s.addr);
+
+  const dayLabels = businessDays.map(d => {
+    const isToday = d.toDateString() === new Date().toDateString();
+    return d.toLocaleDateString("en-US",{weekday:"short",month:"numeric",day:"numeric"}) + (isToday ? " ★" : "");
+  });
+
+  // ── SIGN IN ──────────────────────────────────────────────────────────────
+  // Register service worker for PWA
+  useEffect(() => {
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+  }, []);
+
+  if (!token) return (
+    <div style={{height:"100dvh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0a0b10",fontFamily:"'Oswald','DM Sans',system-ui,sans-serif",color:"#f0f4fa",padding:20,paddingTop:"max(20px,env(safe-area-inset-top))",boxSizing:"border-box"}}>
+      <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=DM+Sans:wght@500;700;800&display=swap" rel="stylesheet"/>
+      <div style={{fontSize:28,fontWeight:900,letterSpacing:3,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif"}}>MTS FIELD SALES</div>
+      <div style={{fontSize:12,color:"#5a6580",marginBottom:32,fontWeight:500,letterSpacing:1}}>Monster Tree Service of Rochester</div>
+      <button onClick={initAuth} style={{padding:"16px 40px",borderRadius:12,background:"#1a2035",border:"1px solid #2a3560",color:"#f0f4fa",fontSize:16,fontWeight:700,cursor:"pointer",letterSpacing:.5}}>Sign in with Google</button>
+      {error && <div style={{marginTop:16,color:"#ff5555",fontSize:12}}>{error}</div>}
+    </div>
+  );
 
   if (loading && !Object.keys(rawEvents).length) return (
     <div style={{height:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0a0b10",color:"#5a6580",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
@@ -647,7 +694,7 @@ export default function App() {
         {token && (() => {
           const now = Date.now();
           const since = lastSyncTime ? Math.floor((now - lastSyncTime) / 1000) : null;
-          const label = autoPulling || syncIndicator === "syncing"
+          const label = syncPulling || syncIndicator === "syncing"
             ? "Syncing…"
             : syncIndicator === "error"
               ? "Retry"
@@ -655,7 +702,7 @@ export default function App() {
                 : since < 60 ? `✓ ${since}s`
                   : since < 3600 ? `✓ ${Math.floor(since/60)}m`
                     : "✓ Synced";
-          const color = syncIndicator === "syncing" || autoPulling ? "#F6BF26"
+          const color = syncIndicator === "syncing" || syncPulling ? "#F6BF26"
             : syncIndicator === "error" ? "#FF5555"
               : "#10B981";
           return (
@@ -686,7 +733,8 @@ export default function App() {
 
       {/* ── MAP ────────────────────────────────────────────────────────── */}
       <div className="mts-map">
-        {reorderMode && <div style={{padding:"5px 12px",background:"rgba(142,36,170,.08)",borderBottom:"1px solid rgba(142,36,170,.15)",display:"flex",alignItems:"center",gap:8}}>
+
+        {reorderMode && <div style={{padding:"5px 12px",background:"rgba(142,36,170,.08)",borderTop:"1px solid rgba(142,36,170,.15)",display:"flex",alignItems:"center",gap:8}}>
           {moving !== null ? <>
             <div style={{width:10,height:10,borderRadius:10,background:active[moving]?.color||"#8E24AA"}}/>
             <span style={{fontSize:12,fontWeight:600,color:"#c8a0e8"}}>Moving: {active[moving]?.cn} — tap where to place</span>
@@ -822,22 +870,22 @@ export default function App() {
       </div>{/* end mts-body */}
 
       {/* ── BOTTOM BAR ──────────────────────────────────────────────── */}
-      {view === "route" && <div style={{borderTop:"1px solid #0e1520",padding:"3px 10px",paddingBottom:"max(3px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",gap:6,background:"#080a10",flexShrink:0,minHeight:36}}>
+      {view === "route" && <div style={{borderTop:"1px solid #0e1520",padding:"2px 10px",paddingBottom:"max(2px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",gap:6,background:"#080a10",flexShrink:0,minHeight:38}}>
         {/* Undo — left */}
         <button onClick={undo} disabled={!undoStack.length}
-          style={{display:"flex",alignItems:"center",gap:4,padding:"6px 12px",borderRadius:8,background:"transparent",border:`1px solid ${undoStack.length?"#1a2035":"transparent"}`,color:undoStack.length?"#5a6580":"#1a2035",fontSize:11,fontWeight:700,cursor:undoStack.length?"pointer":"default",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
+          style={{display:"flex",alignItems:"center",gap:4,padding:"7px 12px",borderRadius:8,background:"transparent",border:`1px solid ${undoStack.length?"#1a2035":"transparent"}`,color:undoStack.length?"#5a6580":"#1a2035",fontSize:11,fontWeight:700,cursor:undoStack.length?"pointer":"default",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
           <IconUndo size={14} color={undoStack.length?"#5a6580":"#1a2035"}/>UNDO
         </button>
         <div style={{flex:1}}/>
         {/* Reorder — right */}
         <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}}
-          style={{display:"flex",alignItems:"center",gap:4,padding:"6px 12px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"transparent",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#1a2035"}`,color:reorderMode?"#c8a0e8":"#3a4a60",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
+          style={{display:"flex",alignItems:"center",gap:4,padding:"7px 12px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"transparent",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#1a2035"}`,color:reorderMode?"#c8a0e8":"#3a4a60",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
           <IconReorder size={14} color={reorderMode?"#c8a0e8":"#3a4a60"}/>{reorderMode?"DONE":"REORDER"}
         </button>
-        {/* Sign out — arrow-left-start-on-rectangle heroicon */}
+        {/* Sign out — arrow-left-start-on-rectangle */}
         <button onClick={()=>{ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} }}
           title="Sign out"
-          style={{marginLeft:4,width:30,height:30,borderRadius:8,background:"transparent",border:"1px solid #1a2035",color:"#2a3050",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+          style={{marginLeft:4,width:32,height:32,borderRadius:8,background:"transparent",border:"1px solid #1a2035",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
           <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#3a4a60" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
             <polyline points="16 17 21 12 16 7"/>
@@ -845,7 +893,7 @@ export default function App() {
           </svg>
         </button>
       </div>}
-            {view === "pipeline" && <div style={{borderTop:"1px solid #0e1520",padding:"5px 10px",paddingBottom:"max(5px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"flex-end",background:"#080a10",flexShrink:0}}>
+      {view === "pipeline" && <div style={{borderTop:"1px solid #0e1520",padding:"5px 10px",paddingBottom:"max(5px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"flex-end",background:"#080a10",flexShrink:0}}>
         <button onClick={()=>{ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} }}
           title="Sign out"
           style={{width:28,height:28,borderRadius:8,background:"transparent",border:"1px solid #1a2035",color:"#2a3050",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>
@@ -876,7 +924,7 @@ export default function App() {
       </>}{/* end route view */}
 
       {/* ── PIPELINE VIEW ──────────────────────────────────────────── */}
-      {view === "pipeline" && <Pipeline onSwitchToRoute={(cardId) => { setView("route"); if (cardId) { setDismissed(prev => { const n = {...prev}; delete n[cardId]; return n; }); const pl = loadPipeline(); delete pl[cardId]; savePipeline(pl); } }} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} />}
+      {view === "pipeline" && <Pipeline onSwitchToRoute={(cardId) => { setView("route"); if (cardId) { setDismissed(prev => { const n={...prev}; delete n[cardId]; return n; }); const pl=loadPipeline(); delete pl[cardId]; savePipeline(pl); } }} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} />}
 
       {/* ── TEXT SHEET ─────────────────────────────────────────────────── */}
       {textSheet && <div onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
@@ -934,4 +982,96 @@ export default function App() {
       </div>}
     </div>
   );
-}
+}  // ── SYNC: push local data to Drive ─────────────────────────────────────
+  const cloudSyncTimer = useRef(null);
+  const [lastSyncTime, setLastSyncTime] = useState(0);
+  const [syncPulling, setSyncPulling] = useState(false);
+
+  const triggerCloudSync = useCallback(async (immediate = false) => {
+    if (!token) return;
+    const run = async () => {
+      const pl = loadPipeline();
+      await saveAppState(token, pl, dismissed).catch(() => {});
+      // Push all field data
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith("mts-field-")) {
+            const id = key.slice("mts-field-".length);
+            const fd = JSON.parse(localStorage.getItem(key) || "{}");
+            if (fd && Object.keys(fd).length > 0) {
+              await saveFieldToDrive(token, id, fd).catch(() => {});
+            }
+          }
+        }
+      } catch(e) {}
+    };
+    if (immediate) { await run(); return; }
+    if (cloudSyncTimer.current) clearTimeout(cloudSyncTimer.current);
+    cloudSyncTimer.current = setTimeout(run, 2000);
+  }, [token, dismissed]);
+
+  useEffect(() => { triggerCloudSync(); }, [dismissed, triggerCloudSync]);
+
+  // Pull from Drive into localStorage (manual or on-open)
+  const pullFromDrive = useCallback(async () => {
+    if (!token) return;
+    setSyncPulling(true);
+    try {
+      const state = await loadAppState(token);
+      if (state?.pipeline) {
+        const local = loadPipeline();
+        const merged = { ...local };
+        for (const [id, driveCard] of Object.entries(state.pipeline)) {
+          const localCard = local[id];
+          const driveTs = driveCard.stageChangedAt || driveCard.addedAt || 0;
+          const localTs = localCard?.stageChangedAt || localCard?.addedAt || 0;
+          if (!localCard || driveTs > localTs) merged[id] = driveCard;
+        }
+        savePipeline(merged);
+      }
+      if (state?.dismissed) {
+        setDismissed(prev => {
+          const merged = { ...prev };
+          for (const [id, driveTs] of Object.entries(state.dismissed)) {
+            if (driveTs > (prev[id] || 0)) merged[id] = driveTs;
+          }
+          return merged;
+        });
+      }
+      // Pull field data
+      const files = await listFieldFiles(token);
+      for (const f of (files || [])) {
+        const id = f.name.replace(/\.json$/, "");
+        const localRaw = localStorage.getItem(`mts-field-${id}`);
+        const localSavedAt = localRaw ? (JSON.parse(localRaw).savedAt || 0) : 0;
+        if (!localRaw || (f.modifiedTime && new Date(f.modifiedTime).getTime() > localSavedAt)) {
+          const data = await loadFieldFromDrive(token, id);
+          if (data && Object.keys(data).length > 0) {
+            localStorage.setItem(`mts-field-${id}`, JSON.stringify(data));
+          }
+        }
+      }
+      setLastSyncTime(Date.now());
+      window.dispatchEvent(new CustomEvent("mts-field-synced"));
+    } catch(e) { console.warn("Pull failed:", e); }
+    setSyncPulling(false);
+  }, [token]);
+
+  // Pull on mount (once, after calendar loads)
+  useEffect(() => {
+    if (!token) return;
+    const t = setTimeout(() => pullFromDrive(), 3000);
+    return () => clearTimeout(t);
+  }, [token]);
+
+  // Pull when tab becomes visible after being hidden
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && token) pullFromDrive();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [token, pullFromDrive]);
+
+
