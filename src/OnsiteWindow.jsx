@@ -38,6 +38,10 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
   const [recDuration, setRecDuration] = useState(0);
   const [playingIdx, setPlayingIdx] = useState(null);
   const ytFileRef = useRef(null);
+  const [ytUploadCount, setYtUploadCount] = useState(0);
+  const mountedRef = useRef(true);
+  const stopIdRef = useRef(s.id);
+
   const [aiScopeResult, setAiScopeResult] = useState(fd.aiScopeSummary || "");
   const [aiAddonResult, setAiAddonResult] = useState(fd.aiAddonEmail || "");
   const [aiScopeLoading, setAiScopeLoading] = useState(false);
@@ -304,6 +308,54 @@ Property: ${s.addr || ""}`);
       setAiAddonResult(text);
     } catch(e) { setAiAddonResult("Error: " + e.message); }
     setAiAddonLoading(false);
+  };
+
+  // ── YOUTUBE: background upload, no naming prompt, no description ──────
+  useEffect(() => {
+    mountedRef.current = true; stopIdRef.current = s.id;
+    return () => { mountedRef.current = false; };
+  }, [s.id]);
+
+  const uploadToYouTube = async (file, title) => {
+    if (!file || !title) return;
+    if (mountedRef.current) setYtUploadCount(n => n + 1);
+    try {
+      const tokenData = JSON.parse(localStorage.getItem("mts-token") || "null");
+      const tok = tokenData?.token || token;
+      if (!tok) { if (mountedRef.current) setYtUploadCount(n => n - 1); return; }
+      const metadata = { snippet: { title }, status: { privacyStatus: "unlisted" } };
+      const initRes = await fetch("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status", {
+        method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
+        body: JSON.stringify(metadata),
+      });
+      const uploadUrl = initRes.headers.get("Location");
+      if (uploadUrl) {
+        const uploadRes = await fetch(uploadUrl, {
+          method: "PUT", headers: { "Content-Type": file.type || "video/mp4" }, body: file,
+        });
+        const result = await uploadRes.json();
+        if (result.id) {
+          const ytUrl = `https://youtu.be/${result.id}`;
+          const saved = loadFieldData(stopIdRef.current);
+          const existing = saved.videoUrls || (saved.videoUrl ? [saved.videoUrl] : []);
+          saveFieldData(stopIdRef.current, { ...saved, videoUrls: [...existing, ytUrl], savedAt: Date.now() });
+          if (mountedRef.current) setVideoUrls(prev => [...prev, ytUrl]);
+        }
+      }
+    } catch(e) { console.warn("YouTube upload failed:", e); }
+    if (mountedRef.current) setYtUploadCount(n => n - 1);
+  };
+
+  const handleYtFile = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const lastName = (s.cn || "").split(" ").pop();
+      const jobPart = s.jn ? ` #${s.jn}` : "";
+      const datePart = new Date().toLocaleDateString("en-US", {month:"2-digit",day:"2-digit",year:"numeric"});
+      const suffix = videoUrls.length > 0 ? ` (${videoUrls.length + 1})` : "";
+      uploadToYouTube(file, `${lastName}${jobPart} ${datePart}${suffix}`);
+    }
+    e.target.value = "";
   };
 
   const F = "'Oswald',sans-serif";

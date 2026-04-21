@@ -501,69 +501,78 @@ export default function App() {
     window.location.href = `comgooglemaps://?daddr=${q}&directionsmode=driving`;
   };
 
-  // ── TEXT-TO-SPEECH ──────────────────────────────────────────────────────
+
+  // ── TEXT-TO-SPEECH (phone speaker) ────────────────────────────────────
   const ttsAudioRef = useRef(null);
-  const ttsCtxRef = useRef(null);
   const ttsSafetyTimer = useRef(null);
   const [ttsSpeaking, setTtsSpeaking] = useState(false);
+  const [ttsError, setTtsError] = useState(null);
 
   const resetTts = () => {
     setTtsSpeaking(false);
     if (ttsAudioRef.current) { try { ttsAudioRef.current.pause(); } catch(e){} ttsAudioRef.current = null; }
-    if (ttsCtxRef.current) { ttsCtxRef.current.close().catch(()=>{}); ttsCtxRef.current = null; }
+    if (window.speechSynthesis?.speaking) window.speechSynthesis.cancel();
     if (ttsSafetyTimer.current) { clearTimeout(ttsSafetyTimer.current); ttsSafetyTimer.current = null; }
   };
 
   const speakStop = async (stop) => {
-    if (ttsAudioRef.current && !ttsAudioRef.current.paused) { ttsAudioRef.current.pause(); resetTts(); return; }
-    if (ttsCtxRef.current?.state === "running") { resetTts(); return; }
-    if (window.speechSynthesis?.speaking) { window.speechSynthesis.cancel(); resetTts(); return; }
+    // If already speaking, stop
     if (ttsSpeaking) { resetTts(); return; }
+
     const text = stop.notes || "No notes available.";
     const geminiKey = import.meta.env.VITE_GEMINI_KEY;
     setTtsSpeaking(true);
+    setTtsError(null);
     if (ttsSafetyTimer.current) clearTimeout(ttsSafetyTimer.current);
     ttsSafetyTimer.current = setTimeout(() => resetTts(), 90000);
-    // CarPlay fix: unlock AudioContext inside the user gesture, before any await
-    let audioCtx = null;
-    try {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      ttsCtxRef.current = audioCtx;
-      if (audioCtx.state === "suspended") await audioCtx.resume();
-    } catch(e) {}
+
+    // Path 1: Gemini audio → plain Audio element (phone speaker)
     if (geminiKey) {
       try {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ text: `Read this aloud clearly at a comfortable pace: ${text}` }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } } } } }),
-        });
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: `Read this aloud clearly at a comfortable pace: ${text}` }] }],
+              generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } } } },
+            }),
+          }
+        );
         const data = await res.json();
         const b64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        if (b64 && audioCtx) {
-          try {
-            const buf = await audioCtx.decodeAudioData(Uint8Array.from(atob(b64), x => x.charCodeAt(0)).buffer);
-            const src = audioCtx.createBufferSource();
-            src.buffer = buf; src.connect(audioCtx.destination);
-            src.onended = () => resetTts();
-            ttsAudioRef.current = { paused: false, pause: () => { try { src.stop(); } catch(e){} } };
-            src.start(0); return;
-          } catch(e) {}
-          const blob = new Blob([Uint8Array.from(atob(b64), x => x.charCodeAt(0))], { type: "audio/mp3" });
-          const audio = new Audio(URL.createObjectURL(blob));
-          audio.setAttribute("playsinline", "");
+        if (b64) {
+          const blob = new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], { type: "audio/wav" });
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.onended = () => { URL.revokeObjectURL(url); resetTts(); };
+          audio.onerror = () => { URL.revokeObjectURL(url); resetTts(); };
           ttsAudioRef.current = audio;
-          audio.onended = () => resetTts(); audio.onerror = () => resetTts();
-          audio.play().catch(() => resetTts()); return;
+          await audio.play();
+          return;
         }
-      } catch(e) {}
+      } catch(e) {
+        console.warn("Gemini TTS failed:", e);
+      }
     }
+
+    // Path 2: speechSynthesis fallback (always available, robotic voice)
     if (window.speechSynthesis) {
       const u = new SpeechSynthesisUtterance(text);
-      u.rate = 0.85; u.onend = () => resetTts(); u.onerror = () => resetTts();
+      u.rate = 0.85;
+      u.onend = () => resetTts();
+      u.onerror = () => resetTts();
       const voices = window.speechSynthesis.getVoices();
-      if (voices.length) window.speechSynthesis.speak(u);
-      else window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.speak(u);
-    } else resetTts();
+      if (voices.length) {
+        window.speechSynthesis.speak(u);
+      } else {
+        window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.speak(u);
+      }
+    } else {
+      setTtsError("No audio available");
+      resetTts();
+    }
   };
 
   const handleReorderTap = (idx) => {
