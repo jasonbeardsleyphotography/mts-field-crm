@@ -63,7 +63,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
 
   // Auto-save on every change — local + Drive
   useEffect(() => {
-    const data = { scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult };
+    const data = { scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult, savedAt: Date.now() };
     saveFieldData(s.id, data);
     // Sync to Drive (debounced via timer)
     if (token) {
