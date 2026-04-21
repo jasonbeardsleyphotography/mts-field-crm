@@ -131,6 +131,17 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   const [detailCard, setDetailCard] = useState(null);
   const [pipelineSheet, setPipelineSheet] = useState(null); // {card, type:'email'|'sms'}
   const [fieldCache, setFieldCache] = useState({}); // Drive-loaded field data cache
+  const [syncBump, setSyncBump] = useState(0); // bump to force re-render on sync
+
+  // Listen for sync events from App.jsx — clears cache so fresh data shows
+  useEffect(() => {
+    const onSynced = () => {
+      setFieldCache({}); // Clear cache so next render reads fresh localStorage
+      setSyncBump(b => b + 1);
+    };
+    window.addEventListener("mts-field-synced", onSynced);
+    return () => window.removeEventListener("mts-field-synced", onSynced);
+  }, []);
   const [detailLoading, setDetailLoading] = useState(false);
   const [editFields, setEditFields] = useState({}); // editable overrides for detail popup
 
