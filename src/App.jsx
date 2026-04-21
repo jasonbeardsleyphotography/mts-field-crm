@@ -535,37 +535,32 @@ export default function App() {
 
   // ── TEXT-TO-SPEECH ──────────────────────────────────────────────────────
   const ttsAudioRef = useRef(null);
-  const ttsCtxRef = useRef(null); // AudioContext — unlocked during user gesture
+  const ttsCtxRef = useRef(null);
   const ttsSafetyTimer = useRef(null);
   const [ttsSpeaking, setTtsSpeaking] = useState(false);
 
   const resetTts = () => {
     setTtsSpeaking(false);
-    ttsAudioRef.current = null;
+    if (ttsAudioRef.current) { try { ttsAudioRef.current.pause(); } catch(e){} ttsAudioRef.current = null; }
     if (ttsCtxRef.current) { ttsCtxRef.current.close().catch(()=>{}); ttsCtxRef.current = null; }
     if (ttsSafetyTimer.current) { clearTimeout(ttsSafetyTimer.current); ttsSafetyTimer.current = null; }
   };
 
-  const speakStop = async (s) => {
-    // If already playing — stop it
-    if (ttsAudioRef.current && !ttsAudioRef.current.paused) {
-      ttsAudioRef.current.pause(); resetTts(); return;
-    }
+  const speakStop = async (stop) => {
+    if (ttsAudioRef.current && !ttsAudioRef.current.paused) { ttsAudioRef.current.pause(); resetTts(); return; }
     if (ttsCtxRef.current?.state === "running") { resetTts(); return; }
     if (window.speechSynthesis?.speaking) { window.speechSynthesis.cancel(); resetTts(); return; }
     if (ttsSpeaking) { resetTts(); return; }
 
-    const text = s.notes || "No notes available.";
+    const text = stop.notes || "No notes available.";
     const geminiKey = import.meta.env.VITE_GEMINI_KEY;
     setTtsSpeaking(true);
-
-    // Safety timeout — force reset after 90s no matter what
     if (ttsSafetyTimer.current) clearTimeout(ttsSafetyTimer.current);
     ttsSafetyTimer.current = setTimeout(() => resetTts(), 90000);
 
-    // ── KEY CarPlay fix: unlock AudioContext NOW, inside the user gesture ──
-    // iOS/CarPlay requires audio context to be created & resumed in a user tap.
-    // After an await, the gesture context is lost — but AudioContext stays unlocked.
+    // CarPlay fix: create and unlock AudioContext NOW inside the user gesture tap.
+    // After any await, iOS considers the gesture chain broken — but AudioContext
+    // created here stays unlocked and routes through CarPlay correctly.
     let audioCtx = null;
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -577,26 +572,23 @@ export default function App() {
       try {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ text: `Read this aloud clearly and at a comfortable pace: ${text}` }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } } } } }),
+          body: JSON.stringify({ contents: [{ parts: [{ text: `Read this aloud clearly at a comfortable pace: ${text}` }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } } } } }),
         });
         const data = await res.json();
         const audioB64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
         if (audioB64 && audioCtx) {
           try {
-            // Decode and play via AudioContext — works through CarPlay
-            const arrayBuffer = Uint8Array.from(atob(audioB64), c => c.charCodeAt(0)).buffer;
-            const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-            const source = audioCtx.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(audioCtx.destination);
-            source.onended = () => resetTts();
-            ttsAudioRef.current = { paused: false, pause: () => { source.stop(); } };
-            source.start(0);
+            const buf = await audioCtx.decodeAudioData(Uint8Array.from(atob(audioB64), c => c.charCodeAt(0)).buffer);
+            const src = audioCtx.createBufferSource();
+            src.buffer = buf;
+            src.connect(audioCtx.destination);
+            src.onended = () => resetTts();
+            ttsAudioRef.current = { paused: false, pause: () => { try { src.stop(); } catch(e){} } };
+            src.start(0);
             return;
           } catch(e) {
             // AudioContext decode failed — fall through to Audio element
           }
-          // Fallback: Audio element (may not route through CarPlay)
           const blob = new Blob([Uint8Array.from(atob(audioB64), c => c.charCodeAt(0))], { type: "audio/mp3" });
           const audio = new Audio(URL.createObjectURL(blob));
           audio.setAttribute("playsinline", "");
@@ -606,12 +598,9 @@ export default function App() {
           audio.play().catch(() => resetTts());
           return;
         }
-      } catch(e) {
-        // Gemini failed — fall through to speechSynthesis
-      }
+      } catch(e) { /* fall through */ }
     }
 
-    // iOS-safe speechSynthesis fallback
     if (window.speechSynthesis) {
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 0.85;
@@ -620,64 +609,8 @@ export default function App() {
       const voices = window.speechSynthesis.getVoices();
       if (voices.length) window.speechSynthesis.speak(u);
       else { window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.speak(u); }
-    } else {
-      resetTts();
-    }
+    } else { resetTts(); }
   };
-
-  const handleReorderTap = (idx) => {
-    if (!reorderMode) return;
-    if (moving === null) {
-      setMoving(idx); setExpanded(null);
-    } else if (moving === idx) {
-      setMoving(null);
-    } else {
-      const activeIds = active.map(s => s.id);
-      const prevOrder = [...(ordIds[dayKey] || currentOrder)];
-      const fromId = activeIds[moving];
-      const toId = activeIds[idx];
-      const fullOrder = [...prevOrder];
-      const fromIdx = fullOrder.indexOf(fromId);
-      fullOrder.splice(fromIdx, 1);
-      const toIdx = fullOrder.indexOf(toId);
-      fullOrder.splice(moving < idx ? toIdx + 1 : toIdx, 0, fromId);
-      setUndoStack(u => [...u, {type:"reorder", prevOrder}]);
-      setOrdIds(prev => ({...prev, [dayKey]: fullOrder}));
-      setMoving(null);
-    }
-  };
-
-  // ── NAV ALL — with waypoints + current location as origin ──────────────
-  const navAll = useCallback(() => {
-    const addrs = mapStops.filter(s=>s.addr).map(s=>s.addr);
-    if (!addrs.length) return;
-    if (addrs.length === 1) { navigate(addrs[0]); return; }
-    // saddr= blank uses device GPS as origin
-    const chain = addrs.map(a => encodeURIComponent(a)).join("+to:");
-    window.location.href = `comgooglemaps://?saddr=&daddr=${chain}&directionsmode=driving`;
-  }, [mapStops]);
-  const hasStopsWithAddr = mapStops.some(s => s.addr);
-
-  const dayLabels = businessDays.map(d => {
-    const isToday = d.toDateString() === new Date().toDateString();
-    return d.toLocaleDateString("en-US",{weekday:"short",month:"numeric",day:"numeric"}) + (isToday ? " ★" : "");
-  });
-
-  // ── SIGN IN ──────────────────────────────────────────────────────────────
-  // Register service worker for PWA
-  useEffect(() => {
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
-  }, []);
-
-  if (!token) return (
-    <div style={{height:"100dvh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0a0b10",fontFamily:"'Oswald','DM Sans',system-ui,sans-serif",color:"#f0f4fa",padding:20,paddingTop:"max(20px,env(safe-area-inset-top))",boxSizing:"border-box"}}>
-      <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=DM+Sans:wght@500;700;800&display=swap" rel="stylesheet"/>
-      <div style={{fontSize:28,fontWeight:900,letterSpacing:3,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif"}}>MTS FIELD SALES</div>
-      <div style={{fontSize:12,color:"#5a6580",marginBottom:32,fontWeight:500,letterSpacing:1}}>Monster Tree Service of Rochester</div>
-      <button onClick={initAuth} style={{padding:"16px 40px",borderRadius:12,background:"#1a2035",border:"1px solid #2a3560",color:"#f0f4fa",fontSize:16,fontWeight:700,cursor:"pointer",letterSpacing:.5}}>Sign in with Google</button>
-      {error && <div style={{marginTop:16,color:"#ff5555",fontSize:12}}>{error}</div>}
-    </div>
-  );
 
   if (loading && !Object.keys(rawEvents).length) return (
     <div style={{height:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0a0b10",color:"#5a6580",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
@@ -753,11 +686,7 @@ export default function App() {
 
       {/* ── MAP ────────────────────────────────────────────────────────── */}
       <div className="mts-map">
-        <button onClick={()=>setMapOpen(!mapOpen)} style={{width:"100%",padding:"4px 12px",background:"none",border:"none",color:"#3a4560",fontSize:10,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
-          <span style={{transform:mapOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7}}>▶</span>
-          {mapOpen?"hide map":"show map"}
-        </button>
-        {reorderMode && <div style={{padding:"5px 12px",background:"rgba(142,36,170,.08)",borderTop:"1px solid rgba(142,36,170,.15)",display:"flex",alignItems:"center",gap:8}}>
+        {reorderMode && <div style={{padding:"5px 12px",background:"rgba(142,36,170,.08)",borderBottom:"1px solid rgba(142,36,170,.15)",display:"flex",alignItems:"center",gap:8}}>
           {moving !== null ? <>
             <div style={{width:10,height:10,borderRadius:10,background:active[moving]?.color||"#8E24AA"}}/>
             <span style={{fontSize:12,fontWeight:600,color:"#c8a0e8"}}>Moving: {active[moving]?.cn} — tap where to place</span>
@@ -765,7 +694,7 @@ export default function App() {
           </> : <span style={{fontSize:12,fontWeight:500,color:"#9a80c8"}}><span style={{display:"flex",alignItems:"center",gap:4}}><IconReorder size={12} color="#9a80c8"/>Tap a stop to pick it up</span></span>}
         </div>}
         <div className="mts-map-inner">
-          {mapOpen && mapStops.length>0 && <RouteMap stops={mapStops} selectedId={expanded}/>}
+          {mapStops.length>0 && <RouteMap stops={mapStops} selectedId={expanded}/>}
         </div>
       </div>
 
@@ -844,7 +773,7 @@ export default function App() {
         <div style={{borderTop:"1px solid #1a2030",flexShrink:0,background:"#090b0f"}}>
           {/* Search row */}
           {routeSearchOpen && <div style={{padding:"6px 8px",borderBottom:"1px solid #0e1218",display:"flex",gap:6,alignItems:"center"}}>
-            <input value={routeSearch} onChange={e=>setRouteSearch(e.target.value)} autoFocus placeholder="Search clients, addresses..." style={{flex:1,padding:"6px 10px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:12,fontFamily:"'DM Sans',system-ui",outline:"none"}} />
+            <input value={routeSearch} onChange={e=>setRouteSearch(e.target.value)} autoFocus placeholder="Search clients, addresses..." style={{flex:1,padding:"6px 10px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:16,fontFamily:"'DM Sans',system-ui",outline:"none"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
             <button onClick={()=>{setRouteSearchOpen(false);setRouteSearch("");}} style={{padding:"6px 8px",borderRadius:6,background:"transparent",border:"none",color:"#4a5a70",fontSize:12,cursor:"pointer"}}><IconX size={13} color="#4a5a70"/></button>
           </div>}
           <div style={{display:"flex",alignItems:"center",padding:"4px 8px",gap:4}}>
@@ -893,26 +822,30 @@ export default function App() {
       </div>{/* end mts-body */}
 
       {/* ── BOTTOM BAR ──────────────────────────────────────────────── */}
-      {view === "route" && <div style={{borderTop:"1px solid #0e1520",padding:"5px 10px",paddingBottom:"max(5px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",gap:6,background:"#080a10",flexShrink:0}}>
-        {/* Reorder */}
-        <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}}
-          style={{display:"flex",alignItems:"center",gap:4,padding:"5px 10px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"transparent",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#1a2035"}`,color:reorderMode?"#c8a0e8":"#3a4a60",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
-          <IconReorder size={13} color={reorderMode?"#c8a0e8":"#3a4a60"}/>{reorderMode?"DONE":"REORDER"}
-        </button>
-        {/* Undo */}
+      {view === "route" && <div style={{borderTop:"1px solid #0e1520",padding:"3px 10px",paddingBottom:"max(3px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",gap:6,background:"#080a10",flexShrink:0,minHeight:36}}>
+        {/* Undo — left */}
         <button onClick={undo} disabled={!undoStack.length}
-          style={{display:"flex",alignItems:"center",gap:4,padding:"5px 10px",borderRadius:8,background:"transparent",border:`1px solid ${undoStack.length?"#1a2035":"transparent"}`,color:undoStack.length?"#5a6580":"#1a2035",fontSize:10,fontWeight:700,cursor:undoStack.length?"pointer":"default",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
-          <IconUndo size={13} color={undoStack.length?"#5a6580":"#1a2035"}/>UNDO
+          style={{display:"flex",alignItems:"center",gap:4,padding:"6px 12px",borderRadius:8,background:"transparent",border:`1px solid ${undoStack.length?"#1a2035":"transparent"}`,color:undoStack.length?"#5a6580":"#1a2035",fontSize:11,fontWeight:700,cursor:undoStack.length?"pointer":"default",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
+          <IconUndo size={14} color={undoStack.length?"#5a6580":"#1a2035"}/>UNDO
         </button>
         <div style={{flex:1}}/>
-        {/* Sign out — icon only */}
+        {/* Reorder — right */}
+        <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}}
+          style={{display:"flex",alignItems:"center",gap:4,padding:"6px 12px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.15)":"transparent",border:`1px solid ${reorderMode?"rgba(142,36,170,.4)":"#1a2035"}`,color:reorderMode?"#c8a0e8":"#3a4a60",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
+          <IconReorder size={14} color={reorderMode?"#c8a0e8":"#3a4a60"}/>{reorderMode?"DONE":"REORDER"}
+        </button>
+        {/* Sign out — arrow-left-start-on-rectangle heroicon */}
         <button onClick={()=>{ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} }}
           title="Sign out"
-          style={{width:28,height:28,borderRadius:8,background:"transparent",border:"1px solid #1a2035",color:"#2a3050",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>
-          ⏏
+          style={{marginLeft:4,width:30,height:30,borderRadius:8,background:"transparent",border:"1px solid #1a2035",color:"#2a3050",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#3a4a60" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
         </button>
       </div>}
-      {view === "pipeline" && <div style={{borderTop:"1px solid #0e1520",padding:"5px 10px",paddingBottom:"max(5px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"flex-end",background:"#080a10",flexShrink:0}}>
+            {view === "pipeline" && <div style={{borderTop:"1px solid #0e1520",padding:"5px 10px",paddingBottom:"max(5px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"flex-end",background:"#080a10",flexShrink:0}}>
         <button onClick={()=>{ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} }}
           title="Sign out"
           style={{width:28,height:28,borderRadius:8,background:"transparent",border:"1px solid #1a2035",color:"#2a3050",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>
@@ -943,7 +876,7 @@ export default function App() {
       </>}{/* end route view */}
 
       {/* ── PIPELINE VIEW ──────────────────────────────────────────── */}
-      {view === "pipeline" && <Pipeline onSwitchToRoute={() => setView("route")} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} />}
+      {view === "pipeline" && <Pipeline onSwitchToRoute={(cardId) => { setView("route"); if (cardId) { setDismissed(prev => { const n = {...prev}; delete n[cardId]; return n; }); const pl = loadPipeline(); delete pl[cardId]; savePipeline(pl); } }} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} />}
 
       {/* ── TEXT SHEET ─────────────────────────────────────────────────── */}
       {textSheet && <div onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>

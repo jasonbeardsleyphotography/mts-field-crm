@@ -526,8 +526,8 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
         const isDeclined = card.stage === "declined";
         const B = "'DM Sans',system-ui,sans-serif";
         const editStyle = (color) => ({width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"rgba(255,255,255,.03)",border:`1px solid ${color}30`,color,fontSize:14,fontFamily:B,lineHeight:1.7,resize:"vertical",outline:"none",minHeight:80});
-        return <div onClick={() => setDetailCard(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",backdropFilter:"blur(6px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:10,overflowY:"auto"}}>
-          <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:14,width:"100%",maxWidth:700,maxHeight:"90vh",overflowY:"auto",padding:0}}>
+        return <div style={{position:"fixed",inset:0,background:"#0d0f18",zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:0,width:"100%",height:"100%",overflowY:"auto",padding:0,display:"flex",flexDirection:"column"}}>
 
             {/* Header */}
             <div style={{padding:"16px 20px",background:"#0a0b10",borderBottom:"1px solid #1a2030",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:1}}>
@@ -536,7 +536,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
                 {card.addr && <div style={{fontSize:13,color:"#8a96a8",fontFamily:F,textTransform:"uppercase",letterSpacing:1,marginTop:2}}>{card.addr}</div>}
               </div>
               {detailLoading && <div style={{fontSize:10,color:"#3B82F6",fontWeight:600,display:"flex",alignItems:"center",gap:4}}><span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>↻</span> syncing</div>}
-              <button onClick={() => { setDetailCard(null); onSwitchToRoute(); }} style={{padding:"4px 10px",borderRadius:6,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",flexShrink:0}}>← Route</button>
+              <button onClick={() => { setDetailCard(null); onSwitchToRoute(card.id); }} style={{padding:"4px 10px",borderRadius:6,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",flexShrink:0}}>← Route</button>
               <span style={{padding:"4px 12px",borderRadius:99,background:stage?.bg,color:stage?.color,fontSize:12,fontWeight:700,fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{stage?.label}</span>
               <button onClick={() => setDetailCard(null)} style={{width:32,height:32,borderRadius:8,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
             </div>
@@ -645,7 +645,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
               <div style={{display:"flex",gap:6,flexWrap:"wrap",paddingTop:12,borderTop:"1px solid #1a2030"}}>
                 {isDeclined && <button onClick={() => { reactivate(card.id); setDetailCard({...card, stage:"estimate_needed"}); }} style={{padding:"8px 16px",borderRadius:8,background:"rgba(255,183,77,.1)",border:"1px solid rgba(255,183,77,.3)",color:"#FFB74D",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>↩ REACTIVATE</button>}
                 {STAGES.filter(st => st.id !== card.stage && !(isDeclined && st.id !== "estimate_needed")).map(st => (
-                  <button key={st.id} onClick={() => { moveCard(card.id, st.id); setDetailCard({...card, stage: st.id}); }} style={{padding:"8px 14px",borderRadius:8,background:st.bg,border:`1px solid ${st.color}40`,color:st.color,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{st.label}</button>
+                  <button key={st.id} onClick={() => { moveCard(card.id, st.id); setDetailCard(null); }} style={{padding:"8px 14px",borderRadius:8,background:st.bg,border:`1px solid ${st.color}40`,color:st.color,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{st.label}</button>
                 ))}
               </div>
             </div>
