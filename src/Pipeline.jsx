@@ -133,7 +133,6 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   const [fieldCache, setFieldCache] = useState({}); // Drive-loaded field data cache
   const [detailLoading, setDetailLoading] = useState(false);
   const [editFields, setEditFields] = useState({}); // editable overrides for detail popup
-  const [contactSave, setContactSave] = useState({}); // {[cardId]: 'saving'|'saved'|'error'}
 
   // Save edited field data back to localStorage (and Drive if token available)
   const saveEditedField = useCallback((id, key, value) => {
@@ -537,19 +536,6 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
                 {card.phone && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconPhone size={14} color="#a0b8d0"/><a href={`tel:${card.phone.replace(/\D/g,"")}`} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.phone}</a></div>}
                 {card.email && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconMail size={14} color="#a0b8d0"/><a href={`mailto:${card.email}`} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.email}</a></div>}
                 {card.jn && <button onClick={() => openSingleOps(card.jn)} style={{fontSize:14,color:"#3B82F6",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}><span style={{display:"flex",alignItems:"center",gap:4}}>SingleOps #{card.jn}<IconClipboard size={12} color="#3B82F6"/></span></button>}
-                {token && (card.phone || card.email) && (() => {
-                  const cs = contactSave[card.id];
-                  return (
-                    <button onClick={async () => {
-                      setContactSave(prev => ({...prev, [card.id]: "saving"}));
-                      const result = await pushToGoogleContacts(card, token);
-                      setContactSave(prev => ({...prev, [card.id]: result.success ? (result.action === "updated" ? "updated" : "saved") : "error"}));
-                      setTimeout(() => setContactSave(prev => ({...prev, [card.id]: null})), 3000);
-                    }} disabled={cs === "saving"} style={{padding:"4px 12px",borderRadius:6,background:cs==="saved"||cs==="updated"?"rgba(16,185,129,.12)":cs==="error"?"rgba(200,60,60,.1)":"rgba(59,130,246,.08)",border:`1px solid ${cs==="saved"||cs==="updated"?"rgba(16,185,129,.3)":cs==="error"?"rgba(200,60,60,.2)":"rgba(59,130,246,.2)"}`,color:cs==="saved"||cs==="updated"?"#10B981":cs==="error"?"#e06060":"#3B82F6",fontSize:12,fontWeight:700,cursor:cs==="saving"?"default":"pointer",whiteSpace:"nowrap"}}>
-                      {cs==="saving"?"Saving…":cs==="saved"?"✓ Saved":cs==="updated"?"✓ Updated":cs==="error"?"✗ Failed":"💾 Save Contact"}
-                    </button>
-                  );
-                })()}
               </div>
 
               {/* Job notes */}
@@ -558,52 +544,59 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
                 <div style={{fontSize:14,color:"#8898a8",lineHeight:1.6,fontStyle:"italic"}}>{card.notes}</div>
               </div>}
 
+              {/* Field data — show summary if none */}
+              {(() => {
+                const hasAnyFieldData = !!(fd.scopeNotes || fd.myNotes || fd.addonNotes || fd.aiScopeSummary || fd.aiAddonEmail ||
+                  (fd.scopePhotos || fd.photos || []).length > 0 || (fd.addonPhotos || []).length > 0 ||
+                  (fd.videoUrls?.length || fd.videoUrl) || (fd.audioClips || []).length > 0);
+                if (!hasAnyFieldData && !detailLoading) {
+                  return <div style={{marginBottom:16,padding:"10px 12px",borderRadius:8,background:"rgba(255,183,77,.05)",border:"1px solid rgba(255,183,77,.15)",fontSize:12,color:"#a08050"}}>
+                    No field data yet — notes, photos, or video from the Route screen will appear here.
+                  </div>;
+                }
+                return null;
+              })()}
+
               {/* Scope section */}
-              {(fd.scopeNotes || fd.myNotes) && <div style={{marginBottom:16}}>
-                <div style={{fontSize:12,fontWeight:700,color:"#3B82F6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>SCOPE</div>
-                <textarea value={fd.scopeNotes || fd.myNotes || ""} onChange={e => saveEditedField(card.id, "scopeNotes", e.target.value)} style={editStyle("#b0b8c8")} />
-              </div>}
-
-              {fd.aiScopeSummary && <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>AI SCOPE SUMMARY</div>
-                <textarea value={fd.aiScopeSummary} onChange={e => saveEditedField(card.id, "aiScopeSummary", e.target.value)} style={editStyle("#a0b0c8")} />
-              </div>}
-
-              {/* Scope photos */}
-              {((fd.scopePhotos || fd.photos || []).length > 0) && <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>SCOPE PHOTOS ({(fd.scopePhotos || fd.photos).length})</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:8}}>
-                  {(fd.scopePhotos || fd.photos).map((p, i) => (
-                    <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
-                      <img src={p.dataUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
-                      <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_scope_${i+1}.jpg`} style={{position:"absolute",bottom:6,right:6,padding:"4px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#fff",fontSize:11,textDecoration:"none",fontWeight:600}}>⬇ Download</a>
-                    </div>
-                  ))}
-                </div>
+              {(fd.scopeNotes || fd.myNotes || (fd.scopePhotos || fd.photos || []).length > 0 || fd.aiScopeSummary) && <div style={{marginBottom:16}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#3B82F6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>SCOPE</div>
+                {(fd.scopeNotes || fd.myNotes) && <textarea value={fd.scopeNotes || fd.myNotes || ""} onChange={e => saveEditedField(card.id, "scopeNotes", e.target.value)} style={{...editStyle("#b0b8c8"),marginBottom:10}} />}
+                {fd.aiScopeSummary && <>
+                  <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>AI SUMMARY</div>
+                  <textarea value={fd.aiScopeSummary} onChange={e => saveEditedField(card.id, "aiScopeSummary", e.target.value)} style={{...editStyle("#a0b0c8"),marginBottom:10}} />
+                </>}
+                {((fd.scopePhotos || fd.photos || []).length > 0) && <>
+                  <div style={{fontSize:10,fontWeight:700,color:"#3B82F6",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>PHOTOS ({(fd.scopePhotos || fd.photos).length})</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:8}}>
+                    {(fd.scopePhotos || fd.photos).map((p, i) => (
+                      <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
+                        <img src={p.dataUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+                        <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_scope_${i+1}.jpg`} style={{position:"absolute",bottom:6,right:6,padding:"4px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#fff",fontSize:11,textDecoration:"none",fontWeight:600}}>⬇ Download</a>
+                      </div>
+                    ))}
+                  </div>
+                </>}
               </div>}
 
               {/* Add-on section */}
-              {fd.addonNotes && <div style={{marginBottom:16}}>
-                <div style={{fontSize:12,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>ADD-ON</div>
-                <textarea value={fd.addonNotes} onChange={e => saveEditedField(card.id, "addonNotes", e.target.value)} style={editStyle("#c8b0a0")} />
-              </div>}
-
-              {fd.aiAddonEmail && <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>AI ADD-ON EMAIL</div>
-                <textarea value={fd.aiAddonEmail} onChange={e => saveEditedField(card.id, "aiAddonEmail", e.target.value)} style={editStyle("#c8a090")} />
-              </div>}
-
-              {/* Add-on photos */}
-              {(fd.addonPhotos || []).length > 0 && <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>ADD-ON PHOTOS ({fd.addonPhotos.length})</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:8}}>
-                  {fd.addonPhotos.map((p, i) => (
-                    <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
-                      <img src={p.dataUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
-                      <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_addon_${i+1}.jpg`} style={{position:"absolute",bottom:6,right:6,padding:"4px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#fff",fontSize:11,textDecoration:"none",fontWeight:600}}>⬇ Download</a>
-                    </div>
-                  ))}
-                </div>
+              {(fd.addonNotes || (fd.addonPhotos || []).length > 0 || fd.aiAddonEmail) && <div style={{marginBottom:16}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>ADD-ON</div>
+                {fd.addonNotes && <textarea value={fd.addonNotes} onChange={e => saveEditedField(card.id, "addonNotes", e.target.value)} style={{...editStyle("#c8b0a0"),marginBottom:10}} />}
+                {fd.aiAddonEmail && <>
+                  <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>AI EMAIL DRAFT</div>
+                  <textarea value={fd.aiAddonEmail} onChange={e => saveEditedField(card.id, "aiAddonEmail", e.target.value)} style={{...editStyle("#c8a090"),marginBottom:10}} />
+                </>}
+                {(fd.addonPhotos || []).length > 0 && <>
+                  <div style={{fontSize:10,fontWeight:700,color:"#FF8A65",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>PHOTOS ({fd.addonPhotos.length})</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:8}}>
+                    {fd.addonPhotos.map((p, i) => (
+                      <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
+                        <img src={p.dataUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+                        <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_addon_${i+1}.jpg`} style={{position:"absolute",bottom:6,right:6,padding:"4px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#fff",fontSize:11,textDecoration:"none",fontWeight:600}}>⬇ Download</a>
+                      </div>
+                    ))}
+                  </div>
+                </>}
               </div>}
 
               {/* Video */}
