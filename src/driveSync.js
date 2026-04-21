@@ -1,6 +1,10 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Google Drive Sync
-   Unified app state: pipeline + dismissed in one file for cross-device sync.
+   ─────────────────────────
+   - App state (pipeline + dismissed) syncs in one `app-state.json` file
+   - Each calendar event's field data syncs as `{eventId}.json` in field-data folder
+   - All records carry `savedAt` timestamp for conflict resolution (newest wins)
+   - Status listeners provide sync UI feedback
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
@@ -41,16 +45,16 @@ async function findOrCreateFolder(token, name, parentId = null) {
 
 async function findFile(token, name, folderId) {
   const q = `name='${name}' and '${folderId}' in parents and trashed=false`;
-  const r = await driveReq(token, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id)&spaces=drive`);
+  const r = await driveReq(token, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,modifiedTime)&spaces=drive`);
   const d = await r.json();
-  return d.files?.[0]?.id || null;
+  return d.files?.[0] || null;
 }
 
 async function saveJson(token, fileName, folderId, data) {
   const body = JSON.stringify(data);
-  const existingId = await findFile(token, fileName, folderId);
-  if (existingId) {
-    await driveReq(token, `${UPLOAD_API}/files/${existingId}?uploadType=media`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body });
+  const existing = await findFile(token, fileName, folderId);
+  if (existing) {
+    await driveReq(token, `${UPLOAD_API}/files/${existing.id}?uploadType=media`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body });
   } else {
     const metadata = { name: fileName, parents: [folderId] };
     const form = new FormData();
@@ -61,9 +65,9 @@ async function saveJson(token, fileName, folderId, data) {
 }
 
 async function loadJson(token, fileName, folderId) {
-  const fileId = await findFile(token, fileName, folderId);
-  if (!fileId) return null;
-  const r = await driveReq(token, `${DRIVE_API}/files/${fileId}?alt=media`);
+  const existing = await findFile(token, fileName, folderId);
+  if (!existing) return null;
+  const r = await driveReq(token, `${DRIVE_API}/files/${existing.id}?alt=media`);
   return await r.json();
 }
 
@@ -75,7 +79,7 @@ export async function saveAppState(token, pipeline, dismissed) {
     const rootId = await findOrCreateFolder(token, FOLDER_NAME);
     await saveJson(token, STATE_FILE, rootId, { pipeline, dismissed, savedAt: Date.now() });
     setSyncStatus("success");
-    setTimeout(() => setSyncStatus("idle"), 3000);
+    setTimeout(() => { if (syncStatus === "success") setSyncStatus("idle"); }, 2000);
   } catch(e) {
     console.warn("Drive save failed:", e);
     setSyncStatus("error");
@@ -98,8 +102,9 @@ export async function saveFieldToDrive(token, eventId, fieldData) {
   try {
     const rootId = await findOrCreateFolder(token, FOLDER_NAME);
     const fid = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
-    // Include full field data including photos as base64
-    await saveJson(token, `${eventId}.json`, fid, fieldData);
+    // Always attach a timestamp so we can resolve conflicts (newest wins)
+    const payload = { ...fieldData, savedAt: Date.now() };
+    await saveJson(token, `${eventId}.json`, fid, payload);
   } catch(e) {
     console.warn("Drive field save failed:", e);
   }
@@ -113,14 +118,49 @@ export async function loadFieldFromDrive(token, eventId) {
   } catch(e) { return null; }
 }
 
-// List all field data files in the Drive field folder (for pull-from-Drive)
+// List all field data files with modifiedTime (for efficient polling)
 export async function listFieldFiles(token) {
   try {
     const rootId = await findOrCreateFolder(token, FOLDER_NAME);
     const fid = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
     const q = `'${fid}' in parents and trashed=false and mimeType='application/json'`;
-    const r = await driveReq(token, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name)&spaces=drive&pageSize=1000`);
+    const r = await driveReq(token, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name,modifiedTime)&spaces=drive&pageSize=1000`);
     const d = await r.json();
     return d.files || [];
   } catch(e) { console.warn("List field files failed:", e); return []; }
+}
+
+// Fetch a single file by its direct ID
+export async function loadFileById(token, fileId) {
+  try {
+    const r = await driveReq(token, `${DRIVE_API}/files/${fileId}?alt=media`);
+    return await r.json();
+  } catch(e) { return null; }
+}
+
+// ── FULL SYNC (called on app open, visibility change, interval) ──────────────
+// Returns { pipeline, dismissed, fieldData: {[id]: data} } merged from Drive
+export async function fullSyncFromDrive(token) {
+  setSyncStatus("syncing");
+  const result = { pipeline: null, dismissed: null, fieldData: {}, stateSavedAt: 0 };
+  try {
+    const state = await loadAppState(token);
+    if (state) {
+      result.pipeline = state.pipeline || null;
+      result.dismissed = state.dismissed || null;
+      result.stateSavedAt = state.savedAt || 0;
+    }
+    const files = await listFieldFiles(token);
+    for (const f of files) {
+      const id = f.name.replace(/\.json$/, "");
+      const data = await loadFileById(token, f.id);
+      if (data) result.fieldData[id] = { ...data, _modifiedTime: f.modifiedTime };
+    }
+    setSyncStatus("success");
+    setTimeout(() => { if (syncStatus === "success") setSyncStatus("idle"); }, 2000);
+  } catch(e) {
+    console.warn("Full sync failed:", e);
+    setSyncStatus("error");
+  }
+  return result;
 }
