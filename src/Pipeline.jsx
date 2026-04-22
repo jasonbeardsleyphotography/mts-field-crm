@@ -630,19 +630,6 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
                 {card.phone && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconPhone size={14} color="#a0b8d0"/><a href={`tel:${card.phone.replace(/\D/g,"")}`} onClick={()=>markContact(card.id,"call")} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.phone}</a></div>}
                 {card.email && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconMail size={14} color="#a0b8d0"/><a href={`mailto:${card.email}`} onClick={()=>markContact(card.id,"email")} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.email}</a></div>}
                 {card.jn && <button onClick={() => openSingleOps(card.jn)} style={{fontSize:14,color:"#3B82F6",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}><span style={{display:"flex",alignItems:"center",gap:4}}>SingleOps #{card.jn}<IconClipboard size={12} color="#3B82F6"/></span></button>}
-                {token && (card.phone || card.email) && (() => {
-                  const cs = contactSave[card.id];
-                  return (
-                    <button onClick={async () => {
-                      setContactSave(prev => ({...prev, [card.id]: "saving"}));
-                      const result = await pushToGoogleContacts(card, token);
-                      setContactSave(prev => ({...prev, [card.id]: result.success ? (result.action === "updated" ? "updated" : "saved") : "error"}));
-                      setTimeout(() => setContactSave(prev => ({...prev, [card.id]: null})), 3000);
-                    }} disabled={cs === "saving"} style={{padding:"4px 12px",borderRadius:6,background:cs==="saved"||cs==="updated"?"rgba(16,185,129,.12)":cs==="error"?"rgba(200,60,60,.1)":"rgba(59,130,246,.08)",border:`1px solid ${cs==="saved"||cs==="updated"?"rgba(16,185,129,.3)":cs==="error"?"rgba(200,60,60,.2)":"rgba(59,130,246,.2)"}`,color:cs==="saved"||cs==="updated"?"#10B981":cs==="error"?"#e06060":"#3B82F6",fontSize:12,fontWeight:700,cursor:cs==="saving"?"default":"pointer",whiteSpace:"nowrap"}}>
-                      {cs==="saving"?"Saving…":cs==="saved"?"✓ Saved":cs==="updated"?"✓ Updated":cs==="error"?"✗ Failed":"💾 Save Contact"}
-                    </button>
-                  );
-                })()}
               </div>
 
               {/* Job notes */}
