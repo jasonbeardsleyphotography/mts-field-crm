@@ -82,11 +82,24 @@ export default function App() {
     });
   }, []);
 
-  // Auto-refresh token every 50 min to stay signed in continuously
+  // Auto-refresh token: every 50 min while the tab is active, AND whenever
+  // the tab regains focus (phone wakes from sleep between stops — the 50-min
+  // interval never fires while the screen is off, so we'd wake up signed out).
   useEffect(() => {
     if (!token) return;
     const interval = setInterval(() => { silentReauth(); }, 50 * 60 * 1000);
-    return () => clearInterval(interval);
+    const onVisible = () => {
+      const saved = lsGet("mts-token", null);
+      // Re-auth if token is within 10 minutes of expiry or already expired
+      if (!saved || saved.expiry - Date.now() < 10 * 60 * 1000) {
+        silentReauth();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [token, silentReauth]);
 
   const [loading, setLoading] = useState(false);
@@ -182,11 +195,12 @@ export default function App() {
     const [givenName, ...rest] = (card.cn || "Unknown").split(" ");
     const familyName = rest.join(" ");
     const body = {
-      names: [{ givenName, familyName }],
+      // Prefix first name with CLIENT so it sorts/displays clearly in the phone app
+      names: [{ givenName: `CLIENT ${givenName}`, familyName }],
       ...(card.phone ? { phoneNumbers: [{ value: card.phone, type: "mobile" }] } : {}),
       ...(card.email ? { emailAddresses: [{ value: card.email }] } : {}),
       ...(card.addr  ? { addresses: [{ formattedValue: card.addr, type: "home" }] } : {}),
-      ...(card.jn    ? { biographies: [{ value: `MTS Rochester — Job #${card.jn}`, contentType: "TEXT_PLAIN" }] } : {}),
+      biographies: [{ value: `MTS Rochester Tree Service Client${card.jn ? ` — Job #${card.jn}` : ""}`, contentType: "TEXT_PLAIN" }],
     };
     try {
       // Dedupe: if a contact with this phone already exists, update rather than create
@@ -561,6 +575,8 @@ export default function App() {
   const [addStopOpen, setAddStopOpen] = useState(false);
   const [addStopAddr, setAddStopAddr] = useState("");
   const [addStopName, setAddStopName] = useState("");
+  const [addStopNotes, setAddStopNotes] = useState("");
+  const [addStopTime, setAddStopTime] = useState("AM");
 
   // Decline = remove from route with confirmation
   const decline = (id) => {
@@ -627,167 +643,35 @@ export default function App() {
   };
 
 
-  // ── TEXT-TO-SPEECH (phone speaker) ────────────────────────────────────
-  // Gemini TTS returns raw PCM: signed 16-bit, 24000 Hz, mono. The browser's
-  // <audio> element can't play headerless PCM, so we wrap it in a 44-byte
-  // RIFF/WAVE header before creating the Blob. Previously this fed raw PCM
-  // to Audio() with an audio/wav MIME type — which silently failed to play.
-  function pcmToWav(pcm, sampleRate = 24000) {
-    const numChannels = 1;
-    const bitsPerSample = 16;
-    const blockAlign = numChannels * bitsPerSample / 8;
-    const byteRate = sampleRate * blockAlign;
-    const dataSize = pcm.length;
-    const buf = new ArrayBuffer(44 + dataSize);
-    const view = new DataView(buf);
-    const writeStr = (offset, str) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
-    writeStr(0, "RIFF");
-    view.setUint32(4, 36 + dataSize, true);
-    writeStr(8, "WAVE");
-    writeStr(12, "fmt ");
-    view.setUint32(16, 16, true);            // fmt chunk size
-    view.setUint16(20, 1, true);             // PCM format
-    view.setUint16(22, numChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, byteRate, true);
-    view.setUint16(32, blockAlign, true);
-    view.setUint16(34, bitsPerSample, true);
-    writeStr(36, "data");
-    view.setUint32(40, dataSize, true);
-    new Uint8Array(buf, 44).set(pcm);
-    return buf;
-  }
-
-  const ttsAudioRef = useRef(null);
+  // ── TEXT-TO-SPEECH ────────────────────────────────────────────────────────
+  // Uses browser speechSynthesis — no API, no lag, works offline.
+  // Does not route through CarPlay/Bluetooth; reads on the phone speaker only.
+  const ttsAudioRef = useRef(null); // kept as stub so nothing else breaks
   const ttsSafetyTimer = useRef(null);
   const [ttsSpeaking, setTtsSpeaking] = useState(false);
   const [ttsError, setTtsError] = useState(null);
 
   const resetTts = () => {
     setTtsSpeaking(false);
-    if (ttsAudioRef.current) { try { ttsAudioRef.current.pause(); } catch(e){} ttsAudioRef.current = null; }
     if (window.speechSynthesis?.speaking) window.speechSynthesis.cancel();
     if (ttsSafetyTimer.current) { clearTimeout(ttsSafetyTimer.current); ttsSafetyTimer.current = null; }
   };
 
-  // Try a single Gemini TTS model. Returns {ok, audio} on success, or
-  // {ok:false, error:...} on any failure. Doesn't mutate component state.
-  const tryGeminiTts = async (modelId, text, geminiKey) => {
-    console.log(`[TTS] Trying model: ${modelId}`);
-    try {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: `Read this aloud clearly at a comfortable pace: ${text}` }] }],
-            generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } } } },
-          }),
-        }
-      );
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        console.warn(`[TTS] ${modelId} returned HTTP ${res.status}:`, body.slice(0, 300));
-        return { ok: false, error: `HTTP ${res.status}` };
-      }
-      const data = await res.json();
-      const b64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (!b64) {
-        console.warn(`[TTS] ${modelId} returned no audio data. Response:`, data);
-        return { ok: false, error: "no audio in response" };
-      }
-      const pcm = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-      const wavBuffer = pcmToWav(pcm, 24000);
-      const blob = new Blob([wavBuffer], { type: "audio/wav" });
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      console.log(`[TTS] ${modelId} succeeded, ${pcm.length} PCM bytes, wrapped to WAV`);
-      return { ok: true, audio, url };
-    } catch (e) {
-      console.warn(`[TTS] ${modelId} threw:`, e);
-      return { ok: false, error: e?.message || String(e) };
-    }
-  };
-
-  const speakStop = async (stop) => {
-    // If already speaking, stop
+  const speakStop = (stop) => {
     if (ttsSpeaking) { resetTts(); return; }
-
+    if (!window.speechSynthesis) { setTtsError("TTS not supported in this browser"); return; }
     const text = stop.notes || "No notes available.";
-    const geminiKey = import.meta.env.VITE_GEMINI_KEY;
     setTtsSpeaking(true);
     setTtsError(null);
-    if (ttsSafetyTimer.current) clearTimeout(ttsSafetyTimer.current);
-    ttsSafetyTimer.current = setTimeout(() => resetTts(), 90000);
-
-    console.log("[TTS] Starting. Key present:", !!geminiKey, "Text length:", text.length);
-
-    // Try Gemini TTS with two model IDs in sequence:
-    // 1) gemini-3.1-flash-tts-preview (launched Apr 2026)
-    // 2) gemini-2.5-flash-preview-tts (older, may be more broadly accessible)
-    const errors = [];
-    if (geminiKey) {
-      for (const modelId of ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"]) {
-        const result = await tryGeminiTts(modelId, text, geminiKey);
-        if (result.ok) {
-          result.audio.onended = () => { URL.revokeObjectURL(result.url); resetTts(); };
-          result.audio.onerror = (ev) => {
-            console.warn("[TTS] Audio element error:", ev);
-            URL.revokeObjectURL(result.url);
-            setTtsError("Audio playback failed");
-            resetTts();
-          };
-          ttsAudioRef.current = result.audio;
-          try {
-            await result.audio.play();
-            return;
-          } catch (e) {
-            console.warn("[TTS] audio.play() rejected:", e);
-            errors.push(`play: ${e?.message || e}`);
-            URL.revokeObjectURL(result.url);
-            // Fall through to speechSynthesis
-            break;
-          }
-        }
-        errors.push(`${modelId}: ${result.error}`);
-      }
-    } else {
-      errors.push("no VITE_GEMINI_KEY");
-    }
-
-    // Path 3: speechSynthesis fallback (robotic, but reliable if voices load)
-    if (window.speechSynthesis) {
-      console.log("[TTS] Falling back to speechSynthesis");
-      const u = new SpeechSynthesisUtterance(text);
-      u.rate = 0.85;
-      u.onend = () => resetTts();
-      u.onerror = (ev) => {
-        console.warn("[TTS] speechSynthesis error:", ev);
-        setTtsError("Browser TTS failed. " + errors.join(" | "));
-        resetTts();
-      };
-      const voices = window.speechSynthesis.getVoices();
-      if (voices.length) {
-        window.speechSynthesis.speak(u);
-      } else {
-        // iOS Safari quirk: voices load async. Wait for them.
-        window.speechSynthesis.onvoiceschanged = () => {
-          window.speechSynthesis.speak(u);
-          window.speechSynthesis.onvoiceschanged = null;
-        };
-        // Safety: if voices never load, surface the error after 2s
-        setTimeout(() => {
-          if (!window.speechSynthesis.speaking && ttsSpeaking) {
-            setTtsError("TTS failed. " + errors.join(" | "));
-            resetTts();
-          }
-        }, 2000);
-      }
-    } else {
-      setTtsError("TTS unavailable. " + errors.join(" | "));
-      resetTts();
-    }
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 0.88;
+    u.pitch = 1;
+    u.onend   = () => setTtsSpeaking(false);
+    u.onerror = (ev) => { setTtsSpeaking(false); if (ev.error !== "interrupted") setTtsError("TTS: " + ev.error); };
+    const doSpeak = () => window.speechSynthesis.speak(u);
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length) { doSpeak(); }
+    else { window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.onvoiceschanged = null; doSpeak(); }; }
   };
 
   const handleReorderTap = (idx) => {
@@ -863,7 +747,6 @@ export default function App() {
 
   if (!token) return (
     <div style={{height:"100dvh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0a0b10",fontFamily:"'Oswald','DM Sans',system-ui,sans-serif",color:"#f0f4fa",padding:20,paddingTop:"max(20px,env(safe-area-inset-top))",boxSizing:"border-box"}}>
-      <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=DM+Sans:wght@500;700;800&display=swap" rel="stylesheet"/>
       <div style={{fontSize:28,fontWeight:900,letterSpacing:3,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif"}}>MTS FIELD SALES</div>
       <div style={{fontSize:12,color:"#5a6580",marginBottom:32,fontWeight:500,letterSpacing:1}}>Monster Tree Service of Rochester</div>
       <button onClick={initAuth} style={{padding:"16px 40px",borderRadius:12,background:"#1a2035",border:"1px solid #2a3560",color:"#f0f4fa",fontSize:16,fontWeight:700,cursor:"pointer",letterSpacing:.5}}>Sign in with Google</button>
@@ -880,7 +763,6 @@ export default function App() {
   // ═════════════════════════════════════════════════════════════════════════
   return (
     <div style={{height:"100dvh",width:"100%",background:"#0a0b10",display:"flex",flexDirection:"column",fontFamily:"'DM Sans',system-ui,sans-serif",color:"#f0f4fa",overflow:"hidden",paddingTop:"env(safe-area-inset-top)",boxSizing:"border-box"}}>
-      <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
       <style>{`
 .scr::-webkit-scrollbar{width:0}
 .gmnoprint,.gm-bundled-control,.gm-style-cc,.gm-control-active,.gm-fullscreen-control,.gm-style .adp,.gm-style button[title]{display:none!important}
@@ -1110,21 +992,44 @@ export default function App() {
       </div>}
 
       {/* ── ADD STOP POPUP ─────────────────────────────────────────── */}
-      {addStopOpen && <div onClick={()=>{setAddStopOpen(false);setAddStopAddr("");setAddStopName("");}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      {addStopOpen && <div onClick={()=>{setAddStopOpen(false);setAddStopAddr("");setAddStopName("");setAddStopNotes("");setAddStopTime("AM");}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
         <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:14,padding:20,maxWidth:360,width:"100%"}}>
           <div style={{fontSize:15,fontWeight:700,color:"#f0f4fa",marginBottom:14,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>Add a stop</div>
           <input value={addStopName} onChange={e=>setAddStopName(e.target.value)} placeholder="Name (e.g. Smith)" style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none",marginBottom:8}} />
-          <input value={addStopAddr} onChange={e=>setAddStopAddr(e.target.value)} placeholder="Address" style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none",marginBottom:12}} />
+          <input value={addStopAddr} onChange={e=>setAddStopAddr(e.target.value)} placeholder="Address" style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none",marginBottom:8}} />
+          <textarea value={addStopNotes} onChange={e=>setAddStopNotes(e.target.value)} placeholder="Notes (scope, constraints, what to quote...)" rows={3} style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none",resize:"vertical",marginBottom:8}} />
+          {/* Time frame */}
+          <div style={{display:"flex",gap:6,marginBottom:14}}>
+            {["AM","PM","All Day"].map(t => (
+              <button key={t} onClick={()=>setAddStopTime(t)} style={{flex:1,padding:"8px 0",borderRadius:8,background:addStopTime===t?(t==="AM"?"rgba(46,125,50,.2)":"rgba(30,136,229,.2)"):"transparent",border:`1px solid ${addStopTime===t?(t==="AM"?"#66BB6A":"#64B5F6"):"#1a2030"}`,color:addStopTime===t?(t==="AM"?"#66BB6A":"#64B5F6"):"#4a5a70",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5}}>{t}</button>
+            ))}
+          </div>
           <div style={{display:"flex",gap:8}}>
-            <button onClick={()=>{setAddStopOpen(false);setAddStopAddr("");setAddStopName("");}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#5a6580",fontSize:13,fontWeight:600,cursor:"pointer"}}>Cancel</button>
+            <button onClick={()=>{setAddStopOpen(false);setAddStopAddr("");setAddStopName("");setAddStopNotes("");setAddStopTime("AM");}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#5a6580",fontSize:13,fontWeight:600,cursor:"pointer"}}>Cancel</button>
             <button onClick={()=>{
               if (!addStopName.trim() && !addStopAddr.trim()) return;
               const id = "local-" + Date.now();
+              const now = new Date();
+              // Set start time based on AM/PM selection
+              const startHour = addStopTime === "AM" ? 9 : addStopTime === "PM" ? 13 : 8;
+              const startDt = new Date(businessDays[selDay] || now);
+              startDt.setHours(startHour, 0, 0, 0);
+              const endDt = new Date(startDt); endDt.setHours(startHour + 1);
+              // Build summary with time prefix to match parseEvent expectations
+              const prefix = addStopTime === "AM" ? "AM WINDOW " : addStopTime === "PM" ? "PM WINDOW " : "";
               setRawEvents(prev => {
                 const dayEvts = prev[dayKey] || [];
-                return {...prev, [dayKey]: [...dayEvts, { id, summary: addStopName.trim() || addStopAddr.trim(), location: addStopAddr.trim(), start:{dateTime:new Date().toISOString()}, end:{dateTime:new Date().toISOString()}, colorId:"7", description:"" }]};
+                return {...prev, [dayKey]: [...dayEvts, {
+                  id,
+                  summary: `TASK ${addStopName.trim() || addStopAddr.trim()}`,
+                  location: addStopAddr.trim(),
+                  start: { dateTime: startDt.toISOString() },
+                  end:   { dateTime: endDt.toISOString() },
+                  colorId: "7",
+                  description: addStopNotes.trim() || "",
+                }]};
               });
-              setAddStopAddr(""); setAddStopName(""); setAddStopOpen(false);
+              setAddStopAddr(""); setAddStopName(""); setAddStopNotes(""); setAddStopTime("AM"); setAddStopOpen(false);
             }} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:13,fontWeight:700,cursor:"pointer"}}>Add</button>
           </div>
         </div>

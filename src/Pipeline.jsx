@@ -91,8 +91,8 @@ const PIPELINE_KEY = "mts-pipeline";
 const FIELD_KEY = id => `mts-field-${id}`;
 const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
 
-// SingleOps direct search — deep link with job number pre-filled
-const SINGLEOPS_URL = "https://app.singleops.com/jobs?search=";
+// SingleOps — open the base URL and copy the job number to clipboard for quick paste
+const SINGLEOPS_URL = "https://app.singleops.com/";
 
 const EMAIL_TEMPLATES = [
   { id: "checkin", label: "Quick check-in", subject: "Quick question about your estimate — Jason @ Monster Tree",
@@ -374,10 +374,11 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
     return `${kind} · ${ago}`;
   };
 
-  // Open SingleOps job with search pre-filled
+  // Open SingleOps and copy job number to clipboard for quick paste
   const openSingleOps = (jn) => {
     if (!jn) return;
-    window.open(`${SINGLEOPS_URL}${encodeURIComponent(jn)}`, "_blank");
+    navigator.clipboard?.writeText(jn).catch(() => {});
+    window.open(SINGLEOPS_URL, "_blank");
   };
 
   // Desktop drag
@@ -603,7 +604,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
         const stage = STAGES.find(st => st.id === card.stage);
         const isDeclined = card.stage === "declined";
         const B = "'DM Sans',system-ui,sans-serif";
-        const editStyle = (color) => ({width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"rgba(255,255,255,.03)",border:`1px solid ${color}30`,color,fontSize:14,fontFamily:B,lineHeight:1.7,resize:"vertical",outline:"none",minHeight:80});
+        const editStyle = (color) => ({width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"rgba(255,255,255,.03)",border:`1px solid ${color}30`,color,fontSize:14,fontFamily:B,lineHeight:1.7,resize:"vertical",outline:"none",minHeight:"unset"});
         return <div onClick={() => setDetailCard(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
           <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",width:"100%",maxWidth:880,height:"100%",maxHeight:"min(100vh, 900px)",display:"flex",flexDirection:"column",overflow:"hidden",borderRadius:14,boxShadow:"0 20px 60px rgba(0,0,0,.6)",border:"1px solid #1a2030"}}>
             <div style={{flex:1,overflowY:"auto"}}>
@@ -625,10 +626,20 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
             </div>
 
             <div style={{padding:"16px 20px"}}>
+              {/* Stage move bar — sits above contact info for quick access */}
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14,paddingBottom:12,borderBottom:"1px solid #1a2030"}}>
+                {isDeclined && <button onClick={() => { reactivate(card.id); setDetailCard({...card, stage:"estimate_needed"}); }} style={{padding:"6px 12px",borderRadius:8,background:"rgba(255,183,77,.1)",border:"1px solid rgba(255,183,77,.3)",color:"#FFB74D",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>↩ REACTIVATE</button>}
+                {STAGES.filter(st => st.id !== card.stage && !(isDeclined && st.id !== "estimate_needed")).map(st => (
+                  <button key={st.id} onClick={() => { moveCard(card.id, st.id); setDetailCard(null); }} style={{padding:"6px 10px",borderRadius:8,background:st.bg,border:`1px solid ${st.color}40`,color:st.color,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.3}}>{st.label}</button>
+                ))}
+              </div>
+
               {/* Contact */}
               <div style={{display:"flex",gap:16,marginBottom:16,flexWrap:"wrap"}}>
                 {card.phone && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconPhone size={14} color="#a0b8d0"/><a href={`tel:${card.phone.replace(/\D/g,"")}`} onClick={()=>markContact(card.id,"call")} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.phone}</a></div>}
-                {card.email && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconMail size={14} color="#a0b8d0"/><a href={`mailto:${card.email}`} onClick={()=>markContact(card.id,"email")} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.email}</a></div>}
+                {card.email && <button onClick={()=>{navigator.clipboard?.writeText(card.email).catch(()=>{});markContact(card.id,"email");}} style={{fontSize:14,color:"#a0b8d0",background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:6}} title="Copy email">
+                  <IconMail size={14} color="#a0b8d0"/><span style={{color:"#a0b8d0"}}>{card.email}</span>
+                </button>}
                 {card.jn && <button onClick={() => openSingleOps(card.jn)} style={{fontSize:14,color:"#3B82F6",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}><span style={{display:"flex",alignItems:"center",gap:4}}>SingleOps #{card.jn}<IconClipboard size={12} color="#3B82F6"/></span></button>}
               </div>
 
@@ -641,7 +652,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
               {/* Scope section */}
               {(fd.scopeNotes || fd.myNotes) && <div style={{marginBottom:16}}>
                 <div style={{fontSize:12,fontWeight:700,color:"#3B82F6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>SCOPE</div>
-                <textarea value={fd.scopeNotes || fd.myNotes || ""} onChange={e => saveEditedField(card.id, "scopeNotes", e.target.value)} style={editStyle("#b0b8c8")} />
+                <textarea value={fd.scopeNotes || fd.myNotes || ""} onChange={e => saveEditedField(card.id, "scopeNotes", e.target.value)} rows={Math.max(4, Math.ceil((fd.scopeNotes || fd.myNotes || "").length / 60))} style={editStyle("#b0b8c8")} />
               </div>}
 
               {fd.aiScopeSummary && <div style={{marginBottom:16}}>
@@ -665,7 +676,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
               {/* Add-on section */}
               {fd.addonNotes && <div style={{marginBottom:16}}>
                 <div style={{fontSize:12,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>ADD-ON</div>
-                <textarea value={fd.addonNotes} onChange={e => saveEditedField(card.id, "addonNotes", e.target.value)} style={editStyle("#c8b0a0")} />
+                <textarea value={fd.addonNotes} onChange={e => saveEditedField(card.id, "addonNotes", e.target.value)} rows={Math.max(4, Math.ceil((fd.addonNotes || "").length / 60))} style={editStyle("#c8b0a0")} />
               </div>}
 
               {fd.aiAddonEmail && <div style={{marginBottom:16}}>
@@ -717,13 +728,6 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
                 Added {card.addedAt ? new Date(card.addedAt).toLocaleDateString() : "—"} · {card.constraint || "No constraints"}
               </div>
 
-              {/* Stage move */}
-              <div style={{display:"flex",gap:6,flexWrap:"wrap",paddingTop:12,borderTop:"1px solid #1a2030"}}>
-                {isDeclined && <button onClick={() => { reactivate(card.id); setDetailCard({...card, stage:"estimate_needed"}); }} style={{padding:"8px 16px",borderRadius:8,background:"rgba(255,183,77,.1)",border:"1px solid rgba(255,183,77,.3)",color:"#FFB74D",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>↩ REACTIVATE</button>}
-                {STAGES.filter(st => st.id !== card.stage && !(isDeclined && st.id !== "estimate_needed")).map(st => (
-                  <button key={st.id} onClick={() => { moveCard(card.id, st.id); setDetailCard(null); }} style={{padding:"8px 14px",borderRadius:8,background:st.bg,border:`1px solid ${st.color}40`,color:st.color,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{st.label}</button>
-                ))}
-              </div>
             </div>
             </div>{/* end scrollable */}
           </div>{/* end centered card */}
