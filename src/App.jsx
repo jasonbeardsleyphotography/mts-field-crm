@@ -218,34 +218,7 @@ export default function App() {
   const [contactsPushed, setContactsPushed] = useState(() => lsGet("mts-contacts-pushed", {}));
   useEffect(() => { lsSet("mts-contacts-pushed", contactsPushed); }, [contactsPushed]);
 
-  // On every calendar parse, find stops with contact info that we haven't
-  // pushed yet and push them silently. Runs at most once per stop, ever.
-  useEffect(() => {
-    if (!token || !allParsed.length) return;
-    const unpushed = allParsed.filter(s =>
-      s.isTask &&
-      !contactsPushed[s.id] &&
-      (s.phone || s.email)
-    );
-    if (unpushed.length === 0) return;
-    let dead = false;
-    (async () => {
-      const now = Date.now();
-      const updates = {};
-      // Throttle: 1 contact per 400ms so we don't hammer the People API.
-      for (const stop of unpushed) {
-        if (dead) return;
-        const ok = await autoPushContact(stop);
-        if (ok) updates[stop.id] = now;
-        await new Promise(r => setTimeout(r, 400));
-      }
-      if (!dead && Object.keys(updates).length > 0) {
-        setContactsPushed(prev => ({ ...prev, ...updates }));
-      }
-    })();
-    return () => { dead = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allParsed, token]);
+  // (Auto-contact-push effect is defined below, after allParsed is declared.)
 
   const [view, setView] = useState(() => lsGet("mts-view", "route"));
   const [pipelineSearch, setPipelineSearch] = useState("");
@@ -472,6 +445,36 @@ export default function App() {
     const raw = rawEvents[dayKey] || [];
     return raw.map(parseEvent).filter(Boolean).filter(s => !s.isAdmin);
   }, [rawEvents, dayKey]);
+
+  // Auto-push new contacts to Google Contacts silently. Runs when allParsed
+  // changes — finds stops with phone/email that haven't been pushed yet and
+  // pushes them one at a time at 400ms intervals. Each stop is pushed at
+  // most once, ever (tracked in contactsPushed).
+  useEffect(() => {
+    if (!token || !allParsed.length) return;
+    const unpushed = allParsed.filter(s =>
+      s.isTask &&
+      !contactsPushed[s.id] &&
+      (s.phone || s.email)
+    );
+    if (unpushed.length === 0) return;
+    let dead = false;
+    (async () => {
+      const now = Date.now();
+      const updates = {};
+      for (const stop of unpushed) {
+        if (dead) return;
+        const ok = await autoPushContact(stop);
+        if (ok) updates[stop.id] = now;
+        await new Promise(r => setTimeout(r, 400));
+      }
+      if (!dead && Object.keys(updates).length > 0) {
+        setContactsPushed(prev => ({ ...prev, ...updates }));
+      }
+    })();
+    return () => { dead = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allParsed, token]);
 
   useEffect(() => {
     if (!dayKey || !allParsed.length) return;
