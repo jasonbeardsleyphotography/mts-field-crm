@@ -77,58 +77,72 @@ export default function CameraView({ onPhoto, onClose }) {
     let dead = false;
 
     (async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: "environment",
-            width:  { ideal: 3840 },
-            height: { ideal: 2160 },
-          },
-          audio: false,
-        });
+      // Try resolutions in order: 4K → 1080p → device default.
+      // On some iPhones, asking for 4K causes getUserMedia to hang or return
+      // a stream that never produces frames — falling back to a lower
+      // constraint gets a working viewfinder reliably.
+      const CONSTRAINTS = [
+        { facingMode: "environment", width: { ideal: 3840 }, height: { ideal: 2160 } },
+        { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+        { facingMode: "environment" },
+      ];
 
-        if (dead) {
-          stream.getTracks().forEach(t => t.stop());
-          return;
+      let stream = null;
+      let lastErr = null;
+      for (const video of CONSTRAINTS) {
+        if (dead) return;
+        try {
+          stream = await Promise.race([
+            navigator.mediaDevices.getUserMedia({ video, audio: false }),
+            new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000)),
+          ]);
+          break; // got a stream — stop trying
+        } catch (e) {
+          lastErr = e;
+          console.warn(`Camera constraint failed (${JSON.stringify(video)}):`, e?.message);
         }
+      }
 
-        streamRef.current = stream;
-        const track = stream.getVideoTracks()[0];
-        trackRef.current = track;
-
-        const caps = track.getCapabilities?.() || {};
-
-        // ── Zoom capabilities
-        if (caps.zoom) {
-          const min  = caps.zoom.min  ?? 1;
-          const max  = caps.zoom.max  ?? 1;
-          const step = caps.zoom.step ?? 0.1;
-          setZoomCaps({ min, max, step, supported: max > min });
-
-          // Default to 0.5× if the device exposes ultrawide; otherwise start at min.
-          const target = min <= 0.5 ? 0.5 : Math.max(1, min);
-          setZoom(target);
-          try {
-            await track.applyConstraints({ advanced: [{ zoom: target }] });
-          } catch { /* some tracks reject advanced constraints — fine */ }
-        }
-
-        // ── Torch
-        if (caps.torch) setTorchSupported(true);
-
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          try { await videoRef.current.play(); } catch {}
-          setReady(true);
-        }
-      } catch (e) {
-        console.warn("Camera failed:", e);
+      if (!stream) {
         if (!dead) {
-          setError(e?.name === "NotAllowedError"
+          setError(lastErr?.name === "NotAllowedError"
             ? "Camera permission denied. Enable it in Settings → Safari → Camera."
             : "Camera unavailable.");
           setTimeout(() => onClose?.(), 1800);
         }
+        return;
+      }
+
+      if (dead) { stream.getTracks().forEach(t => t.stop()); return; }
+
+      streamRef.current = stream;
+      const track = stream.getVideoTracks()[0];
+      trackRef.current = track;
+
+      const caps = track.getCapabilities?.() || {};
+
+      // ── Zoom capabilities
+      if (caps.zoom) {
+        const min  = caps.zoom.min  ?? 1;
+        const max  = caps.zoom.max  ?? 1;
+        const step = caps.zoom.step ?? 0.1;
+        setZoomCaps({ min, max, step, supported: max > min });
+
+        // Default to 0.5× if the device exposes ultrawide; otherwise start at min.
+        const target = min <= 0.5 ? 0.5 : Math.max(1, min);
+        setZoom(target);
+        try {
+          await track.applyConstraints({ advanced: [{ zoom: target }] });
+        } catch { /* some tracks reject advanced constraints — fine */ }
+      }
+
+      // ── Torch
+      if (caps.torch) setTorchSupported(true);
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        try { await videoRef.current.play(); } catch {}
+        setReady(true);
       }
     })();
 
