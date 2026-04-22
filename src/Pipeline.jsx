@@ -604,8 +604,9 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
         const isDeclined = card.stage === "declined";
         const B = "'DM Sans',system-ui,sans-serif";
         const editStyle = (color) => ({width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"rgba(255,255,255,.03)",border:`1px solid ${color}30`,color,fontSize:14,fontFamily:B,lineHeight:1.7,resize:"vertical",outline:"none",minHeight:80});
-        return <div style={{position:"fixed",inset:0,background:"#0a0b10",zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-          <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",width:"100%",flex:1,overflowY:"auto",padding:0}}>
+        return <div onClick={() => setDetailCard(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+          <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",width:"100%",maxWidth:880,height:"100%",maxHeight:"min(100vh, 900px)",display:"flex",flexDirection:"column",overflow:"hidden",borderRadius:14,boxShadow:"0 20px 60px rgba(0,0,0,.6)",border:"1px solid #1a2030"}}>
+            <div style={{flex:1,overflowY:"auto"}}>
 
             {/* Header */}
             <div style={{padding:"16px 20px",background:"#0a0b10",borderBottom:"1px solid #1a2030",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:1}}>
@@ -737,8 +738,9 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
                 ))}
               </div>
             </div>
-          </div>
-        </div>;
+            </div>{/* end scrollable */}
+          </div>{/* end centered card */}
+        </div>;{/* end backdrop */}
       })()}
 
       {/* ── EMAIL TEMPLATE SHEET ──────────────────────────────────────── */}
