@@ -1,5 +1,7 @@
-import { IconFire, IconRevision, IconPause, IconMail, IconX, IconCheckCircle, IconPhone, IconTrash, IconEdit, IconClipboard, IconSingleops, IconVideo, IconStar, IconCamera } from "./icons";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { IconFire, IconRevision, IconPause, IconMail, IconX, IconCheckCircle, IconPhone, IconTrash, IconEdit, IconClipboard, IconSingleops, IconVideo, IconStar, IconCamera, IconImage, IconDownload, IconPen, IconYoutube } from "./icons";
+import CameraView from "./CameraView";
+import PhotoMarkup from "./PhotoMarkup";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { loadFieldFromDrive, saveFieldToDrive } from "./driveSync";
 import { loadField, saveField, peekField, primeField } from "./fieldStore";
 
@@ -87,6 +89,9 @@ async function pushToGoogleContacts(card, token) {
   } catch(e) { console.warn("Contact push failed:", e); return { success: false }; }
 }
 
+const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+
 const PIPELINE_KEY = "mts-pipeline";
 const FIELD_KEY = id => `mts-field-${id}`;
 const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
@@ -134,6 +139,18 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   const [detailLoading, setDetailLoading] = useState(false);
   const [editFields, setEditFields] = useState({}); // editable overrides for detail popup
   const [contactSave, setContactSave] = useState({}); // {[cardId]: 'saving'|'saved'|'error'}
+  const [detailAiScopeLoading, setDetailAiScopeLoading] = useState(false);
+  const [detailAiAddonLoading, setDetailAiAddonLoading] = useState(false);
+  // Email client preference — persisted so user doesn't have to re-select
+  const [emailClient, setEmailClient] = useState(() => localStorage.getItem("mts-email-client") || "outlook_web");
+  const [bulkEmailQueue, setBulkEmailQueue] = useState(null); // [{email,subject,body,name,cardId,opened}] | null
+  // Detail popup — camera / markup / YouTube upload state
+  const [detailShowCamera, setDetailShowCamera] = useState(null); // "scope" | "addon" | null
+  const [detailMarkup, setDetailMarkup] = useState(null); // { section, idx } | null
+  const [detailYtCount, setDetailYtCount] = useState(0);
+  const detailScopeLibRef = useRef(null);
+  const detailAddonLibRef = useRef(null);
+  const detailYtFileRef = useRef(null);
 
   // Save edited field data to IndexedDB (and Drive if token available)
   const saveEditedField = useCallback((id, key, value) => {
@@ -149,6 +166,156 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
       }, 2000);
     }
   }, [token]);
+
+  // ── GEMINI AI — used in detail popup ─────────────────────────────────
+  const callGemini = async (prompt) => {
+    const res = await fetch(`${GEMINI_URL}?key=${GEMINI_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+    });
+    const data = await res.json();
+    return data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response.";
+  };
+
+  const generateDetailScopeSummary = async (card, fd) => {
+    if (!GEMINI_KEY) { saveEditedField(card.id, "aiScopeSummary", "Add VITE_GEMINI_KEY to .env"); return; }
+    setDetailAiScopeLoading(true);
+    try {
+      const text = await callGemini(`You are an ISA-certified arborist's field assistant. Summarize these field notes into a structured estimate summary. Include: species/trees observed, conditions found, recommended treatments, equipment needed, and a rough job value estimate if enough info exists. Be concise and professional.
+
+Client: ${card.cn}
+Address: ${card.addr}
+Job notes from office: ${card.notes || "None"}
+Scope notes: ${fd.scopeNotes || fd.myNotes || "None"}
+Constraints: ${card.constraint || "None"}`);
+      saveEditedField(card.id, "aiScopeSummary", text);
+    } catch(e) { saveEditedField(card.id, "aiScopeSummary", "Error: " + e.message); }
+    setDetailAiScopeLoading(false);
+  };
+
+  const generateDetailAddonEmail = async (card, fd) => {
+    if (!GEMINI_KEY) { saveEditedField(card.id, "aiAddonEmail", "Add VITE_GEMINI_KEY to .env"); return; }
+    setDetailAiAddonLoading(true);
+    try {
+      const text = await callGemini(`You are an ISA-certified arborist writing a professional, educational email to a homeowner. Based on these additional findings discovered during a site visit:
+
+1. For each issue found, write a brief educational paragraph explaining what it is, why it matters for tree/plant health, and what treatments or recommendations exist.
+2. Reference science-based information — cite Cornell Cooperative Extension, Northeast university extension resources, or ISA best practices where relevant.
+3. NEVER use the word "chemical" — instead use "treatments," "applications," "plant healthcare solutions," or "recommendations."
+4. Tone should be educational but down-to-earth. Keep it warm and professional.
+5. End with a brief recommendation and offer to discuss further.
+6. Sign as Jason from Monster Tree Service of Rochester.
+
+Client first name: ${(card.cn || "").split(" ")[0]}
+Add-on findings: ${fd.addonNotes || "None"}
+Property: ${card.addr || ""}`);
+      saveEditedField(card.id, "aiAddonEmail", text);
+    } catch(e) { saveEditedField(card.id, "aiAddonEmail", "Error: " + e.message); }
+    setDetailAiAddonLoading(false);
+  };
+
+  // ── DETAIL POPUP — PHOTO / VIDEO HELPERS ─────────────────────────────
+  const detailAddPhoto = (dataUrl, section, cardId) => {
+    const photo = { dataUrl, ts: Date.now() };
+    const key = section === "addon" ? "addonPhotos" : "scopePhotos";
+    setEditFields(prev => {
+      const cur = prev[cardId] || {};
+      const existing = cur[key] || peekField(cardId)[key] || [];
+      return { ...prev, [cardId]: { ...cur, [key]: [...existing, photo] } };
+    });
+    // Persist
+    const cur = peekField(cardId);
+    const existingArr = cur[key] || [];
+    const updated = { ...cur, [key]: [...existingArr, photo] };
+    primeField(cardId, updated);
+    saveField(cardId, updated).catch(() => {});
+  };
+
+  const detailRemovePhoto = (idx, section, cardId) => {
+    const key = section === "addon" ? "addonPhotos" : "scopePhotos";
+    setEditFields(prev => {
+      const cur = prev[cardId] || {};
+      const existing = cur[key] || peekField(cardId)[key] || [];
+      return { ...prev, [cardId]: { ...cur, [key]: existing.filter((_, i) => i !== idx) } };
+    });
+    const cur = peekField(cardId);
+    const existingArr = cur[key] || [];
+    const updated = { ...cur, [key]: existingArr.filter((_, i) => i !== idx) };
+    primeField(cardId, updated);
+    saveField(cardId, updated).catch(() => {});
+  };
+
+  const detailSaveMarkup = (newDataUrl, idx, section, cardId) => {
+    const key = section === "addon" ? "addonPhotos" : "scopePhotos";
+    setEditFields(prev => {
+      const cur = prev[cardId] || {};
+      const existing = [...(cur[key] || peekField(cardId)[key] || [])];
+      existing[idx] = { ...existing[idx], dataUrl: newDataUrl };
+      return { ...prev, [cardId]: { ...cur, [key]: existing } };
+    });
+    const cur = peekField(cardId);
+    const existingArr = [...(cur[key] || [])];
+    existingArr[idx] = { ...existingArr[idx], dataUrl: newDataUrl };
+    const updated = { ...cur, [key]: existingArr };
+    primeField(cardId, updated);
+    saveField(cardId, updated).catch(() => {});
+    setDetailMarkup(null);
+  };
+
+  const detailHandleLibraryPhotos = (e, section, cardId) => {
+    Array.from(e.target.files || []).forEach(file => {
+      _detailProcessPhoto(file, section, cardId, detailAddPhoto);
+    });
+    e.target.value = "";
+  };
+
+  const detailHandleYtFile = (e, card, fd) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const videoUrls = fd.videoUrls || (fd.videoUrl ? [fd.videoUrl] : []);
+      const lastName = (card.cn || "").split(" ").pop();
+      const jobPart = card.jn ? ` #${card.jn}` : "";
+      const datePart = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
+      const suffix = videoUrls.length > 0 ? ` (${videoUrls.length + 1})` : "";
+      const title = `${lastName}${jobPart} ${datePart}${suffix}`;
+      setDetailYtCount(n => n + 1);
+      _uploadToYouTubeForDetail(file, title, token, card.id).then(ytUrl => {
+        if (ytUrl) {
+          setEditFields(prev => {
+            const cur = prev[card.id] || {};
+            const existing = cur.videoUrls || peekField(card.id).videoUrls || [];
+            return { ...prev, [card.id]: { ...cur, videoUrls: [...existing, ytUrl] } };
+          });
+        }
+        setDetailYtCount(n => n - 1);
+      }).catch(() => setDetailYtCount(n => n - 1));
+    }
+    e.target.value = "";
+  };
+
+  const detailDeleteVideo = async (url, idx, card, fd) => {
+    const videoId = url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
+    if (videoId && token) {
+      const confirmed = window.confirm("Delete this video from YouTube AND remove it from the app?");
+      if (!confirmed) return;
+      try {
+        await fetch(`https://www.googleapis.com/youtube/v3/videos?id=${videoId}`, {
+          method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch(e) { console.warn("YT delete error:", e); }
+    }
+    const key = "videoUrls";
+    setEditFields(prev => {
+      const cur = prev[card.id] || {};
+      const existing = cur[key] || fd.videoUrls || [];
+      return { ...prev, [card.id]: { ...cur, [key]: existing.filter((_, i) => i !== idx) } };
+    });
+    const cur = peekField(card.id);
+    const updated = { ...cur, videoUrls: (cur.videoUrls || []).filter((_, i) => i !== idx) };
+    primeField(card.id, updated);
+    saveField(card.id, updated).catch(() => {});
+  };
 
   // Persist
   useEffect(() => { savePipeline(pipeline); }, [pipeline]);
@@ -392,18 +559,37 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   const selectedCount = selectedCards.length;
 
   // ── BULK EMAIL + SMS ────────────────────────────────────────
+  // ── EMAIL COMPOSE HELPER ─────────────────────────────────────────────
+  // Opens a compose window in the user's preferred email client.
+  // Direct user-gesture call (no setTimeout) so browsers don't block the popup.
+  const openEmailCompose = useCallback((to, subject, body, client) => {
+    const cl = client || emailClient;
+    if (cl === "outlook_web") {
+      const url = `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(to)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      window.open(url, "_blank");
+    } else if (cl === "outlook_live") {
+      const url = `https://outlook.live.com/mail/0/deeplink/compose?to=${encodeURIComponent(to)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      window.open(url, "_blank");
+    } else {
+      window.open(`mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_self");
+    }
+  }, [emailClient]);
+
+  const saveEmailClient = (cl) => {
+    setEmailClient(cl);
+    localStorage.setItem("mts-email-client", cl);
+  };
+
+  // Build the queue — user then taps each recipient button to open one tab per click
   const sendBulkEmail = (template) => {
-    selectedCards.forEach((card, i) => {
-      const firstName = (card.cn || "").split(" ")[0];
-      const body = template.body.replace(/\{firstName\}/g, firstName);
-      const email = card.email || "";
-      if (!email) return;
-      setTimeout(() => {
-        window.open(`mailto:${email}?subject=${encodeURIComponent(template.subject)}&body=${encodeURIComponent(body)}`, "_self");
-        markContact(card.id, "email");
-      }, i * 800);
-    });
-    setEmailPreview(null); setEmailSheet(false); setSelectMode(false); setSelected({});
+    const queue = selectedCards
+      .filter(c => c.email)
+      .map(c => {
+        const firstName = (c.cn || "").split(" ")[0];
+        const body = template.body.replace(/\{firstName\}/g, firstName);
+        return { email: c.email, subject: template.subject, body, name: firstName, cardId: c.id, opened: false };
+      });
+    setBulkEmailQueue(queue);
   };
 
   const sendBulkSms = (template) => {
@@ -604,13 +790,34 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
         const stage = STAGES.find(st => st.id === card.stage);
         const isDeclined = card.stage === "declined";
         const B = "'DM Sans',system-ui,sans-serif";
-        const editStyle = (color) => ({width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"rgba(255,255,255,.03)",border:`1px solid ${color}30`,color,fontSize:14,fontFamily:B,lineHeight:1.7,resize:"vertical",outline:"none",minHeight:"unset"});
+        const editStyle = (color) => ({width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"rgba(255,255,255,.03)",border:`1px solid ${color}30`,color,fontSize:14,fontFamily:B,lineHeight:1.2,resize:"vertical",outline:"none",minHeight:"unset"});
+        const scopePhotos = fd.scopePhotos || fd.photos || [];
+        const addonPhotos = fd.addonPhotos || [];
+        const videoUrls = fd.videoUrls || (fd.videoUrl ? [fd.videoUrl] : []);
+        const getYtId = url => url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
+
+        // Camera overlay — renders above everything else in the popup
+        if (detailShowCamera) return <CameraView
+          onPhoto={(dataUrl) => { detailAddPhoto(dataUrl, detailShowCamera, card.id); }}
+          onClose={() => setDetailShowCamera(null)}
+        />;
+
+        // Markup overlay
+        if (detailMarkup) {
+          const photos = detailMarkup.section === "addon" ? addonPhotos : scopePhotos;
+          if (photos[detailMarkup.idx]) return <PhotoMarkup
+            photoDataUrl={photos[detailMarkup.idx].dataUrl}
+            onSave={dataUrl => detailSaveMarkup(dataUrl, detailMarkup.idx, detailMarkup.section, card.id)}
+            onCancel={() => setDetailMarkup(null)}
+          />;
+        }
+
         return <div onClick={() => setDetailCard(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
           <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",width:"100%",maxWidth:880,height:"100%",maxHeight:"min(100vh, 900px)",display:"flex",flexDirection:"column",overflow:"hidden",borderRadius:14,boxShadow:"0 20px 60px rgba(0,0,0,.6)",border:"1px solid #1a2030"}}>
             <div style={{flex:1,overflowY:"auto"}}>
 
-            {/* Header */}
-            <div style={{padding:"16px 20px",background:"#0a0b10",borderBottom:"1px solid #1a2030",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:1}}>
+            {/* Header — paddingTop respects iPhone notch / Dynamic Island */}
+            <div style={{padding:"16px 20px",paddingTop:"max(16px, env(safe-area-inset-top))",background:"#0a0b10",borderBottom:"1px solid #1a2030",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:1}}>
               <div style={{flex:1}}>
                 <div style={{fontSize:20,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.5}}>{card.hot && <IconFire size={16} color="#FFB300" style={{marginRight:6,flexShrink:0}}/>}{card.cn}</div>
                 {card.addr && <div style={{fontSize:13,color:"#8a96a8",fontFamily:F,textTransform:"uppercase",letterSpacing:1,marginTop:2}}>{card.addr}</div>}
@@ -620,7 +827,6 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
                 })()}
               </div>
               {detailLoading && <div style={{fontSize:10,color:"#3B82F6",fontWeight:600,display:"flex",alignItems:"center",gap:4}}><span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>↻</span> syncing</div>}
-              <button onClick={() => { setDetailCard(null); onSwitchToRoute(card.id); }} style={{padding:"4px 10px",borderRadius:6,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",flexShrink:0}}>← Route</button>
               <span style={{padding:"4px 12px",borderRadius:99,background:stage?.bg,color:stage?.color,fontSize:12,fontWeight:700,fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{stage?.label}</span>
               <button onClick={() => setDetailCard(null)} style={{width:32,height:32,borderRadius:8,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
             </div>
@@ -652,7 +858,12 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
               {/* Scope section */}
               {(fd.scopeNotes || fd.myNotes) && <div style={{marginBottom:16}}>
                 <div style={{fontSize:12,fontWeight:700,color:"#3B82F6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>SCOPE</div>
-                <textarea value={fd.scopeNotes || fd.myNotes || ""} onChange={e => saveEditedField(card.id, "scopeNotes", e.target.value)} rows={Math.max(4, Math.ceil((fd.scopeNotes || fd.myNotes || "").length / 60))} style={editStyle("#b0b8c8")} />
+                <textarea value={fd.scopeNotes || fd.myNotes || ""} onChange={e => saveEditedField(card.id, "scopeNotes", e.target.value)} rows={Math.max(5, Math.round(Math.ceil((fd.scopeNotes || fd.myNotes || "").length / 60) * 1.3))} style={editStyle("#b0b8c8")} />
+                <button onClick={() => saveEditedField(card.id, "scopeNotes", (fd.scopeNotes || fd.myNotes || "").toUpperCase())} style={{marginTop:4,padding:"5px 12px",borderRadius:6,background:"rgba(176,184,200,.06)",border:"1px solid rgba(176,184,200,.15)",color:"#6a7a90",fontSize:10,fontWeight:800,cursor:"pointer",letterSpacing:1}}>AA → ALL CAPS</button>
+                <button onClick={() => generateDetailScopeSummary(card, fd)} disabled={detailAiScopeLoading} style={{marginTop:6,width:"100%",padding:"9px 12px",borderRadius:8,background:detailAiScopeLoading?"rgba(59,130,246,.05)":"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.25)",color:detailAiScopeLoading?"#3a5a80":"#3B82F6",fontSize:11,fontWeight:700,cursor:detailAiScopeLoading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
+                  <span style={{fontSize:13}}>{detailAiScopeLoading?"⏳":"✦"}</span>
+                  {detailAiScopeLoading ? "Generating summary…" : fd.aiScopeSummary ? "Regenerate scope summary" : "Generate scope summary"}
+                </button>
               </div>}
 
               {fd.aiScopeSummary && <div style={{marginBottom:16}}>
@@ -660,60 +871,113 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
                 <textarea value={fd.aiScopeSummary} onChange={e => saveEditedField(card.id, "aiScopeSummary", e.target.value)} style={editStyle("#a0b0c8")} />
               </div>}
 
-              {/* Scope photos */}
-              {((fd.scopePhotos || fd.photos || []).length > 0) && <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>SCOPE PHOTOS ({(fd.scopePhotos || fd.photos).length})</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:8}}>
-                  {(fd.scopePhotos || fd.photos).map((p, i) => (
-                    <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
-                      <img src={p.dataUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
-                      <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_scope_${i+1}.jpg`} style={{position:"absolute",bottom:6,right:6,padding:"4px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#fff",fontSize:11,textDecoration:"none",fontWeight:600}}>⬇ Download</a>
-                    </div>
-                  ))}
+              {/* Scope photos — fully editable */}
+              <div style={{marginBottom:16}}>
+                {scopePhotos.length > 0 && <>
+                  <div style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>SCOPE PHOTOS ({scopePhotos.length})</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:8,marginBottom:8}}>
+                    {scopePhotos.map((p, i) => (
+                      <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
+                        <img src={p.dataUrl} alt="" onClick={() => setDetailMarkup({section:"scope",idx:i})} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
+                        <button onClick={() => detailRemovePhoto(i,"scope",card.id)} style={{position:"absolute",top:4,right:4,width:22,height:22,borderRadius:11,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={11} color="#ff6666"/></button>
+                        <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:3}}>
+                          <div onClick={() => setDetailMarkup({section:"scope",idx:i})} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={10} color="#ccc"/></div>
+                          <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_scope_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer",textDecoration:"none"}}><IconDownload size={10} color="#ccc"/></a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>}
+                <input ref={detailScopeLibRef} type="file" accept="image/*" multiple onChange={e => detailHandleLibraryPhotos(e,"scope",card.id)} style={{display:"none"}} />
+                <div style={{display:"flex",gap:6}}>
+                  <button onClick={() => setDetailShowCamera("scope")} style={{flex:1,padding:"8px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4}}>
+                    <IconCamera size={14} color="#5a7090"/><span style={{fontSize:10,color:"#5a7090",fontWeight:600}}>Camera</span>
+                  </button>
+                  <button onClick={() => detailScopeLibRef.current?.click()} style={{flex:1,padding:"8px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4}}>
+                    <IconImage size={14} color="#5a7090"/><span style={{fontSize:10,color:"#5a7090",fontWeight:600}}>Library</span>
+                  </button>
                 </div>
-              </div>}
+              </div>
 
               {/* Add-on section */}
               {fd.addonNotes && <div style={{marginBottom:16}}>
                 <div style={{fontSize:12,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>ADD-ON</div>
                 <textarea value={fd.addonNotes} onChange={e => saveEditedField(card.id, "addonNotes", e.target.value)} rows={Math.max(4, Math.ceil((fd.addonNotes || "").length / 60))} style={editStyle("#c8b0a0")} />
+                <button onClick={() => saveEditedField(card.id, "addonNotes", (fd.addonNotes || "").toUpperCase())} style={{marginTop:4,padding:"5px 12px",borderRadius:6,background:"rgba(200,176,160,.06)",border:"1px solid rgba(200,176,160,.15)",color:"#8a6a50",fontSize:10,fontWeight:800,cursor:"pointer",letterSpacing:1}}>AA → ALL CAPS</button>
+                <button onClick={() => generateDetailAddonEmail(card, fd)} disabled={detailAiAddonLoading} style={{marginTop:6,width:"100%",padding:"9px 12px",borderRadius:8,background:detailAiAddonLoading?"rgba(255,138,101,.05)":"rgba(255,138,101,.1)",border:"1px solid rgba(255,138,101,.25)",color:detailAiAddonLoading?"#906050":"#FF8A65",fontSize:11,fontWeight:700,cursor:detailAiAddonLoading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
+                  <span style={{fontSize:13}}>{detailAiAddonLoading?"⏳":"✦"}</span>
+                  {detailAiAddonLoading ? "Generating email…" : fd.aiAddonEmail ? "Regenerate add-on email" : "Generate add-on email"}
+                </button>
               </div>}
 
               {fd.aiAddonEmail && <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>AI ADD-ON EMAIL</div>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                  <span style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,flex:1}}>AI ADD-ON EMAIL</span>
+                  <button onClick={()=>{
+                    const subject = `Additional findings from your estimate — Monster Tree Service`;
+                    openEmailCompose(card.email||"", subject, fd.aiAddonEmail);
+                  }} style={{padding:"3px 8px",borderRadius:5,background:"rgba(255,138,101,.08)",border:"1px solid rgba(255,138,101,.25)",color:"#FF8A65",fontSize:10,fontWeight:700,cursor:"pointer"}}>Send</button>
+                  <button onClick={()=>{navigator.clipboard?.writeText(fd.aiAddonEmail).catch(()=>{});}} style={{padding:"3px 8px",borderRadius:5,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",fontSize:10,fontWeight:700,cursor:"pointer"}}>Copy</button>
+                </div>
                 <textarea value={fd.aiAddonEmail} onChange={e => saveEditedField(card.id, "aiAddonEmail", e.target.value)} style={editStyle("#c8a090")} />
               </div>}
 
-              {/* Add-on photos */}
-              {(fd.addonPhotos || []).length > 0 && <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>ADD-ON PHOTOS ({fd.addonPhotos.length})</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:8}}>
-                  {fd.addonPhotos.map((p, i) => (
-                    <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
-                      <img src={p.dataUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
-                      <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_addon_${i+1}.jpg`} style={{position:"absolute",bottom:6,right:6,padding:"4px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",color:"#fff",fontSize:11,textDecoration:"none",fontWeight:600}}>⬇ Download</a>
-                    </div>
-                  ))}
+              {/* Add-on photos — fully editable */}
+              <div style={{marginBottom:16}}>
+                {addonPhotos.length > 0 && <>
+                  <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>ADD-ON PHOTOS ({addonPhotos.length})</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:8,marginBottom:8}}>
+                    {addonPhotos.map((p, i) => (
+                      <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
+                        <img src={p.dataUrl} alt="" onClick={() => setDetailMarkup({section:"addon",idx:i})} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
+                        <button onClick={() => detailRemovePhoto(i,"addon",card.id)} style={{position:"absolute",top:4,right:4,width:22,height:22,borderRadius:11,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={11} color="#ff6666"/></button>
+                        <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:3}}>
+                          <div onClick={() => setDetailMarkup({section:"addon",idx:i})} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={10} color="#ccc"/></div>
+                          <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_addon_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer",textDecoration:"none"}}><IconDownload size={10} color="#ccc"/></a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>}
+                <input ref={detailAddonLibRef} type="file" accept="image/*" multiple onChange={e => detailHandleLibraryPhotos(e,"addon",card.id)} style={{display:"none"}} />
+                <div style={{display:"flex",gap:6}}>
+                  <button onClick={() => setDetailShowCamera("addon")} style={{flex:1,padding:"8px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4}}>
+                    <IconCamera size={14} color="#5a7090"/><span style={{fontSize:10,color:"#5a7090",fontWeight:600}}>Camera</span>
+                  </button>
+                  <button onClick={() => detailAddonLibRef.current?.click()} style={{flex:1,padding:"8px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4}}>
+                    <IconImage size={14} color="#5a7090"/><span style={{fontSize:10,color:"#5a7090",fontWeight:600}}>Library</span>
+                  </button>
                 </div>
-              </div>}
+              </div>
 
-              {/* Video */}
-              {(fd.videoUrls?.length || fd.videoUrl) && <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>VIDEO</div>
-                {(fd.videoUrls || (fd.videoUrl ? [fd.videoUrl] : [])).map((url, i) => {
-                  const vid = url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
-                  return <div key={i} style={{marginBottom:8}}>
+              {/* Video — upload, view, delete */}
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
+                  VIDEO
+                  {detailYtCount > 0 && <span style={{fontSize:9,color:"#F6BF26",fontWeight:700,padding:"1px 8px",borderRadius:10,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.2)"}}>↑ Uploading…</span>}
+                </div>
+                {videoUrls.map((url, i) => {
+                  const vid = getYtId(url);
+                  return <div key={i} style={{marginBottom:8,borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",overflow:"hidden"}}>
                     {vid ? (
-                      <div style={{position:"relative",paddingBottom:"56.25%",borderRadius:10,overflow:"hidden"}}>
+                      <div style={{position:"relative",paddingBottom:"56.25%"}}>
                         <iframe src={`https://www.youtube.com/embed/${vid}`} style={{position:"absolute",inset:0,width:"100%",height:"100%",border:"none"}} allowFullScreen />
                       </div>
                     ) : (
-                      <a href={url} target="_blank" rel="noopener noreferrer" style={{fontSize:14,color:"#6a8aB0"}}>{url}</a>
+                      <a href={url} target="_blank" rel="noopener noreferrer" style={{display:"block",padding:"10px 12px",fontSize:13,color:"#6a8ab0"}}>{url}</a>
                     )}
-                    <button onClick={()=>{const html=`<a href="${url}">Link to Video Review</a>`;if(navigator.clipboard?.write){navigator.clipboard.write([new ClipboardItem({"text/html":new Blob([html],{type:"text/html"}),"text/plain":new Blob([url],{type:"text/plain"})})]).catch(()=>navigator.clipboard?.writeText(url));}else{navigator.clipboard?.writeText(url);}}} style={{marginTop:6,padding:"5px 12px",borderRadius:6,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#5a90b0",fontSize:10,fontWeight:600,cursor:"pointer"}}>Copy link</button>
+                    <div style={{padding:"6px 8px",display:"flex",gap:6,alignItems:"center"}}>
+                      <div style={{fontSize:9,color:"#5a6890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{url}</div>
+                      <button onClick={()=>{const html=`<a href="${url}">Link to Video Review</a>`;if(navigator.clipboard?.write){navigator.clipboard.write([new ClipboardItem({"text/html":new Blob([html],{type:"text/html"}),"text/plain":new Blob([url],{type:"text/plain"})})]).catch(()=>navigator.clipboard?.writeText(url));}else{navigator.clipboard?.writeText(url);}}} style={{padding:"4px 8px",borderRadius:5,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#5a90b0",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Copy link</button>
+                      <button onClick={() => detailDeleteVideo(url, i, card, fd)} style={{padding:"4px 6px",borderRadius:5,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.15)",color:"#e06060",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}><IconX size={10} color="#e06060"/></button>
+                    </div>
                   </div>;
                 })}
-              </div>}
+                <input ref={detailYtFileRef} type="file" accept="video/*" onChange={e => detailHandleYtFile(e, card, fd)} style={{display:"none"}} />
+                <button onClick={() => detailYtFileRef.current?.click()} style={{width:"100%",padding:"9px 0",borderRadius:8,background:"rgba(255,0,0,.06)",border:"1px dashed rgba(255,0,0,.2)",color:"#cc4040",fontSize:11,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                  <IconYoutube size={13} color="#cc4040"/>{videoUrls.length > 0 ? `Add another video (${videoUrls.length + 1})` : "Upload video"}
+                </button>
+              </div>
 
               {/* Audio clips */}
               {(fd.audioClips || []).length > 0 && <div style={{marginBottom:16}}>
@@ -730,15 +994,55 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
 
             </div>
             </div>{/* end scrollable */}
+
+            {/* Sticky bottom bar — Route button lives here so it doesn't crowd the header */}
+            <div style={{flexShrink:0,padding:"10px 20px",paddingBottom:"max(10px,env(safe-area-inset-bottom))",background:"#0a0b10",borderTop:"1px solid #1a2030",display:"flex",gap:8,alignItems:"center"}}>
+              <button onClick={() => { setDetailCard(null); onSwitchToRoute(card.id); }} style={{flex:1,padding:"11px 0",borderRadius:10,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>← Route</button>
+              <button onClick={() => setDetailCard(null)} style={{flex:2,padding:"11px 0",borderRadius:10,background:"#1a2035",border:"1px solid #2a3560",color:"#8898a8",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Close</button>
+            </div>
+
           </div>{/* end centered card */}
         </div>;{/* end backdrop */}
       })()}
 
       {/* ── EMAIL TEMPLATE SHEET ──────────────────────────────────────── */}
-      {emailSheet && <div onClick={()=>{setEmailSheet(false);setEmailPreview(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:emailPreview?"center":"flex-end",justifyContent:"center",padding:emailPreview?20:0}}>
-        <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:emailPreview?14:"14px 14px 0 0",padding:18,maxWidth:480,width:"100%",paddingBottom:emailPreview?18:"max(18px,env(safe-area-inset-bottom))"}}>
+      {emailSheet && <div onClick={()=>{setEmailSheet(false);setEmailPreview(null);setBulkEmailQueue(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:emailPreview||bulkEmailQueue?"center":"flex-end",justifyContent:"center",padding:emailPreview||bulkEmailQueue?20:0}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:emailPreview||bulkEmailQueue?14:"14px 14px 0 0",padding:18,maxWidth:480,width:"100%",maxHeight:"85vh",overflowY:"auto",paddingBottom:emailPreview||bulkEmailQueue?18:"max(18px,env(safe-area-inset-bottom))"}}>
 
-          {!emailPreview ? <>
+          {/* ── Email client toggle ── */}
+          <div style={{display:"flex",gap:4,marginBottom:14,background:"#0a0c14",borderRadius:8,padding:3}}>
+            {[["outlook_web","Outlook (work)"],["outlook_live","Outlook.com"],["mailto","Default app"]].map(([id,label])=>(
+              <button key={id} onClick={()=>saveEmailClient(id)} style={{flex:1,padding:"5px 0",borderRadius:6,background:emailClient===id?"#1a2540":"transparent",border:emailClient===id?"1px solid #2a3560":"1px solid transparent",color:emailClient===id?"#90b8e0":"#3a4a60",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.3,transition:"all .15s"}}>{label}</button>
+            ))}
+          </div>
+
+          {/* ── Bulk queue: tap each recipient to open their compose window ── */}
+          {bulkEmailQueue ? <>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+              <button onClick={()=>setBulkEmailQueue(null)} style={{padding:"4px 10px",borderRadius:6,background:"transparent",border:"1px solid #2a3560",color:"#5a6580",fontSize:11,cursor:"pointer"}}>← Back</button>
+              <span style={{fontSize:13,fontWeight:700,color:"#f0f4fa",flex:1}}>Tap each to open in Outlook</span>
+            </div>
+            <div style={{fontSize:10,color:"#4a5060",marginBottom:10}}>Each tap opens one compose window — browsers only allow one per click.</div>
+            {bulkEmailQueue.map((item, i) => (
+              <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",borderRadius:8,background:item.opened?"rgba(16,185,129,.05)":"#0e1120",border:`1px solid ${item.opened?"rgba(16,185,129,.2)":"#1a2540"}`,marginBottom:6}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:600,color:item.opened?"#10B981":"#a0b8d0"}}>{item.name} — {item.email}</div>
+                  <div style={{fontSize:10,color:"#4a5a70",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.subject}</div>
+                </div>
+                {item.opened
+                  ? <span style={{fontSize:11,color:"#10B981",fontWeight:700}}>✓ Opened</span>
+                  : <button onClick={()=>{
+                      openEmailCompose(item.email, item.subject, item.body);
+                      markContact(item.cardId, "email");
+                      setBulkEmailQueue(prev => prev.map((x,j) => j===i ? {...x,opened:true} : x));
+                    }} style={{padding:"6px 14px",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.3)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0}}>
+                      Open →
+                    </button>
+                }
+              </div>
+            ))}
+            {bulkEmailQueue.every(x=>x.opened) && <div style={{textAlign:"center",padding:"10px 0",fontSize:12,color:"#10B981",fontWeight:700}}>✓ All {bulkEmailQueue.length} opened</div>}
+          </> : !emailPreview ? <>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
               <span style={{fontSize:15,fontWeight:700,color:"#f0f4fa",flex:1,fontFamily:F,letterSpacing:1,textTransform:"uppercase"}}>Email {selectedCount} clients</span>
               <button onClick={()=>{setEmailSheet(false);}} style={{width:28,height:28,borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
@@ -761,8 +1065,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
               <div style={{fontSize:12,color:"#8898a8",lineHeight:1.5,whiteSpace:"pre-wrap"}}>{emailPreview.body.replace(/\{firstName\}/g, (selectedCards[0]?.cn || "").split(" ")[0])}</div>
             </div>
             <div style={{fontSize:10,color:"#4a5a70",marginBottom:10}}>Will send to: {selectedCards.map(c => c.email || "(no email)").join(", ")}</div>
-            <button onClick={()=>sendBulkEmail(emailPreview)} style={{width:"100%",padding:"12px 0",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:1,textTransform:"uppercase"}}><span style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconMail size={15} color="#3B82F6"/>SEND {selectedCount} EMAILS</span></button>
-            <div style={{fontSize:10,color:"#3a4a60",marginTop:6,textAlign:"center"}}>Opens each in Outlook — tap Send on each one</div>
+            <button onClick={()=>sendBulkEmail(emailPreview)} style={{width:"100%",padding:"12px 0",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:1,textTransform:"uppercase"}}><span style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconMail size={15} color="#3B82F6"/>PREPARE {selectedCount} EMAILS →</span></button>
           </>}
         </div>
       </div>}
@@ -799,7 +1102,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
                     setPipelineSheet(null);
                   } else {
                     const body = t.body.replace(/\{firstName\}/g, firstName);
-                    window.open(`mailto:${card.email}?subject=${encodeURIComponent(t.subject)}&body=${encodeURIComponent(body)}`, "_self");
+                    openEmailCompose(card.email, t.subject, body);
                     markContact(card.id, "email");
                     setPipelineSheet(null);
                   }
@@ -833,3 +1136,49 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
 }
 
 export { STAGES, loadPipeline, savePipeline };
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Module-level helpers — outside React so async work survives navigation
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+// Photo resize + immediate IndexedDB save for the detail popup
+function _detailProcessPhoto(file, section, cardId, addCallback) {
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const img = new Image();
+    img.onload = () => {
+      const MAX = 2400;
+      let w = img.width, h = img.height;
+      if (w > MAX) { h = h * MAX / w; w = MAX; }
+      if (h > MAX) { w = w * MAX / h; h = MAX; }
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      c.getContext("2d").drawImage(img, 0, 0, w, h);
+      const dataUrl = c.toDataURL("image/jpeg", 0.82);
+      addCallback(dataUrl, section, cardId);
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// YouTube upload — network request is browser-managed, not tied to component
+async function _uploadToYouTubeForDetail(file, title, token, stopId) {
+  try {
+    const tokenData = JSON.parse(localStorage.getItem("mts-token") || "null");
+    const tok = tokenData?.token || token;
+    if (!tok) return null;
+    const metadata = { snippet: { title }, status: { privacyStatus: "unlisted" } };
+    const initRes = await fetch(
+      "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+      { method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify(metadata) }
+    );
+    const uploadUrl = initRes.headers.get("Location");
+    if (!uploadUrl) return null;
+    const uploadRes = await fetch(uploadUrl, {
+      method: "PUT", headers: { "Content-Type": file.type || "video/mp4" }, body: file,
+    });
+    const result = await uploadRes.json();
+    return result.id ? `https://youtu.be/${result.id}` : null;
+  } catch(e) { console.warn("YouTube upload failed:", e); return null; }
+}

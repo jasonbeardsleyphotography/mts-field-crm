@@ -40,6 +40,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
   const [ytUploadCount, setYtUploadCount] = useState(0);
   const mountedRef = useRef(true);
   const stopIdRef = useRef(s.id);
+  const [speechField, setSpeechField] = useState(null); // "scope" | "addon" | null
+  const recognitionRef = useRef(null);
 
   const [aiScopeResult, setAiScopeResult] = useState(fd.aiScopeSummary || "");
   const [aiAddonResult, setAiAddonResult] = useState(fd.aiAddonEmail || "");
@@ -132,26 +134,17 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
   }, [s.id, token]);
 
   // ── PHOTO HANDLING ──────────────────────────────────────────────────
+  // processPhoto delegates to the module-level _processPhoto so that photo
+  // processing (FileReader + canvas resize) continues even if the user taps
+  // Done before the async work completes. The photo is saved to IndexedDB
+  // regardless; UI state is only updated if the component is still mounted.
   const processPhoto = (file, section = "scope") => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const img = new Image();
-      img.onload = () => {
-        const MAX = 2400;
-        let w = img.width, h = img.height;
-        if (w > MAX) { h = h * MAX / w; w = MAX; }
-        if (h > MAX) { w = w * MAX / h; h = MAX; }
-        const c = document.createElement("canvas");
-        c.width = w; c.height = h;
-        c.getContext("2d").drawImage(img, 0, 0, w, h);
-        const photo = { dataUrl: c.toDataURL("image/jpeg", 0.82), ts: Date.now() };
-        if (section === "addon") setAddonPhotos(prev => [...prev, photo]);
-        else setScopePhotos(prev => [...prev, photo]);
-      };
-      img.src = ev.target.result;
-    };
-    reader.readAsDataURL(file);
+    _processPhoto(file, section, s.id).then(photo => {
+      if (!photo || !mountedRef.current) return;
+      if (section === "addon") setAddonPhotos(prev => [...prev, photo]);
+      else setScopePhotos(prev => [...prev, photo]);
+    });
   };
   const handleScopePhotos = (e) => { Array.from(e.target.files || []).forEach(f => processPhoto(f, "scope")); e.target.value = ""; };
   const handleAddonPhotos = (e) => { Array.from(e.target.files || []).forEach(f => processPhoto(f, "addon")); e.target.value = ""; };
@@ -268,6 +261,45 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
       alert("Network error — removing from app only.");
       setVideoUrls(prev => prev.filter((_, i) => i !== idx));
     }
+  };
+
+  // ── SPEECH-TO-TEXT ──────────────────────────────────────────────────
+  const toggleSpeech = (field) => {
+    if (speechField === field) {
+      recognitionRef.current?.stop();
+      setSpeechField(null);
+      return;
+    }
+    recognitionRef.current?.abort();
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { alert("Speech recognition isn't supported in this browser. Try Chrome or Safari."); return; }
+    const base = (field === "scope" ? scopeNotes : addonNotes);
+    const prefix = base && !base.endsWith(" ") ? base + " " : base;
+    let accumulated = "";
+    const r = new SR();
+    r.continuous = true;
+    r.interimResults = true;
+    r.lang = "en-US";
+    r.onresult = (e) => {
+      let finals = "";
+      let interim = "";
+      for (let i = 0; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finals += e.results[i][0].transcript + " ";
+        else interim += e.results[i][0].transcript;
+      }
+      accumulated = finals;
+      if (field === "scope") setScopeNotes(prefix + finals + interim);
+      else setAddonNotes(prefix + finals + interim);
+    };
+    r.onerror = () => setSpeechField(null);
+    r.onend = () => {
+      if (field === "scope") setScopeNotes(prefix + accumulated);
+      else setAddonNotes(prefix + accumulated);
+      setSpeechField(null);
+    };
+    recognitionRef.current = r;
+    r.start();
+    setSpeechField(field);
   };
 
   // ── YOUTUBE: track mount status for safe state updates after async ops ──
@@ -455,7 +487,12 @@ Property: ${s.addr || ""}`);
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
           <div style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>SCOPE</div>
           <textarea value={scopeNotes} onChange={e => setScopeNotes(e.target.value)} placeholder="Equipment, treatments, what you're quoting..." rows={6}
-            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}}  onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
+            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:`1px solid ${speechField==="scope"?"rgba(59,130,246,.5)":"#1a2540"}`,color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none",transition:"border-color .15s"}}  onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
+          <button onClick={() => toggleSpeech("scope")} style={{display:"flex",alignItems:"center",gap:5,marginTop:5,padding:"7px 14px",borderRadius:8,background:speechField==="scope"?"rgba(255,59,48,.15)":"rgba(59,130,246,.08)",border:`1px solid ${speechField==="scope"?"rgba(255,59,48,.35)":"rgba(59,130,246,.2)"}`,color:speechField==="scope"?"#FF3B30":"#4a80c0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
+            <IconMic size={13} color={speechField==="scope"?"#FF3B30":"#4a80c0"}/>
+            {speechField==="scope" ? "■ Stop dictating" : "Dictate"}
+            {speechField==="scope" && <span style={{animation:"pulse 1s infinite",display:"inline-block",width:6,height:6,borderRadius:3,background:"#FF3B30",marginLeft:2}}/>}
+          </button>
 
           {/* Scope photos */}
           {scopePhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
@@ -499,7 +536,12 @@ Property: ${s.addr || ""}`);
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
           <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>ADD-ON</div>
           <textarea value={addonNotes} onChange={e => setAddonNotes(e.target.value)} placeholder="Additional findings — box tree moth, dead limb over driveway, etc..." rows={3}
-            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none"}}  onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
+            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:`1px solid ${speechField==="addon"?"rgba(255,138,101,.5)":"#1a2540"}`,color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none",transition:"border-color .15s"}}  onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
+          <button onClick={() => toggleSpeech("addon")} style={{display:"flex",alignItems:"center",gap:5,marginTop:5,padding:"7px 14px",borderRadius:8,background:speechField==="addon"?"rgba(255,59,48,.15)":"rgba(255,138,101,.08)",border:`1px solid ${speechField==="addon"?"rgba(255,59,48,.35)":"rgba(255,138,101,.2)"}`,color:speechField==="addon"?"#FF3B30":"#c07040",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
+            <IconMic size={13} color={speechField==="addon"?"#FF3B30":"#c07040"}/>
+            {speechField==="addon" ? "■ Stop dictating" : "Dictate"}
+            {speechField==="addon" && <span style={{animation:"pulse 1s infinite",display:"inline-block",width:6,height:6,borderRadius:3,background:"#FF3B30",marginLeft:2}}/>}
+          </button>
 
           {/* Add-on photos */}
           {addonPhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
@@ -621,6 +663,46 @@ Property: ${s.addr || ""}`);
       </div>
     </div>
   );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Module-level photo processor — lives OUTSIDE React so FileReader + canvas
+   work completes even if OnsiteWindow unmounts (user taps Done mid-pick).
+   The photo is written to IndexedDB immediately; the component only updates
+   its own state if it's still mounted when the promise resolves.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function _processPhoto(file, section, stopId) {
+  return new Promise((resolve) => {
+    if (!file) { resolve(null); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = async () => {
+        const MAX = 2400;
+        let w = img.width, h = img.height;
+        if (w > MAX) { h = h * MAX / w; w = MAX; }
+        if (h > MAX) { w = w * MAX / h; h = MAX; }
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        c.getContext("2d").drawImage(img, 0, 0, w, h);
+        const photo = { dataUrl: c.toDataURL("image/jpeg", 0.82), ts: Date.now() };
+        // Persist to IndexedDB regardless of component mount state
+        try {
+          const saved = await loadField(stopId).catch(() => ({}));
+          const key = section === "addon" ? "addonPhotos" : "scopePhotos";
+          const existing = saved?.[key] || [];
+          const next = { ...(saved || {}), [key]: [...existing, photo], savedAt: Date.now() };
+          primeField(stopId, next);
+          await saveField(stopId, next).catch(() => {});
+        } catch(e) { console.warn("Photo background save failed:", e); }
+        resolve(photo);
+      };
+      img.onerror = () => resolve(null);
+      img.src = ev.target.result;
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
