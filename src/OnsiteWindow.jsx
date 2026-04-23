@@ -270,6 +270,14 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
     }
   };
 
+  // ── YOUTUBE: track mount status for safe state updates after async ops ──
+  // IMPORTANT: this hook MUST stay above the early returns (showCamera / markupIdx)
+  // so React sees the same hook order on every render.
+  useEffect(() => {
+    mountedRef.current = true; stopIdRef.current = s.id;
+    return () => { mountedRef.current = false; };
+  }, [s.id]);
+
   // ── MARKUP OVERLAY ──────────────────────────────────────────────────
   // Camera view — rapid capture mode
   if (showCamera) {
@@ -341,41 +349,20 @@ Property: ${s.addr || ""}`);
   };
 
   // ── YOUTUBE: background upload, no naming prompt, no description ──────
-  useEffect(() => {
-    mountedRef.current = true; stopIdRef.current = s.id;
-    return () => { mountedRef.current = false; };
-  }, [s.id]);
-
-  const uploadToYouTube = async (file, title) => {
+  // uploadToYouTube is a thin wrapper that delegates to the module-level
+  // _uploadToYouTube function (defined below the component). Because
+  // _uploadToYouTube lives outside React, its fetch calls are NOT tied to
+  // component lifecycle — the browser keeps the network request alive even
+  // after the user taps Done/Back and OnsiteWindow unmounts.
+  const uploadToYouTube = (file, title) => {
     if (!file || !title) return;
-    if (mountedRef.current) setYtUploadCount(n => n + 1);
-    try {
-      const tokenData = JSON.parse(localStorage.getItem("mts-token") || "null");
-      const tok = tokenData?.token || token;
-      if (!tok) { if (mountedRef.current) setYtUploadCount(n => n - 1); return; }
-      const metadata = { snippet: { title }, status: { privacyStatus: "unlisted" } };
-      const initRes = await fetch("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status", {
-        method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
-        body: JSON.stringify(metadata),
-      });
-      const uploadUrl = initRes.headers.get("Location");
-      if (uploadUrl) {
-        const uploadRes = await fetch(uploadUrl, {
-          method: "PUT", headers: { "Content-Type": file.type || "video/mp4" }, body: file,
-        });
-        const result = await uploadRes.json();
-        if (result.id) {
-          const ytUrl = `https://youtu.be/${result.id}`;
-          const saved = await loadField(stopIdRef.current);
-          const existing = saved.videoUrls || (saved.videoUrl ? [saved.videoUrl] : []);
-          const next = { ...saved, videoUrls: [...existing, ytUrl], savedAt: Date.now() };
-          primeField(stopIdRef.current, next);
-          await saveField(stopIdRef.current, next).catch(() => {});
-          if (mountedRef.current) setVideoUrls(prev => [...prev, ytUrl]);
-        }
-      }
-    } catch(e) { console.warn("YouTube upload failed:", e); }
-    if (mountedRef.current) setYtUploadCount(n => n - 1);
+    setYtUploadCount(n => n + 1);
+    _uploadToYouTube(file, title, token, s.id).then((ytUrl) => {
+      if (ytUrl && mountedRef.current) setVideoUrls(prev => [...prev, ytUrl]);
+      if (mountedRef.current) setYtUploadCount(n => n - 1);
+    }).catch(() => {
+      if (mountedRef.current) setYtUploadCount(n => n - 1);
+    });
   };
 
   const handleYtFile = (e) => {
@@ -407,6 +394,7 @@ Property: ${s.addr || ""}`);
     setSwipeX(0); setSwiping(false); swipeDir.current = null;
   };
 
+  // ── RENDER ────────────────────────────────────────────────────────────
   return (
     <div style={{position:"fixed",inset:0,zIndex:100,background:"#0a0b10",display:"flex",flexDirection:"column",fontFamily:B,color:"#f0f4fa",overflow:"hidden"}}>
 
@@ -633,4 +621,49 @@ Property: ${s.addr || ""}`);
       </div>
     </div>
   );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Module-level upload helper — lives OUTSIDE the React component so the
+   browser's network layer keeps the fetch alive regardless of whether
+   OnsiteWindow is still mounted. The component wrapper above fires this off
+   and only touches React state if still mounted when the promise resolves.
+   ═══════════════════════════════════════════════════════════════════════════ */
+async function _uploadToYouTube(file, title, propToken, stopId) {
+  if (!file || !title) return null;
+  try {
+    const tokenData = JSON.parse(localStorage.getItem("mts-token") || "null");
+    const tok = tokenData?.token || propToken;
+    if (!tok) return null;
+    const metadata = { snippet: { title }, status: { privacyStatus: "unlisted" } };
+    const initRes = await fetch(
+      "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
+        body: JSON.stringify(metadata),
+      }
+    );
+    const uploadUrl = initRes.headers.get("Location");
+    if (!uploadUrl) return null;
+    const uploadRes = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": file.type || "video/mp4" },
+      body: file,
+    });
+    const result = await uploadRes.json();
+    if (!result.id) return null;
+    const ytUrl = `https://youtu.be/${result.id}`;
+    // Persist to IndexedDB unconditionally — the component may already be
+    // gone but the data must be saved for the next time the stop is opened.
+    const saved = await loadField(stopId).catch(() => ({}));
+    const existing = saved?.videoUrls || (saved?.videoUrl ? [saved.videoUrl] : []);
+    const next = { ...(saved || {}), videoUrls: [...existing, ytUrl], savedAt: Date.now() };
+    primeField(stopId, next);
+    await saveField(stopId, next).catch(() => {});
+    return ytUrl;
+  } catch (e) {
+    console.warn("YouTube upload failed:", e);
+    return null;
+  }
 }
