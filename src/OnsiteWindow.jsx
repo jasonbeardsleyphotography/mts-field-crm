@@ -717,32 +717,77 @@ async function _uploadToYouTube(file, title, propToken, stopId) {
     const tokenData = JSON.parse(localStorage.getItem("mts-token") || "null");
     const tok = tokenData?.token || propToken;
     if (!tok) return null;
+
+    // ── Determine MIME type ───────────────────────────────────────────
+    // iOS Safari often leaves file.type empty for .mov (QuickTime) files.
+    // Sending the wrong Content-Type causes YouTube to accept the upload
+    // but fail to process it ("processing will begin shortly" forever).
+    let mimeType = file.type;
+    if (!mimeType) {
+      const ext = (file.name || "").split(".").pop().toLowerCase();
+      const MAP = { mov: "video/quicktime", mp4: "video/mp4", m4v: "video/x-m4v",
+                    avi: "video/x-msvideo", webm: "video/webm", mkv: "video/x-matroska" };
+      mimeType = MAP[ext] || "video/mp4";
+    }
+
+    // ── Init resumable session ────────────────────────────────────────
+    // X-Upload-Content-Type and X-Upload-Content-Length let YouTube
+    // know the total size upfront, preventing truncated-upload issues.
     const metadata = { snippet: { title }, status: { privacyStatus: "unlisted" } };
     const initRes = await fetch(
       "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${tok}`,
+          "Content-Type": "application/json",
+          "X-Upload-Content-Type": mimeType,
+          "X-Upload-Content-Length": String(file.size),
+        },
         body: JSON.stringify(metadata),
       }
     );
+    if (!initRes.ok) {
+      console.warn("YouTube upload init failed:", initRes.status);
+      return null;
+    }
     const uploadUrl = initRes.headers.get("Location");
     if (!uploadUrl) return null;
+
+    // ── Upload the file ───────────────────────────────────────────────
+    // Content-Length is required for YouTube to know the upload is
+    // complete and to begin processing. Without it, partial uploads
+    // are accepted silently and never finish processing.
     const uploadRes = await fetch(uploadUrl, {
       method: "PUT",
-      headers: { "Content-Type": file.type || "video/mp4" },
+      headers: {
+        "Content-Type": mimeType,
+        "Content-Length": String(file.size),
+      },
       body: file,
     });
+    if (!uploadRes.ok && uploadRes.status !== 201) {
+      console.warn("YouTube PUT failed:", uploadRes.status);
+      return null;
+    }
     const result = await uploadRes.json();
     if (!result.id) return null;
+
     const ytUrl = `https://youtu.be/${result.id}`;
-    // Persist to IndexedDB unconditionally — the component may already be
-    // gone but the data must be saved for the next time the stop is opened.
+
+    // ── Persist locally ───────────────────────────────────────────────
     const saved = await loadField(stopId).catch(() => ({}));
     const existing = saved?.videoUrls || (saved?.videoUrl ? [saved.videoUrl] : []);
+    if (existing.includes(ytUrl)) return ytUrl; // deduplicate
     const next = { ...(saved || {}), videoUrls: [...existing, ytUrl], savedAt: Date.now() };
     primeField(stopId, next);
     await saveField(stopId, next).catch(() => {});
+
+    // ── Push to Drive immediately ─────────────────────────────────────
+    // Without this, the pipeline card detail loads Drive's older copy
+    // (which doesn't have the new URL yet) and overwrites local data.
+    saveFieldToDrive(tok, stopId, next).catch(() => {});
+
     return ytUrl;
   } catch (e) {
     console.warn("YouTube upload failed:", e);

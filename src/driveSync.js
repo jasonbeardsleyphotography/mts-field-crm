@@ -12,14 +12,27 @@ const FIELD_FOLDER = "field-data";
 let folderCache = {};
 let syncStatus = "idle";
 let statusListeners = [];
+let authErrorCallback = null;
 
 export function onSyncStatus(fn) { statusListeners.push(fn); return () => { statusListeners = statusListeners.filter(f => f !== fn); }; }
 function setSyncStatus(s) { syncStatus = s; statusListeners.forEach(fn => fn(s)); }
 export function getSyncStatus() { return syncStatus; }
 
+/** Register a callback to be invoked when Drive returns 401/403.
+ *  App.jsx wires this to silentReauth() so token is refreshed automatically. */
+export function onAuthError(fn) { authErrorCallback = fn; }
+
 async function driveReq(token, url, opts = {}) {
   const res = await fetch(url, { ...opts, headers: { Authorization: `Bearer ${token}`, ...opts.headers } });
-  if (!res.ok) { const err = new Error(`Drive ${res.status}`); err.status = res.status; throw err; }
+  if (!res.ok) {
+    const err = new Error(`Drive ${res.status}`);
+    err.status = res.status;
+    if (res.status === 401 || res.status === 403) {
+      err.isAuthError = true;
+      if (authErrorCallback) authErrorCallback();
+    }
+    throw err;
+  }
   return res;
 }
 
@@ -78,7 +91,8 @@ export async function saveAppState(token, pipeline, dismissed, lastContact) {
     setTimeout(() => setSyncStatus("idle"), 3000);
   } catch(e) {
     console.warn("Drive save failed:", e);
-    setSyncStatus("error");
+    // auth errors trigger re-auth via the registered callback; show distinct state
+    setSyncStatus(e.isAuthError ? "auth-error" : "error");
   }
 }
 

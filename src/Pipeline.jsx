@@ -353,7 +353,9 @@ Property: ${card.addr || ""}`);
             audioClips: (cloud.audioClips || []).length >= (local.audioClips || []).length
               ? (cloud.audioClips || [])
               : (local.audioClips || []),
-            videoUrls: cloud.videoUrls?.length ? cloud.videoUrls : (local.videoUrls || (local.videoUrl ? [local.videoUrl] : [])),
+            videoUrls: (cloud.videoUrls?.length || 0) >= (local.videoUrls?.length || 0)
+              ? (cloud.videoUrls || [])
+              : (local.videoUrls || (local.videoUrl ? [local.videoUrl] : [])),
           };
           primeField(id, merged);
           setFieldCache(prev => ({ ...prev, [id]: merged }));
@@ -1135,7 +1137,7 @@ Property: ${card.addr || ""}`);
   );
 }
 
-export { STAGES, loadPipeline, savePipeline };
+export { STAGES, loadPipeline, savePipeline, pushCalendarColor };
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Module-level helpers — outside React so async work survives navigation
@@ -1168,17 +1170,49 @@ async function _uploadToYouTubeForDetail(file, title, token, stopId) {
     const tokenData = JSON.parse(localStorage.getItem("mts-token") || "null");
     const tok = tokenData?.token || token;
     if (!tok) return null;
+
+    // MIME type — iOS Safari often leaves file.type empty for .mov files
+    let mimeType = file.type;
+    if (!mimeType) {
+      const ext = (file.name || "").split(".").pop().toLowerCase();
+      const MAP = { mov: "video/quicktime", mp4: "video/mp4", m4v: "video/x-m4v",
+                    avi: "video/x-msvideo", webm: "video/webm", mkv: "video/x-matroska" };
+      mimeType = MAP[ext] || "video/mp4";
+    }
+
     const metadata = { snippet: { title }, status: { privacyStatus: "unlisted" } };
     const initRes = await fetch(
       "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
-      { method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify(metadata) }
+      { method: "POST",
+        headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json",
+          "X-Upload-Content-Type": mimeType, "X-Upload-Content-Length": String(file.size) },
+        body: JSON.stringify(metadata) }
     );
+    if (!initRes.ok) return null;
     const uploadUrl = initRes.headers.get("Location");
     if (!uploadUrl) return null;
+
     const uploadRes = await fetch(uploadUrl, {
-      method: "PUT", headers: { "Content-Type": file.type || "video/mp4" }, body: file,
+      method: "PUT",
+      headers: { "Content-Type": mimeType, "Content-Length": String(file.size) },
+      body: file,
     });
+    if (!uploadRes.ok && uploadRes.status !== 201) return null;
+
     const result = await uploadRes.json();
-    return result.id ? `https://youtu.be/${result.id}` : null;
+    if (!result.id) return null;
+
+    const ytUrl = `https://youtu.be/${result.id}`;
+
+    // Persist to IDB + push to Drive so it shows up on card immediately
+    const saved = await loadField(stopId).catch(() => ({}));
+    const existing = saved?.videoUrls || (saved?.videoUrl ? [saved.videoUrl] : []);
+    if (!existing.includes(ytUrl)) {
+      const next = { ...(saved || {}), videoUrls: [...existing, ytUrl], savedAt: Date.now() };
+      primeField(stopId, next);
+      await saveField(stopId, next).catch(() => {});
+      saveFieldToDrive(tok, stopId, next).catch(() => {});
+    }
+    return ytUrl;
   } catch(e) { console.warn("YouTube upload failed:", e); return null; }
 }

@@ -3,8 +3,8 @@ import { parseEvent, stageColor } from "./parseEvent";
 import RouteMap, { AM_COLOR, PM_COLOR } from "./RouteMap";
 import SwipeCard from "./SwipeCard";
 import OnsiteWindow from "./OnsiteWindow";
-import Pipeline, { savePipeline, loadPipeline } from "./Pipeline";
-import { saveAppState, loadAppState, saveFieldToDrive, loadFieldFromDrive, listFieldFiles, onSyncStatus } from "./driveSync";
+import Pipeline, { savePipeline, loadPipeline, pushCalendarColor } from "./Pipeline";
+import { saveAppState, loadAppState, saveFieldToDrive, loadFieldFromDrive, listFieldFiles, onSyncStatus, onAuthError } from "./driveSync";
 import { loadField, saveField, listFieldIds } from "./fieldStore";
 import {
   IconArrowLeft, IconNavigation, IconMessageSquare, IconVolume2,
@@ -101,6 +101,13 @@ export default function App() {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [token, silentReauth]);
+
+  // ── DRIVE AUTH ERROR HANDLER ─────────────────────────────────────────────
+  // When any Drive API call returns 401/403, automatically attempt a silent
+  // token refresh so the next sync attempt uses a fresh token.
+  useEffect(() => {
+    onAuthError(() => { silentReauth(); });
+  }, [silentReauth]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -602,6 +609,8 @@ export default function App() {
         hot: false,
       };
       savePipeline(pl);
+      // Push calendar color to "estimate_needed" (yellow/banana)
+      if (token) pushCalendarColor(id, "estimate_needed", token);
       // Also sync field data to Drive — read from IDB so base64 media is included
       if (token) {
         loadField(id).then(fd => {
@@ -798,10 +807,19 @@ export default function App() {
             })()}
           </button>
         </div>
-        {token && <button onClick={() => { triggerCloudSync(true); pullFromDrive(); }}
+        {token && <button onClick={async () => {
+            // If we're in an error state, refresh the token first before retrying
+            if (syncIndicator === "error" || syncIndicator === "auth-error") {
+              await silentReauth();
+              // Give the new token a moment to settle in localStorage
+              await new Promise(r => setTimeout(r, 300));
+            }
+            triggerCloudSync(true);
+            pullFromDrive();
+          }}
           title="Tap to sync"
           style={{background:"none",border:"none",cursor:"pointer",padding:"2px 6px",display:"flex",alignItems:"center",gap:3}}>
-          {syncIndicator==="error" ? <IconCloudOff size={13} color="#FF5555"/> : (syncIndicator==="syncing"||syncPulling) ? <IconCloud size={13} color="#F6BF26"/> : <IconCloud size={13} color="#10B981"/>}
+          {(syncIndicator==="error"||syncIndicator==="auth-error") ? <IconCloudOff size={13} color="#FF5555"/> : (syncIndicator==="syncing"||syncPulling) ? <IconCloud size={13} color="#F6BF26"/> : <IconCloud size={13} color="#10B981"/>}
           {lastSyncTime>0 && <span style={{fontSize:9,color:"#3a5060",fontFamily:"'Oswald',sans-serif"}}>{Math.floor((Date.now()-lastSyncTime)/60000)<1?"now":`${Math.floor((Date.now()-lastSyncTime)/60000)}m`}</span>}
         </button>}
         <div style={{flex:1}}/>
