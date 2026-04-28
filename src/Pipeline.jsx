@@ -724,6 +724,7 @@ Property: ${card.addr || ""}`);
     const { photoCount, hasNotes, hasVideo } = summary;
     const isSelected = !!selected[card.id];
     const isDeclined = card.stage === "declined";
+    const isPendingReject = !!card.pendingRejectInSingleops;
     // Days-without-contact warning: show if 7+ days since last contact AND card is active
     const lc = lastContact[card.id];
     const daysSinceContact = lc?.at ? Math.floor((Date.now() - lc.at) / (24 * 60 * 60 * 1000)) : null;
@@ -740,14 +741,20 @@ Property: ${card.addr || ""}`);
         }}
         style={{
           padding: compact ? "10px 12px" : "12px 14px",
-          background: isSelected ? "rgba(59,130,246,.08)" : card.hot ? "rgba(255,160,0,.05)" : "#0e1020",
+          background: isPendingReject ? "rgba(255,140,0,.10)" : isSelected ? "rgba(59,130,246,.08)" : card.hot ? "rgba(255,160,0,.05)" : "#0e1020",
           borderBottom: "1px solid #0e1220",
-          borderLeft: `4px solid ${isSelected ? "#3B82F6" : card.hot ? "#FFB300" : stage?.color || "#555"}`,
+          borderLeft: `4px solid ${isPendingReject ? "#FF8C00" : isSelected ? "#3B82F6" : card.hot ? "#FFB300" : stage?.color || "#555"}`,
           cursor: "pointer",
           transition: "background .15s",
           opacity: isDeclined && !selectMode ? 0.6 : 1,
         }}
       >
+        {/* Reject-in-SingleOps banner */}
+        {isPendingReject && <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,padding:"4px 8px",borderRadius:6,background:"rgba(255,140,0,.2)",border:"1px solid rgba(255,140,0,.4)"}}>
+          <span style={{fontSize:12}}>🚫</span>
+          <span style={{fontSize:10,fontWeight:800,color:"#FF8C00",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",flex:1}}>REJECT IN SINGLEOPS</span>
+          <button onClick={e=>{e.stopPropagation();setPipeline(prev=>{const next={...prev};if(next[card.id]){next[card.id]={...next[card.id],pendingRejectInSingleops:false};}return next;});}} style={{padding:"2px 6px",borderRadius:4,background:"rgba(255,140,0,.2)",border:"1px solid rgba(255,140,0,.4)",color:"#FF8C00",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.3}}>DONE</button>
+        </div>}
         {/* Top row */}
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           {selectMode && <div style={{width:22,height:22,borderRadius:6,border:`2px solid ${isSelected?"#3B82F6":"#252d47"}`,background:isSelected?"#3B82F6":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:12,color:"#fff",fontWeight:800}}>{isSelected && <IconCheckCircle size={13} color="#fff"/>}</div>}

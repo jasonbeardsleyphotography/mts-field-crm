@@ -7,6 +7,7 @@ import Pipeline, { savePipeline, loadPipeline, pushCalendarColor } from "./Pipel
 import { saveAppState, loadAppState, saveFieldToDrive, loadFieldFromDrive, listFieldFiles, onSyncStatus, onAuthError } from "./driveSync";
 import { loadField, saveField, listFieldIds } from "./fieldStore";
 import { startPhotoSyncWatcher } from "./photoSync";
+import { startVideoQueueWatcher } from "./videoQueue";
 import {
   IconArrowLeft, IconNavigation, IconMessageSquare, IconVolume2,
   IconClipboard, IconX, IconRotateCcw, IconRefresh, IconReorder, IconUndo,
@@ -116,10 +117,12 @@ export default function App() {
   // It also fires immediately to process any queue from a prior session.
   useEffect(() => {
     if (!token) return;
-    startPhotoSyncWatcher(() => {
+    const getTok = () => {
       const saved = lsGet("mts-token", null);
       return (saved && saved.expiry > Date.now()) ? saved.token : null;
-    });
+    };
+    startPhotoSyncWatcher(getTok);
+    startVideoQueueWatcher(getTok);
   }, [token]);
 
   const [loading, setLoading] = useState(false);
@@ -302,20 +305,24 @@ export default function App() {
   }, [silentReauth]);
 
   // ── LOAD — today first, then background-fill remaining days ──────────
-  const load = useCallback(async () => {
+  const load = useCallback(async (preserveDay = false) => {
     if (!token) return;
     setLoading(true);
     try {
       const days = getBusinessDays(10);
       setBusinessDays(days);
 
-      // PHASE 1: Load today immediately
-      const today = days[0];
-      const ts = new Date(today); ts.setHours(0,0,0,0);
-      const te = new Date(today); te.setHours(23,59,59,999);
+      // PHASE 1: Load the currently-selected day first (or today on initial load)
+      // When preserveDay=true (manual refresh), stay on the current selDay index.
+      // On initial load, always jump to today (index 0).
+      const targetIdx = preserveDay ? selDay : 0;
+      const targetDay = days[targetIdx] || days[0];
+      const ts = new Date(targetDay); ts.setHours(0,0,0,0);
+      const te = new Date(targetDay); te.setHours(23,59,59,999);
       const todayEvents = await authedFetchEvents(token, ts, te);
-      setRawEvents(prev => ({ ...prev, [today.toDateString()]: todayEvents }));
-      setSelDay(0); setExpanded(null); setReorderMode(false); setMoving(null);
+      setRawEvents(prev => ({ ...prev, [targetDay.toDateString()]: todayEvents }));
+      if (!preserveDay) setSelDay(0);
+      setExpanded(null); setReorderMode(false); setMoving(null);
       setLoading(false);
 
       // PHASE 2: Background-fill remaining days
@@ -965,7 +972,7 @@ export default function App() {
             <button onClick={()=>setRouteSearchOpen(!routeSearchOpen)} style={{padding:"7px",borderRadius:8,background:routeSearchOpen?"rgba(59,130,246,.12)":"transparent",border:"1px solid #1a2030",color:routeSearchOpen?"#3B82F6":"#3a4a60",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
               <IconSearch size={15} color={routeSearchOpen?"#3B82F6":"#3a4a60"} />
             </button>
-            <button onClick={load} disabled={loading} style={{padding:"7px",borderRadius:8,background:"#1a2035",border:"1px solid #1a2030",color:loading?"#2a3050":"#5a6580",cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <button onClick={() => load(true)} disabled={loading} style={{padding:"7px",borderRadius:8,background:"#1a2035",border:"1px solid #1a2030",color:loading?"#2a3050":"#5a6580",cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
               <IconRefresh size={15} color={loading?"#2a3050":"#5a6580"} style={{animation:loading?"spin 1s linear infinite":undefined}} />
             </button>
             {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"7px",borderRadius:8,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -1140,6 +1147,24 @@ export default function App() {
         onBack={() => setOnsiteStop(null)}
         onDone={() => markDone(onsiteStop.id)}
         onDecline={() => { decline(onsiteStop.id); setOnsiteStop(null); }}
+        onMarkReject={() => {
+          const stop = stopMap[onsiteStop.id];
+          if (stop) {
+            const pl = loadPipeline();
+            pl[onsiteStop.id] = {
+              id: onsiteStop.id, cn: stop.cn, addr: stop.addr, phone: stop.phone, email: stop.email,
+              jn: stop.jn, notes: stop.notes, constraint: stop.constraint,
+              stage: "estimate_needed", addedAt: Date.now(), stageChangedAt: Date.now(),
+              hot: false,
+              pendingRejectInSingleops: true, // 🚩 flag for color-coding
+            };
+            savePipeline(pl);
+            if (token) pushCalendarColor(onsiteStop.id, "estimate_needed", token);
+          }
+          setDismissed(p => ({...p,[onsiteStop.id]:Date.now()}));
+          setExpanded(null);
+          setOnsiteStop(null);
+        }}
       />}
 
       {/* ── UNDO TOAST ─────────────────────────────────────────────── */}

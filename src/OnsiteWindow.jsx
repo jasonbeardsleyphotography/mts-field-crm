@@ -5,6 +5,17 @@ import { saveFieldToDrive, loadFieldFromDrive } from "./driveSync";
 import { loadField, saveField, peekField, primeField } from "./fieldStore";
 import { incUpload, decUpload } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
+import {
+  enqueueVideo,
+  listForStop as listVideoQueueForStop,
+  onQueueChange as onVideoQueueChange,
+  forceUploadNow as forceVideoUploadNow,
+  cancelQueueItem as cancelVideoQueueItem,
+  retryQueueItem as retryVideoQueueItem,
+  getUploadMode as getVideoUploadMode,
+  setUploadMode as setVideoUploadMode,
+  isWifi,
+} from "./videoQueue";
 import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconYoutube, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconRotateCcw, IconSend } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
@@ -17,7 +28,7 @@ const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemi
    without marking done. "Done →" moves card to pipeline.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token }) {
+export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkReject, token }) {
   const s = stop;
   // Synchronous peek for initial state — returns {} or the localStorage
   // mirror if one exists. The real async load runs below and hydrates.
@@ -51,6 +62,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, token })
   const [aiScopeLoading, setAiScopeLoading] = useState(false);
   const [aiAddonLoading, setAiAddonLoading] = useState(false);
   const [declineConfirm, setDeclineConfirm] = useState(false);
+  const [rejectConfirm, setRejectConfirm] = useState(false);
   const [jobNotesOpen, setJobNotesOpen] = useState(false);
   const [isRevision, setIsRevision] = useState(false);
   // Prior visit notes — loaded once on mount, shown only when isRevision is true
@@ -461,34 +473,60 @@ Property: ${s.addr || ""}`);
     setAiAddonLoading(false);
   };
 
-  // ── YOUTUBE: background upload, no naming prompt, no description ──────
-  // uploadToYouTube is a thin wrapper that delegates to the module-level
-  // _uploadToYouTube function (defined below the component). Because
-  // _uploadToYouTube lives outside React, its fetch calls are NOT tied to
-  // component lifecycle — the browser keeps the network request alive even
-  // after the user taps Done/Back and OnsiteWindow unmounts.
-  const uploadToYouTube = (file, title) => {
-    if (!file || !title) return;
-    setYtUploadCount(n => n + 1);
-    incUpload(s.id); // module-level tracker — survives component unmount
-    _uploadToYouTube(file, title, token, s.id).then((ytUrl) => {
-      decUpload(s.id);
-      if (ytUrl && mountedRef.current) setVideoUrls(prev => [...prev, ytUrl]);
-      if (mountedRef.current) setYtUploadCount(n => n - 1);
-    }).catch(() => {
-      decUpload(s.id);
-      if (mountedRef.current) setYtUploadCount(n => n - 1);
-    });
-  };
+  // ── YOUTUBE: enqueue for background upload via videoQueue ──────────────
+  // The actual upload (compress → chunked PUT to YouTube) runs entirely
+  // inside videoQueue.js, persisted to its own IndexedDB store. By the
+  // time enqueueVideo() resolves the file is safely written to IDB and
+  // will upload on the next opportunity (WiFi by default), even if the
+  // app is closed and reopened. This is what fixes the 6-hour upload
+  // problem — the upload doesn't depend on this component being mounted.
 
-  const handleYtFile = (e) => {
+  // Live queue items for this stop (what's currently uploading/pending)
+  const [videoQueueItems, setVideoQueueItems] = useState([]);
+  const [uploadMode, setUploadModeState] = useState(getVideoUploadMode());
+  const [showQueuePanel, setShowQueuePanel] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    listVideoQueueForStop(s.id).then(items => { if (alive) setVideoQueueItems(items); });
+    const off = onVideoQueueChange((all) => {
+      if (alive) setVideoQueueItems(all.filter(i => i.stopId === s.id));
+    });
+    return () => { alive = false; off(); };
+  }, [s.id]);
+
+  // When the queue produces a YouTube URL, fieldStore is updated and a
+  // "mts-field-synced" event is dispatched. Re-pull videoUrls from IDB.
+  useEffect(() => {
+    const handler = async () => {
+      try {
+        const fd = await loadField(s.id);
+        if (fd && mountedRef.current) {
+          if (fd.videoUrls) setVideoUrls(fd.videoUrls);
+          else if (fd.videoUrl) setVideoUrls([fd.videoUrl]);
+        }
+      } catch {}
+    };
+    window.addEventListener("mts-field-synced", handler);
+    return () => window.removeEventListener("mts-field-synced", handler);
+  }, [s.id]);
+
+  const handleYtFile = async (e) => {
     const file = e.target.files?.[0];
     if (file) {
       const lastName = (s.cn || "").split(" ").pop();
       const jobPart = s.jn ? ` #${s.jn}` : "";
       const datePart = new Date().toLocaleDateString("en-US", {month:"2-digit",day:"2-digit",year:"numeric"});
-      const suffix = videoUrls.length > 0 ? ` (${videoUrls.length + 1})` : "";
-      uploadToYouTube(file, `${lastName}${jobPart} ${datePart}${suffix}`);
+      // Sequence number = existing uploaded videos + already-queued videos + this one
+      const totalCount = videoUrls.length + videoQueueItems.length + 1;
+      const seqNum = String(totalCount).padStart(2, "0");
+      const title = `${lastName}${jobPart} ${datePart} - ${seqNum}`;
+      try {
+        await enqueueVideo({ stopId: s.id, file, title });
+      } catch (err) {
+        console.warn("Failed to enqueue video:", err);
+        alert("Failed to queue video: " + (err.message || err));
+      }
     }
     e.target.value = "";
   };
@@ -527,6 +565,14 @@ Property: ${s.addr || ""}`);
         ) : (
           <button onClick={()=>{setDeclineConfirm(false);onDecline();}} style={{display:"flex",alignItems:"center",gap:4,padding:"6px 10px",borderRadius:8,background:"rgba(200,60,60,.2)",border:"1px solid rgba(200,60,60,.4)",color:"#FF5555",fontSize:10,fontWeight:800,cursor:"pointer",animation:"pulse 1s infinite",flexShrink:0,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Confirm?</button>
         )}
+        {/* Mark to Reject in SingleOps — sends to pipeline with orange warning flag */}
+        {onMarkReject && (!rejectConfirm ? (
+          <button onClick={()=>setRejectConfirm(true)} title="Flag: reject in SingleOps" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"6px 8px",borderRadius:8,background:"transparent",border:"1px solid #3a2810",cursor:"pointer",flexShrink:0}}>
+            <span style={{fontSize:13}}>🚫</span>
+          </button>
+        ) : (
+          <button onClick={()=>{setRejectConfirm(false);onMarkReject();}} style={{display:"flex",alignItems:"center",gap:4,padding:"6px 10px",borderRadius:8,background:"rgba(255,140,0,.25)",border:"1px solid rgba(255,140,0,.5)",color:"#FF8C00",fontSize:9,fontWeight:800,cursor:"pointer",animation:"pulse 1s infinite",flexShrink:0,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>🚫 REJECT?</button>
+        ))}
         <button onClick={onDone} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:8,background:"#10B981",border:"none",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}><IconCheckCircle size={13} color="#fff"/>DONE</button>
       </div>
 
@@ -604,7 +650,7 @@ Property: ${s.addr || ""}`);
               {speechField==="scope" ? <>■ Stop{<span style={{animation:"pulse 1s infinite",display:"inline-block",width:5,height:5,borderRadius:3,background:"#FF3B30",marginLeft:3}}/>}</> : "Dictate"}
             </button>
           </div>
-          <textarea value={scopeNotes} onChange={e => setScopeNotes(e.target.value)} placeholder="Equipment, treatments, what you're quoting..." rows={6}
+          <textarea value={scopeNotes} onChange={e => setScopeNotes(e.target.value)} placeholder="Scope of work..." rows={6}
             style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:`1px solid ${speechField==="scope"?"rgba(59,130,246,.5)":"#1a2540"}`,color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none",transition:"border-color .15s"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
 
           {/* Scope photos */}
@@ -640,7 +686,7 @@ Property: ${s.addr || ""}`);
               {speechField==="addon" ? <>■ Stop{<span style={{animation:"pulse 1s infinite",display:"inline-block",width:5,height:5,borderRadius:3,background:"#FF3B30",marginLeft:3}}/>}</> : "Dictate"}
             </button>
           </div>
-          <textarea value={addonNotes} onChange={e => setAddonNotes(e.target.value)} placeholder="Additional findings — box tree moth, dead limb over driveway, etc..." rows={3}
+          <textarea value={addonNotes} onChange={e => setAddonNotes(e.target.value)} placeholder="Additional recommendations..." rows={3}
             style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:`1px solid ${speechField==="addon"?"rgba(255,138,101,.5)":"#1a2540"}`,color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none",transition:"border-color .15s"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
 
           {/* Add-on photos */}
@@ -669,7 +715,7 @@ Property: ${s.addr || ""}`);
 
         {/* ── VIDEO ─────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
-          <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>VIDEO{ytUploadCount > 0 && <span style={{fontSize:9,color:"#F6BF26",fontWeight:700,padding:"1px 8px",borderRadius:10,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.2)",marginLeft:6,animation:"pulse 1s infinite"}}>↑ Uploading…</span>}</div>
+          <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>VIDEO{(ytUploadCount > 0 || videoQueueItems.length > 0) && <span style={{fontSize:9,color:"#F6BF26",fontWeight:700,padding:"1px 8px",borderRadius:10,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.2)",marginLeft:6,animation:"pulse 1s infinite"}}>↑ {videoQueueItems.length || ytUploadCount} pending</span>}</div>
 
           {/* Uploaded videos list */}
           {videoUrls.length > 0 && <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
@@ -698,10 +744,70 @@ Property: ${s.addr || ""}`);
             })}
           </div>}
 
+          {/* ── QUEUED / IN-PROGRESS UPLOADS ──────────────────────────── */}
+          {videoQueueItems.length > 0 && <div style={{marginBottom:8,borderRadius:8,background:"rgba(246,191,38,.04)",border:"1px solid rgba(246,191,38,.15)",overflow:"hidden"}}>
+            <div style={{padding:"6px 10px",display:"flex",alignItems:"center",gap:6,background:"rgba(246,191,38,.06)",borderBottom:"1px solid rgba(246,191,38,.1)"}}>
+              <span style={{fontSize:9,color:"#F6BF26",fontWeight:800,fontFamily:F,letterSpacing:0.6,textTransform:"uppercase",flex:1}}>
+                {videoQueueItems.length} pending • {uploadMode === "wifi" ? "WiFi only" : uploadMode === "always" ? "Auto upload" : "WiFi + on-demand"}
+              </span>
+              <button onClick={() => setShowQueuePanel(v=>!v)} style={{padding:"2px 8px",borderRadius:5,background:"transparent",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5}}>
+                {showQueuePanel ? "HIDE" : "SHOW"}
+              </button>
+            </div>
+            {showQueuePanel && <>
+              {/* Mode toggle row */}
+              <div style={{padding:"8px 10px",display:"flex",alignItems:"center",gap:6,borderBottom:"1px solid rgba(246,191,38,.1)"}}>
+                <span style={{fontSize:9,color:"#7a7050",fontWeight:600,fontFamily:F,letterSpacing:0.4,textTransform:"uppercase"}}>Mode:</span>
+                {[["wifi","WiFi only"],["hybrid","Hybrid"],["always","Always"]].map(([m,lbl]) => (
+                  <button key={m} onClick={() => { setVideoUploadMode(m); setUploadModeState(m); }} style={{padding:"3px 8px",borderRadius:5,background:uploadMode===m?"rgba(246,191,38,.15)":"transparent",border:`1px solid ${uploadMode===m?"rgba(246,191,38,.4)":"#252d47"}`,color:uploadMode===m?"#F6BF26":"#5a6580",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>{lbl}</button>
+                ))}
+              </div>
+              {videoQueueItems.map(it => {
+                const sizeMB = ((it.compressedSize || it.originalSize) / (1024*1024)).toFixed(1);
+                const origMB = (it.originalSize / (1024*1024)).toFixed(0);
+                const statusColor = it.status === "error" ? "#FF5555" : it.status === "uploading" ? "#10B981" : it.status === "compressing" ? "#5a90b0" : "#7a7050";
+                const statusLabel =
+                  it.status === "queued" ? "Waiting…" :
+                  it.status === "compressing" ? `Compressing ${it.progress||0}%` :
+                  it.status === "ready" ? "Ready" :
+                  it.status === "uploading" ? `Uploading ${it.progress||0}%` :
+                  it.status === "error" ? "Failed" :
+                  it.status === "paused" ? "Paused" : it.status;
+                return (
+                  <div key={it.id} style={{padding:"8px 10px",borderTop:"1px solid rgba(246,191,38,.06)"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                      <div style={{flex:1,minWidth:0,fontSize:11,color:"#c0c8d0",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</div>
+                      <span style={{fontSize:9,color:statusColor,fontWeight:800,fontFamily:F,letterSpacing:0.4,textTransform:"uppercase",flexShrink:0}}>{statusLabel}</span>
+                    </div>
+                    {/* Progress bar */}
+                    <div style={{height:3,background:"rgba(255,255,255,.05)",borderRadius:2,overflow:"hidden",marginBottom:4}}>
+                      <div style={{height:"100%",width:`${it.progress||0}%`,background:statusColor,transition:"width .3s"}}/>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <div style={{flex:1,fontSize:9,color:"#5a6580",fontFamily:F,letterSpacing:0.3}}>
+                        {it.compressedSize ? `${origMB}MB → ${sizeMB}MB` : `${origMB}MB`}
+                      </div>
+                      {(it.status === "queued" || it.status === "ready") && uploadMode !== "always" && !it.forceNow && (
+                        <button onClick={() => forceVideoUploadNow(it.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.25)",color:"#10B981",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Upload now</button>
+                      )}
+                      {it.status === "error" && (
+                        <button onClick={() => retryVideoQueueItem(it.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Retry</button>
+                      )}
+                      <button onClick={() => { if(window.confirm("Cancel and remove this video from the queue?")) cancelVideoQueueItem(it.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#a06060",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,display:"flex",alignItems:"center"}}>
+                        <IconX size={10} color="#a06060"/>
+                      </button>
+                    </div>
+                    {it.error && <div style={{fontSize:9,color:"#FF8888",marginTop:3,fontFamily:F}}>{it.error}</div>}
+                  </div>
+                );
+              })}
+            </>}
+          </div>}
+
           {/* Upload button — brighter red to stand out */}
           <input ref={ytFileRef} type="file" accept="video/*" onChange={handleYtFile} style={{display:"none"}} />
           <button onClick={() => ytFileRef.current?.click()} style={{width:"100%",padding:"11px 0",borderRadius:8,background:"rgba(255,0,0,.12)",border:"1px solid rgba(255,0,0,.4)",color:"#ff4040",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-            <IconYoutube size={15} color="#ff4040"/><span>{videoUrls.length > 0 ? `Add another video (${videoUrls.length + 1})` : "Upload video to YouTube"}</span>
+            <IconYoutube size={15} color="#ff4040"/><span>{(videoUrls.length + videoQueueItems.length) > 0 ? `Add another video (${videoUrls.length + videoQueueItems.length + 1})` : "Upload video to YouTube"}</span>
           </button>
         </div>
 
