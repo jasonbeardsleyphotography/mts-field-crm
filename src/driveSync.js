@@ -106,6 +106,66 @@ export async function loadAppState(token) {
   }
 }
 
+// ── PHOTO FILE UPLOAD ────────────────────────────────────────────────────────
+
+/**
+ * Upload a single photo (base64 dataUrl) to Drive as a real file inside the
+ * "field-data/photos" folder.  Returns the webContentLink (direct HTTPS URL)
+ * on success, or null on failure.
+ *
+ * Uploading photos as Drive files rather than embedding them as base64 JSON
+ * dramatically reduces app-state.json size, speeds up cross-device sync, and
+ * lets the IMG tag load over CDN instead of parsing a huge data: string.
+ */
+export async function uploadPhotoToDrive(token, dataUrl, filename) {
+  try {
+    // Convert base64 dataUrl → binary Blob
+    const [header, b64] = dataUrl.split(",");
+    const mimeMatch = header.match(/data:([^;]+)/);
+    const mime = mimeMatch?.[1] || "image/jpeg";
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: mime });
+
+    // Ensure folder structure exists
+    const rootId  = await findOrCreateFolder(token, FOLDER_NAME);
+    const fieldId = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
+    const photoId = await findOrCreateFolder(token, "photos", fieldId);
+
+    // Multipart upload
+    const metadata = { name: filename, parents: [photoId] };
+    const form = new FormData();
+    form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
+    form.append("file", blob);
+
+    const res = await driveReq(
+      token,
+      `${UPLOAD_API}/files?uploadType=multipart&fields=id,webContentLink`,
+      { method: "POST", body: form }
+    );
+    const data = await res.json();
+    if (!data.id) return null;
+
+    // Make publicly readable so IMG tags can load it without auth headers
+    await driveReq(
+      token,
+      `${DRIVE_API}/files/${data.id}/permissions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: "reader", type: "anyone" }),
+      }
+    );
+
+    // webContentLink works for direct download; use thumbnail URL for display
+    return `https://drive.google.com/thumbnail?id=${data.id}&sz=w1200`;
+  } catch(e) {
+    console.warn("Photo Drive upload failed:", e);
+    return null;
+  }
+}
+
 // ── FIELD DATA ───────────────────────────────────────────────────────────────
 
 export async function saveFieldToDrive(token, eventId, fieldData) {

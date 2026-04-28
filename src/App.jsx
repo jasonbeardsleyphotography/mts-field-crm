@@ -6,6 +6,7 @@ import OnsiteWindow from "./OnsiteWindow";
 import Pipeline, { savePipeline, loadPipeline, pushCalendarColor } from "./Pipeline";
 import { saveAppState, loadAppState, saveFieldToDrive, loadFieldFromDrive, listFieldFiles, onSyncStatus, onAuthError } from "./driveSync";
 import { loadField, saveField, listFieldIds } from "./fieldStore";
+import { startPhotoSyncWatcher } from "./photoSync";
 import {
   IconArrowLeft, IconNavigation, IconMessageSquare, IconVolume2,
   IconClipboard, IconX, IconRotateCcw, IconRefresh, IconReorder, IconUndo,
@@ -108,6 +109,18 @@ export default function App() {
   useEffect(() => {
     onAuthError(() => { silentReauth(); });
   }, [silentReauth]);
+
+  // ── OFFLINE PHOTO QUEUE ───────────────────────────────────────────────────
+  // Start the watcher once we have a valid token. The watcher installs
+  // window "online" and visibilitychange listeners so it only runs once total.
+  // It also fires immediately to process any queue from a prior session.
+  useEffect(() => {
+    if (!token) return;
+    startPhotoSyncWatcher(() => {
+      const saved = lsGet("mts-token", null);
+      return (saved && saved.expiry > Date.now()) ? saved.token : null;
+    });
+  }, [token]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -584,6 +597,7 @@ export default function App() {
   const [addStopName, setAddStopName] = useState("");
   const [addStopNotes, setAddStopNotes] = useState("");
   const [addStopTime, setAddStopTime] = useState("AM");
+  const [addStopDest, setAddStopDest] = useState("route"); // "route" | "pipeline"
 
   // Decline = remove from route with confirmation
   const decline = (id) => {
@@ -1010,45 +1024,74 @@ export default function App() {
       </div>}
 
       {/* ── ADD STOP POPUP ─────────────────────────────────────────── */}
-      {addStopOpen && <div onClick={()=>{setAddStopOpen(false);setAddStopAddr("");setAddStopName("");setAddStopNotes("");setAddStopTime("AM");}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      {addStopOpen && <div onClick={()=>{setAddStopOpen(false);setAddStopAddr("");setAddStopName("");setAddStopNotes("");setAddStopTime("AM");setAddStopDest("route");}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
         <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:14,padding:20,maxWidth:360,width:"100%"}}>
           <div style={{fontSize:15,fontWeight:700,color:"#f0f4fa",marginBottom:14,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>Add a stop</div>
-          <input value={addStopName} onChange={e=>setAddStopName(e.target.value)} placeholder="Name (e.g. Smith)" style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none",marginBottom:8}} />
+
+          {/* Destination toggle */}
+          <div style={{display:"flex",gap:4,marginBottom:12,background:"#0a0c14",borderRadius:8,padding:3}}>
+            {[["route","➕ Route"],["pipeline","📋 Pipeline"]].map(([dest,label])=>(
+              <button key={dest} onClick={()=>setAddStopDest(dest)} style={{flex:1,padding:"7px 0",borderRadius:6,background:addStopDest===dest?(dest==="route"?"rgba(59,130,246,.2)":"rgba(246,191,38,.15)"):"transparent",border:addStopDest===dest?(dest==="route"?"1px solid rgba(59,130,246,.4)":"1px solid rgba(246,191,38,.3)"):"1px solid transparent",color:addStopDest===dest?(dest==="route"?"#3B82F6":"#F6BF26"):"#4a5a70",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",letterSpacing:0.5,transition:"all .15s"}}>{label}</button>
+            ))}
+          </div>
+          {addStopDest === "pipeline" && <div style={{fontSize:10,color:"#4a6040",marginBottom:10,padding:"6px 10px",borderRadius:6,background:"rgba(246,191,38,.04)",border:"1px solid rgba(246,191,38,.1)"}}>Goes straight to Pipeline → Estimate Needed. No route stop created.</div>}
+
+          <input value={addStopName} onChange={e=>setAddStopName(e.target.value)} placeholder="Client name (e.g. Smith)" style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none",marginBottom:8}} />
           <input value={addStopAddr} onChange={e=>setAddStopAddr(e.target.value)} placeholder="Address" style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none",marginBottom:8}} />
           <textarea value={addStopNotes} onChange={e=>setAddStopNotes(e.target.value)} placeholder="Notes (scope, constraints, what to quote...)" rows={3} style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none",resize:"vertical",marginBottom:8}} />
-          {/* Time frame */}
-          <div style={{display:"flex",gap:6,marginBottom:14}}>
+
+          {/* Time frame — only relevant for Route */}
+          {addStopDest === "route" && <div style={{display:"flex",gap:6,marginBottom:14}}>
             {["AM","PM","All Day"].map(t => (
               <button key={t} onClick={()=>setAddStopTime(t)} style={{flex:1,padding:"8px 0",borderRadius:8,background:addStopTime===t?(t==="AM"?"rgba(46,125,50,.2)":"rgba(30,136,229,.2)"):"transparent",border:`1px solid ${addStopTime===t?(t==="AM"?"#66BB6A":"#64B5F6"):"#1a2030"}`,color:addStopTime===t?(t==="AM"?"#66BB6A":"#64B5F6"):"#4a5a70",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5}}>{t}</button>
             ))}
-          </div>
+          </div>}
+
           <div style={{display:"flex",gap:8}}>
-            <button onClick={()=>{setAddStopOpen(false);setAddStopAddr("");setAddStopName("");setAddStopNotes("");setAddStopTime("AM");}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#5a6580",fontSize:13,fontWeight:600,cursor:"pointer"}}>Cancel</button>
+            <button onClick={()=>{setAddStopOpen(false);setAddStopAddr("");setAddStopName("");setAddStopNotes("");setAddStopTime("AM");setAddStopDest("route");}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#5a6580",fontSize:13,fontWeight:600,cursor:"pointer"}}>Cancel</button>
             <button onClick={()=>{
               if (!addStopName.trim() && !addStopAddr.trim()) return;
               const id = "local-" + Date.now();
-              const now = new Date();
-              // Set start time based on AM/PM selection
-              const startHour = addStopTime === "AM" ? 9 : addStopTime === "PM" ? 13 : 8;
-              const startDt = new Date(businessDays[selDay] || now);
-              startDt.setHours(startHour, 0, 0, 0);
-              const endDt = new Date(startDt); endDt.setHours(startHour + 1);
-              // Build summary with time prefix to match parseEvent expectations
-              const prefix = addStopTime === "AM" ? "AM WINDOW " : addStopTime === "PM" ? "PM WINDOW " : "";
-              setRawEvents(prev => {
-                const dayEvts = prev[dayKey] || [];
-                return {...prev, [dayKey]: [...dayEvts, {
+
+              if (addStopDest === "pipeline") {
+                // Add directly to Pipeline as Estimate Needed
+                const pl = loadPipeline();
+                pl[id] = {
                   id,
-                  summary: `TASK ${addStopName.trim() || addStopAddr.trim()}`,
-                  location: addStopAddr.trim(),
-                  start: { dateTime: startDt.toISOString() },
-                  end:   { dateTime: endDt.toISOString() },
-                  colorId: "7",
-                  description: addStopNotes.trim() || "",
-                }]};
-              });
-              setAddStopAddr(""); setAddStopName(""); setAddStopNotes(""); setAddStopTime("AM"); setAddStopOpen(false);
-            }} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:13,fontWeight:700,cursor:"pointer"}}>Add</button>
+                  cn: addStopName.trim() || addStopAddr.trim(),
+                  addr: addStopAddr.trim(),
+                  notes: addStopNotes.trim(),
+                  stage: "estimate_needed",
+                  addedAt: Date.now(),
+                  stageChangedAt: Date.now(),
+                  hot: false,
+                };
+                savePipeline(pl);
+                if (token) pushCalendarColor(id, "estimate_needed", token);
+              } else {
+                // Add to today's route
+                const now = new Date();
+                const startHour = addStopTime === "AM" ? 9 : addStopTime === "PM" ? 13 : 8;
+                const startDt = new Date(businessDays[selDay] || now);
+                startDt.setHours(startHour, 0, 0, 0);
+                const endDt = new Date(startDt); endDt.setHours(startHour + 1);
+                setRawEvents(prev => {
+                  const dayEvts = prev[dayKey] || [];
+                  return {...prev, [dayKey]: [...dayEvts, {
+                    id,
+                    summary: `TASK ${addStopName.trim() || addStopAddr.trim()}`,
+                    location: addStopAddr.trim(),
+                    start: { dateTime: startDt.toISOString() },
+                    end:   { dateTime: endDt.toISOString() },
+                    colorId: "7",
+                    description: addStopNotes.trim() || "",
+                  }]};
+                });
+              }
+              setAddStopAddr(""); setAddStopName(""); setAddStopNotes(""); setAddStopTime("AM"); setAddStopDest("route"); setAddStopOpen(false);
+            }} style={{flex:2,padding:"10px 0",borderRadius:8,background:addStopDest==="pipeline"?"rgba(246,191,38,.15)":"rgba(59,130,246,.15)",border:addStopDest==="pipeline"?"1px solid rgba(246,191,38,.3)":"1px solid rgba(59,130,246,.25)",color:addStopDest==="pipeline"?"#F6BF26":"#3B82F6",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+              {addStopDest === "pipeline" ? "Add to Pipeline →" : "Add to Route →"}
+            </button>
           </div>
         </div>
       </div>}

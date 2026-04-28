@@ -4,6 +4,8 @@ import PhotoMarkup from "./PhotoMarkup";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { loadFieldFromDrive, saveFieldToDrive } from "./driveSync";
 import { loadField, saveField, peekField, primeField } from "./fieldStore";
+import { isUploadPending, onUploadChange } from "./uploadStatus";
+import { markStopForPhotoSync } from "./photoSync";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Pipeline
@@ -95,6 +97,8 @@ const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemi
 const PIPELINE_KEY = "mts-pipeline";
 const FIELD_KEY = id => `mts-field-${id}`;
 const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
+const FIVE_DAYS  = 5 * 24 * 60 * 60 * 1000;
+const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
 
 // SingleOps — open the base URL and copy the job number to clipboard for quick paste
 const SINGLEOPS_URL = "https://app.singleops.com/";
@@ -144,13 +148,25 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   // Email client preference — persisted so user doesn't have to re-select
   const [emailClient, setEmailClient] = useState(() => localStorage.getItem("mts-email-client") || "outlook_web");
   const [bulkEmailQueue, setBulkEmailQueue] = useState(null); // [{email,subject,body,name,cardId,opened}] | null
+  const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
+  const [customTemplates, setCustomTemplates] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("mts-email-templates") || "null") || {}; } catch { return {}; }
+  });
+  const [draftTemplates, setDraftTemplates] = useState(null); // edits in progress
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   // Detail popup — camera / markup / YouTube upload state
   const [detailShowCamera, setDetailShowCamera] = useState(null); // "scope" | "addon" | null
   const [detailMarkup, setDetailMarkup] = useState(null); // { section, idx } | null
   const [detailYtCount, setDetailYtCount] = useState(0);
+  // Tracks uploads started from OnsiteWindow that are still running after user tapped Done
+  const [externalYtActive, setExternalYtActive] = useState(false);
   const detailScopeLibRef = useRef(null);
   const detailAddonLibRef = useRef(null);
   const detailYtFileRef = useRef(null);
+  // Pipeline undo — stores the card state snapshot before the last manual move
+  const pipelineRef = useRef({});      // always-current mirror of pipeline (avoids stale closure)
+  const [undoAction, setUndoAction] = useState(null); // { prevCard, label } | null
+  const undoTimerRef = useRef(null);
 
   // Save edited field data to IndexedDB (and Drive if token available)
   const saveEditedField = useCallback((id, key, value) => {
@@ -230,6 +246,7 @@ Property: ${card.addr || ""}`);
     const updated = { ...cur, [key]: [...existingArr, photo] };
     primeField(cardId, updated);
     saveField(cardId, updated).catch(() => {});
+    markStopForPhotoSync(cardId);
   };
 
   const detailRemovePhoto = (idx, section, cardId) => {
@@ -248,18 +265,20 @@ Property: ${card.addr || ""}`);
 
   const detailSaveMarkup = (newDataUrl, idx, section, cardId) => {
     const key = section === "addon" ? "addonPhotos" : "scopePhotos";
+    // Clear the Drive URL so the edited version shows immediately;
+    // re-queue so the updated photo gets re-uploaded.
+    const applyMarkup = (p, i) => i === idx ? { ...p, dataUrl: newDataUrl, url: undefined } : p;
     setEditFields(prev => {
       const cur = prev[cardId] || {};
       const existing = [...(cur[key] || peekField(cardId)[key] || [])];
-      existing[idx] = { ...existing[idx], dataUrl: newDataUrl };
-      return { ...prev, [cardId]: { ...cur, [key]: existing } };
+      return { ...prev, [cardId]: { ...cur, [key]: existing.map(applyMarkup) } };
     });
     const cur = peekField(cardId);
     const existingArr = [...(cur[key] || [])];
-    existingArr[idx] = { ...existingArr[idx], dataUrl: newDataUrl };
-    const updated = { ...cur, [key]: existingArr };
+    const updated = { ...cur, [key]: existingArr.map(applyMarkup) };
     primeField(cardId, updated);
     saveField(cardId, updated).catch(() => {});
+    markStopForPhotoSync(cardId);
     setDetailMarkup(null);
   };
 
@@ -320,6 +339,8 @@ Property: ${card.addr || ""}`);
   // Persist
   useEffect(() => { savePipeline(pipeline); }, [pipeline]);
   useEffect(() => { if (onCloudSync) onCloudSync(); }, [pipeline]);
+  // Keep pipelineRef current so moveCard can snapshot prev state without a stale closure
+  useEffect(() => { pipelineRef.current = pipeline; }, [pipeline]);
 
   // ── LOAD FIELD DATA FROM DRIVE WHEN DETAIL OPENS ───────────────────────
   useEffect(() => {
@@ -370,6 +391,19 @@ Property: ${card.addr || ""}`);
     return () => { dead = true; };
   }, [detailCard?.id, token]);
 
+  // ── EXTERNAL UPLOAD STATUS ───────────────────────────────────────────────
+  // Subscribe to OnsiteWindow's module-level upload tracker so the detail
+  // popup shows "↑ Uploading…" even after the user tapped Done and OnsiteWindow
+  // unmounted (the network request is still live in the background).
+  useEffect(() => {
+    if (!detailCard?.id) { setExternalYtActive(false); return; }
+    setExternalYtActive(isUploadPending(detailCard.id));
+    const unsub = onUploadChange((stopId, count) => {
+      if (stopId === detailCard.id) setExternalYtActive(count > 0);
+    });
+    return unsub;
+  }, [detailCard?.id]);
+
   // ── AUTO-AGING ──────────────────────────────────────────────────────────
   // Runs on mount, on interval (every 5 min when tab visible), and when the
   // tab becomes visible again — catches cards that entered 'waiting' after
@@ -389,7 +423,10 @@ Property: ${card.addr || ""}`);
             return;
           }
           const age = now - (card.stageChangedAt || card.addedAt || now);
-          if (card.stage === "waiting" && age > THREE_DAYS) {
+          if (card.stage === "strong" && age > FIVE_DAYS) {
+            updated[id] = { ...card, stage: "follow_up", stageChangedAt: now };
+            changed = true;
+          } else if (card.stage === "waiting" && age > THREE_DAYS) {
             updated[id] = { ...card, stage: "weak", stageChangedAt: now };
             changed = true;
           } else if (card.stage === "weak" && age > THREE_DAYS) {
@@ -477,6 +514,28 @@ Property: ${card.addr || ""}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allCards, fieldSummaryVersion]);
 
+  // Repeat client map — active cards whose last name OR address matches a sold/declined card.
+  // Used to show a "↩ return client" indicator so Jason knows this is a known property.
+  const repeatClients = useMemo(() => {
+    const result = {};
+    const cards = Object.values(pipeline);
+    const history = cards.filter(c => c.stage === "sold" || c.stage === "declined");
+    const active  = cards.filter(c => c.stage !== "sold" && c.stage !== "declined");
+    for (const card of active) {
+      const lastName  = (card.cn  || "").trim().split(/\s+/).pop().toLowerCase();
+      const addrKey   = (card.addr || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 14);
+      const match = history.find(h => {
+        if (h.id === card.id) return false;
+        const hLast = (h.cn  || "").trim().split(/\s+/).pop().toLowerCase();
+        const hAddr = (h.addr || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 14);
+        return (lastName.length > 1 && hLast === lastName) ||
+               (addrKey.length > 8  && hAddr === addrKey);
+      });
+      if (match) result[card.id] = match;
+    }
+    return result;
+  }, [pipeline]);
+
   // Cards in waiting for 2+ days (due for follow-up nudge)
   const dueForFollowUp = useMemo(() => {
     const TWO_DAYS = 2 * 24 * 60 * 60 * 1000;
@@ -492,13 +551,44 @@ Property: ${card.addr || ""}`);
   }, [search]);
 
   // Move card to stage + push color to Google Calendar
-  const moveCard = useCallback((id, newStage) => {
-    setPipeline(prev => ({
-      ...prev,
-      [id]: { ...prev[id], stage: newStage, stageChangedAt: Date.now(), autoDeclined: false },
-    }));
+  // Records estimateSentAt the first time a card leaves estimate_needed.
+  // opts.noUndo = true skips the undo snapshot (used by auto-aging so you
+  // can't undo automatic decays — only manual moves should be undoable).
+  const moveCard = useCallback((id, newStage, opts = {}) => {
+    if (!opts.noUndo) {
+      const prevCard = pipelineRef.current[id];
+      if (prevCard) {
+        if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+        const toLabel = STAGES.find(s => s.id === newStage)?.short || newStage;
+        setUndoAction({ prevCard, label: `${prevCard.cn} → ${toLabel}` });
+        undoTimerRef.current = setTimeout(() => setUndoAction(null), 6000);
+      }
+    }
+    setPipeline(prev => {
+      const card = prev[id];
+      const leavingEstimate = card?.stage === "estimate_needed" && newStage !== "estimate_needed";
+      return {
+        ...prev,
+        [id]: {
+          ...card,
+          stage: newStage,
+          stageChangedAt: Date.now(),
+          autoDeclined: false,
+          ...(leavingEstimate && !card?.estimateSentAt ? { estimateSentAt: Date.now() } : {}),
+        },
+      };
+    });
     if (token) pushCalendarColor(id, newStage, token);
   }, [token]);
+
+  const undoMove = useCallback(() => {
+    if (!undoAction) return;
+    const { prevCard } = undoAction;
+    setPipeline(prev => ({ ...prev, [prevCard.id]: prevCard }));
+    if (token) pushCalendarColor(prevCard.id, prevCard.stage, token);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setUndoAction(null);
+  }, [undoAction, token]);
 
   // Reactivate = move from declined back to estimate_needed
   const reactivate = useCallback((id) => {
@@ -562,27 +652,41 @@ Property: ${card.addr || ""}`);
 
   // ── BULK EMAIL + SMS ────────────────────────────────────────
   // ── EMAIL COMPOSE HELPER ─────────────────────────────────────────────
-  // Opens a compose window in the user's preferred email client.
-  // Direct user-gesture call (no setTimeout) so browsers don't block the popup.
-  const openEmailCompose = useCallback((to, subject, body, client) => {
+  // Builds the compose URL for the selected email client.
+  // Exposed separately so the bulk queue can put it in an <a href> — that
+  // lets middle-click / right-click → open in new tab work natively.
+  const buildComposeUrl = useCallback((to, subject, body, client) => {
     const cl = client || emailClient;
     if (cl === "outlook_web") {
-      const url = `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(to)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-      window.open(url, "_blank");
+      return `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(to)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     } else if (cl === "outlook_live") {
-      const url = `https://outlook.live.com/mail/0/deeplink/compose?to=${encodeURIComponent(to)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-      window.open(url, "_blank");
+      return `https://outlook.live.com/mail/0/deeplink/compose?to=${encodeURIComponent(to)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     } else {
-      window.open(`mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_self");
+      return `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     }
   }, [emailClient]);
+
+  const openEmailCompose = useCallback((to, subject, body, client) => {
+    const url = buildComposeUrl(to, subject, body, client);
+    if ((client || emailClient) === "mailto") window.open(url, "_self");
+    else window.open(url, "_blank");
+  }, [buildComposeUrl, emailClient]);
 
   const saveEmailClient = (cl) => {
     setEmailClient(cl);
     localStorage.setItem("mts-email-client", cl);
   };
 
+  // Effective templates — defaults merged with any user edits stored in localStorage
+  const effectiveTemplates = EMAIL_TEMPLATES.map(t => ({ ...t, ...(customTemplates?.[t.id] || {}) }));
+
+  const saveCustomTemplates = (updates) => {
+    setCustomTemplates(updates);
+    try { localStorage.setItem("mts-email-templates", JSON.stringify(updates)); } catch {}
+  };
+
   // Build the queue — user then taps each recipient button to open one tab per click
+  // Auto-moves Strong / Weak cards → Follow Up when an email campaign is sent
   const sendBulkEmail = (template) => {
     const queue = selectedCards
       .filter(c => c.email)
@@ -592,6 +696,10 @@ Property: ${card.addr || ""}`);
         return { email: c.email, subject: template.subject, body, name: firstName, cardId: c.id, opened: false };
       });
     setBulkEmailQueue(queue);
+    // Auto-advance: Strong/Weak → Follow Up after sending an email campaign
+    selectedCards.forEach(c => {
+      if (c.stage === "strong" || c.stage === "weak") moveCard(c.id, "follow_up");
+    });
   };
 
   const sendBulkSms = (template) => {
@@ -616,6 +724,10 @@ Property: ${card.addr || ""}`);
     const { photoCount, hasNotes, hasVideo } = summary;
     const isSelected = !!selected[card.id];
     const isDeclined = card.stage === "declined";
+    // Days-without-contact warning: show if 7+ days since last contact AND card is active
+    const lc = lastContact[card.id];
+    const daysSinceContact = lc?.at ? Math.floor((Date.now() - lc.at) / (24 * 60 * 60 * 1000)) : null;
+    const contactWarning = !isDeclined && card.stage !== "sold" && daysSinceContact !== null && daysSinceContact >= 7;
 
     return (
       <div
@@ -658,7 +770,7 @@ Property: ${card.addr || ""}`);
               const lc = formatContact(lastContact[card.id]);
               return lc ? <span style={{fontSize:9,color:"#64B5F6",fontWeight:600,fontFamily:F,letterSpacing:0.3,textTransform:"uppercase"}}>{lc}</span> : null;
             })()}
-            <span style={{fontSize:10,color:card.stage==="weak"?"#FF8A65":"#4a5a70"}}>{daysSince(card.stageChangedAt || card.addedAt)}</span>
+            <span style={{fontSize:10,color:card.stage==="weak"?"#FF8A65":"#4a5a70"}} title="Days since estimate was sent">{daysSince(card.estimateSentAt || (card.stage !== "estimate_needed" ? card.stageChangedAt : null) || card.addedAt)}</span>
           </div>
         </div>
 
@@ -667,6 +779,8 @@ Property: ${card.addr || ""}`);
           {photoCount > 0 && <span style={{display:"flex",alignItems:"center",gap:2,fontSize:10,color:"#5a6580"}}><IconCamera size={11} color="#5a6580"/>{photoCount}</span>}
           {hasNotes && <IconEdit size={11} color="#5a6580"/>}
           {hasVideo && <IconVideo size={11} color="#5a6580"/>}
+          {contactWarning && <button onClick={e=>{e.stopPropagation();setPipelineSheet({card,type:"email"});}} title={`${daysSinceContact} days since last contact — tap to email`} style={{fontSize:9,padding:"1px 6px",borderRadius:99,background:"rgba(230,124,115,.12)",border:"1px solid rgba(230,124,115,.3)",color:"#E67C73",fontWeight:700,fontFamily:F,letterSpacing:0.3,cursor:"pointer"}}>⚠ {daysSinceContact}d · email</button>}
+          {repeatClients[card.id] && <span title={`Return client — previously ${STAGES.find(s=>s.id===repeatClients[card.id].stage)?.short}`} style={{fontSize:9,padding:"1px 6px",borderRadius:99,background:"rgba(139,92,246,.1)",border:"1px solid rgba(139,92,246,.25)",color:"#a78bfa",fontWeight:700,fontFamily:F,letterSpacing:0.3}}>↩ return</span>}
           {card.jn && <button onClick={e=>{e.stopPropagation();openSingleOps(card.jn);}} style={{fontSize:10,color:"#3B82F6",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}>SO #{card.jn}</button>}
           <div style={{flex:1}}/>
           {/* Quick email + SMS shortcuts */}
@@ -737,9 +851,28 @@ Property: ${card.addr || ""}`);
           <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"10px 16px",background:"#0d0f18",borderTop:"1px solid #1a2030",display:"flex",gap:8,alignItems:"center",paddingBottom:"max(10px,env(safe-area-inset-bottom))",zIndex:50}}>
             <span style={{fontSize:12,color:"#90a8c0",fontWeight:600}}>{selectedCount} selected</span>
             <div style={{flex:1}}/>
-            <button onClick={()=>setEmailSheet(true)} style={{padding:"8px 16px",borderRadius:8,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:12,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#3B82F6"/>Email</span></button>
-            <button onClick={()=>setPipelineSheet({card:null,type:"sms_bulk"})} style={{padding:"8px 16px",borderRadius:8,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.2)",color:"#10B981",fontSize:12,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}>💬 Text</span></button>
-            <button onClick={()=>{selectedCards.forEach(c=>moveCard(c.id,"follow_up"));setSelected({});setSelectMode(false);}} style={{padding:"8px 12px",borderRadius:8,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>→ Follow up</button>
+            <button onClick={()=>setEmailSheet(true)} style={{padding:"8px 14px",borderRadius:8,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:12,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#3B82F6"/>Email</span></button>
+            <button onClick={()=>setPipelineSheet({card:null,type:"sms_bulk"})} style={{padding:"8px 14px",borderRadius:8,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.2)",color:"#10B981",fontSize:12,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}>💬 Text</span></button>
+            <button onClick={()=>setBulkMoveOpen(true)} style={{padding:"8px 14px",borderRadius:8,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>Move →</button>
+            {/* Bulk stage picker popover */}
+            {bulkMoveOpen && (
+              <div onClick={()=>setBulkMoveOpen(false)} style={{position:"fixed",inset:0,zIndex:200}}>
+                <div onClick={e=>e.stopPropagation()} style={{position:"absolute",bottom:"calc(max(10px,env(safe-area-inset-bottom)) + 54px)",right:16,background:"#0d0f18",border:"1px solid #1a2030",borderRadius:12,padding:"8px 0",minWidth:180,boxShadow:"0 4px 20px rgba(0,0,0,.5)"}}>
+                  <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",padding:"4px 14px 8px",fontFamily:F}}>Move {selectedCount} cards to</div>
+                  {STAGES.filter(st => st.id !== "declined").map(st => (
+                    <button key={st.id} onClick={()=>{
+                      selectedCards.forEach(c => moveCard(c.id, st.id));
+                      setBulkMoveOpen(false);
+                      setSelected({});
+                      setSelectMode(false);
+                    }} style={{width:"100%",padding:"9px 14px",background:"transparent",border:"none",cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:16,height:16,borderRadius:8,background:st.color,color:"#fff",fontSize:9,fontWeight:800,flexShrink:0}}>{st.letter}</span>
+                      <span style={{fontSize:13,color:"#c0d0e0",fontWeight:600}}>{st.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -782,6 +915,15 @@ Property: ${card.addr || ""}`);
     <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
       <div className="mts-pipeline-mobile" style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>{mobileView()}</div>
       <div className="mts-pipeline-desktop" style={{display:"none",flex:1,overflow:"hidden"}}>{desktopView()}</div>
+
+      {/* ── UNDO TOAST ─────────────────────────────────────────────── */}
+      {undoAction && (
+        <div style={{position:"fixed",bottom:"max(80px,calc(70px + env(safe-area-inset-bottom)))",left:"50%",transform:"translateX(-50%)",zIndex:300,display:"flex",alignItems:"center",gap:10,padding:"10px 16px",borderRadius:12,background:"#1a2035",border:"1px solid #2a3560",boxShadow:"0 4px 20px rgba(0,0,0,.5)",whiteSpace:"nowrap",pointerEvents:"all"}}>
+          <span style={{fontSize:12,color:"#90a8c0",fontFamily:F,letterSpacing:0.5}}>{undoAction.label}</span>
+          <button onClick={undoMove} style={{padding:"5px 12px",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.35)",color:"#3B82F6",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>UNDO</button>
+          <button onClick={()=>{clearTimeout(undoTimerRef.current);setUndoAction(null);}} style={{width:20,height:20,borderRadius:4,background:"transparent",border:"none",color:"#4a5a70",fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>✕</button>
+        </div>
+      )}
 
       {/* ── FULL CARD DETAIL POPUP ──────────────────────────────────── */}
       {detailCard && (() => {
@@ -842,6 +984,22 @@ Property: ${card.addr || ""}`);
                 ))}
               </div>
 
+              {/* Repeat client banner */}
+              {repeatClients[card.id] && (() => {
+                const prev = repeatClients[card.id];
+                const prevStage = STAGES.find(s => s.id === prev.stage);
+                return (
+                  <div style={{marginBottom:14,padding:"8px 12px",borderRadius:8,background:"rgba(139,92,246,.08)",border:"1px solid rgba(139,92,246,.2)",display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:13}}>↩</span>
+                    <div style={{flex:1}}>
+                      <span style={{fontSize:12,fontWeight:700,color:"#a78bfa",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Return client</span>
+                      <span style={{fontSize:11,color:"#7060a0",marginLeft:8}}>Previous card: {prevStage?.label || prev.stage} · {daysSince(prev.stageChangedAt || prev.addedAt)}</span>
+                    </div>
+                    <button onClick={()=>setDetailCard(prev)} style={{padding:"4px 10px",borderRadius:6,background:"rgba(139,92,246,.12)",border:"1px solid rgba(139,92,246,.25)",color:"#a78bfa",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>View</button>
+                  </div>
+                );
+              })()}
+
               {/* Contact */}
               <div style={{display:"flex",gap:16,marginBottom:16,flexWrap:"wrap"}}>
                 {card.phone && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconPhone size={14} color="#a0b8d0"/><a href={`tel:${card.phone.replace(/\D/g,"")}`} onClick={()=>markContact(card.id,"call")} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.phone}</a></div>}
@@ -880,7 +1038,7 @@ Property: ${card.addr || ""}`);
                   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:8,marginBottom:8}}>
                     {scopePhotos.map((p, i) => (
                       <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
-                        <img src={p.dataUrl} alt="" onClick={() => setDetailMarkup({section:"scope",idx:i})} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
+                        <img src={p.url || p.dataUrl} alt="" onClick={() => setDetailMarkup({section:"scope",idx:i})} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
                         <button onClick={() => detailRemovePhoto(i,"scope",card.id)} style={{position:"absolute",top:4,right:4,width:22,height:22,borderRadius:11,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={11} color="#ff6666"/></button>
                         <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:3}}>
                           <div onClick={() => setDetailMarkup({section:"scope",idx:i})} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={10} color="#ccc"/></div>
@@ -931,7 +1089,7 @@ Property: ${card.addr || ""}`);
                   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:8,marginBottom:8}}>
                     {addonPhotos.map((p, i) => (
                       <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
-                        <img src={p.dataUrl} alt="" onClick={() => setDetailMarkup({section:"addon",idx:i})} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
+                        <img src={p.url || p.dataUrl} alt="" onClick={() => setDetailMarkup({section:"addon",idx:i})} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
                         <button onClick={() => detailRemovePhoto(i,"addon",card.id)} style={{position:"absolute",top:4,right:4,width:22,height:22,borderRadius:11,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={11} color="#ff6666"/></button>
                         <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:3}}>
                           <div onClick={() => setDetailMarkup({section:"addon",idx:i})} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={10} color="#ccc"/></div>
@@ -956,7 +1114,7 @@ Property: ${card.addr || ""}`);
               <div style={{marginBottom:16}}>
                 <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
                   VIDEO
-                  {detailYtCount > 0 && <span style={{fontSize:9,color:"#F6BF26",fontWeight:700,padding:"1px 8px",borderRadius:10,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.2)"}}>↑ Uploading…</span>}
+                  {(detailYtCount > 0 || externalYtActive) && <span style={{fontSize:9,color:"#F6BF26",fontWeight:700,padding:"1px 8px",borderRadius:10,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.2)",animation:"pulse 1s infinite"}}>↑ Uploading…</span>}
                 </div>
                 {videoUrls.map((url, i) => {
                   const vid = getYtId(url);
@@ -1033,13 +1191,21 @@ Property: ${card.addr || ""}`);
                 </div>
                 {item.opened
                   ? <span style={{fontSize:11,color:"#10B981",fontWeight:700}}>✓ Opened</span>
-                  : <button onClick={()=>{
-                      openEmailCompose(item.email, item.subject, item.body);
-                      markContact(item.cardId, "email");
-                      setBulkEmailQueue(prev => prev.map((x,j) => j===i ? {...x,opened:true} : x));
-                    }} style={{padding:"6px 14px",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.3)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0}}>
+                  : <a href={buildComposeUrl(item.email, item.subject, item.body)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={()=>{
+                        markContact(item.cardId, "email");
+                        setBulkEmailQueue(prev => prev.map((x,j) => j===i ? {...x,opened:true} : x));
+                      }}
+                      onAuxClick={()=>{
+                        // middle-click — track as opened too
+                        markContact(item.cardId, "email");
+                        setBulkEmailQueue(prev => prev.map((x,j) => j===i ? {...x,opened:true} : x));
+                      }}
+                      style={{padding:"6px 14px",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.3)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,textDecoration:"none",display:"inline-block"}}>
                       Open →
-                    </button>
+                    </a>
                 }
               </div>
             ))}
@@ -1049,8 +1215,11 @@ Property: ${card.addr || ""}`);
               <span style={{fontSize:15,fontWeight:700,color:"#f0f4fa",flex:1,fontFamily:F,letterSpacing:1,textTransform:"uppercase"}}>Email {selectedCount} clients</span>
               <button onClick={()=>{setEmailSheet(false);}} style={{width:28,height:28,borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
             </div>
-            <div style={{fontSize:11,color:"#5a6580",marginBottom:10}}>Choose a template — each email will be personalized with the client's name.</div>
-            {EMAIL_TEMPLATES.map(t => (
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
+              <span style={{fontSize:11,color:"#5a6580",flex:1}}>Choose a template — each email is personalized with the client's name.</span>
+              <button onClick={()=>{ setDraftTemplates(effectiveTemplates.reduce((acc,t)=>({...acc,[t.id]:{subject:t.subject,body:t.body}}),{})); setTemplateEditorOpen(true); }} style={{padding:"4px 10px",borderRadius:6,background:"transparent",border:"1px solid #2a3560",color:"#5a6580",fontSize:10,cursor:"pointer",fontWeight:700}}>✏ Edit</button>
+            </div>
+            {effectiveTemplates.map(t => (
               <button key={t.id} onClick={()=>setEmailPreview(t)} style={{width:"100%",padding:"12px 14px",marginBottom:6,borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",cursor:"pointer",textAlign:"left"}}>
                 <div style={{fontSize:13,fontWeight:700,color:"#a0b8d0"}}>{t.label}</div>
                 <div style={{fontSize:11,color:"#4a5a70",marginTop:2}}>{t.subject}</div>
@@ -1071,6 +1240,48 @@ Property: ${card.addr || ""}`);
           </>}
         </div>
       </div>}
+
+      {/* ── TEMPLATE EDITOR OVERLAY ───────────────────────────────────── */}
+      {templateEditorOpen && draftTemplates && (
+        <div onClick={()=>setTemplateEditorOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",backdropFilter:"blur(4px)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:14,padding:18,maxWidth:520,width:"100%",maxHeight:"88vh",overflowY:"auto"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+              <span style={{fontSize:15,fontWeight:700,color:"#f0f4fa",flex:1,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Edit Email Templates</span>
+              <button onClick={()=>setTemplateEditorOpen(false)} style={{width:28,height:28,borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+            </div>
+            <div style={{fontSize:10,color:"#4a5060",marginBottom:12,lineHeight:1.5}}>
+              Use <span style={{color:"#a0b8d0",fontWeight:700}}>{"{firstName}"}</span> where you want the client's first name inserted.
+              Font and signature are controlled by your Outlook compose settings (Settings → Compose and reply → Default font).
+            </div>
+            {EMAIL_TEMPLATES.map(t => (
+              <div key={t.id} style={{marginBottom:16,padding:"12px 14px",borderRadius:8,background:"#0a0c14",border:"1px solid #1a2030"}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>{t.label}</div>
+                <div style={{fontSize:10,color:"#4a5a70",marginBottom:4}}>Subject line:</div>
+                <input value={draftTemplates[t.id]?.subject ?? t.subject}
+                  onChange={e => setDraftTemplates(prev => ({...prev,[t.id]:{...prev[t.id],subject:e.target.value}}))}
+                  style={{width:"100%",boxSizing:"border-box",padding:"7px 10px",borderRadius:7,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:12,fontFamily:"inherit",marginBottom:8,outline:"none"}} />
+                <div style={{fontSize:10,color:"#4a5a70",marginBottom:4}}>Body:</div>
+                <textarea value={draftTemplates[t.id]?.body ?? t.body}
+                  onChange={e => setDraftTemplates(prev => ({...prev,[t.id]:{...prev[t.id],body:e.target.value}}))}
+                  rows={7}
+                  style={{width:"100%",boxSizing:"border-box",padding:"7px 10px",borderRadius:7,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:12,fontFamily:"inherit",lineHeight:1.5,resize:"vertical",outline:"none"}} />
+                <button onClick={()=>setDraftTemplates(prev=>({...prev,[t.id]:{subject:t.subject,body:t.body}}))}
+                  style={{fontSize:10,color:"#5a6580",background:"transparent",border:"none",cursor:"pointer",padding:"2px 0",textDecoration:"underline"}}>Reset to default</button>
+              </div>
+            ))}
+            <div style={{display:"flex",gap:8,marginTop:4}}>
+              <button onClick={()=>setTemplateEditorOpen(false)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"transparent",border:"1px solid #2a3560",color:"#5a6580",fontSize:12,cursor:"pointer"}}>Cancel</button>
+              <button onClick={()=>{
+                const updates = {};
+                EMAIL_TEMPLATES.forEach(t => { updates[t.id] = { subject: draftTemplates[t.id]?.subject ?? t.subject, body: draftTemplates[t.id]?.body ?? t.body }; });
+                saveCustomTemplates(updates);
+                setTemplateEditorOpen(false);
+              }} style={{flex:2,padding:"10px 0",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.3)",color:"#3B82F6",fontSize:12,fontWeight:800,cursor:"pointer"}}>Save Templates</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── PIPELINE MESSAGE SHEET (per-card email/sms + bulk sms) ─────── */}
       {pipelineSheet && (() => {
         const isBulk = pipelineSheet.type === "sms_bulk";
