@@ -422,14 +422,30 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
 
   // When the queue produces a YouTube URL, fieldStore is updated and a
   // "mts-field-synced" event is dispatched. Re-pull videoUrls from IDB.
+  //
+  // CRITICAL: Only update state if the value ACTUALLY changed. Otherwise
+  // we trigger a feedback loop with the auto-save useEffect below (which
+  // also dispatches "mts-field-synced" on every save). A naïve setVideoUrls
+  // call here would cause: save → dispatch → handler → setVideoUrls (new
+  // array ref) → save → dispatch → ... infinite render loop, screen flashes,
+  // component eventually unmounts and bails to the routing screen, taking
+  // any unsaved photo state with it. (This is the bug that was eating
+  // photos taken with the camera, since camera photos only live in React
+  // state until the auto-save effect runs.)
   useEffect(() => {
     const handler = async () => {
       try {
         const fd = await loadField(s.id);
-        if (fd && mountedRef.current) {
-          if (fd.videoUrls) setVideoUrls(fd.videoUrls);
-          else if (fd.videoUrl) setVideoUrls([fd.videoUrl]);
-        }
+        if (!fd || !mountedRef.current) return;
+        const incoming = fd.videoUrls || (fd.videoUrl ? [fd.videoUrl] : []);
+        // Compare by content — array identity will always differ since
+        // loadField returns a fresh JSON-parse each call.
+        setVideoUrls(prev => {
+          if (prev.length === incoming.length && prev.every((v, i) => v === incoming[i])) {
+            return prev; // no change → no rerender → no save → no loop
+          }
+          return incoming;
+        });
       } catch {}
     };
     window.addEventListener("mts-field-synced", handler);
@@ -440,8 +456,22 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // Camera view — rapid capture mode
   if (showCamera) {
     return <CameraView
-      onPhoto={(dataUrl) => {
+      onPhoto={async (dataUrl) => {
         const photo = { dataUrl, ts: Date.now() };
+        const key = cameraSection === "addon" ? "addonPhotos" : "scopePhotos";
+        // CRITICAL: Persist to IDB BEFORE updating React state. The library
+        // pick path does this via _processPhoto; the camera path used to
+        // skip it, which meant photos lived only in React state until the
+        // auto-save effect ran. Any unmount before then erased them. Now
+        // they survive even if the OnsiteWindow re-mounts.
+        try {
+          const saved = await loadField(s.id).catch(() => ({}));
+          const existing = saved?.[key] || [];
+          const next = { ...(saved || {}), [key]: [...existing, photo], savedAt: Date.now() };
+          primeField(s.id, next);
+          await saveField(s.id, next).catch(() => {});
+        } catch (e) { console.warn("Camera photo IDB save failed:", e); }
+        // Now reflect in component state so the UI updates
         if (cameraSection === "addon") setAddonPhotos(prev => [...prev, photo]);
         else setScopePhotos(prev => [...prev, photo]);
         markStopForPhotoSync(s.id); // queue for Drive upload
