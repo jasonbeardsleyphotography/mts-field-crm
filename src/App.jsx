@@ -8,6 +8,8 @@ import { saveAppState, loadAppState, saveFieldToDrive, loadFieldFromDrive, listF
 import { loadField, saveField, listFieldIds } from "./fieldStore";
 import { startPhotoSyncWatcher } from "./photoSync";
 import { startVideoQueueWatcher } from "./videoQueue";
+import UploadTracker from "./UploadTracker";
+import Linkify from "./Linkify";
 import {
   IconArrowLeft, IconNavigation, IconMessageSquare, IconVolume2,
   IconClipboard, IconX, IconRotateCcw, IconRefresh, IconReorder, IconUndo,
@@ -212,9 +214,27 @@ export default function App() {
 
   // Silent version of the above, used for auto-save on calendar import.
   // Returns true on success, false on failure. No UI side effects.
+  // Local cache mapping a normalized phone digit-string → contact resourceName.
+  // Persists across sessions in localStorage. Once we've matched a phone to
+  // a Google Contact (or seen the auto-pusher try and fail), we never call
+  // people:createContact for that number again. This prevents the duplicate
+  // "CLIENT Mark Reigelsperger / CLIENT Mark Reigelsperger" issue when the
+  // People API's searchContacts index hasn't warmed up after sign-in.
+  const phoneContactCache = useRef(lsGet("mts-phone-contact-cache", {}));
+  const persistPhoneCache = useCallback(() => {
+    try { lsSet("mts-phone-contact-cache", phoneContactCache.current); } catch {}
+  }, []);
+
   const autoPushContact = useCallback(async (card) => {
     if (!token || !card) return false;
     if (!card.phone && !card.email) return false;
+    const phoneDigits = (card.phone || "").replace(/\D/g, "");
+
+    // Cache hit — already pushed (or already known to exist). Skip entirely.
+    if (phoneDigits && phoneContactCache.current[phoneDigits]) {
+      return true;
+    }
+
     const [givenName, ...rest] = (card.cn || "Unknown").split(" ");
     const familyName = rest.join(" ");
     const body = {
@@ -225,30 +245,69 @@ export default function App() {
       ...(card.addr  ? { addresses: [{ formattedValue: card.addr, type: "home" }] } : {}),
       biographies: [{ value: `MTS Rochester Tree Service Client${card.jn ? ` — Job #${card.jn}` : ""}`, contentType: "TEXT_PLAIN" }],
     };
+
     try {
-      // Dedupe: if a contact with this phone already exists, update rather than create
-      if (card.phone) {
-        const raw = (card.phone || "").replace(/\D/g, "");
-        const sr = await fetch(
-          `https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(card.phone)}&readMask=names,phoneNumbers,metadata&pageSize=5`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const sd = await sr.json();
-        const existing = sd.results?.find(r =>
-          (r.person?.phoneNumbers || []).some(p => p.value?.replace(/\D/g,"") === raw)
-        );
-        if (existing?.person?.resourceName) {
-          // Already in contacts — mark as pushed, don't bother updating.
+      // Dedupe across BOTH primary contacts and "Other Contacts" (auto-saved
+      // from Gmail etc). The People API splits these into two endpoints —
+      // missing the "Other Contacts" search was a major source of duplicates.
+      if (phoneDigits) {
+        const auth = { headers: { Authorization: `Bearer ${token}` } };
+        // Primary contacts search
+        const [primaryRes, otherRes] = await Promise.allSettled([
+          fetch(`https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(card.phone)}&readMask=names,phoneNumbers&pageSize=10`, auth),
+          fetch(`https://people.googleapis.com/v1/otherContacts:search?query=${encodeURIComponent(card.phone)}&readMask=names,phoneNumbers&pageSize=10`, auth),
+        ]);
+        const matchesPhone = (person) =>
+          (person?.phoneNumbers || []).some(p => p.value?.replace(/\D/g, "") === phoneDigits);
+        let existing = null;
+        if (primaryRes.status === "fulfilled" && primaryRes.value.ok) {
+          const sd = await primaryRes.value.json();
+          existing = sd.results?.find(r => matchesPhone(r.person))?.person;
+        }
+        if (!existing && otherRes.status === "fulfilled" && otherRes.value.ok) {
+          const od = await otherRes.value.json();
+          existing = od.results?.find(r => matchesPhone(r.person))?.person;
+        }
+        // Fallback: also do a name-based search in case searchContacts hasn't
+        // indexed the number yet (the well-known warmup issue). Only run if
+        // the phone search came up empty.
+        if (!existing && card.cn) {
+          try {
+            const ns = await fetch(`https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(card.cn)}&readMask=names,phoneNumbers&pageSize=10`, auth);
+            if (ns.ok) {
+              const nsd = await ns.json();
+              existing = nsd.results?.find(r => matchesPhone(r.person))?.person;
+            }
+          } catch {}
+        }
+        if (existing?.resourceName) {
+          // Already in contacts — record in cache so we never re-create.
+          phoneContactCache.current[phoneDigits] = existing.resourceName;
+          persistPhoneCache();
           return true;
         }
       }
+
+      // No existing contact found — create one.
       const res = await fetch("https://people.googleapis.com/v1/people:createContact", {
         method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (res.ok && phoneDigits) {
+        // Stash the new resourceName so subsequent runs skip even the
+        // search step. Belt-and-suspenders against any future warmup race.
+        try {
+          const created = await res.json();
+          phoneContactCache.current[phoneDigits] = created.resourceName || "created";
+          persistPhoneCache();
+        } catch {
+          phoneContactCache.current[phoneDigits] = "created";
+          persistPhoneCache();
+        }
+      }
       return res.ok;
     } catch { return false; }
-  }, [token]);
+  }, [token, persistPhoneCache]);
 
   // Track which stops have already been auto-pushed so we don't re-push on
   // every calendar reload. Stored by event id to survive app restarts.
@@ -927,7 +986,7 @@ export default function App() {
                   const kindLabel = lc.kind === "sms" ? "Texted" : lc.kind === "call" ? "Called" : lc.kind === "email" ? "Emailed" : "Contacted";
                   return <div style={{fontSize:11,color:"#64B5F6",marginBottom:8,fontWeight:600,fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>{kindLabel} · {label}</div>;
                 })()}
-                {s.notes && <div style={{fontSize:13,color:"#a0b0c0",lineHeight:1.6,marginBottom:10,fontWeight:500}}>{s.notes}</div>}
+                {s.notes && <div style={{fontSize:13,color:"#a0b0c0",lineHeight:1.6,marginBottom:10,fontWeight:500}}><Linkify text={s.notes} linkColor="#7BB3FF"/></div>}
                 {s.phone && <div style={{fontSize:13,color:"#a0b8d0",marginBottom:3,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><IconPhone size={13} color="#a0b8d0"/>{s.phone}</div>}
                 {s.email && <div style={{fontSize:13,color:"#a0b8d0",marginBottom:8,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#a0b8d0"/>{s.email}</div>}
                 {declineConfirm === s.id ? (
@@ -1182,6 +1241,14 @@ export default function App() {
         </div>
         <button onClick={() => setTtsError(null)} style={{padding:"4px 8px",borderRadius:6,background:"transparent",border:"none",color:"#a06060",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}><IconX size={14} color="#a06060"/></button>
       </div>}
+
+      {/* ── GLOBAL UPLOAD TRACKER ──────────────────────────────────── */}
+      {/* Sits above any toast that might also be showing. Toasts use 0 or
+          56px from the bottom; we offset by 56 if a toast is up. */}
+      <UploadTracker
+        stopMap={stopMap}
+        bottomOffset={undoToast ? 56 : (ttsError ? 56 : 0)}
+      />
     </div>
   );
 }

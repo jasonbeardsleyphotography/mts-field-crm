@@ -44,6 +44,12 @@ const MODE_KEY = "mts-video-upload-mode";
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB — YouTube requires multiples of 256 KB; 5 MB is well-tested
 const CHUNK_RETRY_LIMIT = 3;        // per-chunk retry count before pausing the queue item
 
+// Structured logging — every line prefixed [VQ] so you can filter the
+// browser console by "VQ" to see only video-queue activity. Helpful
+// when an upload appears stuck and we need to know which phase it's in.
+const vqLog = (...args) => { try { console.log("[VQ]", ...args); } catch {} };
+const vqWarn = (...args) => { try { console.warn("[VQ]", ...args); } catch {} };
+
 // ── IndexedDB ──────────────────────────────────────────────────────────
 
 const DB_NAME = "mts-video-queue";
@@ -195,6 +201,7 @@ export async function enqueueVideo({ stopId, file, title }) {
     error: null,
   };
   await putItem(item);
+  vqLog("enqueued", { id, stopId, title, originalSize: file.size });
   notify();
   _maybeProcessQueue();
   return id;
@@ -257,19 +264,22 @@ async function _processOne(id) {
   const item = await getItem(id);
   if (!item) return;
   const token = _getToken?.();
-  if (!token) return;
+  if (!token) { vqWarn("processOne: no token, skipping", id); return; }
 
+  vqLog("processOne start", { id, stopId: item.stopId, title: item.title, status: item.status, originalSize: item.originalSize, compressedSize: item.compressedSize, bytesUploaded: item.bytesUploaded });
   incUpload(item.stopId);
   try {
     // ── Phase 1: Compress (skipped if already done) ─────────────────────
     let blob = item.compressedFile || item.originalFile;
     if (!item.compressedFile && item.status !== "ready") {
+      vqLog("compress phase begin", { id, originalSize: item.originalSize });
       await _setStatus(id, "compressing", { progress: 0 });
       const result = await compressVideo(item.originalFile, async (pct) => {
         // Throttle progress writes — once every ~5% to avoid IDB thrash
         if (pct % 5 === 0) await _setProgress(id, pct);
       });
       blob = result.blob;
+      vqLog("compress phase done", { id, skipped: result.skipped, reason: result.reason, originalSize: result.originalSize, compressedSize: result.compressedSize });
       const itm = await getItem(id);
       if (!itm) return; // canceled mid-compress
       itm.compressedFile = blob;
@@ -278,6 +288,8 @@ async function _processOne(id) {
       itm.status = "ready";
       itm.progress = 0;
       itm.bytesUploaded = 0;
+      itm.compressionSkipped = !!result.skipped;
+      itm.compressionReason = result.reason || null;
       itm.updatedAt = Date.now();
       await putItem(itm);
       notify();
@@ -290,30 +302,29 @@ async function _processOne(id) {
     let bytesUploaded = cur.bytesUploaded || 0;
 
     if (!uploadUrl) {
+      vqLog("init YT session", { id, size: blob.size, mime: blob.type });
       uploadUrl = await _initYouTubeSession(token, cur.title, blob.size, blob.type || "video/mp4");
-      if (!uploadUrl) throw new Error("Failed to init YouTube upload session");
+      if (!uploadUrl) throw new Error("Failed to init YouTube upload session (check token + YouTube API enabled)");
+      vqLog("YT session ready", { id, sessionUrl: uploadUrl.slice(0,80) + "..." });
       cur.uploadUrl = uploadUrl;
       cur.updatedAt = Date.now();
       await putItem(cur);
     } else {
       // Resuming — ask YouTube where we left off
+      vqLog("resuming session", { id, lastByte: bytesUploaded });
       const resumed = await _queryUploadOffset(uploadUrl, blob.size);
+      vqLog("resume query result", { id, resumed });
       if (resumed === "complete") {
-        // Edge case: previous run finished the upload but crashed before
-        // recording the result. Fetch the video metadata via the original
-        // session URL by attempting a 0-byte upload that will return 200/308.
-        // Simplest path: just delete the queue item, the video already exists
-        // (orphaned in YouTube). User can re-upload if needed.
         await _setStatus(id, "error", { error: "Upload appears complete but result was lost. Check YouTube." });
         return;
       }
       if (typeof resumed === "number") bytesUploaded = resumed;
       if (resumed === null) {
-        // Session expired (404/410) — drop the URL and start over
+        vqLog("session expired, re-initing", { id });
         cur.uploadUrl = null;
         cur.bytesUploaded = 0;
         await putItem(cur);
-        return _processOne(id); // recurse to re-init
+        return _processOne(id);
       }
     }
 
@@ -328,10 +339,13 @@ async function _processOne(id) {
       const chunk = blob.slice(bytesUploaded, end);
       const isLast = end === blob.size;
 
+      const t0 = Date.now();
       const result = await _uploadChunk(uploadUrl, chunk, bytesUploaded, end, blob.size);
+      const ms = Date.now() - t0;
+      vqLog("chunk done", { id, range: `${bytesUploaded}-${end-1}/${blob.size}`, isLast, kind: result.kind, ms });
 
       if (result.kind === "ok-final") {
-        // Upload complete — YouTube returned the video metadata
+        vqLog("upload complete", { id, videoId: result.videoId });
         await _finalize(id, result.videoId, token);
         return;
       }
@@ -342,7 +356,7 @@ async function _processOne(id) {
         continue;
       }
       if (result.kind === "session-expired") {
-        // Need to re-init
+        vqLog("session expired mid-upload, re-initing", { id });
         const itm2 = await getItem(id);
         if (itm2) {
           itm2.uploadUrl = null;
@@ -355,6 +369,7 @@ async function _processOne(id) {
       const itm2 = await getItem(id);
       if (!itm2) return;
       itm2.retries = (itm2.retries || 0) + 1;
+      vqWarn("chunk failed", { id, attempt: itm2.retries, error: result.error });
       if (itm2.retries >= CHUNK_RETRY_LIMIT) {
         itm2.status = "error";
         itm2.error = result.error || "Chunk upload failed after retries";
@@ -369,7 +384,7 @@ async function _processOne(id) {
       await new Promise(r => setTimeout(r, 1500 * itm2.retries));
     }
   } catch (e) {
-    console.warn("Queue process error for", id, e);
+    vqWarn("processOne exception", id, e?.message || e);
     await _setStatus(id, "error", { error: e.message || String(e) });
   } finally {
     decUpload(item.stopId);
@@ -422,21 +437,28 @@ async function _finalize(id, videoId, token) {
 
 async function _initYouTubeSession(token, title, size, mimeType) {
   const metadata = { snippet: { title }, status: { privacyStatus: "unlisted" } };
-  const res = await fetch(
-    "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "X-Upload-Content-Type": mimeType,
-        "X-Upload-Content-Length": String(size),
-      },
-      body: JSON.stringify(metadata),
-    }
-  );
+  let res;
+  try {
+    res = await fetch(
+      "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "X-Upload-Content-Type": mimeType,
+          "X-Upload-Content-Length": String(size),
+        },
+        body: JSON.stringify(metadata),
+      }
+    );
+  } catch (e) {
+    vqWarn("YT init network error:", e?.message || e);
+    return null;
+  }
   if (!res.ok) {
-    console.warn("YT init failed:", res.status, await res.text().catch(()=>""));
+    const txt = await res.text().catch(()=>"");
+    vqWarn("YT init failed:", res.status, txt.slice(0, 200));
     return null;
   }
   return res.headers.get("Location");

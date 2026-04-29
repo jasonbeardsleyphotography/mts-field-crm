@@ -6,6 +6,7 @@ import { loadFieldFromDrive, saveFieldToDrive } from "./driveSync";
 import { loadField, saveField, peekField, primeField } from "./fieldStore";
 import { isUploadPending, onUploadChange } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
+import { listAll as listAllQueue, onQueueChange } from "./videoQueue";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Pipeline
@@ -514,6 +515,26 @@ Property: ${card.addr || ""}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allCards, fieldSummaryVersion]);
 
+  // ── Live video upload queue indexed by stopId ─────────────────────────
+  // So each pipeline card can show a small "↑ uploading 47%" pill if it
+  // has active uploads. Without this, when a card moves from route to
+  // pipeline, the user loses sight of in-flight uploads.
+  const [queueByStop, setQueueByStop] = useState({});
+  useEffect(() => {
+    let alive = true;
+    const ingest = (all) => {
+      const m = {};
+      for (const it of all) {
+        if (!m[it.stopId]) m[it.stopId] = [];
+        m[it.stopId].push(it);
+      }
+      if (alive) setQueueByStop(m);
+    };
+    listAllQueue().then(ingest);
+    const off = onQueueChange(ingest);
+    return () => { alive = false; off(); };
+  }, []);
+
   // Repeat client map — active cards whose last name OR address matches a sold/declined card.
   // Used to show a "↩ return client" indicator so Jason knows this is a known property.
   const repeatClients = useMemo(() => {
@@ -786,6 +807,25 @@ Property: ${card.addr || ""}`);
           {photoCount > 0 && <span style={{display:"flex",alignItems:"center",gap:2,fontSize:10,color:"#5a6580"}}><IconCamera size={11} color="#5a6580"/>{photoCount}</span>}
           {hasNotes && <IconEdit size={11} color="#5a6580"/>}
           {hasVideo && <IconVideo size={11} color="#5a6580"/>}
+          {/* Live upload indicator — visible whenever this card has queued / in-flight uploads */}
+          {(() => {
+            const q = queueByStop[card.id] || [];
+            if (q.length === 0) return null;
+            const hasErr = q.some(i => i.status === "error");
+            const active = q.find(i => i.status === "uploading" || i.status === "compressing");
+            const pct = active ? Math.round(q.reduce((s,i)=>s+(i.progress||0),0)/q.length) : null;
+            const color = hasErr ? "#FF5555" : "#10B981";
+            const label = hasErr
+              ? `↑ ${q.length} failed`
+              : active
+                ? `↑ ${q.length} uploading ${pct}%`
+                : `↑ ${q.length} pending`;
+            return (
+              <span title="Tap the bar at the bottom of the screen to manage uploads" style={{display:"flex",alignItems:"center",gap:3,fontSize:9,padding:"1px 6px",borderRadius:99,background:`${color}1a`,border:`1px solid ${color}55`,color,fontWeight:800,fontFamily:F,letterSpacing:0.3,textTransform:"uppercase",animation:active?"pulse 1.5s infinite":undefined}}>
+                {label}
+              </span>
+            );
+          })()}
           {contactWarning && <button onClick={e=>{e.stopPropagation();setPipelineSheet({card,type:"email"});}} title={`${daysSinceContact} days since last contact — tap to email`} style={{fontSize:9,padding:"1px 6px",borderRadius:99,background:"rgba(230,124,115,.12)",border:"1px solid rgba(230,124,115,.3)",color:"#E67C73",fontWeight:700,fontFamily:F,letterSpacing:0.3,cursor:"pointer"}}>⚠ {daysSinceContact}d · email</button>}
           {repeatClients[card.id] && <span title={`Return client — previously ${STAGES.find(s=>s.id===repeatClients[card.id].stage)?.short}`} style={{fontSize:9,padding:"1px 6px",borderRadius:99,background:"rgba(139,92,246,.1)",border:"1px solid rgba(139,92,246,.25)",color:"#a78bfa",fontWeight:700,fontFamily:F,letterSpacing:0.3}}>↩ return</span>}
           {card.jn && <button onClick={e=>{e.stopPropagation();openSingleOps(card.jn);}} style={{fontSize:10,color:"#3B82F6",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}>SO #{card.jn}</button>}
