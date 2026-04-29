@@ -402,6 +402,40 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     return () => { mountedRef.current = false; };
   }, [s.id]);
 
+  // ── VIDEO QUEUE STATE — must stay above early returns (Rules of Hooks) ──
+  // These power the queue panel UI shown in the VIDEO section. The actual
+  // upload work (compress → chunked PUT to YouTube) runs entirely inside
+  // videoQueue.js, persisted to IDB, so it survives this component
+  // unmounting. These hooks just keep the on-screen queue panel in sync.
+  const [videoQueueItems, setVideoQueueItems] = useState([]);
+  const [uploadMode, setUploadModeState] = useState(getVideoUploadMode());
+  const [showQueuePanel, setShowQueuePanel] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    listVideoQueueForStop(s.id).then(items => { if (alive) setVideoQueueItems(items); });
+    const off = onVideoQueueChange((all) => {
+      if (alive) setVideoQueueItems(all.filter(i => i.stopId === s.id));
+    });
+    return () => { alive = false; off(); };
+  }, [s.id]);
+
+  // When the queue produces a YouTube URL, fieldStore is updated and a
+  // "mts-field-synced" event is dispatched. Re-pull videoUrls from IDB.
+  useEffect(() => {
+    const handler = async () => {
+      try {
+        const fd = await loadField(s.id);
+        if (fd && mountedRef.current) {
+          if (fd.videoUrls) setVideoUrls(fd.videoUrls);
+          else if (fd.videoUrl) setVideoUrls([fd.videoUrl]);
+        }
+      } catch {}
+    };
+    window.addEventListener("mts-field-synced", handler);
+    return () => window.removeEventListener("mts-field-synced", handler);
+  }, [s.id]);
+
   // ── MARKUP OVERLAY ──────────────────────────────────────────────────
   // Camera view — rapid capture mode
   if (showCamera) {
@@ -477,39 +511,11 @@ Property: ${s.addr || ""}`);
   // The actual upload (compress → chunked PUT to YouTube) runs entirely
   // inside videoQueue.js, persisted to its own IndexedDB store. By the
   // time enqueueVideo() resolves the file is safely written to IDB and
-  // will upload on the next opportunity (WiFi by default), even if the
-  // app is closed and reopened. This is what fixes the 6-hour upload
-  // problem — the upload doesn't depend on this component being mounted.
-
-  // Live queue items for this stop (what's currently uploading/pending)
-  const [videoQueueItems, setVideoQueueItems] = useState([]);
-  const [uploadMode, setUploadModeState] = useState(getVideoUploadMode());
-  const [showQueuePanel, setShowQueuePanel] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    listVideoQueueForStop(s.id).then(items => { if (alive) setVideoQueueItems(items); });
-    const off = onVideoQueueChange((all) => {
-      if (alive) setVideoQueueItems(all.filter(i => i.stopId === s.id));
-    });
-    return () => { alive = false; off(); };
-  }, [s.id]);
-
-  // When the queue produces a YouTube URL, fieldStore is updated and a
-  // "mts-field-synced" event is dispatched. Re-pull videoUrls from IDB.
-  useEffect(() => {
-    const handler = async () => {
-      try {
-        const fd = await loadField(s.id);
-        if (fd && mountedRef.current) {
-          if (fd.videoUrls) setVideoUrls(fd.videoUrls);
-          else if (fd.videoUrl) setVideoUrls([fd.videoUrl]);
-        }
-      } catch {}
-    };
-    window.addEventListener("mts-field-synced", handler);
-    return () => window.removeEventListener("mts-field-synced", handler);
-  }, [s.id]);
+  // will upload on the next opportunity, even if the app is closed and
+  // reopened. This is what fixes the 6-hour upload problem — the upload
+  // doesn't depend on this component being mounted.
+  // (State hooks for videoQueueItems / uploadMode / showQueuePanel live
+  //  above the early returns, in the hook section, per Rules of Hooks.)
 
   const handleYtFile = async (e) => {
     const file = e.target.files?.[0];
