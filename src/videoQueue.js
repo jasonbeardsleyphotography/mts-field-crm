@@ -1,59 +1,71 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   MTS — Video Upload Queue
+   MTS — Video Upload Queue (v2 rewrite)
    ───────────────────────────────────────────────────────────────────────────
-   Solves the "phone in pocket, app backgrounded, 6-hour upload" problem by:
+   Hard-won lessons informing this rewrite:
 
-   1.  Persisting the actual video Blob to IndexedDB the moment the user
-       picks it. After that point, the app being closed/backgrounded/
-       reloaded does NOT lose the video — it just delays the upload.
+   1. The previous version had a localStorage trap: existing users had
+      `mts-video-upload-mode` set to "wifi" from when that was the default.
+      iOS Safari can't detect WiFi, so shouldUpload() returned false for
+      every item forever. Uploads sat at "queued" indefinitely even with
+      the screen on. → Fix: there is NO MODE. We always try to upload as
+      soon as we can. If the user is truly worried about cell data, they
+      can pause uploads with a single global toggle.
 
-   2.  Compressing to 720p H.264 ~2 Mbps before upload (videoCompress.js).
-       A 500 MB original becomes ~30 MB. 15-20x faster network transfer.
+   2. The previous version used ffmpeg.wasm for compression. Loading 30MB
+      of WASM from a CDN was unreliable on cellular and added a phase that
+      could silently fail and stall everything. → Fix: no compression.
+      Upload original file directly. Modern phones already produce reasonable
+      sizes through iOS's built-in HEVC and the file picker recompresses
+      4K to a friendlier format.
 
-   3.  Uploading in 5 MB CHUNKED resumable PUTs to YouTube. When the app
-       is backgrounded mid-upload the current chunk fails, we persist the
-       byte offset, and on the next resume we ask YouTube where it left
-       off (a status query) and continue from there. No restarts.
+   3. The previous version's worker loop used `_processing` as a singleton
+      lock. If _processOne threw an exception unexpectedly without going
+      through the try/finally cleanup, the lock could stay set forever.
+      → Fix: every code path that sets _processing=true also unsets it
+      with a finally; additionally, a watchdog timer resets the lock if
+      it's been stuck for >10 minutes.
 
-   4.  WiFi-only mode by default. Videos sit queued until the device
-       reports a WiFi/ethernet connection. Each item has an "Upload now"
-       override that ignores the gate.
+   4. The previous version dispatched "mts-field-synced" on completion,
+      which created a feedback loop with OnsiteWindow's auto-save effect.
+      → Fix: completion event uses a more specific name and OnsiteWindow's
+      handler does proper equality checks before setState.
 
-   ──────────────────────────────────────────────────────────────────────────
-   Switching modes:
-     UPLOAD_MODE = "wifi"    — only upload on WiFi/ethernet (default)
-     UPLOAD_MODE = "hybrid"  — upload on WiFi automatically, allow per-item
-                               cellular override (basically "wifi" but
-                               surfaces the override more aggressively)
-     UPLOAD_MODE = "always"  — upload immediately on any connection
-
-   Change the constant below or call setUploadMode() at runtime — the
-   queue picks up the new mode on its next tick.
+   5. Diagnostic logging now persists to IDB via videoLog.js so we can
+      tell after the fact what went wrong.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { loadField, saveField, primeField } from "./fieldStore";
 import { saveFieldToDrive } from "./driveSync";
-import { compressVideo } from "./videoCompress";
 import { incUpload, decUpload } from "./uploadStatus";
+import { vlogInfo, vlogWarn, vlogError } from "./videoLog";
 
-// ── Configuration ──────────────────────────────────────────────────────
+// ── Tunables ─────────────────────────────────────────────────────────────
 
-const DEFAULT_MODE = "always"; // "wifi" | "hybrid" | "always"
-const MODE_KEY = "mts-video-upload-mode";
+// 5 MB is the smallest chunk YouTube accepts beyond the minimum (256KB
+// alignment is required for non-final chunks). Using 5MB gives reasonable
+// resume granularity without too much per-chunk overhead.
+const CHUNK_SIZE = 5 * 1024 * 1024;
 
-const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB — YouTube requires multiples of 256 KB; 5 MB is well-tested
-const CHUNK_RETRY_LIMIT = 3;        // per-chunk retry count before pausing the queue item
+// Per-chunk retry budget. After N failures on the same chunk, mark item
+// as error and stop trying (until user explicitly retries).
+const CHUNK_RETRY_LIMIT = 5;
 
-// Structured logging — every line prefixed [VQ] so you can filter the
-// browser console by "VQ" to see only video-queue activity. Helpful
-// when an upload appears stuck and we need to know which phase it's in.
-const vqLog = (...args) => { try { console.log("[VQ]", ...args); } catch {} };
-const vqWarn = (...args) => { try { console.warn("[VQ]", ...args); } catch {} };
+// If the worker lock has been held for longer than this, assume we're
+// wedged and forcibly release it. This is a safety net, not a feature.
+const WORKER_LOCK_WATCHDOG_MS = 10 * 60 * 1000;
 
-// ── IndexedDB ──────────────────────────────────────────────────────────
+// Backoff schedule for chunk retries. Indices correspond to attempt count.
+// First retry: 1.5s. Last retry: 30s. Total budget if all retries used: ~70s.
+const RETRY_BACKOFF_MS = [1500, 3000, 6000, 12000, 30000];
+
+// Pause flag — separate from per-item state. When true, no new chunks fire.
+const PAUSE_KEY = "mts-video-uploads-paused";
+
+// ── IndexedDB ────────────────────────────────────────────────────────────
 
 const DB_NAME = "mts-video-queue";
-const DB_VER = 1;
+// DB_VER bumped because we changed the schema (compressedFile etc removed)
+const DB_VER = 2;
 const STORE = "queue";
 
 let _dbPromise = null;
@@ -62,358 +74,318 @@ function openDB() {
   _dbPromise = new Promise((resolve, reject) => {
     if (!("indexedDB" in window)) { reject(new Error("IndexedDB unavailable")); return; }
     const req = indexedDB.open(DB_NAME, DB_VER);
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (e) => {
       const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: "id" });
+      // For v1→v2: just keep the same store. The shape change is additive
+      // (we ignore old fields like compressedFile). Don't delete existing
+      // queue items — the user has data in there.
+      if (!db.objectStoreNames.contains(STORE)) {
+        db.createObjectStore(STORE, { keyPath: "id" });
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+  _dbPromise.catch(() => { _dbPromise = null; });
   return _dbPromise;
 }
 
-function tx(mode) {
-  return openDB().then(db => db.transaction(STORE, mode).objectStore(STORE));
+async function _idbOp(mode, op) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const t = db.transaction(STORE, mode);
+    const store = t.objectStore(STORE);
+    let result;
+    op(store, (r) => { result = r; });
+    t.oncomplete = () => resolve(result);
+    t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error);
+  });
 }
 
-// ── Mode management ────────────────────────────────────────────────────
+const idbPut    = (item) => _idbOp("readwrite", (s) => s.put(item));
+const idbGet    = (id)   => _idbOp("readonly",  (s, ret) => { s.get(id).onsuccess = (e) => ret(e.target.result); });
+const idbDelete = (id)   => _idbOp("readwrite", (s) => s.delete(id));
+const idbAll    = ()     => _idbOp("readonly",  (s, ret) => { s.getAll().onsuccess = (e) => ret(e.target.result || []); });
 
-let _mode = (typeof localStorage !== "undefined" && localStorage.getItem(MODE_KEY)) || DEFAULT_MODE;
-let _modeListeners = new Set();
+// ── Pause state ──────────────────────────────────────────────────────────
 
-export function getUploadMode() { return _mode; }
-export function setUploadMode(mode) {
-  if (!["wifi", "hybrid", "always"].includes(mode)) return;
-  _mode = mode;
-  try { localStorage.setItem(MODE_KEY, mode); } catch {}
-  _modeListeners.forEach(fn => { try { fn(mode); } catch {} });
-  // Kick the watcher in case we just unlocked uploads
-  _maybeProcessQueue();
-}
-export function onModeChange(fn) { _modeListeners.add(fn); return () => _modeListeners.delete(fn); }
+let _isPaused = false;
+try { _isPaused = localStorage.getItem(PAUSE_KEY) === "1"; } catch {}
 
-// ── Connection detection ───────────────────────────────────────────────
-// navigator.connection is supported on Chrome/Edge/Android. Safari iOS does
-// NOT expose it. On iOS we conservatively assume "unknown" connection and
-// fall back to: assume cellular UNLESS the user toggled to "always" or
-// flipped on a per-item override. Practically this means iOS users will
-// queue everything until they manually trigger uploads — which matches our
-// "WiFi default" intent (we just can't auto-detect WiFi on iOS, so the user
-// has to either flip the global toggle or hit "Upload now" per item).
-
-function isOnWifi() {
-  if (!navigator.onLine) return false;
-  const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-  if (!c) return null; // unknown — caller decides
-  // type is the modern field; effectiveType is fallback
-  if (c.type === "wifi" || c.type === "ethernet") return true;
-  if (c.type === "cellular") return false;
-  return null;
+export function isPaused() { return _isPaused; }
+export function setPaused(p) {
+  _isPaused = !!p;
+  try { localStorage.setItem(PAUSE_KEY, _isPaused ? "1" : "0"); } catch {}
+  vlogInfo("queue.paused", { paused: _isPaused });
+  notify();
+  if (!_isPaused) _kick();
 }
 
-function shouldUpload(item) {
-  if (item.forceNow) return true;     // per-item override
-  if (_mode === "always") return true;
-  if (!navigator.onLine) return false;
-  const wifi = isOnWifi();
-  if (wifi === true) return true;
-  if (wifi === false) return false;
-  // Unknown (iOS) — only auto-process if mode is "always"; otherwise wait
-  // for explicit user action. This is the conservative path.
-  return false;
-}
-
-// ── Queue CRUD ─────────────────────────────────────────────────────────
+// ── Subscribers ──────────────────────────────────────────────────────────
 
 const _listeners = new Set();
-function notify() {
-  listAll().then(items => {
-    _listeners.forEach(fn => { try { fn(items); } catch {} });
-  });
-}
 export function onQueueChange(fn) { _listeners.add(fn); return () => _listeners.delete(fn); }
 
-export async function listAll() {
-  const store = await tx("readonly");
-  return new Promise((resolve, reject) => {
-    const req = store.getAll();
-    req.onsuccess = () => resolve(req.result || []);
-    req.onerror = () => reject(req.error);
-  });
+let _notifyTimer = null;
+function notify() {
+  if (_notifyTimer) return;
+  _notifyTimer = setTimeout(async () => {
+    _notifyTimer = null;
+    try {
+      const all = await idbAll();
+      _listeners.forEach(fn => { try { fn(all); } catch {} });
+    } catch {}
+  }, 50);
 }
 
+// ── Public API: queue inspection ─────────────────────────────────────────
+
+export async function listAll() { return await idbAll(); }
 export async function listForStop(stopId) {
-  const all = await listAll();
+  const all = await idbAll();
   return all.filter(i => i.stopId === stopId);
 }
 
-async function getItem(id) {
-  const store = await tx("readonly");
-  return new Promise((resolve, reject) => {
-    const req = store.get(id);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
+// ── Public API: enqueue and lifecycle ────────────────────────────────────
 
-async function putItem(item) {
-  const store = await tx("readwrite");
-  return new Promise((resolve, reject) => {
-    const req = store.put(item);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function deleteItem(id) {
-  const store = await tx("readwrite");
-  return new Promise((resolve, reject) => {
-    const req = store.delete(id);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
-}
-
-/**
- * Add a video to the queue. Returns the queue item id.
- * status flow:
- *   "queued" → "compressing" → "ready" → "uploading" → "done" (then removed)
- *   any state → "error" (with retry count); "paused" if user-paused
- */
 export async function enqueueVideo({ stopId, file, title }) {
+  if (!file || !file.size) {
+    vlogError("enqueue.bad_file", { hasFile: !!file, size: file?.size });
+    throw new Error("No file or empty file");
+  }
   const id = `vq_${stopId}_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
   const item = {
     id,
     stopId,
     title,
-    originalFile: file,        // Blob — IDB stores Blobs natively, no base64 needed
-    originalSize: file.size,
-    originalName: file.name || "video.mov",
+    file,
+    fileSize: file.size,
+    fileName: file.name || "video.mov",
+    fileType: file.type || "video/mp4",
     status: "queued",
     progress: 0,
     bytesUploaded: 0,
-    totalBytes: file.size,     // updated post-compression
-    uploadUrl: null,           // YouTube resumable session URL
+    uploadUrl: null,
     retries: 0,
-    forceNow: false,
+    error: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
-    error: null,
   };
-  await putItem(item);
-  vqLog("enqueued", { id, stopId, title, originalSize: file.size });
+  await idbPut(item);
+  vlogInfo("enqueue.ok", { id, stopId, title, fileSize: file.size, fileType: item.fileType }, id);
   notify();
-  _maybeProcessQueue();
+  _kick();
   return id;
 }
 
-export async function forceUploadNow(id) {
-  const item = await getItem(id);
-  if (!item) return;
-  item.forceNow = true;
-  item.status = item.status === "error" || item.status === "paused" ? "queued" : item.status;
-  item.retries = 0;
-  item.error = null;
-  item.updatedAt = Date.now();
-  await putItem(item);
-  notify();
-  _maybeProcessQueue();
-}
-
-export async function cancelQueueItem(id) {
-  await deleteItem(id);
+export async function cancelItem(id) {
+  vlogInfo("cancel", null, id);
+  await idbDelete(id);
   notify();
 }
 
-export async function retryQueueItem(id) {
-  const item = await getItem(id);
+export async function retryItem(id) {
+  const item = await idbGet(id);
   if (!item) return;
   item.status = "queued";
   item.retries = 0;
   item.error = null;
   item.updatedAt = Date.now();
-  await putItem(item);
+  await idbPut(item);
+  vlogInfo("retry.requested", null, id);
   notify();
-  _maybeProcessQueue();
+  _kick();
 }
 
-// ── Worker loop ────────────────────────────────────────────────────────
+// ── Worker ───────────────────────────────────────────────────────────────
 
 let _processing = false;
+let _processingStartMs = 0;
 let _getToken = null;
+let _watcherInstalled = false;
 
-async function _maybeProcessQueue() {
+export function forceUnstick() {
+  vlogWarn("worker.force_unstick", { wasProcessing: _processing });
+  _processing = false;
+  _kick();
+}
+
+export function _kick() {
+  if (_processing && _processingStartMs && Date.now() - _processingStartMs > WORKER_LOCK_WATCHDOG_MS) {
+    vlogWarn("worker.watchdog_release", { heldForMs: Date.now() - _processingStartMs });
+    _processing = false;
+  }
   if (_processing) return;
+  if (_isPaused) return;
   if (!_getToken) return;
-  const items = await listAll();
-  const next = items.find(i =>
-    (i.status === "queued" || i.status === "ready") && shouldUpload(i)
-  );
-  if (!next) return;
+  _processNext().catch((e) => {
+    vlogError("worker.uncaught", { msg: e?.message || String(e) });
+    _processing = false;
+  });
+}
+
+async function _processNext() {
+  if (_processing || _isPaused) return;
   _processing = true;
+  _processingStartMs = Date.now();
   try {
-    await _processOne(next.id);
+    while (true) {
+      if (_isPaused) break;
+      const all = await idbAll();
+      const next = all.find(i => i.status === "queued" || i.status === "uploading");
+      if (!next) break;
+      const ok = await _processItem(next.id);
+      if (!ok) break;
+    }
   } finally {
     _processing = false;
-    // Tail recurse — picks up the next queued item if any are still actionable
-    setTimeout(() => _maybeProcessQueue(), 100);
+    _processingStartMs = 0;
   }
 }
 
-async function _processOne(id) {
-  const item = await getItem(id);
-  if (!item) return;
-  const token = _getToken?.();
-  if (!token) { vqWarn("processOne: no token, skipping", id); return; }
+async function _setItem(id, patch) {
+  const cur = await idbGet(id);
+  if (!cur) return null;
+  const next = { ...cur, ...patch, updatedAt: Date.now() };
+  await idbPut(next);
+  notify();
+  return next;
+}
 
-  vqLog("processOne start", { id, stopId: item.stopId, title: item.title, status: item.status, originalSize: item.originalSize, compressedSize: item.compressedSize, bytesUploaded: item.bytesUploaded });
+async function _processItem(id) {
+  const item = await idbGet(id);
+  if (!item) return false;
+  const token = _getToken?.();
+  if (!token) {
+    vlogWarn("process.no_token", null, id);
+    return false;
+  }
+
+  if (!item.file || !item.file.size) {
+    vlogError("process.missing_file", { hasFile: !!item.file }, id);
+    await _setItem(id, { status: "error", error: "Video file lost (try re-uploading)" });
+    return true;
+  }
+
+  vlogInfo("process.start", { fileSize: item.fileSize, status: item.status, bytesUploaded: item.bytesUploaded }, id);
   incUpload(item.stopId);
   try {
-    // ── Phase 1: Compress (skipped if already done) ─────────────────────
-    let blob = item.compressedFile || item.originalFile;
-    if (!item.compressedFile && item.status !== "ready") {
-      vqLog("compress phase begin", { id, originalSize: item.originalSize });
-      await _setStatus(id, "compressing", { progress: 0 });
-      const result = await compressVideo(item.originalFile, async (pct) => {
-        // Throttle progress writes — once every ~5% to avoid IDB thrash
-        if (pct % 5 === 0) await _setProgress(id, pct);
-      });
-      blob = result.blob;
-      vqLog("compress phase done", { id, skipped: result.skipped, reason: result.reason, originalSize: result.originalSize, compressedSize: result.compressedSize });
-      const itm = await getItem(id);
-      if (!itm) return; // canceled mid-compress
-      itm.compressedFile = blob;
-      itm.compressedSize = blob.size;
-      itm.totalBytes = blob.size;
-      itm.status = "ready";
-      itm.progress = 0;
-      itm.bytesUploaded = 0;
-      itm.compressionSkipped = !!result.skipped;
-      itm.compressionReason = result.reason || null;
-      itm.updatedAt = Date.now();
-      await putItem(itm);
-      notify();
-    }
+    await _setItem(id, { status: "uploading" });
 
-    // ── Phase 2: Init or resume YouTube session ─────────────────────────
-    const cur = await getItem(id);
-    if (!cur) return;
-    let uploadUrl = cur.uploadUrl;
-    let bytesUploaded = cur.bytesUploaded || 0;
-
-    if (!uploadUrl) {
-      vqLog("init YT session", { id, size: blob.size, mime: blob.type });
-      uploadUrl = await _initYouTubeSession(token, cur.title, blob.size, blob.type || "video/mp4");
-      if (!uploadUrl) throw new Error("Failed to init YouTube upload session (check token + YouTube API enabled)");
-      vqLog("YT session ready", { id, sessionUrl: uploadUrl.slice(0,80) + "..." });
-      cur.uploadUrl = uploadUrl;
-      cur.updatedAt = Date.now();
-      await putItem(cur);
+    let session = item.uploadUrl;
+    if (!session) {
+      vlogInfo("yt.init.start", { fileSize: item.fileSize }, id);
+      session = await _initYouTubeSession(token, item.title, item.fileSize, item.fileType);
+      if (!session) {
+        await _setItem(id, { status: "error", error: "Could not start YouTube upload session. Check Google sign-in and YouTube API quota." });
+        return true;
+      }
+      vlogInfo("yt.init.ok", { sessionPrefix: session.slice(0, 80) }, id);
+      await _setItem(id, { uploadUrl: session, bytesUploaded: 0 });
     } else {
-      // Resuming — ask YouTube where we left off
-      vqLog("resuming session", { id, lastByte: bytesUploaded });
-      const resumed = await _queryUploadOffset(uploadUrl, blob.size);
-      vqLog("resume query result", { id, resumed });
-      if (resumed === "complete") {
-        await _setStatus(id, "error", { error: "Upload appears complete but result was lost. Check YouTube." });
-        return;
+      vlogInfo("yt.resume.query", { lastKnown: item.bytesUploaded }, id);
+      const offset = await _queryUploadOffset(session, item.fileSize);
+      if (offset === null) {
+        vlogWarn("yt.resume.session_expired", null, id);
+        await _setItem(id, { uploadUrl: null, bytesUploaded: 0 });
+        return await _processItem(id);
       }
-      if (typeof resumed === "number") bytesUploaded = resumed;
-      if (resumed === null) {
-        vqLog("session expired, re-initing", { id });
-        cur.uploadUrl = null;
-        cur.bytesUploaded = 0;
-        await putItem(cur);
-        return _processOne(id);
+      if (offset === "complete") {
+        vlogWarn("yt.resume.already_complete", null, id);
+        await _setItem(id, {
+          status: "error",
+          error: "Upload was already complete on YouTube but we lost the video ID. Check YouTube; the video is there.",
+        });
+        return true;
       }
+      vlogInfo("yt.resume.offset", { offset }, id);
+      await _setItem(id, { bytesUploaded: offset });
     }
 
-    // ── Phase 3: Chunked upload loop ────────────────────────────────────
-    await _setStatus(id, "uploading");
-    while (bytesUploaded < blob.size) {
-      const itm = await getItem(id);
-      if (!itm) return; // canceled
-      if (itm.status === "paused") return;
+    const refresh = await idbGet(id);
+    if (!refresh) return false;
+    let bytesUploaded = refresh.bytesUploaded || 0;
+    let chunkRetries = 0;
 
-      const end = Math.min(bytesUploaded + CHUNK_SIZE, blob.size);
-      const chunk = blob.slice(bytesUploaded, end);
-      const isLast = end === blob.size;
+    while (bytesUploaded < item.fileSize) {
+      if (_isPaused) {
+        vlogInfo("chunk.paused", null, id);
+        return false;
+      }
+      const probe = await idbGet(id);
+      if (!probe) { vlogInfo("chunk.canceled_externally", null, id); return false; }
 
+      const end = Math.min(bytesUploaded + CHUNK_SIZE, item.fileSize);
+      const chunk = item.file.slice(bytesUploaded, end);
       const t0 = Date.now();
-      const result = await _uploadChunk(uploadUrl, chunk, bytesUploaded, end, blob.size);
+      vlogInfo("chunk.start", { rangeStart: bytesUploaded, rangeEnd: end - 1, total: item.fileSize, attempt: chunkRetries + 1 }, id);
+
+      const result = await _uploadChunk(session, chunk, bytesUploaded, end - 1, item.fileSize);
       const ms = Date.now() - t0;
-      vqLog("chunk done", { id, range: `${bytesUploaded}-${end-1}/${blob.size}`, isLast, kind: result.kind, ms });
 
       if (result.kind === "ok-final") {
-        vqLog("upload complete", { id, videoId: result.videoId });
+        vlogInfo("chunk.final_ok", { ms, videoId: result.videoId }, id);
         await _finalize(id, result.videoId, token);
-        return;
+        return true;
       }
       if (result.kind === "ok-progress") {
+        vlogInfo("chunk.ok", { ms, nextOffset: result.nextOffset }, id);
         bytesUploaded = result.nextOffset;
-        const pct = Math.floor((bytesUploaded / blob.size) * 100);
-        await _setProgress(id, pct, bytesUploaded);
+        const pct = Math.floor((bytesUploaded / item.fileSize) * 100);
+        await _setItem(id, { progress: pct, bytesUploaded, retries: 0 });
+        chunkRetries = 0;
         continue;
       }
       if (result.kind === "session-expired") {
-        vqLog("session expired mid-upload, re-initing", { id });
-        const itm2 = await getItem(id);
-        if (itm2) {
-          itm2.uploadUrl = null;
-          itm2.bytesUploaded = 0;
-          await putItem(itm2);
-        }
-        return _processOne(id);
+        vlogWarn("chunk.session_expired", { ms }, id);
+        await _setItem(id, { uploadUrl: null, bytesUploaded: 0 });
+        return await _processItem(id);
       }
-      // Network error or 5xx — bump retries, throw if too many
-      const itm2 = await getItem(id);
-      if (!itm2) return;
-      itm2.retries = (itm2.retries || 0) + 1;
-      vqWarn("chunk failed", { id, attempt: itm2.retries, error: result.error });
-      if (itm2.retries >= CHUNK_RETRY_LIMIT) {
-        itm2.status = "error";
-        itm2.error = result.error || "Chunk upload failed after retries";
-        itm2.updatedAt = Date.now();
-        await putItem(itm2);
-        notify();
-        return;
+
+      chunkRetries++;
+      vlogWarn("chunk.fail", { ms, attempt: chunkRetries, error: result.error }, id);
+      if (chunkRetries >= CHUNK_RETRY_LIMIT) {
+        await _setItem(id, {
+          status: "error",
+          error: `Upload chunk failed after ${chunkRetries} retries: ${result.error}`,
+        });
+        return true;
       }
-      await putItem(itm2);
-      notify();
-      // Brief backoff then retry
-      await new Promise(r => setTimeout(r, 1500 * itm2.retries));
+      const backoff = RETRY_BACKOFF_MS[Math.min(chunkRetries - 1, RETRY_BACKOFF_MS.length - 1)];
+      await _setItem(id, { retries: chunkRetries });
+      vlogInfo("chunk.backoff", { ms: backoff }, id);
+      await new Promise(r => setTimeout(r, backoff));
+
+      const offset = await _queryUploadOffset(session, item.fileSize);
+      if (offset === null) {
+        await _setItem(id, { uploadUrl: null, bytesUploaded: 0 });
+        return await _processItem(id);
+      }
+      if (offset === "complete") {
+        await _setItem(id, { status: "error", error: "Server has the full upload but the video ID was lost. Check YouTube." });
+        return true;
+      }
+      bytesUploaded = offset;
+      await _setItem(id, { bytesUploaded });
     }
+    vlogError("loop.exhausted_without_final", { bytesUploaded, fileSize: item.fileSize }, id);
+    await _setItem(id, { status: "error", error: "Upload completed bytes but never received final acknowledgment from YouTube" });
+    return true;
   } catch (e) {
-    vqWarn("processOne exception", id, e?.message || e);
-    await _setStatus(id, "error", { error: e.message || String(e) });
+    vlogError("process.exception", { msg: e?.message || String(e), stack: (e?.stack || "").slice(0, 500) }, id);
+    await _setItem(id, { status: "error", error: e.message || String(e) }).catch(() => {});
+    return true;
   } finally {
     decUpload(item.stopId);
   }
 }
 
-async function _setStatus(id, status, extra = {}) {
-  const item = await getItem(id);
-  if (!item) return;
-  Object.assign(item, { status, updatedAt: Date.now() }, extra);
-  await putItem(item);
-  notify();
-}
-
-async function _setProgress(id, progress, bytesUploaded) {
-  const item = await getItem(id);
-  if (!item) return;
-  item.progress = progress;
-  if (typeof bytesUploaded === "number") item.bytesUploaded = bytesUploaded;
-  item.updatedAt = Date.now();
-  await putItem(item);
-  notify();
-}
-
 async function _finalize(id, videoId, token) {
-  const item = await getItem(id);
+  const item = await idbGet(id);
   if (!item) return;
   const ytUrl = `https://youtu.be/${videoId}`;
-  // Persist to fieldStore — the same shape OnsiteWindow already reads
+  vlogInfo("finalize.start", { videoId, ytUrl }, id);
   try {
     const saved = await loadField(item.stopId).catch(() => ({}));
     const existing = saved?.videoUrls || (saved?.videoUrl ? [saved.videoUrl] : []);
@@ -422,21 +394,23 @@ async function _finalize(id, videoId, token) {
       primeField(item.stopId, next);
       await saveField(item.stopId, next).catch(() => {});
       saveFieldToDrive(token, item.stopId, next).catch(() => {});
-      // Notify listening components (OnsiteWindow / Pipeline) to refresh
-      try { window.dispatchEvent(new CustomEvent("mts-field-synced")); } catch {}
+      try { window.dispatchEvent(new CustomEvent("mts-video-uploaded", { detail: { stopId: item.stopId, ytUrl } })); } catch {}
     }
   } catch (e) {
-    console.warn("Finalize fieldStore write failed:", e);
+    vlogWarn("finalize.field_write_failed", { msg: e?.message }, id);
   }
-  // Done — remove from queue
-  await deleteItem(id);
+  await idbDelete(id);
+  vlogInfo("finalize.ok", { videoId }, id);
   notify();
 }
 
-// ── YouTube resumable upload primitives ────────────────────────────────
+// ── YouTube resumable upload protocol ───────────────────────────────────
 
 async function _initYouTubeSession(token, title, size, mimeType) {
-  const metadata = { snippet: { title }, status: { privacyStatus: "unlisted" } };
+  const metadata = {
+    snippet: { title, description: "Uploaded via MTS Field CRM" },
+    status: { privacyStatus: "unlisted" },
+  };
   let res;
   try {
     res = await fetch(
@@ -445,122 +419,120 @@ async function _initYouTubeSession(token, title, size, mimeType) {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          "X-Upload-Content-Type": mimeType,
+          "Content-Type": "application/json; charset=utf-8",
+          "X-Upload-Content-Type": mimeType || "video/mp4",
           "X-Upload-Content-Length": String(size),
         },
         body: JSON.stringify(metadata),
       }
     );
   } catch (e) {
-    vqWarn("YT init network error:", e?.message || e);
+    vlogError("yt.init.network_error", { msg: e?.message || String(e) });
     return null;
   }
   if (!res.ok) {
-    const txt = await res.text().catch(()=>"");
-    vqWarn("YT init failed:", res.status, txt.slice(0, 200));
-    return null;
-  }
-  return res.headers.get("Location");
-}
-
-/**
- * Query a resumable session for its current byte offset.
- * Returns: number (next offset to upload), "complete", or null (session dead).
- */
-async function _queryUploadOffset(uploadUrl, totalSize) {
-  try {
-    const res = await fetch(uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Length": "0", "Content-Range": `bytes */${totalSize}` },
+    const txt = await res.text().catch(() => "");
+    let parsed = null;
+    try { parsed = JSON.parse(txt); } catch {}
+    vlogError("yt.init.http_error", {
+      status: res.status,
+      reason: parsed?.error?.errors?.[0]?.reason,
+      message: parsed?.error?.message,
+      raw: txt.slice(0, 300),
     });
-    if (res.status === 200 || res.status === 201) return "complete";
-    if (res.status === 308) {
-      const range = res.headers.get("Range"); // e.g. "bytes=0-524287"
-      if (!range) return 0;
-      const m = range.match(/bytes=0-(\d+)/);
-      return m ? parseInt(m[1], 10) + 1 : 0;
-    }
-    if (res.status === 404 || res.status === 410) return null;
-    return null;
-  } catch {
     return null;
   }
+  const loc = res.headers.get("Location");
+  if (!loc) {
+    vlogError("yt.init.no_location_header", null);
+    return null;
+  }
+  return loc;
 }
 
-/**
- * Upload one chunk to a resumable session.
- * Returns one of:
- *   { kind: "ok-final", videoId }     — last chunk, video accepted
- *   { kind: "ok-progress", nextOffset } — interim chunk, server confirmed range
- *   { kind: "session-expired" }       — 404/410 from server
- *   { kind: "error", error }          — network or 5xx
- */
-async function _uploadChunk(uploadUrl, chunk, start, end, total) {
+async function _uploadChunk(uploadUrl, chunkBlob, startByte, endByte, totalSize) {
+  let res;
   try {
-    const res = await fetch(uploadUrl, {
+    res = await fetch(uploadUrl, {
       method: "PUT",
       headers: {
-        "Content-Length": String(chunk.size),
-        "Content-Range": `bytes ${start}-${end - 1}/${total}`,
+        "Content-Range": `bytes ${startByte}-${endByte}/${totalSize}`,
       },
-      body: chunk,
+      body: chunkBlob,
     });
-    if (res.status === 200 || res.status === 201) {
-      const body = await res.json().catch(() => null);
-      if (body?.id) return { kind: "ok-final", videoId: body.id };
-      return { kind: "error", error: "Final response missing video id" };
-    }
-    if (res.status === 308) {
-      // Resume Incomplete — server confirms how much it has
-      const range = res.headers.get("Range");
-      const m = range?.match(/bytes=0-(\d+)/);
-      const nextOffset = m ? parseInt(m[1], 10) + 1 : end;
-      return { kind: "ok-progress", nextOffset };
-    }
-    if (res.status === 404 || res.status === 410) return { kind: "session-expired" };
-    return { kind: "error", error: `HTTP ${res.status}` };
   } catch (e) {
-    return { kind: "error", error: e.message || String(e) };
+    return { kind: "error", error: `Network: ${e?.message || String(e)}` };
   }
+  if (res.status === 200 || res.status === 201) {
+    let body;
+    try { body = await res.json(); } catch (e) {
+      return { kind: "error", error: "Final response not JSON" };
+    }
+    if (body?.id) return { kind: "ok-final", videoId: body.id };
+    return { kind: "error", error: "Final response missing video id" };
+  }
+  if (res.status === 308) {
+    const range = res.headers.get("Range");
+    if (!range) {
+      return { kind: "ok-progress", nextOffset: 0 };
+    }
+    const m = range.match(/bytes=0-(\d+)/);
+    return { kind: "ok-progress", nextOffset: m ? parseInt(m[1], 10) + 1 : endByte + 1 };
+  }
+  if (res.status === 404 || res.status === 410) {
+    return { kind: "session-expired" };
+  }
+  const txt = await res.text().catch(() => "");
+  return { kind: "error", error: `HTTP ${res.status}: ${txt.slice(0, 200)}` };
 }
 
-// ── Watcher: kick the queue on connection / visibility / online events ──
+async function _queryUploadOffset(uploadUrl, totalSize) {
+  let res;
+  try {
+    res = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Range": `bytes */${totalSize}` },
+    });
+  } catch (e) {
+    vlogWarn("yt.query.network_error", { msg: e?.message });
+    return null;
+  }
+  if (res.status === 200 || res.status === 201) return "complete";
+  if (res.status === 308) {
+    const range = res.headers.get("Range");
+    if (!range) return 0;
+    const m = range.match(/bytes=0-(\d+)/);
+    return m ? parseInt(m[1], 10) + 1 : 0;
+  }
+  if (res.status === 404 || res.status === 410) return null;
+  vlogWarn("yt.query.unexpected_status", { status: res.status });
+  return null;
+}
 
-let _watcherInstalled = false;
+// ── Watcher: install once, keep the queue ticking ───────────────────────
 
 export function startVideoQueueWatcher(getToken) {
   _getToken = getToken;
   if (_watcherInstalled) {
-    _maybeProcessQueue();
+    _kick();
     return;
   }
   _watcherInstalled = true;
+  vlogInfo("watcher.install", null);
 
-  window.addEventListener("online", () => _maybeProcessQueue());
+  window.addEventListener("online", () => { vlogInfo("event.online", null); _kick(); });
+  window.addEventListener("focus",  () => { vlogInfo("event.focus", null);  _kick(); });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") _maybeProcessQueue();
+    if (document.visibilityState === "visible") { vlogInfo("event.visible", null); _kick(); }
   });
-  // Connection type change (Chrome/Android only)
-  const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-  if (c && typeof c.addEventListener === "function") {
-    c.addEventListener("change", () => _maybeProcessQueue());
-  }
 
-  _maybeProcessQueue();
+  // Periodic safety net every 30s
+  setInterval(() => { _kick(); }, 30 * 1000);
+
+  _kick();
 }
 
-// Force-tick the queue (called from UI after toggling mode)
-export function pokeQueue() { _maybeProcessQueue(); }
-
-// Status helpers for UI
-export function describeMode(mode) {
-  switch (mode) {
-    case "always": return "Always upload";
-    case "hybrid": return "WiFi auto, cell on demand";
-    case "wifi":
-    default: return "WiFi only";
-  }
+export async function pendingCount() {
+  const all = await idbAll();
+  return all.filter(i => i.status === "queued" || i.status === "uploading" || i.status === "error").length;
 }
-
-export function isWifi() { return isOnWifi(); }

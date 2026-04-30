@@ -10,12 +10,10 @@ import {
   enqueueVideo,
   listForStop as listVideoQueueForStop,
   onQueueChange as onVideoQueueChange,
-  forceUploadNow as forceVideoUploadNow,
-  cancelQueueItem as cancelVideoQueueItem,
-  retryQueueItem as retryVideoQueueItem,
-  getUploadMode as getVideoUploadMode,
-  setUploadMode as setVideoUploadMode,
-  isWifi,
+  cancelItem as cancelVideoQueueItem,
+  retryItem as retryVideoQueueItem,
+  isPaused as isVideoQueuePaused,
+  setPaused as setVideoQueuePaused,
 } from "./videoQueue";
 import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconYoutube, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconRotateCcw, IconSend } from "./icons";
 
@@ -51,7 +49,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [recDuration, setRecDuration] = useState(0);
   const [playingIdx, setPlayingIdx] = useState(null);
   const ytFileRef = useRef(null);
-  const [ytUploadCount, setYtUploadCount] = useState(0);
+  // (formerly: ytUploadCount — now tracked entirely via videoQueueItems)
   const mountedRef = useRef(true);
   const stopIdRef = useRef(s.id);
   const [speechField, setSpeechField] = useState(null); // "scope" | "addon" | null
@@ -409,7 +407,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // videoQueue.js, persisted to IDB, so it survives this component
   // unmounting. These hooks just keep the on-screen queue panel in sync.
   const [videoQueueItems, setVideoQueueItems] = useState([]);
-  const [uploadMode, setUploadModeState] = useState(getVideoUploadMode());
+  const [queuePaused, setQueuePausedState] = useState(isVideoQueuePaused());
   const [showQueuePanel, setShowQueuePanel] = useState(false);
 
   useEffect(() => {
@@ -439,18 +437,21 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         const fd = await loadField(s.id);
         if (!fd || !mountedRef.current) return;
         const incoming = fd.videoUrls || (fd.videoUrl ? [fd.videoUrl] : []);
-        // Compare by content — array identity will always differ since
-        // loadField returns a fresh JSON-parse each call.
         setVideoUrls(prev => {
           if (prev.length === incoming.length && prev.every((v, i) => v === incoming[i])) {
-            return prev; // no change → no rerender → no save → no loop
+            return prev;
           }
           return incoming;
         });
       } catch {}
     };
     window.addEventListener("mts-field-synced", handler);
-    return () => window.removeEventListener("mts-field-synced", handler);
+    // Also listen for the dedicated video-uploaded event from videoQueue
+    window.addEventListener("mts-video-uploaded", handler);
+    return () => {
+      window.removeEventListener("mts-field-synced", handler);
+      window.removeEventListener("mts-video-uploaded", handler);
+    };
   }, [s.id]);
 
   // ── MARKUP OVERLAY ──────────────────────────────────────────────────
@@ -752,7 +753,7 @@ Property: ${s.addr || ""}`);
 
         {/* ── VIDEO ─────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
-          <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>VIDEO{(ytUploadCount > 0 || videoQueueItems.length > 0) && <span style={{fontSize:9,color:"#F6BF26",fontWeight:700,padding:"1px 8px",borderRadius:10,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.2)",marginLeft:6,animation:"pulse 1s infinite"}}>↑ {videoQueueItems.length || ytUploadCount} pending</span>}</div>
+          <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>VIDEO{videoQueueItems.length > 0 && <span style={{fontSize:9,color:"#F6BF26",fontWeight:700,padding:"1px 8px",borderRadius:10,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.2)",marginLeft:6,animation:"pulse 1s infinite"}}>↑ {videoQueueItems.length} pending</span>}</div>
 
           {/* Uploaded videos list */}
           {videoUrls.length > 0 && <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
@@ -785,48 +786,39 @@ Property: ${s.addr || ""}`);
           {videoQueueItems.length > 0 && <div style={{marginBottom:8,borderRadius:8,background:"rgba(246,191,38,.04)",border:"1px solid rgba(246,191,38,.15)",overflow:"hidden"}}>
             <div style={{padding:"6px 10px",display:"flex",alignItems:"center",gap:6,background:"rgba(246,191,38,.06)",borderBottom:"1px solid rgba(246,191,38,.1)"}}>
               <span style={{fontSize:9,color:"#F6BF26",fontWeight:800,fontFamily:F,letterSpacing:0.6,textTransform:"uppercase",flex:1}}>
-                {videoQueueItems.length} pending • {uploadMode === "wifi" ? "WiFi only" : uploadMode === "always" ? "Auto upload" : "WiFi + on-demand"}
+                {videoQueueItems.length} pending {queuePaused ? "• PAUSED" : ""}
               </span>
               <button onClick={() => setShowQueuePanel(v=>!v)} style={{padding:"2px 8px",borderRadius:5,background:"transparent",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5}}>
                 {showQueuePanel ? "HIDE" : "SHOW"}
               </button>
             </div>
             {showQueuePanel && <>
-              {/* Mode toggle row */}
+              {/* Pause/resume toggle */}
               <div style={{padding:"8px 10px",display:"flex",alignItems:"center",gap:6,borderBottom:"1px solid rgba(246,191,38,.1)"}}>
-                <span style={{fontSize:9,color:"#7a7050",fontWeight:600,fontFamily:F,letterSpacing:0.4,textTransform:"uppercase"}}>Mode:</span>
-                {[["wifi","WiFi only"],["hybrid","Hybrid"],["always","Always"]].map(([m,lbl]) => (
-                  <button key={m} onClick={() => { setVideoUploadMode(m); setUploadModeState(m); }} style={{padding:"3px 8px",borderRadius:5,background:uploadMode===m?"rgba(246,191,38,.15)":"transparent",border:`1px solid ${uploadMode===m?"rgba(246,191,38,.4)":"#252d47"}`,color:uploadMode===m?"#F6BF26":"#5a6580",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>{lbl}</button>
-                ))}
+                <button onClick={() => { setVideoQueuePaused(!queuePaused); setQueuePausedState(!queuePaused); }} style={{padding:"4px 10px",borderRadius:5,background:queuePaused?"rgba(246,191,38,.15)":"rgba(16,185,129,.1)",border:`1px solid ${queuePaused?"rgba(246,191,38,.4)":"rgba(16,185,129,.3)"}`,color:queuePaused?"#F6BF26":"#10B981",fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
+                  {queuePaused ? "▶ RESUME UPLOADS" : "⏸ PAUSE UPLOADS"}
+                </button>
               </div>
               {videoQueueItems.map(it => {
-                const sizeMB = ((it.compressedSize || it.originalSize) / (1024*1024)).toFixed(1);
-                const origMB = (it.originalSize / (1024*1024)).toFixed(0);
-                const statusColor = it.status === "error" ? "#FF5555" : it.status === "uploading" ? "#10B981" : it.status === "compressing" ? "#5a90b0" : "#7a7050";
+                const sizeMB = (it.fileSize / (1024*1024)).toFixed(1);
+                const statusColor = it.status === "error" ? "#FF5555" : it.status === "uploading" ? "#10B981" : "#7a7050";
                 const statusLabel =
                   it.status === "queued" ? "Waiting…" :
-                  it.status === "compressing" ? `Compressing ${it.progress||0}%` :
-                  it.status === "ready" ? "Ready" :
                   it.status === "uploading" ? `Uploading ${it.progress||0}%` :
-                  it.status === "error" ? "Failed" :
-                  it.status === "paused" ? "Paused" : it.status;
+                  it.status === "error" ? "Failed" : it.status;
                 return (
                   <div key={it.id} style={{padding:"8px 10px",borderTop:"1px solid rgba(246,191,38,.06)"}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
                       <div style={{flex:1,minWidth:0,fontSize:11,color:"#c0c8d0",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</div>
                       <span style={{fontSize:9,color:statusColor,fontWeight:800,fontFamily:F,letterSpacing:0.4,textTransform:"uppercase",flexShrink:0}}>{statusLabel}</span>
                     </div>
-                    {/* Progress bar */}
                     <div style={{height:3,background:"rgba(255,255,255,.05)",borderRadius:2,overflow:"hidden",marginBottom:4}}>
                       <div style={{height:"100%",width:`${it.progress||0}%`,background:statusColor,transition:"width .3s"}}/>
                     </div>
                     <div style={{display:"flex",alignItems:"center",gap:6}}>
                       <div style={{flex:1,fontSize:9,color:"#5a6580",fontFamily:F,letterSpacing:0.3}}>
-                        {it.compressedSize ? `${origMB}MB → ${sizeMB}MB` : `${origMB}MB`}
+                        {sizeMB}MB
                       </div>
-                      {(it.status === "queued" || it.status === "ready") && uploadMode !== "always" && !it.forceNow && (
-                        <button onClick={() => forceVideoUploadNow(it.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.25)",color:"#10B981",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Upload now</button>
-                      )}
                       {it.status === "error" && (
                         <button onClick={() => retryVideoQueueItem(it.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Retry</button>
                       )}
@@ -927,94 +919,4 @@ function _processPhoto(file, section, stopId) {
     reader.onerror = () => resolve(null);
     reader.readAsDataURL(file);
   });
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   Module-level upload helper — lives OUTSIDE the React component so the
-   browser's network layer keeps the fetch alive regardless of whether
-   OnsiteWindow is still mounted. The component wrapper above fires this off
-   and only touches React state if still mounted when the promise resolves.
-   ═══════════════════════════════════════════════════════════════════════════ */
-async function _uploadToYouTube(file, title, propToken, stopId) {
-  if (!file || !title) return null;
-  try {
-    const tokenData = JSON.parse(localStorage.getItem("mts-token") || "null");
-    const tok = tokenData?.token || propToken;
-    if (!tok) return null;
-
-    // ── Determine MIME type ───────────────────────────────────────────
-    // iOS Safari often leaves file.type empty for .mov (QuickTime) files.
-    // Sending the wrong Content-Type causes YouTube to accept the upload
-    // but fail to process it ("processing will begin shortly" forever).
-    let mimeType = file.type;
-    if (!mimeType) {
-      const ext = (file.name || "").split(".").pop().toLowerCase();
-      const MAP = { mov: "video/quicktime", mp4: "video/mp4", m4v: "video/x-m4v",
-                    avi: "video/x-msvideo", webm: "video/webm", mkv: "video/x-matroska" };
-      mimeType = MAP[ext] || "video/mp4";
-    }
-
-    // ── Init resumable session ────────────────────────────────────────
-    // X-Upload-Content-Type and X-Upload-Content-Length let YouTube
-    // know the total size upfront, preventing truncated-upload issues.
-    const metadata = { snippet: { title }, status: { privacyStatus: "unlisted" } };
-    const initRes = await fetch(
-      "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${tok}`,
-          "Content-Type": "application/json",
-          "X-Upload-Content-Type": mimeType,
-          "X-Upload-Content-Length": String(file.size),
-        },
-        body: JSON.stringify(metadata),
-      }
-    );
-    if (!initRes.ok) {
-      console.warn("YouTube upload init failed:", initRes.status);
-      return null;
-    }
-    const uploadUrl = initRes.headers.get("Location");
-    if (!uploadUrl) return null;
-
-    // ── Upload the file ───────────────────────────────────────────────
-    // Content-Length is required for YouTube to know the upload is
-    // complete and to begin processing. Without it, partial uploads
-    // are accepted silently and never finish processing.
-    const uploadRes = await fetch(uploadUrl, {
-      method: "PUT",
-      headers: {
-        "Content-Type": mimeType,
-        "Content-Length": String(file.size),
-      },
-      body: file,
-    });
-    if (!uploadRes.ok && uploadRes.status !== 201) {
-      console.warn("YouTube PUT failed:", uploadRes.status);
-      return null;
-    }
-    const result = await uploadRes.json();
-    if (!result.id) return null;
-
-    const ytUrl = `https://youtu.be/${result.id}`;
-
-    // ── Persist locally ───────────────────────────────────────────────
-    const saved = await loadField(stopId).catch(() => ({}));
-    const existing = saved?.videoUrls || (saved?.videoUrl ? [saved.videoUrl] : []);
-    if (existing.includes(ytUrl)) return ytUrl; // deduplicate
-    const next = { ...(saved || {}), videoUrls: [...existing, ytUrl], savedAt: Date.now() };
-    primeField(stopId, next);
-    await saveField(stopId, next).catch(() => {});
-
-    // ── Push to Drive immediately ─────────────────────────────────────
-    // Without this, the pipeline card detail loads Drive's older copy
-    // (which doesn't have the new URL yet) and overwrites local data.
-    saveFieldToDrive(tok, stopId, next).catch(() => {});
-
-    return ytUrl;
-  } catch (e) {
-    console.warn("YouTube upload failed:", e);
-    return null;
-  }
 }

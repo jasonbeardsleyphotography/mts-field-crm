@@ -10,6 +10,8 @@ import { startPhotoSyncWatcher } from "./photoSync";
 import { startVideoQueueWatcher } from "./videoQueue";
 import UploadTracker from "./UploadTracker";
 import Linkify from "./Linkify";
+import AddStopModal from "./AddStopModal";
+import { buildClientIndex } from "./clientIndex";
 import {
   IconArrowLeft, IconNavigation, IconMessageSquare, IconVolume2,
   IconClipboard, IconX, IconRotateCcw, IconRefresh, IconReorder, IconUndo,
@@ -125,6 +127,9 @@ export default function App() {
     };
     startPhotoSyncWatcher(getTok);
     startVideoQueueWatcher(getTok);
+    // Prune the video diagnostic log on each startup so it doesn't grow
+    // unbounded across many sessions.
+    import("./videoLog").then(m => m.pruneLog?.()).catch(() => {});
   }, [token]);
 
   const [loading, setLoading] = useState(false);
@@ -546,6 +551,33 @@ export default function App() {
     return raw.map(parseEvent).filter(Boolean).filter(s => !s.isAdmin);
   }, [rawEvents, dayKey]);
 
+  // ── CLIENT INDEX — for the Add Stop modal's name autosuggest ─────────
+  // Pulls from pipeline (every job ever recorded) + the current week's
+  // parsed events. Rebuilt only when those sources change so typing is fast.
+  // The week's events span all days currently loaded into rawEvents.
+  const allEventsAcrossDays = useMemo(() => {
+    const out = [];
+    for (const day of Object.values(rawEvents)) {
+      for (const ev of (day || [])) {
+        const p = parseEvent(ev);
+        if (p && !p.isAdmin) {
+          // Tag with start ms for recency ranking
+          const t = ev.start?.dateTime || ev.start?.date;
+          p._startMs = t ? new Date(t).getTime() : 0;
+          out.push(p);
+        }
+      }
+    }
+    return out;
+  }, [rawEvents]);
+  const [pipelineSnapshot, setPipelineSnapshot] = useState(() => loadPipeline());
+  // Refresh pipelineSnapshot when modal opens so we see latest pipeline state
+  useEffect(() => { if (addStopOpen) setPipelineSnapshot(loadPipeline()); }, [addStopOpen]);
+  const clientIndex = useMemo(
+    () => buildClientIndex(pipelineSnapshot, allEventsAcrossDays),
+    [pipelineSnapshot, allEventsAcrossDays]
+  );
+
   // Auto-push new contacts to Google Contacts silently. Runs when allParsed
   // changes — finds stops with phone/email that haven't been pushed yet and
   // pushes them one at a time at 400ms intervals. Each stop is pushed at
@@ -659,11 +691,123 @@ export default function App() {
   const [declineConfirm, setDeclineConfirm] = useState(null); // stop id awaiting confirm
   const [signOutConfirm, setSignOutConfirm] = useState(false);
   const [addStopOpen, setAddStopOpen] = useState(false);
-  const [addStopAddr, setAddStopAddr] = useState("");
-  const [addStopName, setAddStopName] = useState("");
-  const [addStopNotes, setAddStopNotes] = useState("");
-  const [addStopTime, setAddStopTime] = useState("AM");
-  const [addStopDest, setAddStopDest] = useState("route"); // "route" | "pipeline"
+
+  // Move-day picker — open when user taps the calendar icon on a card.
+  // { stopId, anchorRect } so the popover can position near the button.
+  const [movePicker, setMovePicker] = useState(null);
+
+  // Move a calendar event to a different day (preserves time of day).
+  // Calls events.patch on Google Calendar, then optimistically moves the
+  // event between rawEvents[oldKey] and rawEvents[newKey] so the UI updates
+  // instantly. If the API call fails we revert.
+  const moveStopToDay = useCallback(async (id, targetDate) => {
+    const stop = stopMap[id];
+    if (!stop || !token) return;
+    if (id.startsWith("local-")) {
+      // Locally-created event that isn't on Google Calendar yet — just move it
+      // in the in-memory rawEvents map. Time of day stays the same.
+      const oldKey = dayKey;
+      const newKey = targetDate.toDateString();
+      if (oldKey === newKey) return;
+      setRawEvents(prev => {
+        const oldList = prev[oldKey] || [];
+        const newList = prev[newKey] || [];
+        const found = oldList.find(e => e.id === id);
+        if (!found) return prev;
+        // Shift the start/end dates to the new day, keeping HH:MM
+        const oldStart = new Date(found.start?.dateTime || found.start?.date);
+        const oldEnd = new Date(found.end?.dateTime || found.end?.date);
+        const newStart = new Date(targetDate);
+        newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
+        const durMs = oldEnd.getTime() - oldStart.getTime();
+        const newEnd = new Date(newStart.getTime() + durMs);
+        const updated = {
+          ...found,
+          start: { dateTime: newStart.toISOString() },
+          end: { dateTime: newEnd.toISOString() },
+        };
+        return {
+          ...prev,
+          [oldKey]: oldList.filter(e => e.id !== id),
+          [newKey]: [...newList, updated],
+        };
+      });
+      return;
+    }
+
+    // Real calendar event — patch it on Google Calendar first.
+    // We need the original event's start/end so we can preserve duration.
+    const oldList = rawEvents[dayKey] || [];
+    const original = oldList.find(e => e.id === id);
+    if (!original) return;
+
+    const isAllDay = !!original.start?.date;
+    let patchBody;
+    if (isAllDay) {
+      const newDateStr = targetDate.toISOString().slice(0, 10); // YYYY-MM-DD
+      const oldStart = new Date(original.start.date);
+      const oldEnd = new Date(original.end?.date || original.start.date);
+      const days = Math.max(1, Math.round((oldEnd - oldStart) / 86400000));
+      const newEnd = new Date(targetDate);
+      newEnd.setDate(newEnd.getDate() + days);
+      patchBody = {
+        start: { date: newDateStr },
+        end: { date: newEnd.toISOString().slice(0, 10) },
+      };
+    } else {
+      const oldStart = new Date(original.start.dateTime);
+      const oldEnd = new Date(original.end.dateTime);
+      const newStart = new Date(targetDate);
+      newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), oldStart.getSeconds(), 0);
+      const durMs = oldEnd.getTime() - oldStart.getTime();
+      const newEnd = new Date(newStart.getTime() + durMs);
+      patchBody = {
+        start: { dateTime: newStart.toISOString() },
+        end: { dateTime: newEnd.toISOString() },
+      };
+    }
+
+    // Optimistic UI update
+    const oldKey = dayKey;
+    const newKey = targetDate.toDateString();
+    setRawEvents(prev => {
+      const cur = prev[oldKey] || [];
+      const target = prev[newKey] || [];
+      return {
+        ...prev,
+        [oldKey]: cur.filter(e => e.id !== id),
+        [newKey]: [...target, { ...original, ...patchBody }],
+      };
+    });
+    setExpanded(null);
+    setMovePicker(null);
+
+    // Push to Google
+    try {
+      const res = await fetch(`${CAL_BASE}/events/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(patchBody),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        console.warn("[Cal] move event failed:", res.status, txt);
+        // Revert
+        setRawEvents(prev => {
+          const cur = prev[newKey] || [];
+          const target = prev[oldKey] || [];
+          return {
+            ...prev,
+            [newKey]: cur.filter(e => e.id !== id),
+            [oldKey]: [...target, original],
+          };
+        });
+        alert("Failed to move event in Google Calendar. The event was put back on its original day.");
+      }
+    } catch (e) {
+      console.warn("[Cal] move event error:", e);
+    }
+  }, [stopMap, token, dayKey, rawEvents]);
 
   // Decline = remove from route with confirmation
   const decline = (id) => {
@@ -997,8 +1141,45 @@ export default function App() {
                     {s.addr && <button onClick={()=>navigate(s.addr)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconNavigation size={16} color="#3B82F6"/></button>}
                     {s.notes && <button onClick={()=>speakStop(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:ttsSpeaking?"rgba(100,80,200,.18)":"rgba(100,80,200,.08)",border:"1px solid rgba(100,80,200,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{ttsSpeaking ? <IconX size={16} color="#8a80c0"/> : <IconVolume2 size={16} color="#8a80c0"/>}</button>}
                     <button onClick={()=>openOnsite(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(16,185,129,.06)",border:"1px solid rgba(16,185,129,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconClipboard size={16} color="#10B981"/></button>
+                    {/* Move to a different day — patches Google Calendar */}
+                    <button onClick={()=>setMovePicker(movePicker?.stopId === s.id ? null : { stopId: s.id })} title="Move to another day" style={{flex:1,padding:"10px 0",borderRadius:8,background:movePicker?.stopId===s.id?"rgba(246,191,38,.18)":"rgba(246,191,38,.06)",border:`1px solid ${movePicker?.stopId===s.id?"rgba(246,191,38,.4)":"rgba(246,191,38,.15)"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>📅</button>
                     <button onClick={()=>setDeclineConfirm(s.id)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(200,60,60,.06)",border:"1px solid rgba(200,60,60,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={16} color="#a06060"/></button>
                     {!s.isTask && <button onClick={()=>deleteStop(s.id)} title="Delete permanently" style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(100,100,100,.06)",border:"1px solid rgba(100,100,100,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconTrash size={16} color="#4a5a70"/></button>}
+                  </div>
+                )}
+                {/* Day picker popover — shown beneath action row when active */}
+                {movePicker?.stopId === s.id && (
+                  <div style={{marginTop:8,padding:10,borderRadius:8,background:"#0a0c14",border:"1px solid rgba(246,191,38,.25)"}}>
+                    <div style={{fontSize:9,color:"#F6BF26",fontWeight:800,fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",marginBottom:8}}>Move to which day?</div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6}}>
+                      {businessDays.map((d, idx) => {
+                        const isCurrent = idx === selDay;
+                        const label = d.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
+                        return (
+                          <button
+                            key={idx}
+                            disabled={isCurrent}
+                            onClick={() => moveStopToDay(s.id, d)}
+                            style={{
+                              padding: "8px 6px",
+                              borderRadius: 6,
+                              background: isCurrent ? "transparent" : "rgba(246,191,38,.08)",
+                              border: `1px solid ${isCurrent ? "#1a2030" : "rgba(246,191,38,.25)"}`,
+                              color: isCurrent ? "#3a4a60" : "#F6BF26",
+                              fontSize: 11,
+                              fontWeight: 700,
+                              cursor: isCurrent ? "default" : "pointer",
+                              fontFamily: "'Oswald',sans-serif",
+                              letterSpacing: 0.5,
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            {label}{isCurrent ? " (now)" : ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <button onClick={() => setMovePicker(null)} style={{width:"100%",marginTop:8,padding:"6px 0",borderRadius:6,background:"transparent",border:"1px solid #1a2030",color:"#5a6580",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>Cancel</button>
                   </div>
                 )}
               </div>}
@@ -1090,77 +1271,55 @@ export default function App() {
       </div>}
 
       {/* ── ADD STOP POPUP ─────────────────────────────────────────── */}
-      {addStopOpen && <div onClick={()=>{setAddStopOpen(false);setAddStopAddr("");setAddStopName("");setAddStopNotes("");setAddStopTime("AM");setAddStopDest("route");}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-        <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:14,padding:20,maxWidth:360,width:"100%"}}>
-          <div style={{fontSize:15,fontWeight:700,color:"#f0f4fa",marginBottom:14,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>Add a stop</div>
-
-          {/* Destination toggle */}
-          <div style={{display:"flex",gap:4,marginBottom:12,background:"#0a0c14",borderRadius:8,padding:3}}>
-            {[["route","➕ Route"],["pipeline","📋 Pipeline"]].map(([dest,label])=>(
-              <button key={dest} onClick={()=>setAddStopDest(dest)} style={{flex:1,padding:"7px 0",borderRadius:6,background:addStopDest===dest?(dest==="route"?"rgba(59,130,246,.2)":"rgba(246,191,38,.15)"):"transparent",border:addStopDest===dest?(dest==="route"?"1px solid rgba(59,130,246,.4)":"1px solid rgba(246,191,38,.3)"):"1px solid transparent",color:addStopDest===dest?(dest==="route"?"#3B82F6":"#F6BF26"):"#4a5a70",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",letterSpacing:0.5,transition:"all .15s"}}>{label}</button>
-            ))}
-          </div>
-          {addStopDest === "pipeline" && <div style={{fontSize:10,color:"#4a6040",marginBottom:10,padding:"6px 10px",borderRadius:6,background:"rgba(246,191,38,.04)",border:"1px solid rgba(246,191,38,.1)"}}>Goes straight to Pipeline → Estimate Needed. No route stop created.</div>}
-
-          <input value={addStopName} onChange={e=>setAddStopName(e.target.value)} placeholder="Client name (e.g. Smith)" style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none",marginBottom:8}} />
-          <input value={addStopAddr} onChange={e=>setAddStopAddr(e.target.value)} placeholder="Address" style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none",marginBottom:8}} />
-          <textarea value={addStopNotes} onChange={e=>setAddStopNotes(e.target.value)} placeholder="Notes (scope, constraints, what to quote...)" rows={3} style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none",resize:"vertical",marginBottom:8}} />
-
-          {/* Time frame — only relevant for Route */}
-          {addStopDest === "route" && <div style={{display:"flex",gap:6,marginBottom:14}}>
-            {["AM","PM","All Day"].map(t => (
-              <button key={t} onClick={()=>setAddStopTime(t)} style={{flex:1,padding:"8px 0",borderRadius:8,background:addStopTime===t?(t==="AM"?"rgba(46,125,50,.2)":"rgba(30,136,229,.2)"):"transparent",border:`1px solid ${addStopTime===t?(t==="AM"?"#66BB6A":"#64B5F6"):"#1a2030"}`,color:addStopTime===t?(t==="AM"?"#66BB6A":"#64B5F6"):"#4a5a70",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5}}>{t}</button>
-            ))}
-          </div>}
-
-          <div style={{display:"flex",gap:8}}>
-            <button onClick={()=>{setAddStopOpen(false);setAddStopAddr("");setAddStopName("");setAddStopNotes("");setAddStopTime("AM");setAddStopDest("route");}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#5a6580",fontSize:13,fontWeight:600,cursor:"pointer"}}>Cancel</button>
-            <button onClick={()=>{
-              if (!addStopName.trim() && !addStopAddr.trim()) return;
-              const id = "local-" + Date.now();
-
-              if (addStopDest === "pipeline") {
-                // Add directly to Pipeline as Estimate Needed
-                const pl = loadPipeline();
-                pl[id] = {
-                  id,
-                  cn: addStopName.trim() || addStopAddr.trim(),
-                  addr: addStopAddr.trim(),
-                  notes: addStopNotes.trim(),
-                  stage: "estimate_needed",
-                  addedAt: Date.now(),
-                  stageChangedAt: Date.now(),
-                  hot: false,
-                };
-                savePipeline(pl);
-                if (token) pushCalendarColor(id, "estimate_needed", token);
-              } else {
-                // Add to today's route
-                const now = new Date();
-                const startHour = addStopTime === "AM" ? 9 : addStopTime === "PM" ? 13 : 8;
-                const startDt = new Date(businessDays[selDay] || now);
-                startDt.setHours(startHour, 0, 0, 0);
-                const endDt = new Date(startDt); endDt.setHours(startHour + 1);
-                setRawEvents(prev => {
-                  const dayEvts = prev[dayKey] || [];
-                  return {...prev, [dayKey]: [...dayEvts, {
-                    id,
-                    summary: `TASK ${addStopName.trim() || addStopAddr.trim()}`,
-                    location: addStopAddr.trim(),
-                    start: { dateTime: startDt.toISOString() },
-                    end:   { dateTime: endDt.toISOString() },
-                    colorId: "7",
-                    description: addStopNotes.trim() || "",
-                  }]};
-                });
-              }
-              setAddStopAddr(""); setAddStopName(""); setAddStopNotes(""); setAddStopTime("AM"); setAddStopDest("route"); setAddStopOpen(false);
-            }} style={{flex:2,padding:"10px 0",borderRadius:8,background:addStopDest==="pipeline"?"rgba(246,191,38,.15)":"rgba(59,130,246,.15)",border:addStopDest==="pipeline"?"1px solid rgba(246,191,38,.3)":"1px solid rgba(59,130,246,.25)",color:addStopDest==="pipeline"?"#F6BF26":"#3B82F6",fontSize:13,fontWeight:700,cursor:"pointer"}}>
-              {addStopDest === "pipeline" ? "Add to Pipeline →" : "Add to Route →"}
-            </button>
-          </div>
-        </div>
-      </div>}
+      <AddStopModal
+        open={addStopOpen}
+        onClose={() => setAddStopOpen(false)}
+        clientIndex={clientIndex}
+        onSubmit={(form) => {
+          const id = "local-" + Date.now();
+          if (form.dest === "pipeline") {
+            const pl = loadPipeline();
+            pl[id] = {
+              id,
+              cn: form.name || form.addr,
+              addr: form.addr,
+              phone: form.phone,
+              email: form.email,
+              notes: form.notes,
+              stage: "estimate_needed",
+              addedAt: Date.now(),
+              stageChangedAt: Date.now(),
+              hot: false,
+            };
+            savePipeline(pl);
+            if (token) pushCalendarColor(id, "estimate_needed", token);
+          } else {
+            // Add to currently-selected day's route
+            const startHour = form.time === "AM" ? 9 : form.time === "PM" ? 13 : 8;
+            const startDt = new Date(businessDays[selDay] || new Date());
+            startDt.setHours(startHour, 0, 0, 0);
+            const endDt = new Date(startDt); endDt.setHours(startHour + 1);
+            // Build a description that includes phone/email if provided so
+            // parseEvent can extract them.
+            const descParts = [];
+            if (form.phone) descParts.push(`Phone: ${form.phone}`);
+            if (form.email) descParts.push(`Email: ${form.email}`);
+            if (form.notes) descParts.push(`Notes: ${form.notes}`);
+            setRawEvents(prev => {
+              const dayEvts = prev[dayKey] || [];
+              return { ...prev, [dayKey]: [...dayEvts, {
+                id,
+                summary: `TASK ${form.name || form.addr}`,
+                location: form.addr,
+                start: { dateTime: startDt.toISOString() },
+                end: { dateTime: endDt.toISOString() },
+                colorId: "7",
+                description: descParts.join("\n"),
+              }] };
+            });
+          }
+        }}
+      />
       </>}{/* end route view */}
 
       {/* ── PIPELINE VIEW ──────────────────────────────────────────── */}
