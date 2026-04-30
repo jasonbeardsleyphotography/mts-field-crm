@@ -1245,6 +1245,11 @@ export default function App() {
       </div>
       </div>{/* end mts-body */}
 
+      {/* ── INLINE UPLOAD TRACKER ─────────────────────────────────────
+          Sits in the document flow above the bottom bar so the Reorder
+          button is never hidden by upload progress. */}
+      <UploadTracker stopMap={stopMap} inline />
+
       {/* ── BOTTOM BAR ──────────────────────────────────────────────── */}
       {view === "route" && <div style={{borderTop:"1px solid #0e1520",padding:"4px 10px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,background:"#080a10",flexShrink:0}}>
         {/* Undo — left */}
@@ -1407,13 +1412,7 @@ export default function App() {
         <button onClick={() => setTtsError(null)} style={{padding:"4px 8px",borderRadius:6,background:"transparent",border:"none",color:"#a06060",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}><IconX size={14} color="#a06060"/></button>
       </div>}
 
-      {/* ── GLOBAL UPLOAD TRACKER ──────────────────────────────────── */}
-      {/* Sits above any toast that might also be showing. Toasts use 0 or
-          56px from the bottom; we offset by 56 if a toast is up. */}
-      <UploadTracker
-        stopMap={stopMap}
-        bottomOffset={undoToast ? 56 : (ttsError ? 56 : 0)}
-      />
+      {/* (UploadTracker is mounted inline above the bottom bar — see above) */}
     </div>
   );
 }

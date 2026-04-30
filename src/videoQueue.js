@@ -1,71 +1,53 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   MTS — Video Upload Queue (v2 rewrite)
+   MTS — Video Upload Queue (v3 — Drive)
    ───────────────────────────────────────────────────────────────────────────
-   Hard-won lessons informing this rewrite:
+   This version uploads videos to Google Drive instead of YouTube. Drive is:
+   - More reliable (more mature API surface)
+   - No daily quota cap (YouTube was 6 videos/day default)
+   - Already authenticated (we use Drive for app state and photos)
+   - Universal client playback via /preview URL
 
-   1. The previous version had a localStorage trap: existing users had
-      `mts-video-upload-mode` set to "wifi" from when that was the default.
-      iOS Safari can't detect WiFi, so shouldUpload() returned false for
-      every item forever. Uploads sat at "queued" indefinitely even with
-      the screen on. → Fix: there is NO MODE. We always try to upload as
-      soon as we can. If the user is truly worried about cell data, they
-      can pause uploads with a single global toggle.
+   Key changes from v2:
+   1. Target is Drive, not YouTube
+   2. Per-chunk timeout (60s) prevents indefinite hangs on cellular flake
+   3. Saves canonical /preview URL to card on completion
+   4. Uses anyone-with-link permission so URLs work in client emails
 
-   2. The previous version used ffmpeg.wasm for compression. Loading 30MB
-      of WASM from a CDN was unreliable on cellular and added a phase that
-      could silently fail and stall everything. → Fix: no compression.
-      Upload original file directly. Modern phones already produce reasonable
-      sizes through iOS's built-in HEVC and the file picker recompresses
-      4K to a friendlier format.
-
-   3. The previous version's worker loop used `_processing` as a singleton
-      lock. If _processOne threw an exception unexpectedly without going
-      through the try/finally cleanup, the lock could stay set forever.
-      → Fix: every code path that sets _processing=true also unsets it
-      with a finally; additionally, a watchdog timer resets the lock if
-      it's been stuck for >10 minutes.
-
-   4. The previous version dispatched "mts-field-synced" on completion,
-      which created a feedback loop with OnsiteWindow's auto-save effect.
-      → Fix: completion event uses a more specific name and OnsiteWindow's
-      handler does proper equality checks before setState.
-
-   5. Diagnostic logging now persists to IDB via videoLog.js so we can
-      tell after the fact what went wrong.
+   Key invariants kept from v2:
+   - Persistent IDB queue survives tab restarts
+   - Pause/resume single global toggle
+   - Aggressive retry (5 attempts, exponential backoff)
+   - Watchdog releases stuck worker locks
+   - Diagnostic log to videoLog.js
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { loadField, saveField, primeField } from "./fieldStore";
-import { saveFieldToDrive } from "./driveSync";
 import { incUpload, decUpload } from "./uploadStatus";
 import { vlogInfo, vlogWarn, vlogError } from "./videoLog";
+import {
+  initDriveSession,
+  uploadChunk,
+  queryUploadOffset,
+  makeDriveFilePublic,
+  getVideosFolderId,
+  buildShareUrl,
+} from "./driveUpload";
 
 // ── Tunables ─────────────────────────────────────────────────────────────
 
-// 5 MB is the smallest chunk YouTube accepts beyond the minimum (256KB
-// alignment is required for non-final chunks). Using 5MB gives reasonable
-// resume granularity without too much per-chunk overhead.
-const CHUNK_SIZE = 5 * 1024 * 1024;
-
-// Per-chunk retry budget. After N failures on the same chunk, mark item
-// as error and stop trying (until user explicitly retries).
-const CHUNK_RETRY_LIMIT = 5;
-
-// If the worker lock has been held for longer than this, assume we're
-// wedged and forcibly release it. This is a safety net, not a feature.
+const CHUNK_SIZE = 5 * 1024 * 1024;       // 5MB chunks
+const CHUNK_RETRY_LIMIT = 5;              // 5 attempts per chunk
 const WORKER_LOCK_WATCHDOG_MS = 10 * 60 * 1000;
-
-// Backoff schedule for chunk retries. Indices correspond to attempt count.
-// First retry: 1.5s. Last retry: 30s. Total budget if all retries used: ~70s.
 const RETRY_BACKOFF_MS = [1500, 3000, 6000, 12000, 30000];
-
-// Pause flag — separate from per-item state. When true, no new chunks fire.
 const PAUSE_KEY = "mts-video-uploads-paused";
 
 // ── IndexedDB ────────────────────────────────────────────────────────────
 
 const DB_NAME = "mts-video-queue";
-// DB_VER bumped because we changed the schema (compressedFile etc removed)
-const DB_VER = 2;
+// DB_VER bumped to 3 because schema fields changed (was uploadUrl→sessionUrl,
+// videoId→fileId, etc.). Old items get migrated by reading and re-saving with
+// the new shape, keeping their file blob.
+const DB_VER = 3;
 const STORE = "queue";
 
 let _dbPromise = null;
@@ -76,9 +58,6 @@ function openDB() {
     const req = indexedDB.open(DB_NAME, DB_VER);
     req.onupgradeneeded = (e) => {
       const db = req.result;
-      // For v1→v2: just keep the same store. The shape change is additive
-      // (we ignore old fields like compressedFile). Don't delete existing
-      // queue items — the user has data in there.
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE, { keyPath: "id" });
       }
@@ -139,15 +118,13 @@ function notify() {
   }, 50);
 }
 
-// ── Public API: queue inspection ─────────────────────────────────────────
+// ── Public API ───────────────────────────────────────────────────────────
 
 export async function listAll() { return await idbAll(); }
 export async function listForStop(stopId) {
   const all = await idbAll();
   return all.filter(i => i.stopId === stopId);
 }
-
-// ── Public API: enqueue and lifecycle ────────────────────────────────────
 
 export async function enqueueVideo({ stopId, file, title }) {
   if (!file || !file.size) {
@@ -163,10 +140,11 @@ export async function enqueueVideo({ stopId, file, title }) {
     fileSize: file.size,
     fileName: file.name || "video.mov",
     fileType: file.type || "video/mp4",
-    status: "queued",
+    status: "queued",                  // queued | uploading | done | error
     progress: 0,
     bytesUploaded: 0,
-    uploadUrl: null,
+    sessionUrl: null,                  // Drive resumable session URL
+    folderId: null,                    // Drive folder where file will live
     retries: 0,
     error: null,
     createdAt: Date.now(),
@@ -273,36 +251,55 @@ async function _processItem(id) {
   try {
     await _setItem(id, { status: "uploading" });
 
-    let session = item.uploadUrl;
-    if (!session) {
-      vlogInfo("yt.init.start", { fileSize: item.fileSize }, id);
-      session = await _initYouTubeSession(token, item.title, item.fileSize, item.fileType);
-      if (!session) {
-        await _setItem(id, { status: "error", error: "Could not start YouTube upload session. Check Google sign-in and YouTube API quota." });
+    // Resolve target folder (cached)
+    let folderId = item.folderId;
+    if (!folderId) {
+      try {
+        folderId = await getVideosFolderId(token);
+        await _setItem(id, { folderId });
+      } catch (e) {
+        vlogError("drive.folder_failed", { msg: e?.message }, id);
+        await _setItem(id, { status: "error", error: "Could not access Drive videos folder" });
         return true;
       }
-      vlogInfo("yt.init.ok", { sessionPrefix: session.slice(0, 80) }, id);
-      await _setItem(id, { uploadUrl: session, bytesUploaded: 0 });
+    }
+
+    // Phase 1: ensure session
+    let session = item.sessionUrl;
+    if (!session) {
+      vlogInfo("drive.init.start", { fileSize: item.fileSize }, id);
+      const init = await initDriveSession(token, item.title, item.fileSize, item.fileType, folderId);
+      if (!init.ok) {
+        vlogError("drive.init.fail", { error: init.error, status: init.status }, id);
+        await _setItem(id, { status: "error", error: `Could not start Drive upload: ${init.error}` });
+        return true;
+      }
+      session = init.sessionUrl;
+      vlogInfo("drive.init.ok", { sessionPrefix: session.slice(0, 80) }, id);
+      await _setItem(id, { sessionUrl: session, bytesUploaded: 0 });
     } else {
-      vlogInfo("yt.resume.query", { lastKnown: item.bytesUploaded }, id);
-      const offset = await _queryUploadOffset(session, item.fileSize);
+      vlogInfo("drive.resume.query", { lastKnown: item.bytesUploaded }, id);
+      const offset = await queryUploadOffset(session, item.fileSize);
       if (offset === null) {
-        vlogWarn("yt.resume.session_expired", null, id);
-        await _setItem(id, { uploadUrl: null, bytesUploaded: 0 });
+        vlogWarn("drive.resume.session_expired", null, id);
+        await _setItem(id, { sessionUrl: null, bytesUploaded: 0 });
         return await _processItem(id);
       }
       if (offset === "complete") {
-        vlogWarn("yt.resume.already_complete", null, id);
+        // Server has the bytes but we lost the file ID. Mark error so the
+        // user knows; they can manually find it in Drive.
+        vlogWarn("drive.resume.already_complete", null, id);
         await _setItem(id, {
           status: "error",
-          error: "Upload was already complete on YouTube but we lost the video ID. Check YouTube; the video is there.",
+          error: "Upload completed on Drive but the file ID was lost. Check Drive's MTS Field/field-data/videos folder.",
         });
         return true;
       }
-      vlogInfo("yt.resume.offset", { offset }, id);
+      vlogInfo("drive.resume.offset", { offset }, id);
       await _setItem(id, { bytesUploaded: offset });
     }
 
+    // Phase 2: chunked upload loop
     const refresh = await idbGet(id);
     if (!refresh) return false;
     let bytesUploaded = refresh.bytesUploaded || 0;
@@ -321,12 +318,12 @@ async function _processItem(id) {
       const t0 = Date.now();
       vlogInfo("chunk.start", { rangeStart: bytesUploaded, rangeEnd: end - 1, total: item.fileSize, attempt: chunkRetries + 1 }, id);
 
-      const result = await _uploadChunk(session, chunk, bytesUploaded, end - 1, item.fileSize);
+      const result = await uploadChunk(session, chunk, bytesUploaded, end - 1, item.fileSize);
       const ms = Date.now() - t0;
 
       if (result.kind === "ok-final") {
-        vlogInfo("chunk.final_ok", { ms, videoId: result.videoId }, id);
-        await _finalize(id, result.videoId, token);
+        vlogInfo("chunk.final_ok", { ms, fileId: result.fileId }, id);
+        await _finalize(id, result.fileId, token);
         return true;
       }
       if (result.kind === "ok-progress") {
@@ -339,10 +336,11 @@ async function _processItem(id) {
       }
       if (result.kind === "session-expired") {
         vlogWarn("chunk.session_expired", { ms }, id);
-        await _setItem(id, { uploadUrl: null, bytesUploaded: 0 });
+        await _setItem(id, { sessionUrl: null, bytesUploaded: 0 });
         return await _processItem(id);
       }
 
+      // Error path
       chunkRetries++;
       vlogWarn("chunk.fail", { ms, attempt: chunkRetries, error: result.error }, id);
       if (chunkRetries >= CHUNK_RETRY_LIMIT) {
@@ -357,20 +355,22 @@ async function _processItem(id) {
       vlogInfo("chunk.backoff", { ms: backoff }, id);
       await new Promise(r => setTimeout(r, backoff));
 
-      const offset = await _queryUploadOffset(session, item.fileSize);
+      // After backoff, query current server offset in case our local view
+      // is stale (e.g. timeout fired but the chunk had actually transferred)
+      const offset = await queryUploadOffset(session, item.fileSize);
       if (offset === null) {
-        await _setItem(id, { uploadUrl: null, bytesUploaded: 0 });
+        await _setItem(id, { sessionUrl: null, bytesUploaded: 0 });
         return await _processItem(id);
       }
       if (offset === "complete") {
-        await _setItem(id, { status: "error", error: "Server has the full upload but the video ID was lost. Check YouTube." });
+        await _setItem(id, { status: "error", error: "Upload completed but file ID was lost. Check Drive videos folder." });
         return true;
       }
       bytesUploaded = offset;
       await _setItem(id, { bytesUploaded });
     }
     vlogError("loop.exhausted_without_final", { bytesUploaded, fileSize: item.fileSize }, id);
-    await _setItem(id, { status: "error", error: "Upload completed bytes but never received final acknowledgment from YouTube" });
+    await _setItem(id, { status: "error", error: "Upload completed bytes but never received final acknowledgment" });
     return true;
   } catch (e) {
     vlogError("process.exception", { msg: e?.message || String(e), stack: (e?.stack || "").slice(0, 500) }, id);
@@ -381,135 +381,39 @@ async function _processItem(id) {
   }
 }
 
-async function _finalize(id, videoId, token) {
+async function _finalize(id, fileId, token) {
   const item = await idbGet(id);
   if (!item) return;
-  const ytUrl = `https://youtu.be/${videoId}`;
-  vlogInfo("finalize.start", { videoId, ytUrl }, id);
+  vlogInfo("finalize.start", { fileId }, id);
+
+  // Make the file readable by anyone with the link, so client emails work
+  const publicOk = await makeDriveFilePublic(token, fileId);
+  if (!publicOk) {
+    vlogWarn("finalize.permission_failed", { fileId }, id);
+    // Continue anyway — the file uploaded; user can manually share it
+  }
+
+  const shareUrl = buildShareUrl(fileId);
+
+  // Save the link to the card's field data
   try {
     const saved = await loadField(item.stopId).catch(() => ({}));
     const existing = saved?.videoUrls || (saved?.videoUrl ? [saved.videoUrl] : []);
-    if (!existing.includes(ytUrl)) {
-      const next = { ...(saved || {}), videoUrls: [...existing, ytUrl], savedAt: Date.now() };
+    if (!existing.includes(shareUrl)) {
+      const next = { ...(saved || {}), videoUrls: [...existing, shareUrl], savedAt: Date.now() };
       primeField(item.stopId, next);
       await saveField(item.stopId, next).catch(() => {});
-      saveFieldToDrive(token, item.stopId, next).catch(() => {});
-      try { window.dispatchEvent(new CustomEvent("mts-video-uploaded", { detail: { stopId: item.stopId, ytUrl } })); } catch {}
+      try { window.dispatchEvent(new CustomEvent("mts-video-uploaded", { detail: { stopId: item.stopId, shareUrl, fileId } })); } catch {}
     }
   } catch (e) {
     vlogWarn("finalize.field_write_failed", { msg: e?.message }, id);
   }
   await idbDelete(id);
-  vlogInfo("finalize.ok", { videoId }, id);
+  vlogInfo("finalize.ok", { fileId, shareUrl }, id);
   notify();
 }
 
-// ── YouTube resumable upload protocol ───────────────────────────────────
-
-async function _initYouTubeSession(token, title, size, mimeType) {
-  const metadata = {
-    snippet: { title, description: "Uploaded via MTS Field CRM" },
-    status: { privacyStatus: "unlisted" },
-  };
-  let res;
-  try {
-    res = await fetch(
-      "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json; charset=utf-8",
-          "X-Upload-Content-Type": mimeType || "video/mp4",
-          "X-Upload-Content-Length": String(size),
-        },
-        body: JSON.stringify(metadata),
-      }
-    );
-  } catch (e) {
-    vlogError("yt.init.network_error", { msg: e?.message || String(e) });
-    return null;
-  }
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    let parsed = null;
-    try { parsed = JSON.parse(txt); } catch {}
-    vlogError("yt.init.http_error", {
-      status: res.status,
-      reason: parsed?.error?.errors?.[0]?.reason,
-      message: parsed?.error?.message,
-      raw: txt.slice(0, 300),
-    });
-    return null;
-  }
-  const loc = res.headers.get("Location");
-  if (!loc) {
-    vlogError("yt.init.no_location_header", null);
-    return null;
-  }
-  return loc;
-}
-
-async function _uploadChunk(uploadUrl, chunkBlob, startByte, endByte, totalSize) {
-  let res;
-  try {
-    res = await fetch(uploadUrl, {
-      method: "PUT",
-      headers: {
-        "Content-Range": `bytes ${startByte}-${endByte}/${totalSize}`,
-      },
-      body: chunkBlob,
-    });
-  } catch (e) {
-    return { kind: "error", error: `Network: ${e?.message || String(e)}` };
-  }
-  if (res.status === 200 || res.status === 201) {
-    let body;
-    try { body = await res.json(); } catch (e) {
-      return { kind: "error", error: "Final response not JSON" };
-    }
-    if (body?.id) return { kind: "ok-final", videoId: body.id };
-    return { kind: "error", error: "Final response missing video id" };
-  }
-  if (res.status === 308) {
-    const range = res.headers.get("Range");
-    if (!range) {
-      return { kind: "ok-progress", nextOffset: 0 };
-    }
-    const m = range.match(/bytes=0-(\d+)/);
-    return { kind: "ok-progress", nextOffset: m ? parseInt(m[1], 10) + 1 : endByte + 1 };
-  }
-  if (res.status === 404 || res.status === 410) {
-    return { kind: "session-expired" };
-  }
-  const txt = await res.text().catch(() => "");
-  return { kind: "error", error: `HTTP ${res.status}: ${txt.slice(0, 200)}` };
-}
-
-async function _queryUploadOffset(uploadUrl, totalSize) {
-  let res;
-  try {
-    res = await fetch(uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Range": `bytes */${totalSize}` },
-    });
-  } catch (e) {
-    vlogWarn("yt.query.network_error", { msg: e?.message });
-    return null;
-  }
-  if (res.status === 200 || res.status === 201) return "complete";
-  if (res.status === 308) {
-    const range = res.headers.get("Range");
-    if (!range) return 0;
-    const m = range.match(/bytes=0-(\d+)/);
-    return m ? parseInt(m[1], 10) + 1 : 0;
-  }
-  if (res.status === 404 || res.status === 410) return null;
-  vlogWarn("yt.query.unexpected_status", { status: res.status });
-  return null;
-}
-
-// ── Watcher: install once, keep the queue ticking ───────────────────────
+// ── Watcher ──────────────────────────────────────────────────────────────
 
 export function startVideoQueueWatcher(getToken) {
   _getToken = getToken;
@@ -526,9 +430,7 @@ export function startVideoQueueWatcher(getToken) {
     if (document.visibilityState === "visible") { vlogInfo("event.visible", null); _kick(); }
   });
 
-  // Periodic safety net every 30s
   setInterval(() => { _kick(); }, 30 * 1000);
-
   _kick();
 }
 

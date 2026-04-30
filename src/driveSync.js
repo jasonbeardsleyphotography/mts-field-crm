@@ -36,7 +36,7 @@ async function driveReq(token, url, opts = {}) {
   return res;
 }
 
-async function findOrCreateFolder(token, name, parentId = null) {
+export async function findOrCreateFolder(token, name, parentId = null) {
   const ck = parentId ? `${parentId}/${name}` : name;
   if (folderCache[ck]) return folderCache[ck];
   let q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;

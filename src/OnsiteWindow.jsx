@@ -42,6 +42,13 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [audioClips, setAudioClips] = useState(fd.audioClips || []);
   const [cloudLoading, setCloudLoading] = useState(false);
   const [markupIdx, setMarkupIdx] = useState(null);
+  // markupSrc is what we actually pass to PhotoMarkup. Normally it's the
+  // photo's dataUrl (base64 from IDB). But if the photo has been "promoted"
+  // (uploaded to Drive and dataUrl evicted to save space), we fetch it back
+  // from Drive into a blob URL on demand. The blob URL is revoked when
+  // markup closes.
+  const [markupSrc, setMarkupSrc] = useState(null);
+  const [markupLoading, setMarkupLoading] = useState(false);
   const [markupSection, setMarkupSection] = useState("scope"); // which photo array to edit
   const [showCamera, setShowCamera] = useState(false);
   const [cameraSection, setCameraSection] = useState("scope");
@@ -401,6 +408,63 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     return () => { mountedRef.current = false; };
   }, [s.id]);
 
+  // ── MARKUP SOURCE LOADER ────────────────────────────────────────────
+  // When the user enters markup mode, pick the right image source. If the
+  // photo has been promoted (no local dataUrl), fetch it from its Drive URL
+  // into a blob URL we can pass to PhotoMarkup.
+  useEffect(() => {
+    if (markupIdx === null) {
+      // Cleanup any previous blob URL
+      if (markupSrc && markupSrc.startsWith("blob:")) {
+        try { URL.revokeObjectURL(markupSrc); } catch {}
+      }
+      setMarkupSrc(null);
+      setMarkupLoading(false);
+      return;
+    }
+    const photos = markupSection === "addon" ? addonPhotos : scopePhotos;
+    const photo = photos[markupIdx];
+    if (!photo) return;
+    // Local copy available: use it directly
+    if (photo.dataUrl) {
+      setMarkupSrc(photo.dataUrl);
+      setMarkupLoading(false);
+      return;
+    }
+    // No local copy — fetch from Drive
+    if (!photo.url) {
+      setMarkupSrc(null);
+      setMarkupLoading(false);
+      return;
+    }
+    let cancelled = false;
+    let createdBlobUrl = null;
+    setMarkupLoading(true);
+    (async () => {
+      try {
+        const res = await fetch(photo.url);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const blob = await res.blob();
+        if (cancelled) return;
+        createdBlobUrl = URL.createObjectURL(blob);
+        setMarkupSrc(createdBlobUrl);
+        setMarkupLoading(false);
+      } catch (e) {
+        console.warn("[Markup] failed to load photo from URL:", e);
+        if (!cancelled) {
+          setMarkupSrc(null);
+          setMarkupLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (createdBlobUrl) {
+        try { URL.revokeObjectURL(createdBlobUrl); } catch {}
+      }
+    };
+  }, [markupIdx, markupSection, scopePhotos, addonPhotos]);
+
   // ── VIDEO QUEUE STATE — must stay above early returns (Rules of Hooks) ──
   // These power the queue panel UI shown in the VIDEO section. The actual
   // upload work (compress → chunked PUT to YouTube) runs entirely inside
@@ -485,7 +549,25 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   if (markupIdx !== null) {
     const photos = markupSection === "addon" ? addonPhotos : scopePhotos;
     if (photos[markupIdx]) {
-      return <PhotoMarkup photoDataUrl={photos[markupIdx].dataUrl} onSave={handleMarkupSave} onCancel={() => setMarkupIdx(null)} />;
+      // Show loading screen while we fetch the photo from Drive (only happens
+      // for promoted photos where the local copy was evicted).
+      if (markupLoading) {
+        return (
+          <div style={{ position:"fixed", inset:0, background:"#000", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", color:"#a0b0c0", fontFamily:F, letterSpacing:1, textTransform:"uppercase", fontSize:11 }}>
+            Loading photo from Drive…
+          </div>
+        );
+      }
+      if (!markupSrc) {
+        return (
+          <div style={{ position:"fixed", inset:0, background:"#000", zIndex:1000, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", color:"#FF8888", fontFamily:F, padding:20 }}>
+            <div style={{ fontSize:14, fontWeight:700, marginBottom:8, letterSpacing:1, textTransform:"uppercase" }}>Could not load photo</div>
+            <div style={{ fontSize:11, color:"#7a8090", marginBottom:20, textAlign:"center" }}>The local copy was cleaned up and the cloud copy could not be reached. Check your connection and try again.</div>
+            <button onClick={() => setMarkupIdx(null)} style={{ padding:"10px 20px", background:"transparent", border:"1px solid #2a3560", borderRadius:8, color:"#a0b8d0", fontSize:12, fontWeight:700, cursor:"pointer" }}>BACK</button>
+          </div>
+        );
+      }
+      return <PhotoMarkup photoDataUrl={markupSrc} onSave={handleMarkupSave} onCancel={() => setMarkupIdx(null)} />;
     }
   }
 

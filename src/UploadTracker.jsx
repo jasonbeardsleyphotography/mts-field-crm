@@ -37,7 +37,7 @@ function describeStatus(item) {
   }
 }
 
-export default function UploadTracker({ stopMap = {}, bottomOffset = 0 }) {
+export default function UploadTracker({ stopMap = {}, bottomOffset = 0, inline = false }) {
   const [items, setItems] = useState([]);
   const [expanded, setExpanded] = useState(false);
   const [paused, setPausedState] = useState(isPaused());
@@ -92,7 +92,17 @@ export default function UploadTracker({ stopMap = {}, bottomOffset = 0 }) {
   const accentBorder = errorCount > 0 ? "rgba(255,85,85,.3)" : paused ? "rgba(246,191,38,.3)" : "rgba(16,185,129,.25)";
 
   return (
-    <div style={{
+    <div style={inline ? {
+      // Inline mode — sits in the document flow above the bottom bar
+      width: "100%",
+      background: "#0a0d15",
+      borderTop: `1px solid ${accentBorder}`,
+      maxHeight: "70vh",
+      display: "flex",
+      flexDirection: "column",
+      flexShrink: 0,
+    } : {
+      // Fixed mode — overlays at the bottom of the viewport
       position: "fixed",
       bottom: bottomOffset,
       left: 0, right: 0,
@@ -104,35 +114,54 @@ export default function UploadTracker({ stopMap = {}, bottomOffset = 0 }) {
       display: "flex",
       flexDirection: "column",
     }}>
-      {/* Collapsed bar */}
+      {/* Collapsed bar — TRUE thin strip (6px tall). No text, no icon —
+          just a progress indicator the user can tap to expand. The expanded
+          view has all the details. This preserves bottom UI real estate
+          (especially the Reorder button). */}
       {items.length > 0 && (
         <button
           onClick={() => setExpanded(v => !v)}
           style={{
-            width: "100%", background: accentBg, border: "none",
-            padding: "9px 12px", display: "flex", alignItems: "center",
-            gap: 10, cursor: "pointer", color: "#e0e8f0", textAlign: "left",
+            width: "100%", background: "#0a0d15", border: "none",
+            padding: 0, cursor: "pointer", textAlign: "left",
+            position: "relative", overflow: "hidden",
+            height: 6,
+            display: "block",
           }}
+          aria-label={`Uploads: ${summary}`}
+          title={summary}
         >
-          <IconYoutube size={14} color={accent} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: accent, fontFamily: F, letterSpacing: 0.5, textTransform: "uppercase" }}>
-              {summary}
-              {!errorCount && !paused && activeCount > 0 && <span style={{marginLeft:8,color:"#7a8090",fontWeight:600}}>{avgProgress}%</span>}
-            </div>
-            {!errorCount && !paused && (
-              <div style={{ height: 2, background: "rgba(255,255,255,.05)", borderRadius: 1, marginTop: 4, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${avgProgress}%`, background: accent, transition: "width .3s" }} />
-              </div>
-            )}
-          </div>
-          <span style={{ fontSize: 14, color: "#5a6580", marginLeft: 4 }}>{expanded ? "▾" : "▴"}</span>
+          {/* Progress fill */}
+          {!errorCount && !paused && activeCount > 0 && (
+            <div style={{
+              position: "absolute", left: 0, top: 0, bottom: 0,
+              width: `${avgProgress}%`,
+              background: accent,
+              transition: "width .3s",
+            }} />
+          )}
+          {/* Idle/paused/error: full-width tinted strip */}
+          {(errorCount > 0 || paused || activeCount === 0) && (
+            <div style={{
+              position: "absolute", left: 0, top: 0, bottom: 0, right: 0,
+              background: accent, opacity: 0.4,
+            }} />
+          )}
         </button>
       )}
 
       {/* Expanded list */}
       {expanded && (
         <div style={{ flex: 1, overflowY: "auto", borderTop: "1px solid #1a2030" }}>
+          {/* Title / summary row with collapse button */}
+          <div style={{ padding: "8px 12px", display: "flex", alignItems: "center", gap: 8, background: "#0e1120", borderBottom: "1px solid #1a2030" }}>
+            <IconYoutube size={12} color={accent} />
+            <div style={{ flex: 1, minWidth: 0, fontSize: 10, fontWeight: 800, color: accent, fontFamily: F, letterSpacing: 0.5, textTransform: "uppercase" }}>
+              {summary}
+              {!errorCount && !paused && activeCount > 0 && <span style={{marginLeft:6,color:"#7a8090",fontWeight:600}}>{avgProgress}%</span>}
+            </div>
+            <button onClick={() => setExpanded(false)} style={{ padding:"3px 8px", borderRadius:4, background:"transparent", border:"1px solid #252d47", color:"#5a6580", fontSize:9, fontWeight:700, cursor:"pointer", fontFamily:F, letterSpacing:0.5 }}>HIDE</button>
+          </div>
           {/* Action row */}
           <div style={{ padding: "8px 12px", display: "flex", alignItems: "center", gap: 6, background: "#0e1120", borderBottom: "1px solid #1a2030", flexWrap: "wrap" }}>
             <button
