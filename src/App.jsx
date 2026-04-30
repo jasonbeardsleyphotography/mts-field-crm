@@ -8,6 +8,7 @@ import { saveAppState, loadAppState, saveFieldToDrive, loadFieldFromDrive, listF
 import { loadField, saveField, listFieldIds } from "./fieldStore";
 import { startPhotoSyncWatcher } from "./photoSync";
 import { startVideoQueueWatcher } from "./videoQueue";
+import { pruneLog as pruneVideoLog } from "./videoLog";
 import UploadTracker from "./UploadTracker";
 import Linkify from "./Linkify";
 import AddStopModal from "./AddStopModal";
@@ -129,7 +130,7 @@ export default function App() {
     startVideoQueueWatcher(getTok);
     // Prune the video diagnostic log on each startup so it doesn't grow
     // unbounded across many sessions.
-    import("./videoLog").then(m => m.pruneLog?.()).catch(() => {});
+    pruneVideoLog().catch(() => {});
   }, [token]);
 
   const [loading, setLoading] = useState(false);
@@ -570,6 +571,10 @@ export default function App() {
     }
     return out;
   }, [rawEvents]);
+  // addStopOpen also lives down in the ACTIONS section; we declare it here
+  // because the pipelineSnapshot effect below depends on it. The actual
+  // assignment happens here exactly once — the lower declaration was removed.
+  const [addStopOpen, setAddStopOpen] = useState(false);
   const [pipelineSnapshot, setPipelineSnapshot] = useState(() => loadPipeline());
   // Refresh pipelineSnapshot when modal opens so we see latest pipeline state
   useEffect(() => { if (addStopOpen) setPipelineSnapshot(loadPipeline()); }, [addStopOpen]);
@@ -690,7 +695,8 @@ export default function App() {
   const openOnsite = (stop) => { setOnsiteStop(stop); setExpanded(null); };
   const [declineConfirm, setDeclineConfirm] = useState(null); // stop id awaiting confirm
   const [signOutConfirm, setSignOutConfirm] = useState(false);
-  const [addStopOpen, setAddStopOpen] = useState(false);
+  // (addStopOpen is declared above, near the clientIndex computation — its
+  // useEffect needs to fire when this flag flips, and the effect lives there.)
 
   // Move-day picker — open when user taps the calendar icon on a card.
   // { stopId, anchorRect } so the popover can position near the button.
