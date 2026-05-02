@@ -86,6 +86,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const recTimerRef = useRef(null);
   const audioElRef = useRef(null);
   const notesRef = useRef(null);
+  const hydratedRef = useRef(false);
 
   // Reset scroll on unmount so route screen isn't left zoomed
   useEffect(() => { return () => { setTimeout(() => { try { window.scrollTo(0,0); } catch(e){} }, 80); }; }, []);
@@ -93,46 +94,46 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // Auto-save on every change — IndexedDB (local) + Drive.
   // Emit "mts-field-synced" so Pipeline's field-summary memo refreshes if the
   // user flips to Pipeline with OnsiteWindow already open.
-  useEffect(() => {
-    const data = { scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult };
-    // Prime the sync peek so Pipeline sees fresh data immediately, then
-    // asynchronously persist to IDB.
-    primeField(s.id, data);
-    saveField(s.id, data).catch(() => {});
+useEffect(() => {
+  const data = { scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult };
+  primeField(s.id, data);
+  const hasData = scopeNotes || addonNotes || scopePhotos.length || addonPhotos.length || videoUrls.length || audioClips.length || aiScopeResult || aiAddonResult;
+  if (!hydratedRef.current && !hasData) return;
+  saveField(s.id, data).then(() => {
     try { window.dispatchEvent(new CustomEvent("mts-field-synced")); } catch {}
-    // Sync to Drive (debounced via timer)
-    if (token) {
-      if (window._fieldSyncTimer) clearTimeout(window._fieldSyncTimer);
-      window._fieldSyncTimer = setTimeout(() => {
-        saveFieldToDrive(token, s.id, data).catch(() => {});
-      }, 3000);
-    }
-  }, [scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeResult, aiAddonResult, s.id]);
+  }).catch(() => {});
+  if (token) {
+    if (window._fieldSyncTimer) clearTimeout(window._fieldSyncTimer);
+    window._fieldSyncTimer = setTimeout(() => {
+      saveFieldToDrive(token, s.id, data).catch(() => {});
+    }, 3000);
+  }
+}, [scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeResult, aiAddonResult, s.id]);
 
   // On mount (or when stop changes), hydrate from IndexedDB.
   // If peekField returned empty we'll get the data here; if it had a
   // localStorage-mirror value we'll still get the fresher IDB read.
   useEffect(() => {
-    let dead = false;
-    loadField(s.id).then(data => {
-      if (dead || !data || Object.keys(data).length === 0) return;
-      primeField(s.id, data);
-      // Only overwrite local state if the user hasn't typed anything yet.
-      // Otherwise we'd clobber in-progress edits — unlikely but possible if
-      // the user opens a stop, starts typing, then the load resolves late.
-      if (!scopeNotes && (data.scopeNotes || data.myNotes)) setScopeNotes(data.scopeNotes || data.myNotes || "");
-      if (!addonNotes && data.addonNotes) setAddonNotes(data.addonNotes);
-      if (scopePhotos.length === 0 && (data.scopePhotos || data.photos)) setScopePhotos(data.scopePhotos || data.photos || []);
-      if (addonPhotos.length === 0 && data.addonPhotos) setAddonPhotos(data.addonPhotos);
-      if (videoUrls.length === 0 && (data.videoUrls || data.videoUrl)) setVideoUrls(data.videoUrls || (data.videoUrl ? [data.videoUrl] : []));
-      if (audioClips.length === 0 && data.audioClips) setAudioClips(data.audioClips);
-      if (!aiScopeResult && data.aiScopeSummary) setAiScopeResult(data.aiScopeSummary);
-      if (!aiAddonResult && data.aiAddonEmail) setAiAddonResult(data.aiAddonEmail);
-    });
-    return () => { dead = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.id]);
-
+  hydratedRef.current = false;
+  let dead = false;
+  loadField(s.id).then(data => {
+    if (dead) return;
+    hydratedRef.current = true;
+    if (!data || Object.keys(data).length === 0) return;
+    primeField(s.id, data);
+    if (!scopeNotes && (data.scopeNotes || data.myNotes)) setScopeNotes(data.scopeNotes || data.myNotes || "");
+    if (!addonNotes && data.addonNotes) setAddonNotes(data.addonNotes);
+    if (scopePhotos.length === 0 && (data.scopePhotos || data.photos)) setScopePhotos(data.scopePhotos || data.photos || []);
+    if (addonPhotos.length === 0 && data.addonPhotos) setAddonPhotos(data.addonPhotos);
+    if (videoUrls.length === 0 && (data.videoUrls || data.videoUrl)) setVideoUrls(data.videoUrls || (data.videoUrl ? [data.videoUrl] : []));
+    if (audioClips.length === 0 && data.audioClips) setAudioClips(data.audioClips);
+    if (!aiScopeResult && data.aiScopeSummary) setAiScopeResult(data.aiScopeSummary);
+    if (!aiAddonResult && data.aiAddonEmail) setAiAddonResult(data.aiAddonEmail);
+  });
+  return () => { dead = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [s.id]);
+  
   // If localStorage is empty (desktop), pull from Drive
   useEffect(() => {
     const hasLocal = !!(fd.scopeNotes || fd.myNotes || fd.addonNotes || (fd.scopePhotos || fd.photos || []).length);
