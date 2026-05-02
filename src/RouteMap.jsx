@@ -45,6 +45,21 @@ export async function geocode(addr) {
   return null;
 }
 
+// ── OSRM FALLBACK ROUTING ─────────────────────────────────────────────────────
+async function fetchOSRMPath(positions) {
+  const coords = positions.map(p => `${p.lng},${p.lat}`).join(";");
+  try {
+    const resp = await fetch(
+      `https://router.project-osrm.org/route/v1/driving/${coords}?geometries=geojson&overview=full`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    const data = await resp.json();
+    const line = data?.routes?.[0]?.geometry?.coordinates;
+    if (line?.length) return line.map(([lng, lat]) => ({ lat, lng }));
+  } catch(e) {}
+  return null;
+}
+
 // ── MAPS LOADER ──────────────────────────────────────────────────────────────
 let mapsPromise = null;
 export function loadMaps() {
@@ -153,6 +168,7 @@ export default function RouteMap({ stops, selectedId }) {
   useEffect(() => {
     if (!map.current) return;
     markers.current.forEach(m => m.marker.setMap(null)); markers.current = [];
+    if (route._cancelOSRM) { route._cancelOSRM(); delete route._cancelOSRM; }
     if (route.current) { route.current.setMap(null); route.current = null; }
     if (!Object.keys(coords).length) return;
 
@@ -179,30 +195,39 @@ export default function RouteMap({ stops, selectedId }) {
       positions.push(pos); bounds.extend(pos);
     });
 
-    // Full route polyline
+    // Full route polyline — Google Directions → OSRM fallback → straight-line fallback
     if (positions.length >= 2) {
+      let staleRoute = false;
+      const drawOSRM = async () => {
+        const path = await fetchOSRMPath(positions);
+        if (staleRoute || route.current) return;
+        route.current = new window.google.maps.Polyline({
+          path: path || positions,
+          strokeColor:"#039BE5", strokeOpacity: path ? .6 : .4,
+          strokeWeight: path ? 3 : 2, map:map.current,
+        });
+      };
       try {
         new window.google.maps.DirectionsService().route({
           origin:positions[0], destination:positions[positions.length-1],
           waypoints:positions.slice(1,-1).map(p=>({location:p,stopover:true})).slice(0,23),
           travelMode:window.google.maps.TravelMode.DRIVING, optimizeWaypoints:false,
         }, (result, status) => {
+          if (staleRoute) return;
           if (status === "OK") {
             route.current = new window.google.maps.DirectionsRenderer({
               map:map.current, directions:result, suppressMarkers:true, preserveViewport:true,
               polylineOptions:{strokeColor:"#039BE5",strokeOpacity:.6,strokeWeight:3},
             });
           } else {
-            route.current = new window.google.maps.Polyline({
-              path:positions, strokeColor:"#039BE5", strokeOpacity:.4, strokeWeight:2, map:map.current,
-            });
+            drawOSRM();
           }
         });
       } catch(e) {
-        route.current = new window.google.maps.Polyline({
-          path:positions, strokeColor:"#039BE5", strokeOpacity:.4, strokeWeight:2, map:map.current,
-        });
+        drawOSRM();
       }
+      // Expose cleanup so the effect can cancel inflight OSRM fetch
+      route._cancelOSRM = () => { staleRoute = true; };
     }
 
     // Fit bounds only when stop SET changes
@@ -216,7 +241,6 @@ export default function RouteMap({ stops, selectedId }) {
   // ── DIRECTIONS FROM CURRENT LOCATION TO NEXT STOP ─────────────────────
   useEffect(() => {
     if (!map.current) return;
-    // Clean up old direction line
     if (nextRoute.current) { nextRoute.current.setMap(null); nextRoute.current = null; }
     let stale = false;
     const firstStop = stops[0];
@@ -228,7 +252,7 @@ export default function RouteMap({ stops, selectedId }) {
         destination: coords[firstStop.id],
         travelMode: window.google.maps.TravelMode.DRIVING,
       }, (result, status) => {
-        if (stale) return; // Don't create renderer if effect already re-ran
+        if (stale) return;
         if (status === "OK") {
           nextRoute.current = new window.google.maps.DirectionsRenderer({
             map: map.current, directions: result, suppressMarkers: true, preserveViewport: true,
