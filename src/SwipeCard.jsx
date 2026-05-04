@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { IconNavigation, IconClipboard } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Swipe Card
@@ -21,7 +22,7 @@ export default function SwipeCard({ children, onSwipeRight, onSwipeLeft, enabled
 
   return <div style={{position:"relative",overflow:"hidden"}}>
     {abs>20 && <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:right?"flex-start":"flex-end",justifyContent:"center",padding:"0 20px",opacity:reveal,background:right?"rgba(3,155,229,.1)":"rgba(51,182,121,.1)"}}>
-      <div style={{fontSize:20,fontWeight:800,color:right?"#039BE5":"#33B679"}}>{right?"🧭":"📋"}</div>
+      <div style={{color:right?"#039BE5":"#33B679"}}>{right ? <IconNavigation size={22} color="#039BE5"/> : <IconClipboard size={22} color="#33B679"/>}</div>
       <div style={{fontSize:12,fontWeight:700,color:right?"#039BE5":"#33B679",marginTop:2}}>{right?"Navigate":"Onsite"}</div>
     </div>}
     <div onTouchStart={ts} onTouchMove={tm} onTouchEnd={te}

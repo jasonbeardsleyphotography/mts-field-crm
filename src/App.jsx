@@ -17,7 +17,7 @@ import {
   IconArrowLeft, IconNavigation, IconMessageSquare, IconVolume2,
   IconClipboard, IconX, IconRotateCcw, IconRefresh, IconReorder, IconUndo,
   IconPlus, IconSearch, IconTrash, IconChevronDown, IconChevronRight,
-  IconCloud, IconCloudOff, IconCheckCircle, IconEdit, IconPhone, IconMail, IconClock
+  IconCloud, IconCloudOff, IconCheckCircle, IconEdit, IconPhone, IconMail, IconClock, IconCalendar
 } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -56,6 +56,10 @@ function lsGet(key, fallback) {
 function lsSet(key, val) {
   try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) {}
 }
+// Persist locally-created route stops (id starts with "local-") across reloads.
+// Format: { [id]: { event: <raw event obj>, dk: <dayKey string> } }
+function localStopsGet() { return lsGet("mts-local-stops", {}); }
+function localStopsSet(val) { lsSet("mts-local-stops", val); }
 
 // ═════════════════════════════════════════════════════════════════════════════
 // MAIN APP
@@ -385,7 +389,14 @@ export default function App() {
       const ts = new Date(targetDay); ts.setHours(0,0,0,0);
       const te = new Date(targetDay); te.setHours(23,59,59,999);
       const todayEvents = await authedFetchEvents(token, ts, te);
-      setRawEvents(prev => ({ ...prev, [targetDay.toDateString()]: todayEvents }));
+      const localStops1 = localStopsGet();
+      setRawEvents(prev => {
+        const next = { ...prev, [targetDay.toDateString()]: todayEvents };
+        for (const [id, { event, dk }] of Object.entries(localStops1)) {
+          next[dk] = [...(next[dk] || []).filter(e => e.id !== id), event];
+        }
+        return next;
+      });
       if (!preserveDay) setSelDay(0);
       setExpanded(null); setReorderMode(false); setMoving(null);
       setLoading(false);
@@ -398,7 +409,15 @@ export default function App() {
             const s = new Date(day); s.setHours(0,0,0,0);
             const e = new Date(day); e.setHours(23,59,59,999);
             const events = await authedFetchEvents(token, s, e);
-            setRawEvents(prev => ({ ...prev, [day.toDateString()]: events }));
+            const localStops2 = localStopsGet();
+            setRawEvents(prev => {
+              const next = { ...prev, [day.toDateString()]: events };
+              for (const [id, { event, dk }] of Object.entries(localStops2)) {
+                if (dk === day.toDateString())
+                  next[dk] = [...(next[dk] || []).filter(e => e.id !== id), event];
+              }
+              return next;
+            });
           } catch(err) {
             console.warn("Background load failed for", day.toDateString(), err);
           }
@@ -680,6 +699,10 @@ export default function App() {
       const order = prev[dayKey] || [];
       return { ...prev, [dayKey]: order.filter(i => i !== id) };
     });
+    // Remove from local stop persistence if it's a local event
+    if (id.startsWith("local-")) {
+      const ls = localStopsGet(); delete ls[id]; localStopsSet(ls);
+    }
     // Grey out the event in Google Calendar for TDs with real event ids
     const stop = stopMap[id];
     if (token && id && !id.startsWith("local-") && stop && !stop.isTask) {
@@ -710,33 +733,29 @@ export default function App() {
     const stop = stopMap[id];
     if (!stop || !token) return;
     if (id.startsWith("local-")) {
-      // Locally-created event that isn't on Google Calendar yet — just move it
-      // in the in-memory rawEvents map. Time of day stays the same.
+      // Locally-created event that isn't on Google Calendar yet — move it
+      // in both the in-memory rawEvents map and localStorage. Time of day stays the same.
       const oldKey = dayKey;
       const newKey = targetDate.toDateString();
       if (oldKey === newKey) return;
+      // Compute updated event outside setState so we can persist it
+      const oldList = rawEvents[oldKey] || [];
+      const found = oldList.find(e => e.id === id);
+      if (!found) return;
+      const oldStart = new Date(found.start?.dateTime || found.start?.date);
+      const oldEnd = new Date(found.end?.dateTime || found.end?.date);
+      const newStart = new Date(targetDate);
+      newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
+      const durMs = oldEnd.getTime() - oldStart.getTime();
+      const newEnd = new Date(newStart.getTime() + durMs);
+      const updated = { ...found, start: { dateTime: newStart.toISOString() }, end: { dateTime: newEnd.toISOString() } };
+      const ls = localStopsGet();
+      if (ls[id]) { ls[id] = { event: updated, dk: newKey }; localStopsSet(ls); }
       setRawEvents(prev => {
-        const oldList = prev[oldKey] || [];
-        const newList = prev[newKey] || [];
-        const found = oldList.find(e => e.id === id);
-        if (!found) return prev;
-        // Shift the start/end dates to the new day, keeping HH:MM
-        const oldStart = new Date(found.start?.dateTime || found.start?.date);
-        const oldEnd = new Date(found.end?.dateTime || found.end?.date);
-        const newStart = new Date(targetDate);
-        newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
-        const durMs = oldEnd.getTime() - oldStart.getTime();
-        const newEnd = new Date(newStart.getTime() + durMs);
-        const updated = {
-          ...found,
-          start: { dateTime: newStart.toISOString() },
-          end: { dateTime: newEnd.toISOString() },
-        };
-        return {
-          ...prev,
-          [oldKey]: oldList.filter(e => e.id !== id),
-          [newKey]: [...newList, updated],
-        };
+        const oldL = prev[oldKey] || [];
+        const newL = prev[newKey] || [];
+        if (!oldL.find(e => e.id === id)) return prev;
+        return { ...prev, [oldKey]: oldL.filter(e => e.id !== id), [newKey]: [...newL, updated] };
       });
       return;
     }
@@ -1148,7 +1167,7 @@ export default function App() {
                     {s.notes && <button onClick={()=>speakStop(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:ttsSpeaking?"rgba(100,80,200,.18)":"rgba(100,80,200,.08)",border:"1px solid rgba(100,80,200,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{ttsSpeaking ? <IconX size={16} color="#8a80c0"/> : <IconVolume2 size={16} color="#8a80c0"/>}</button>}
                     <button onClick={()=>openOnsite(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(16,185,129,.06)",border:"1px solid rgba(16,185,129,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconClipboard size={16} color="#10B981"/></button>
                     {/* Move to a different day — patches Google Calendar */}
-                    <button onClick={()=>setMovePicker(movePicker?.stopId === s.id ? null : { stopId: s.id })} title="Move to another day" style={{flex:1,padding:"10px 0",borderRadius:8,background:movePicker?.stopId===s.id?"rgba(246,191,38,.18)":"rgba(246,191,38,.06)",border:`1px solid ${movePicker?.stopId===s.id?"rgba(246,191,38,.4)":"rgba(246,191,38,.15)"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>📅</button>
+                    <button onClick={()=>setMovePicker(movePicker?.stopId === s.id ? null : { stopId: s.id })} title="Move to another day" style={{flex:1,padding:"10px 0",borderRadius:8,background:movePicker?.stopId===s.id?"rgba(246,191,38,.18)":"rgba(246,191,38,.06)",border:`1px solid ${movePicker?.stopId===s.id?"rgba(246,191,38,.4)":"rgba(246,191,38,.15)"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconCalendar size={16} color="#F6BF26"/></button>
                     <button onClick={()=>setDeclineConfirm(s.id)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(200,60,60,.06)",border:"1px solid rgba(200,60,60,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={16} color="#a06060"/></button>
                     {!s.isTask && <button onClick={()=>deleteStop(s.id)} title="Delete permanently" style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(100,100,100,.06)",border:"1px solid rgba(100,100,100,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconTrash size={16} color="#4a5a70"/></button>}
                   </div>
@@ -1316,17 +1335,20 @@ export default function App() {
             if (form.phone) descParts.push(`Phone: ${form.phone}`);
             if (form.email) descParts.push(`Email: ${form.email}`);
             if (form.notes) descParts.push(`Notes: ${form.notes}`);
+            const localEvent = {
+              id,
+              summary: `TASK ${form.name || form.addr}`,
+              location: form.addr,
+              start: { dateTime: startDt.toISOString() },
+              end: { dateTime: endDt.toISOString() },
+              colorId: "7",
+              description: descParts.join("\n"),
+            };
+            // Persist so the stop survives page reloads
+            const ls = localStopsGet(); ls[id] = { event: localEvent, dk: dayKey }; localStopsSet(ls);
             setRawEvents(prev => {
               const dayEvts = prev[dayKey] || [];
-              return { ...prev, [dayKey]: [...dayEvts, {
-                id,
-                summary: `TASK ${form.name || form.addr}`,
-                location: form.addr,
-                start: { dateTime: startDt.toISOString() },
-                end: { dateTime: endDt.toISOString() },
-                colorId: "7",
-                description: descParts.join("\n"),
-              }] };
+              return { ...prev, [dayKey]: [...dayEvts, localEvent] };
             });
           }
         }}

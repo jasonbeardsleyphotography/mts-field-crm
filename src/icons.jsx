@@ -86,6 +86,7 @@ export const IconSingleops   = p => <M {...p} paths={["M19.5 14.25v-2.625a3.375 
 export const IconLinkExternal= p => <S {...p} d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/>;
 export const IconLock        = p => <M {...p} paths={["M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"]}/>;
 export const IconClock       = p => <M {...p} paths={["M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"]}/>;
+export const IconCalendar    = p => <S {...p} d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 9v7.5"/>;
 
 // ── ICON BUTTON WRAPPER ───────────────────────────────────────────────────
 export const IconBtn = ({ icon:Ic, onClick, color, bg, border, size=18, title, style={}, disabled }) => (
