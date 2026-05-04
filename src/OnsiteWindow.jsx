@@ -134,27 +134,47 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [s.id]);
   
-  // If localStorage is empty (desktop), pull from Drive
+  // If no local data, pull from Drive to populate on first open.
+  // _scopePhotoCount/_addonPhotoCount are stored in the slim localStorage mirror
+  // even though the actual base64 data isn't — use them to detect existing photos
+  // so we don't fire a Drive pull that could overwrite locally-captured photos.
   useEffect(() => {
-    const hasLocal = !!(fd.scopeNotes || fd.myNotes || fd.addonNotes || (fd.scopePhotos || fd.photos || []).length);
+    const hasLocal = !!(fd.scopeNotes || fd.myNotes || fd.addonNotes ||
+      (fd.scopePhotos || fd.photos || []).length || fd._scopePhotoCount || fd._addonPhotoCount);
     if (!hasLocal && token) {
+      let dead = false;
       setCloudLoading(true);
-      loadFieldFromDrive(token, s.id).then(cloud => {
-        if (cloud) {
-          if (cloud.scopeNotes || cloud.myNotes) setScopeNotes(cloud.scopeNotes || cloud.myNotes || "");
-          if (cloud.addonNotes) setAddonNotes(cloud.addonNotes);
-          if (cloud.scopePhotos || cloud.photos) setScopePhotos(cloud.scopePhotos || cloud.photos || []);
-          if (cloud.addonPhotos) setAddonPhotos(cloud.addonPhotos);
-          if (cloud.videoUrls) setVideoUrls(cloud.videoUrls); else if (cloud.videoUrl) setVideoUrls([cloud.videoUrl]);
-          if (cloud.audioClips) setAudioClips(cloud.audioClips);
-          if (cloud.aiScopeSummary) setAiScopeResult(cloud.aiScopeSummary);
-          if (cloud.aiAddonEmail) setAiAddonResult(cloud.aiAddonEmail);
-          // Save to IndexedDB for next time
-          saveField(s.id, cloud).catch(() => {});
-          primeField(s.id, cloud);
-        }
+      loadFieldFromDrive(token, s.id).then(async cloud => {
+        if (dead) return;
+        if (!cloud || Object.keys(cloud).length === 0) { setCloudLoading(false); return; }
+        // Always merge with current IDB state — never overwrite locally-captured photos
+        // with older or empty Drive data. This prevents a race where photos taken in
+        // this session get erased when a slow Drive response arrives.
+        const local = await loadField(s.id).catch(() => ({}));
+        if (dead) return;
+        const mergeArr = (a, b) => (a || []).length >= (b || []).length ? (a || []) : (b || []);
+        const merged = {
+          ...local,
+          ...cloud,
+          scopePhotos: mergeArr(cloud.scopePhotos || cloud.photos, local.scopePhotos || local.photos),
+          addonPhotos: mergeArr(cloud.addonPhotos, local.addonPhotos),
+          audioClips:  mergeArr(cloud.audioClips,  local.audioClips),
+          videoUrls:   mergeArr(cloud.videoUrls,   local.videoUrls),
+        };
+        if (cloud.scopeNotes || cloud.myNotes) setScopeNotes(cloud.scopeNotes || cloud.myNotes || "");
+        if (cloud.addonNotes) setAddonNotes(cloud.addonNotes);
+        if ((merged.scopePhotos || []).length) setScopePhotos(merged.scopePhotos);
+        if ((merged.addonPhotos || []).length) setAddonPhotos(merged.addonPhotos);
+        if (merged.videoUrls?.length) setVideoUrls(merged.videoUrls);
+        else if (cloud.videoUrl) setVideoUrls([cloud.videoUrl]);
+        if (merged.audioClips?.length) setAudioClips(merged.audioClips);
+        if (cloud.aiScopeSummary) setAiScopeResult(cloud.aiScopeSummary);
+        if (cloud.aiAddonEmail) setAiAddonResult(cloud.aiAddonEmail);
+        saveField(s.id, merged).catch(() => {});
+        primeField(s.id, merged);
         setCloudLoading(false);
-      }).catch(() => setCloudLoading(false));
+      }).catch(() => { if (!dead) setCloudLoading(false); });
+      return () => { dead = true; };
     }
   }, [s.id, token]);
 
@@ -655,6 +675,16 @@ Property: ${s.addr || ""}`);
   const F = "'Oswald',sans-serif";
   const B = "'DM Sans',system-ui,sans-serif";
 
+  // Explicit final save then call onDone — guarantees current React state
+  // (all visible photos/notes) is persisted to IDB before the component unmounts
+  // and markDone reads from IDB to upload to Drive.
+  const handleDone = async () => {
+    const data = { scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult };
+    primeField(s.id, data);
+    await saveField(s.id, data).catch(() => {});
+    onDone();
+  };
+
   // Swipe left on body → pipeline
   const onTouchStart = (e) => { swipeStartX.current = e.touches[0].clientX; swipeStartY.current = e.touches[0].clientY; swipeDir.current = null; setSwiping(true); };
   const onTouchMove = (e) => {
@@ -665,7 +695,7 @@ Property: ${s.addr || ""}`);
     if (swipeDir.current === "h" && dx < 0) setSwipeX(dx);
   };
   const onTouchEnd = () => {
-    if (swipeX < -120) onDone();
+    if (swipeX < -120) handleDone();
     setSwipeX(0); setSwiping(false); swipeDir.current = null;
   };
 
@@ -694,7 +724,7 @@ Property: ${s.addr || ""}`);
         ) : (
           <button onClick={()=>{setRejectConfirm(false);onMarkReject();}} style={{display:"flex",alignItems:"center",gap:4,padding:"6px 10px",borderRadius:8,background:"rgba(255,140,0,.25)",border:"1px solid rgba(255,140,0,.5)",color:"#FF8C00",fontSize:9,fontWeight:800,cursor:"pointer",animation:"pulse 1s infinite",flexShrink:0,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>🚫 REJECT?</button>
         ))}
-        <button onClick={onDone} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:8,background:"#10B981",border:"none",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}><IconCheckCircle size={13} color="#fff"/>DONE</button>
+        <button onClick={handleDone} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:8,background:"#10B981",border:"none",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}><IconCheckCircle size={13} color="#fff"/>DONE</button>
       </div>
 
       {/* ── SCROLLABLE BODY ────────────────────────────────────────────── */}
@@ -956,7 +986,7 @@ Property: ${s.addr || ""}`);
         {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#1a2035",border:"1px solid #252d47",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",textDecoration:"none"}}><IconPhone size={18} color="#a0b8d0"/></a>}
         {s.phone && <button onClick={() => window.open(`sms:${s.phone.replace(/\D/g,"")}`,"_self")} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#1a2035",border:"1px solid #252d47",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconMessageSquare size={18} color="#a0b8d0"/></button>}
         {s.addr && <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(s.addr)}`} target="_blank" rel="noreferrer" style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",textDecoration:"none"}}><IconNavigation size={18} color="#3B82F6"/></a>}
-        <button onClick={onDone} style={{flex:3,padding:"12px 0",borderRadius:10,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconCheckCircle size={18} color="#10B981"/><span style={{fontSize:13,color:"#10B981",fontWeight:800,fontFamily:F,letterSpacing:0.5}}>DONE</span></button>
+        <button onClick={handleDone} style={{flex:3,padding:"12px 0",borderRadius:10,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconCheckCircle size={18} color="#10B981"/><span style={{fontSize:13,color:"#10B981",fontWeight:800,fontFamily:F,letterSpacing:0.5}}>DONE</span></button>
       </div>
     </div>
   );
@@ -967,7 +997,14 @@ Property: ${s.addr || ""}`);
    work completes even if OnsiteWindow unmounts (user taps Done mid-pick).
    The photo is written to IndexedDB immediately; the component only updates
    its own state if it's still mounted when the promise resolves.
+
+   _photoSaveQueues serializes IDB writes per stop so that bulk imports
+   (many photos selected at once) don't race each other on the read-modify-write
+   cycle. Without this, all N photos read the same "0 existing" state and the
+   last write wins, dropping the rest.
    ═══════════════════════════════════════════════════════════════════════════ */
+const _photoSaveQueues = {};
+
 function _processPhoto(file, section, stopId) {
   return new Promise((resolve) => {
     if (!file) { resolve(null); return; }
@@ -983,17 +1020,22 @@ function _processPhoto(file, section, stopId) {
         c.width = w; c.height = h;
         c.getContext("2d").drawImage(img, 0, 0, w, h);
         const photo = { dataUrl: c.toDataURL("image/jpeg", 0.82), ts: Date.now() };
-        // Persist to IndexedDB regardless of component mount state
-        try {
-          const saved = await loadField(stopId).catch(() => ({}));
-          const key = section === "addon" ? "addonPhotos" : "scopePhotos";
-          const existing = saved?.[key] || [];
-          const next = { ...(saved || {}), [key]: [...existing, photo], savedAt: Date.now() };
-          primeField(stopId, next);
-          await saveField(stopId, next).catch(() => {});
-          // Queue photo for Drive upload (happens in background when online)
-          markStopForPhotoSync(stopId);
-        } catch(e) { console.warn("Photo background save failed:", e); }
+        // Serialize IDB writes per stop — prevents concurrent bulk-import photos
+        // from all reading the same initial state and clobbering each other.
+        const prev = _photoSaveQueues[stopId] || Promise.resolve();
+        const next = prev.then(async () => {
+          try {
+            const saved = await loadField(stopId).catch(() => ({}));
+            const key = section === "addon" ? "addonPhotos" : "scopePhotos";
+            const existing = saved?.[key] || [];
+            const updated = { ...(saved || {}), [key]: [...existing, photo], savedAt: Date.now() };
+            primeField(stopId, updated);
+            await saveField(stopId, updated).catch(() => {});
+            markStopForPhotoSync(stopId);
+          } catch(e) { console.warn("Photo background save failed:", e); }
+        });
+        _photoSaveQueues[stopId] = next;
+        await next;
         resolve(photo);
       };
       img.onerror = () => resolve(null);
