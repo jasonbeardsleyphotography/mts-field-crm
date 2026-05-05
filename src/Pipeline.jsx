@@ -256,10 +256,14 @@ Property: ${card.addr || ""}`);
       const existing = cur[key] || fieldCacheRef.current[cardId]?.[key] || [];
       return { ...prev, [cardId]: { ...cur, [key]: [...existing, photo] } };
     });
-    // Persist via queue — always reads fresh from IDB to avoid clobbering existing photos
+    // Persist via queue — reads IDB, then takes the longer of IDB vs fieldCache
+    // to guard against IDB being stale (e.g. photos loaded from Drive not yet
+    // written back to IDB before this write runs).
     _pipelineQueue(cardId, async () => {
       const current = await loadField(cardId).catch(() => ({}));
-      const existingArr = current?.[key] || [];
+      const idbArr  = current?.[key] || [];
+      const cacheArr = fieldCacheRef.current[cardId]?.[key] || [];
+      const existingArr = idbArr.length >= cacheArr.length ? idbArr : cacheArr;
       const updated = { ...(current || {}), [key]: [...existingArr, photo] };
       primeField(cardId, updated);
       await saveField(cardId, updated).catch(() => {});
@@ -275,8 +279,10 @@ Property: ${card.addr || ""}`);
       return { ...prev, [cardId]: { ...cur, [key]: existing.filter((_, i) => i !== idx) } };
     });
     _pipelineQueue(cardId, async () => {
-      const current = await loadField(cardId).catch(() => ({}));
-      const existingArr = current?.[key] || [];
+      const current  = await loadField(cardId).catch(() => ({}));
+      const idbArr   = current?.[key] || [];
+      const cacheArr = fieldCacheRef.current[cardId]?.[key] || [];
+      const existingArr = idbArr.length >= cacheArr.length ? idbArr : cacheArr;
       const updated = { ...(current || {}), [key]: existingArr.filter((_, i) => i !== idx) };
       primeField(cardId, updated);
       await saveField(cardId, updated).catch(() => {});
@@ -292,8 +298,12 @@ Property: ${card.addr || ""}`);
       return { ...prev, [cardId]: { ...cur, [key]: existing.map(applyMarkup) } };
     });
     _pipelineQueue(cardId, async () => {
-      const current = await loadField(cardId).catch(() => ({}));
-      const existingArr = [...(current?.[key] || [])];
+      const current  = await loadField(cardId).catch(() => ({}));
+      const idbArr   = current?.[key] || [];
+      const cacheArr = fieldCacheRef.current[cardId]?.[key] || [];
+      // Use whichever array is longer — guards against IDB being stale when photos
+      // were loaded from Drive but not yet written back before this queue op runs.
+      const existingArr = [...(idbArr.length >= cacheArr.length ? idbArr : cacheArr)];
       const updated = { ...(current || {}), [key]: existingArr.map(applyMarkup) };
       primeField(cardId, updated);
       await saveField(cardId, updated).catch(() => {});
@@ -407,7 +417,11 @@ Property: ${card.addr || ""}`);
               ? (cloud.videoUrls || [])
               : (local.videoUrls || (local.videoUrl ? [local.videoUrl] : [])),
           };
+          // CRITICAL: write merged data back to IDB so that any queue operations
+          // (markup, add/remove photo) that call loadField() see the full photo
+          // array — not a stale IDB that's missing Drive-sourced photos.
           primeField(id, merged);
+          saveField(id, merged).catch(() => {});
           setFieldCache(prev => ({ ...prev, [id]: merged }));
         } else if (hasLocal) {
           setFieldCache(prev => ({ ...prev, [id]: local }));
