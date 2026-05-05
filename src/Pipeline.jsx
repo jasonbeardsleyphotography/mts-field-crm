@@ -125,6 +125,15 @@ const SMS_TEMPLATES = [
 function loadPipeline() { try { return JSON.parse(localStorage.getItem(PIPELINE_KEY)) || {}; } catch(e) { return {}; } }
 function savePipeline(data) { try { localStorage.setItem(PIPELINE_KEY, JSON.stringify(data)); } catch(e) {} }
 
+// Serialization queue per stop ID — prevents concurrent read-modify-write races on IDB.
+const _pipelinePhotoQueues = {};
+function _pipelineQueue(stopId, fn) {
+  const prev = _pipelinePhotoQueues[stopId] || Promise.resolve();
+  const next = prev.then(fn).catch(e => console.warn("Pipeline IDB op failed:", e));
+  _pipelinePhotoQueues[stopId] = next;
+  return next;
+}
+
 const F = "'Oswald',sans-serif";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -168,20 +177,26 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   const pipelineRef = useRef({});      // always-current mirror of pipeline (avoids stale closure)
   const [undoAction, setUndoAction] = useState(null); // { prevCard, label } | null
   const undoTimerRef = useRef(null);
+  // Always-current ref to fieldCache so closures can access it without stale captures
+  const fieldCacheRef = useRef({});
+  useEffect(() => { fieldCacheRef.current = fieldCache; }, [fieldCache]);
 
-  // Save edited field data to IndexedDB (and Drive if token available)
+  // Save edited field data to IndexedDB (and Drive if token available).
+  // Uses loadField (IDB) as the base so photo arrays are never clobbered.
   const saveEditedField = useCallback((id, key, value) => {
     setEditFields(prev => ({ ...prev, [id]: { ...(prev[id] || {}), [key]: value } }));
-    const current = peekField(id);
-    const updated = { ...current, [key]: value };
-    primeField(id, updated);
-    saveField(id, updated).catch(() => {});
-    if (token) {
-      if (window._pipelineFieldSync) clearTimeout(window._pipelineFieldSync);
-      window._pipelineFieldSync = setTimeout(() => {
-        saveFieldToDrive(token, id, updated).catch(() => {});
-      }, 2000);
-    }
+    _pipelineQueue(id, async () => {
+      const current = await loadField(id).catch(() => ({}));
+      const updated = { ...(current || {}), [key]: value };
+      primeField(id, updated);
+      await saveField(id, updated).catch(() => {});
+      if (token) {
+        if (window._pipelineFieldSync) clearTimeout(window._pipelineFieldSync);
+        window._pipelineFieldSync = setTimeout(() => {
+          saveFieldToDrive(token, id, updated).catch(() => {});
+        }, 2000);
+      }
+    });
   }, [token]);
 
   // ── GEMINI AI — used in detail popup ─────────────────────────────────
@@ -236,17 +251,20 @@ Property: ${card.addr || ""}`);
   const detailAddPhoto = (dataUrl, section, cardId) => {
     const photo = { dataUrl, ts: Date.now() };
     const key = section === "addon" ? "addonPhotos" : "scopePhotos";
+    // UI update — use editFields as primary source, fieldCache as fallback (both have real photos)
     setEditFields(prev => {
       const cur = prev[cardId] || {};
-      const existing = cur[key] || peekField(cardId)[key] || [];
+      const existing = cur[key] || fieldCacheRef.current[cardId]?.[key] || [];
       return { ...prev, [cardId]: { ...cur, [key]: [...existing, photo] } };
     });
-    // Persist
-    const cur = peekField(cardId);
-    const existingArr = cur[key] || [];
-    const updated = { ...cur, [key]: [...existingArr, photo] };
-    primeField(cardId, updated);
-    saveField(cardId, updated).catch(() => {});
+    // Persist via queue — always reads fresh from IDB to avoid clobbering existing photos
+    _pipelineQueue(cardId, async () => {
+      const current = await loadField(cardId).catch(() => ({}));
+      const existingArr = current?.[key] || [];
+      const updated = { ...(current || {}), [key]: [...existingArr, photo] };
+      primeField(cardId, updated);
+      await saveField(cardId, updated).catch(() => {});
+    });
     markStopForPhotoSync(cardId);
   };
 
@@ -254,31 +272,33 @@ Property: ${card.addr || ""}`);
     const key = section === "addon" ? "addonPhotos" : "scopePhotos";
     setEditFields(prev => {
       const cur = prev[cardId] || {};
-      const existing = cur[key] || peekField(cardId)[key] || [];
+      const existing = cur[key] || fieldCacheRef.current[cardId]?.[key] || [];
       return { ...prev, [cardId]: { ...cur, [key]: existing.filter((_, i) => i !== idx) } };
     });
-    const cur = peekField(cardId);
-    const existingArr = cur[key] || [];
-    const updated = { ...cur, [key]: existingArr.filter((_, i) => i !== idx) };
-    primeField(cardId, updated);
-    saveField(cardId, updated).catch(() => {});
+    _pipelineQueue(cardId, async () => {
+      const current = await loadField(cardId).catch(() => ({}));
+      const existingArr = current?.[key] || [];
+      const updated = { ...(current || {}), [key]: existingArr.filter((_, i) => i !== idx) };
+      primeField(cardId, updated);
+      await saveField(cardId, updated).catch(() => {});
+    });
   };
 
   const detailSaveMarkup = (newDataUrl, idx, section, cardId) => {
     const key = section === "addon" ? "addonPhotos" : "scopePhotos";
-    // Clear the Drive URL so the edited version shows immediately;
-    // re-queue so the updated photo gets re-uploaded.
     const applyMarkup = (p, i) => i === idx ? { ...p, dataUrl: newDataUrl, url: undefined } : p;
     setEditFields(prev => {
       const cur = prev[cardId] || {};
-      const existing = [...(cur[key] || peekField(cardId)[key] || [])];
+      const existing = [...(cur[key] || fieldCacheRef.current[cardId]?.[key] || [])];
       return { ...prev, [cardId]: { ...cur, [key]: existing.map(applyMarkup) } };
     });
-    const cur = peekField(cardId);
-    const existingArr = [...(cur[key] || [])];
-    const updated = { ...cur, [key]: existingArr.map(applyMarkup) };
-    primeField(cardId, updated);
-    saveField(cardId, updated).catch(() => {});
+    _pipelineQueue(cardId, async () => {
+      const current = await loadField(cardId).catch(() => ({}));
+      const existingArr = [...(current?.[key] || [])];
+      const updated = { ...(current || {}), [key]: existingArr.map(applyMarkup) };
+      primeField(cardId, updated);
+      await saveField(cardId, updated).catch(() => {});
+    });
     markStopForPhotoSync(cardId);
     setDetailMarkup(null);
   };
@@ -304,7 +324,7 @@ Property: ${card.addr || ""}`);
         if (ytUrl) {
           setEditFields(prev => {
             const cur = prev[card.id] || {};
-            const existing = cur.videoUrls || peekField(card.id).videoUrls || [];
+            const existing = cur.videoUrls || fieldCacheRef.current[card.id]?.videoUrls || [];
             return { ...prev, [card.id]: { ...cur, videoUrls: [...existing, ytUrl] } };
           });
         }
@@ -328,13 +348,15 @@ Property: ${card.addr || ""}`);
     const key = "videoUrls";
     setEditFields(prev => {
       const cur = prev[card.id] || {};
-      const existing = cur[key] || fd.videoUrls || [];
+      const existing = cur[key] || fieldCacheRef.current[card.id]?.videoUrls || fd.videoUrls || [];
       return { ...prev, [card.id]: { ...cur, [key]: existing.filter((_, i) => i !== idx) } };
     });
-    const cur = peekField(card.id);
-    const updated = { ...cur, videoUrls: (cur.videoUrls || []).filter((_, i) => i !== idx) };
-    primeField(card.id, updated);
-    saveField(card.id, updated).catch(() => {});
+    _pipelineQueue(card.id, async () => {
+      const current = await loadField(card.id).catch(() => ({}));
+      const updated = { ...(current || {}), videoUrls: (current?.videoUrls || []).filter((_, i) => i !== idx) };
+      primeField(card.id, updated);
+      await saveField(card.id, updated).catch(() => {});
+    });
   };
 
   // Persist
@@ -479,14 +501,14 @@ Property: ${card.addr || ""}`);
     return () => window.removeEventListener("mts-field-synced", bump);
   }, []);
 
-  // Hydrate missing cards from IndexedDB. Runs whenever the card set changes.
+  // Hydrate all cards from IndexedDB to get full data (photos, etc.) into the mirror.
+  // peekField only returns the slim localStorage mirror (no photos), so we always load
+  // from IDB to get accurate photo counts and to prime the mirror for closures.
   useEffect(() => {
     let dead = false;
     (async () => {
       let hydrated = false;
       for (const card of allCards) {
-        const existing = peekField(card.id);
-        if (existing && Object.keys(existing).length > 0) continue;
         try {
           const fresh = await loadField(card.id);
           if (dead) return;
