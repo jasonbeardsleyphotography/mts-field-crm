@@ -1449,11 +1449,15 @@ export default function App() {
             savePipeline(pl);
             if (token) pushCalendarColor(id, "estimate_needed", token);
           } else {
-            // Add to currently-selected day's route
-            const startHour = form.time === "AM" ? 9 : form.time === "PM" ? 13 : 8;
+            // Add to currently-selected day's route. Default time windows
+            // match Jason's standard arrival ranges: AM 8–12, PM 11–3.
+            const [startHour, endHour] =
+              form.time === "AM" ? [8, 12] :
+              form.time === "PM" ? [11, 15] :
+              [8, 17]; // All Day → full work day
             const startDt = new Date(businessDays[selDay] || new Date());
             startDt.setHours(startHour, 0, 0, 0);
-            const endDt = new Date(startDt); endDt.setHours(startHour + 1);
+            const endDt = new Date(startDt); endDt.setHours(endHour, 0, 0, 0);
             // Build a description that includes phone/email if provided so
             // parseEvent can extract them.
             const descParts = [];

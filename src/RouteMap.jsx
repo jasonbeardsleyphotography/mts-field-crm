@@ -289,5 +289,5 @@ export default function RouteMap({ stops, selectedId }) {
     });
   }, [selectedId]);
 
-  return <div ref={ref} style={{width:"100%",height:200,background:"#10131a"}}>{!ready && <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:"#5a6580",fontSize:12}}>Loading map...</div>}</div>;
+  return <div ref={ref} style={{width:"100%",height:260,background:"#10131a"}}>{!ready && <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:"#5a6580",fontSize:12}}>Loading map...</div>}</div>;
 }
