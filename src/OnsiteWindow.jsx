@@ -15,7 +15,7 @@ import {
   isPaused as isVideoQueuePaused,
   setPaused as setVideoQueuePaused,
 } from "./videoQueue";
-import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconYoutube, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconRotateCcw, IconSend } from "./icons";
+import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconRotateCcw, IconSend } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
@@ -276,52 +276,41 @@ useEffect(() => {
 
   const fmtDur = (s) => `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
 
-  // YouTube thumbnail + ID helpers
+  // URL type helpers — kept for backward compat with legacy YouTube links on older cards
   const getYtId = (url) => url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
+  const getDriveFileId = (url) => url?.match(/\/file\/d\/([a-zA-Z0-9_-]+)/)?.[1];
 
-  // ── YOUTUBE DELETE ──────────────────────────────────────────────────
-  const deleteYouTubeVideo = async (url, idx) => {
-    const videoId = getYtId(url);
-    if (!videoId) {
-      // No valid YT ID — just remove from app
-      setVideoUrls(prev => prev.filter((_, i) => i !== idx));
-      return;
-    }
+  // ── VIDEO DELETE ────────────────────────────────────────────────────
+  // Handles both Drive (new) and YouTube (legacy) URLs.
+  const deleteVideo = async (url, idx) => {
+    const driveId = getDriveFileId(url);
+    const ytId    = getYtId(url);
 
     const tokenData = JSON.parse(localStorage.getItem("mts-token") || "null");
     const tok = tokenData?.token || token;
-    if (!tok) {
-      alert("Not signed in — can't delete from YouTube.");
-      return;
-    }
 
-    const confirmed = window.confirm("Delete this video from YouTube AND remove it from the app?");
-    if (!confirmed) return;
-
-    try {
-      const res = await fetch(
-        `https://www.googleapis.com/youtube/v3/videos?id=${videoId}`,
-        {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${tok}` },
-        }
-      );
-
-      if (res.ok || res.status === 204) {
-        // 204 No Content = success
-        setVideoUrls(prev => prev.filter((_, i) => i !== idx));
-      } else if (res.status === 404) {
-        // Already deleted on YouTube — clean it up in the app anyway
-        setVideoUrls(prev => prev.filter((_, i) => i !== idx));
-      } else {
-        const err = await res.text();
-        console.error("YouTube delete failed:", err);
-        alert("Could not delete from YouTube. Removing from app only.");
-        setVideoUrls(prev => prev.filter((_, i) => i !== idx));
+    if (driveId) {
+      if (!window.confirm("Delete this video from Google Drive AND remove it from the app?")) return;
+      if (tok) {
+        try {
+          await fetch(`https://www.googleapis.com/drive/v3/files/${driveId}`, {
+            method: "DELETE", headers: { Authorization: `Bearer ${tok}` },
+          });
+        } catch(e) { console.warn("Drive delete error:", e); }
       }
-    } catch(e) {
-      console.warn("YouTube delete error:", e);
-      alert("Network error — removing from app only.");
+      setVideoUrls(prev => prev.filter((_, i) => i !== idx));
+    } else if (ytId) {
+      if (!window.confirm("Delete this video from YouTube AND remove it from the app?")) return;
+      if (tok) {
+        try {
+          await fetch(`https://www.googleapis.com/youtube/v3/videos?id=${ytId}`, {
+            method: "DELETE", headers: { Authorization: `Bearer ${tok}` },
+          });
+        } catch(e) { console.warn("YouTube delete error:", e); }
+      }
+      setVideoUrls(prev => prev.filter((_, i) => i !== idx));
+    } else {
+      // Unknown URL — just remove from app
       setVideoUrls(prev => prev.filter((_, i) => i !== idx));
     }
   };
@@ -642,13 +631,12 @@ Property: ${s.addr || ""}`);
     setAiAddonLoading(false);
   };
 
-  // ── YOUTUBE: enqueue for background upload via videoQueue ──────────────
-  // The actual upload (compress → chunked PUT to YouTube) runs entirely
-  // inside videoQueue.js, persisted to its own IndexedDB store. By the
-  // time enqueueVideo() resolves the file is safely written to IDB and
-  // will upload on the next opportunity, even if the app is closed and
-  // reopened. This is what fixes the 6-hour upload problem — the upload
-  // doesn't depend on this component being mounted.
+  // ── VIDEO: enqueue for background upload to Google Drive via videoQueue ──
+  // The actual upload (chunked PUT to Drive) runs entirely inside videoQueue.js,
+  // persisted to its own IndexedDB store. By the time enqueueVideo() resolves
+  // the file is safely written to IDB and will upload on the next opportunity,
+  // even if the app is closed and reopened. Drive URLs are saved to the card
+  // as google.com/file/d/{id}/preview links, which work in any browser.
   // (State hooks for videoQueueItems / uploadMode / showQueuePanel live
   //  above the early returns, in the hook section, per Rules of Hooks.)
 
@@ -871,10 +859,14 @@ Property: ${s.addr || ""}`);
           {/* Uploaded videos list */}
           {videoUrls.length > 0 && <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
             {videoUrls.map((url, idx) => {
-              const vid = getYtId(url);
+              const ytId    = getYtId(url);
+              const driveId = getDriveFileId(url);
               return (
                 <div key={idx} style={{borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",overflow:"hidden"}}>
-                  {vid && <img src={`https://img.youtube.com/vi/${vid}/mqdefault.jpg`} alt="" style={{width:"100%",height:90,objectFit:"cover"}} />}
+                  {ytId && <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" style={{width:"100%",height:90,objectFit:"cover"}} />}
+                  {driveId && <div style={{height:90,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"rgba(10,15,30,1)"}}>
+                    <IconVideo size={24} color="#4a6a90"/><span style={{fontSize:11,color:"#5a7a90",fontWeight:600}}>Drive video ready</span>
+                  </div>}
                   <div style={{padding:"6px 8px",display:"flex",alignItems:"center",gap:6}}>
                     <div style={{fontSize:9,color:"#5a6890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{url}</div>
                     <button onClick={() => {
@@ -886,7 +878,7 @@ Property: ${s.addr || ""}`);
                         })]).catch(()=>navigator.clipboard?.writeText(url));
                       } else { navigator.clipboard?.writeText(url); }
                     }} style={{padding:"4px 8px",borderRadius:5,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#5a90b0",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Copy link</button>
-                    <button onClick={() => deleteYouTubeVideo(url, idx)} style={{padding:"4px 6px",borderRadius:5,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.15)",color:"#e06060",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}>
+                    <button onClick={() => deleteVideo(url, idx)} style={{padding:"4px 6px",borderRadius:5,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.15)",color:"#e06060",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}>
                       <IconX size={10} color="#e06060" />
                     </button>
                   </div>
@@ -948,8 +940,8 @@ Property: ${s.addr || ""}`);
 
           {/* Upload button — brighter red to stand out */}
           <input ref={ytFileRef} type="file" accept="video/*" onChange={handleYtFile} style={{display:"none"}} />
-          <button onClick={() => ytFileRef.current?.click()} style={{width:"100%",padding:"11px 0",borderRadius:8,background:"rgba(255,0,0,.12)",border:"1px solid rgba(255,0,0,.4)",color:"#ff4040",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-            <IconYoutube size={15} color="#ff4040"/><span>{(videoUrls.length + videoQueueItems.length) > 0 ? `Add another video (${videoUrls.length + videoQueueItems.length + 1})` : "Upload video to YouTube"}</span>
+          <button onClick={() => ytFileRef.current?.click()} style={{width:"100%",padding:"11px 0",borderRadius:8,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.3)",color:"#4a8ab0",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+            <IconVideo size={15} color="#4a8ab0"/><span>{(videoUrls.length + videoQueueItems.length) > 0 ? `Add another video (${videoUrls.length + videoQueueItems.length + 1})` : "Upload video to Drive"}</span>
           </button>
         </div>
 
