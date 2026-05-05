@@ -1,4 +1,4 @@
-import { IconFire, IconRevision, IconPause, IconMail, IconX, IconCheckCircle, IconPhone, IconTrash, IconEdit, IconClipboard, IconSingleops, IconVideo, IconStar, IconCamera, IconImage, IconDownload, IconPen, IconYoutube } from "./icons";
+import { IconFire, IconRevision, IconPause, IconMail, IconX, IconCheckCircle, IconPhone, IconTrash, IconEdit, IconClipboard, IconSingleops, IconVideo, IconStar, IconCamera, IconImage, IconDownload, IconPen } from "./icons";
 import CameraView from "./CameraView";
 import PhotoMarkup from "./PhotoMarkup";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
@@ -6,7 +6,7 @@ import { loadFieldFromDrive, saveFieldToDrive } from "./driveSync";
 import { loadField, saveField, peekField, primeField } from "./fieldStore";
 import { isUploadPending, onUploadChange } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
-import { listAll as listAllQueue, onQueueChange } from "./videoQueue";
+import { listAll as listAllQueue, onQueueChange, enqueueVideo } from "./videoQueue";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Pipeline
@@ -167,7 +167,6 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   // Detail popup — camera / markup / YouTube upload state
   const [detailShowCamera, setDetailShowCamera] = useState(null); // "scope" | "addon" | null
   const [detailMarkup, setDetailMarkup] = useState(null); // { section, idx } | null
-  const [detailYtCount, setDetailYtCount] = useState(0);
   // Tracks uploads started from OnsiteWindow that are still running after user tapped Done
   const [externalYtActive, setExternalYtActive] = useState(false);
   const detailScopeLibRef = useRef(null);
@@ -317,33 +316,40 @@ Property: ${card.addr || ""}`);
       const lastName = (card.cn || "").split(" ").pop();
       const jobPart = card.jn ? ` #${card.jn}` : "";
       const datePart = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
-      const suffix = videoUrls.length > 0 ? ` (${videoUrls.length + 1})` : "";
-      const title = `${lastName}${jobPart} ${datePart}${suffix}`;
-      setDetailYtCount(n => n + 1);
-      _uploadToYouTubeForDetail(file, title, token, card.id).then(ytUrl => {
-        if (ytUrl) {
-          setEditFields(prev => {
-            const cur = prev[card.id] || {};
-            const existing = cur.videoUrls || fieldCacheRef.current[card.id]?.videoUrls || [];
-            return { ...prev, [card.id]: { ...cur, videoUrls: [...existing, ytUrl] } };
-          });
-        }
-        setDetailYtCount(n => n - 1);
-      }).catch(() => setDetailYtCount(n => n - 1));
+      const totalCount = videoUrls.length + (queueByStop[card.id] || []).length + 1;
+      const seqNum = String(totalCount).padStart(2, "0");
+      const title = `${lastName}${jobPart} ${datePart} - ${seqNum}`;
+      enqueueVideo({ stopId: card.id, file, title }).catch(err => {
+        console.warn("Failed to queue video:", err);
+        alert("Failed to queue video: " + (err.message || err));
+      });
     }
     e.target.value = "";
   };
 
   const detailDeleteVideo = async (url, idx, card, fd) => {
-    const videoId = url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
-    if (videoId && token) {
-      const confirmed = window.confirm("Delete this video from YouTube AND remove it from the app?");
-      if (!confirmed) return;
-      try {
-        await fetch(`https://www.googleapis.com/youtube/v3/videos?id=${videoId}`, {
-          method: "DELETE", headers: { Authorization: `Bearer ${token}` },
-        });
-      } catch(e) { console.warn("YT delete error:", e); }
+    const driveId = url?.match(/\/file\/d\/([a-zA-Z0-9_-]+)/)?.[1];
+    const ytId    = url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
+    if (driveId) {
+      if (!window.confirm("Delete this video from Google Drive AND remove it from the app?")) return;
+      if (token) {
+        try {
+          await fetch(`https://www.googleapis.com/drive/v3/files/${driveId}`, {
+            method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+          });
+        } catch(e) { console.warn("Drive delete error:", e); }
+      }
+    } else if (ytId) {
+      if (!window.confirm("Delete this video from YouTube AND remove it from the app?")) return;
+      if (token) {
+        try {
+          await fetch(`https://www.googleapis.com/youtube/v3/videos?id=${ytId}`, {
+            method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+          });
+        } catch(e) { console.warn("YT delete error:", e); }
+      }
+    } else {
+      if (!window.confirm("Remove this video from the app?")) return;
     }
     const key = "videoUrls";
     setEditFields(prev => {
@@ -555,6 +561,29 @@ Property: ${card.addr || ""}`);
     listAllQueue().then(ingest);
     const off = onQueueChange(ingest);
     return () => { alive = false; off(); };
+  }, []);
+
+  // When the Drive upload queue finishes a video, update fieldCache + editFields
+  // with the new Drive URL so the detail popup shows it without needing a reload.
+  useEffect(() => {
+    const handler = (e) => {
+      const { stopId, shareUrl } = e.detail || {};
+      if (!stopId || !shareUrl) return;
+      setFieldCache(prev => {
+        const cur = prev[stopId] || {};
+        const existing = cur.videoUrls || [];
+        if (existing.includes(shareUrl)) return prev;
+        return { ...prev, [stopId]: { ...cur, videoUrls: [...existing, shareUrl] } };
+      });
+      setEditFields(prev => {
+        const cur = prev[stopId] || {};
+        const existing = cur.videoUrls || fieldCacheRef.current[stopId]?.videoUrls || [];
+        if (existing.includes(shareUrl)) return prev;
+        return { ...prev, [stopId]: { ...cur, videoUrls: [...existing, shareUrl] } };
+      });
+    };
+    window.addEventListener("mts-video-uploaded", handler);
+    return () => window.removeEventListener("mts-video-uploaded", handler);
   }, []);
 
   // Repeat client map — active cards whose last name OR address matches a sold/declined card.
@@ -1007,7 +1036,8 @@ Property: ${card.addr || ""}`);
         const scopePhotos = fd.scopePhotos || fd.photos || [];
         const addonPhotos = fd.addonPhotos || [];
         const videoUrls = fd.videoUrls || (fd.videoUrl ? [fd.videoUrl] : []);
-        const getYtId = url => url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
+        const getYtId      = url => url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
+        const getDriveId   = url => url?.match(/\/file\/d\/([a-zA-Z0-9_-]+)/)?.[1];
 
         // Camera overlay — renders above everything else in the popup
         if (detailShowCamera) return <CameraView
@@ -1183,14 +1213,19 @@ Property: ${card.addr || ""}`);
               <div style={{marginBottom:16}}>
                 <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
                   VIDEO
-                  {(detailYtCount > 0 || externalYtActive) && <span style={{fontSize:9,color:"#F6BF26",fontWeight:700,padding:"1px 8px",borderRadius:10,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.2)",animation:"pulse 1s infinite"}}>↑ Uploading…</span>}
+                  {((queueByStop[card.id] || []).length > 0 || externalYtActive) && <span style={{fontSize:9,color:"#F6BF26",fontWeight:700,padding:"1px 8px",borderRadius:10,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.2)",animation:"pulse 1s infinite"}}>↑ Uploading…</span>}
                 </div>
                 {videoUrls.map((url, i) => {
-                  const vid = getYtId(url);
+                  const ytId    = getYtId(url);
+                  const driveId = getDriveId(url);
                   return <div key={i} style={{marginBottom:8,borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",overflow:"hidden"}}>
-                    {vid ? (
+                    {ytId ? (
                       <div style={{position:"relative",paddingBottom:"56.25%"}}>
-                        <iframe src={`https://www.youtube.com/embed/${vid}`} style={{position:"absolute",inset:0,width:"100%",height:"100%",border:"none"}} allowFullScreen />
+                        <iframe src={`https://www.youtube.com/embed/${ytId}`} style={{position:"absolute",inset:0,width:"100%",height:"100%",border:"none"}} allowFullScreen />
+                      </div>
+                    ) : driveId ? (
+                      <div style={{position:"relative",paddingBottom:"56.25%"}}>
+                        <iframe src={url} style={{position:"absolute",inset:0,width:"100%",height:"100%",border:"none"}} allowFullScreen />
                       </div>
                     ) : (
                       <a href={url} target="_blank" rel="noopener noreferrer" style={{display:"block",padding:"10px 12px",fontSize:13,color:"#6a8ab0"}}>{url}</a>
@@ -1203,8 +1238,8 @@ Property: ${card.addr || ""}`);
                   </div>;
                 })}
                 <input ref={detailYtFileRef} type="file" accept="video/*" onChange={e => detailHandleYtFile(e, card, fd)} style={{display:"none"}} />
-                <button onClick={() => detailYtFileRef.current?.click()} style={{width:"100%",padding:"9px 0",borderRadius:8,background:"rgba(255,0,0,.06)",border:"1px dashed rgba(255,0,0,.2)",color:"#cc4040",fontSize:11,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                  <IconYoutube size={13} color="#cc4040"/>{videoUrls.length > 0 ? `Add another video (${videoUrls.length + 1})` : "Upload video"}
+                <button onClick={() => detailYtFileRef.current?.click()} style={{width:"100%",padding:"9px 0",borderRadius:8,background:"rgba(59,130,246,.06)",border:"1px dashed rgba(59,130,246,.25)",color:"#4a7ab0",fontSize:11,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                  <IconVideo size={13} color="#4a7ab0"/>{videoUrls.length > 0 ? `Add another video (${videoUrls.length + 1})` : "Upload video to Drive"}
                 </button>
               </div>
 
@@ -1444,55 +1479,3 @@ function _detailProcessPhoto(file, section, cardId, addCallback) {
   reader.readAsDataURL(file);
 }
 
-// YouTube upload — network request is browser-managed, not tied to component
-async function _uploadToYouTubeForDetail(file, title, token, stopId) {
-  try {
-    const tokenData = JSON.parse(localStorage.getItem("mts-token") || "null");
-    const tok = tokenData?.token || token;
-    if (!tok) return null;
-
-    // MIME type — iOS Safari often leaves file.type empty for .mov files
-    let mimeType = file.type;
-    if (!mimeType) {
-      const ext = (file.name || "").split(".").pop().toLowerCase();
-      const MAP = { mov: "video/quicktime", mp4: "video/mp4", m4v: "video/x-m4v",
-                    avi: "video/x-msvideo", webm: "video/webm", mkv: "video/x-matroska" };
-      mimeType = MAP[ext] || "video/mp4";
-    }
-
-    const metadata = { snippet: { title }, status: { privacyStatus: "unlisted" } };
-    const initRes = await fetch(
-      "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
-      { method: "POST",
-        headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json",
-          "X-Upload-Content-Type": mimeType, "X-Upload-Content-Length": String(file.size) },
-        body: JSON.stringify(metadata) }
-    );
-    if (!initRes.ok) return null;
-    const uploadUrl = initRes.headers.get("Location");
-    if (!uploadUrl) return null;
-
-    const uploadRes = await fetch(uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": mimeType, "Content-Length": String(file.size) },
-      body: file,
-    });
-    if (!uploadRes.ok && uploadRes.status !== 201) return null;
-
-    const result = await uploadRes.json();
-    if (!result.id) return null;
-
-    const ytUrl = `https://youtu.be/${result.id}`;
-
-    // Persist to IDB + push to Drive so it shows up on card immediately
-    const saved = await loadField(stopId).catch(() => ({}));
-    const existing = saved?.videoUrls || (saved?.videoUrl ? [saved.videoUrl] : []);
-    if (!existing.includes(ytUrl)) {
-      const next = { ...(saved || {}), videoUrls: [...existing, ytUrl], savedAt: Date.now() };
-      primeField(stopId, next);
-      await saveField(stopId, next).catch(() => {});
-      saveFieldToDrive(tok, stopId, next).catch(() => {});
-    }
-    return ytUrl;
-  } catch(e) { console.warn("YouTube upload failed:", e); return null; }
-}
