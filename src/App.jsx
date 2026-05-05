@@ -903,33 +903,88 @@ export default function App() {
 
   // ── TEXT-TO-SPEECH ────────────────────────────────────────────────────────
   // Uses browser speechSynthesis — no API, no lag, works offline.
-  // Does not route through CarPlay/Bluetooth; reads on the phone speaker only.
+  // Works through CarPlay/Bluetooth: iOS pauses speechSynthesis whenever the
+  // audio route changes (plug/unplug CarPlay, Bluetooth handoff). We keep a
+  // 500ms interval that calls resume() whenever synthesis is paused but still
+  // active, which transparently handles the route-change pause.
   const ttsAudioRef = useRef(null); // kept as stub so nothing else breaks
-  const ttsSafetyTimer = useRef(null);
+  const ttsSafetyTimer = useRef(null); // holds the resume interval ID while speaking
   const [ttsSpeaking, setTtsSpeaking] = useState(false);
   const [ttsError, setTtsError] = useState(null);
 
   const resetTts = () => {
     setTtsSpeaking(false);
-    if (window.speechSynthesis?.speaking) window.speechSynthesis.cancel();
-    if (ttsSafetyTimer.current) { clearTimeout(ttsSafetyTimer.current); ttsSafetyTimer.current = null; }
+    if (ttsSafetyTimer.current) { clearInterval(ttsSafetyTimer.current); ttsSafetyTimer.current = null; }
+    if (window.speechSynthesis?.speaking || window.speechSynthesis?.paused) window.speechSynthesis.cancel();
   };
 
   const speakStop = (stop) => {
     if (ttsSpeaking) { resetTts(); return; }
     if (!window.speechSynthesis) { setTtsError("TTS not supported in this browser"); return; }
+
     const text = stop.notes || "No notes available.";
     setTtsSpeaking(true);
     setTtsError(null);
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = 0.88;
-    u.pitch = 1;
-    u.onend   = () => setTtsSpeaking(false);
-    u.onerror = (ev) => { setTtsSpeaking(false); if (ev.error !== "interrupted") setTtsError("TTS: " + ev.error); };
-    const doSpeak = () => window.speechSynthesis.speak(u);
+
+    // Clear any stale iOS synthesis queue before starting — required on iOS to
+    // prevent a stuck previous utterance from blocking the new one.
+    window.speechSynthesis.cancel();
+
+    // iOS pauses speechSynthesis when the audio route changes (CarPlay plug/unplug,
+    // Bluetooth handoff). Without intervention it stays paused indefinitely.
+    // This interval resumes it whenever that happens.
+    const resumeInterval = setInterval(() => {
+      if (window.speechSynthesis.paused && window.speechSynthesis.speaking) {
+        window.speechSynthesis.resume();
+      }
+    }, 500);
+    ttsSafetyTimer.current = resumeInterval;
+
+    let attempts = 0;
+    const attempt = () => {
+      attempts++;
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 0.88;
+      u.pitch = 1;
+
+      u.onend = () => {
+        clearInterval(resumeInterval);
+        ttsSafetyTimer.current = null;
+        setTtsSpeaking(false);
+      };
+
+      u.onerror = (ev) => {
+        // "interrupted" = stopped by another utterance; "canceled" = user/cancel() call.
+        // Both are intentional stops — do not show an error.
+        if (ev.error === "interrupted" || ev.error === "canceled") {
+          clearInterval(resumeInterval);
+          ttsSafetyTimer.current = null;
+          setTtsSpeaking(false);
+          return;
+        }
+        // Retry once — transient failure is common during CarPlay/Bluetooth audio handoff.
+        if (attempts < 2) {
+          setTimeout(attempt, 350);
+          return;
+        }
+        clearInterval(resumeInterval);
+        ttsSafetyTimer.current = null;
+        setTtsSpeaking(false);
+        setTtsError(
+          (ev.error === "synthesis-failed" || ev.error === "audio-busy")
+            ? "Audio unavailable — if CarPlay is active, try again after tapping the screen"
+            : "TTS: " + ev.error
+        );
+      };
+
+      window.speechSynthesis.speak(u);
+    };
+
+    // Small delay after cancel() so iOS finishes clearing audio state before
+    // we queue the new utterance.
     const voices = window.speechSynthesis.getVoices();
-    if (voices.length) { doSpeak(); }
-    else { window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.onvoiceschanged = null; doSpeak(); }; }
+    if (voices.length) { setTimeout(attempt, 50); }
+    else { window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.onvoiceschanged = null; setTimeout(attempt, 50); }; }
   };
 
   const handleReorderTap = (idx) => {
