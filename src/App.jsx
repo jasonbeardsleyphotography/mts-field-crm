@@ -65,15 +65,32 @@ function localStopsSet(val) { lsSet("mts-local-stops", val); }
 // MAIN APP
 // ═════════════════════════════════════════════════════════════════════════════
 export default function App() {
-  // Restore cached token
+  // Restore cached token. If it's past its stored expiry we boot with token
+  // null — but we suppress the sign-in screen via `authBootChecked` until the
+  // cold-start silent reauth (below) has had a chance to refresh it. That's
+  // what fixes the "every SW reload kicks me to the login screen" pain.
   const [token, setToken] = useState(() => {
     const saved = lsGet("mts-token", null);
-    if (saved && saved.expiry > Date.now()) return saved.token;
+    if (saved?.token && saved.expiry > Date.now()) return saved.token;
     return null;
   });
-  const saveToken = (t) => {
+  // Track whether we've completed the initial silent-reauth attempt. While
+  // this is false AND we have no token, we render a loader instead of the
+  // sign-in screen so the user doesn't see a flash of "Sign in" before
+  // silent reauth completes.
+  const [authBootChecked, setAuthBootChecked] = useState(() => {
+    const saved = lsGet("mts-token", null);
+    // Only skip the boot check when there's a usable fresh token.
+    return !!(saved?.token && saved.expiry > Date.now());
+  });
+  const saveToken = (t, expiresIn) => {
     setToken(t);
-    if (t) lsSet("mts-token", { token: t, expiry: Date.now() + 55 * 60 * 1000 });
+    if (t) {
+      // Use the actual expires_in from Google's response (seconds) when
+      // available, with a 60s safety buffer. Fall back to 55 min if unknown.
+      const ttlMs = ((typeof expiresIn === "number" ? expiresIn : 3300) * 1000) - 60000;
+      lsSet("mts-token", { token: t, expiry: Date.now() + Math.max(ttlMs, 60000) });
+    }
     else { try { localStorage.removeItem("mts-token"); } catch(e) {} }
   };
 
@@ -84,7 +101,7 @@ export default function App() {
       const client = window.google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID, scope: SCOPES,
         callback: r => {
-          if (r.access_token) { saveToken(r.access_token); resolve(true); }
+          if (r.access_token) { saveToken(r.access_token, r.expires_in); resolve(true); }
           else resolve(false);
         },
         error_callback: () => resolve(false),
@@ -93,24 +110,57 @@ export default function App() {
     });
   }, []);
 
-  // Auto-refresh token: every 50 min while the tab is active, AND whenever
-  // the tab regains focus (phone wakes from sleep between stops — the 50-min
-  // interval never fires while the screen is off, so we'd wake up signed out).
+  // ── COLD-START SILENT REAUTH ──────────────────────────────────────────────
+  // On boot, if there's no fresh token (none, or past stored expiry), try
+  // silent reauth before falling back to the sign-in screen. GIS has to load
+  // first, so we poll briefly. If silent reauth succeeds the user never sees
+  // the sign-in UI; if it fails (no Google session in this browser) we flip
+  // authBootChecked so the sign-in screen renders.
+  useEffect(() => {
+    if (authBootChecked) return;
+    let cancelled = false;
+    const tryOnce = async () => {
+      if (cancelled) return;
+      if (!window.google?.accounts?.oauth2) {
+        setTimeout(tryOnce, 200);
+        return;
+      }
+      const ok = await silentReauth();
+      if (cancelled) return;
+      if (!ok) saveToken(null);
+      setAuthBootChecked(true);
+    };
+    tryOnce();
+    return () => { cancelled = true; };
+  }, [authBootChecked, silentReauth]);
+
+  // Auto-refresh token on a 50-min interval while the tab is active. Gated on
+  // having a token — no point polling if we don't have anything to refresh.
   useEffect(() => {
     if (!token) return;
     const interval = setInterval(() => { silentReauth(); }, 50 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [token, silentReauth]);
+
+  // Visibility-change refresh. Gated on having a token in state so we don't
+  // forcibly re-auth a user who explicitly signed out — `token` only becomes
+  // null on explicit sign-out, on confirmed silent-reauth failure, or before
+  // boot completes (in which case the cold-start effect handles it). For a
+  // session that's been alive in memory while the phone was asleep, `token`
+  // is still the last value we held, so this handler refreshes it on wake.
+  // Threshold widened from 10 min to 20 min so cellular reauth has time to
+  // complete before the next API call needs the token.
+  useEffect(() => {
+    if (!token) return;
     const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
       const saved = lsGet("mts-token", null);
-      // Re-auth if token is within 10 minutes of expiry or already expired
-      if (!saved || saved.expiry - Date.now() < 10 * 60 * 1000) {
+      if (!saved || saved.expiry - Date.now() < 20 * 60 * 1000) {
         silentReauth();
       }
     };
     document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, [token, silentReauth]);
 
   // ── DRIVE AUTH ERROR HANDLER ─────────────────────────────────────────────
@@ -352,11 +402,14 @@ export default function App() {
     if (!window.google?.accounts?.oauth2) { setTimeout(initAuth, 200); return; }
     window.google.accounts.oauth2.initTokenClient({
       client_id: CLIENT_ID, scope: SCOPES,
-      callback: r => { if (r.access_token) { saveToken(r.access_token); setError(null); } else setError("Sign-in failed"); },
+      callback: r => { if (r.access_token) { saveToken(r.access_token, r.expires_in); setError(null); } else setError("Sign-in failed"); },
     }).requestAccessToken();
   }, []);
 
   // ── AUTHED FETCH — wraps fetchEvents with silent reauth on 401 ────────
+  // Only clears the saved token when silent reauth itself confirms the user
+  // has no usable Google session. Transient errors after a successful reauth
+  // are rethrown without nuking the token.
   const authedFetchEvents = useCallback(async (tok, dayStart, dayEnd) => {
     try {
       return await fetchEvents(tok, dayStart, dayEnd);
@@ -366,8 +419,12 @@ export default function App() {
         if (ok) {
           const freshToken = lsGet("mts-token", null)?.token;
           if (freshToken) return await fetchEvents(freshToken, dayStart, dayEnd);
+          // Reauth said OK but token isn't readable — extremely rare race.
+          // Don't clear the token; let the caller retry.
+        } else {
+          // Silent reauth genuinely couldn't get a token — user must sign in.
+          saveToken(null);
         }
-        saveToken(null);
       }
       throw e;
     }
@@ -425,8 +482,11 @@ export default function App() {
       })();
 
     } catch (e) {
+      // authedFetchEvents has already handled the auth side (cleared the token
+      // only if silent reauth failed). Don't double-clear here — a transient
+      // network error that surfaces as "401" in the message would otherwise
+      // log the user out unnecessarily.
       setError(e.message);
-      if (e.message.includes("401")) saveToken(null);
       setLoading(false);
     }
   }, [token, authedFetchEvents]);
@@ -1058,6 +1118,16 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
+  // While the cold-start silent reauth is still in flight, show a brief
+  // loading view instead of the sign-in screen — otherwise the user sees a
+  // flash of "Sign in with Google" on every page reload before silent reauth
+  // completes.
+  if (!token && !authBootChecked) return (
+    <div style={{height:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0a0b10",color:"#5a6580",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
+      <div style={{textAlign:"center"}}><div style={{fontSize:14,fontWeight:600,letterSpacing:1}}>Signing in…</div></div>
+    </div>
+  );
+
   if (!token) return (
     <div style={{height:"100dvh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0a0b10",fontFamily:"'Oswald','DM Sans',system-ui,sans-serif",color:"#f0f4fa",padding:20,paddingTop:"max(20px,env(safe-area-inset-top))",boxSizing:"border-box"}}>
       <div style={{fontSize:28,fontWeight:900,letterSpacing:3,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif"}}>MTS FIELD SALES</div>
@@ -1379,11 +1449,15 @@ export default function App() {
             savePipeline(pl);
             if (token) pushCalendarColor(id, "estimate_needed", token);
           } else {
-            // Add to currently-selected day's route
-            const startHour = form.time === "AM" ? 9 : form.time === "PM" ? 13 : 8;
+            // Add to currently-selected day's route. Default time windows
+            // match Jason's standard arrival ranges: AM 8–12, PM 11–3.
+            const [startHour, endHour] =
+              form.time === "AM" ? [8, 12] :
+              form.time === "PM" ? [11, 15] :
+              [8, 17]; // All Day → full work day
             const startDt = new Date(businessDays[selDay] || new Date());
             startDt.setHours(startHour, 0, 0, 0);
-            const endDt = new Date(startDt); endDt.setHours(startHour + 1);
+            const endDt = new Date(startDt); endDt.setHours(endHour, 0, 0, 0);
             // Build a description that includes phone/email if provided so
             // parseEvent can extract them.
             const descParts = [];
