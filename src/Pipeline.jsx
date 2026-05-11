@@ -3,7 +3,7 @@ import CameraView from "./CameraView";
 import PhotoMarkup from "./PhotoMarkup";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { loadFieldFromDrive, saveFieldToDrive } from "./driveSync";
-import { loadField, saveField, peekField, primeField } from "./fieldStore";
+import { loadField, saveField, peekField, primeField, updateField } from "./fieldStore";
 import { isUploadPending, onUploadChange } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
 import { listAll as listAllQueue, onQueueChange, enqueueVideo } from "./videoQueue";
@@ -260,24 +260,15 @@ Property: ${card.addr || ""}`);
   const detailAddPhoto = (dataUrl, section, cardId) => {
     const photo = { dataUrl, ts: Date.now() };
     const key = section === "addon" ? "addonPhotos" : "scopePhotos";
-    // UI update — use editFields as primary source, fieldCache as fallback (both have real photos)
     setEditFields(prev => {
       const cur = prev[cardId] || {};
       const existing = cur[key] || fieldCacheRef.current[cardId]?.[key] || [];
       return { ...prev, [cardId]: { ...cur, [key]: [...existing, photo] } };
     });
-    // Persist via queue — reads IDB, then takes the longer of IDB vs fieldCache
-    // to guard against IDB being stale (e.g. photos loaded from Drive not yet
-    // written back to IDB before this write runs).
-    _pipelineQueue(cardId, async () => {
-      const current = await loadField(cardId).catch(() => ({}));
-      const idbArr  = current?.[key] || [];
-      const cacheArr = fieldCacheRef.current[cardId]?.[key] || [];
-      const existingArr = idbArr.length >= cacheArr.length ? idbArr : cacheArr;
-      const updated = { ...(current || {}), [key]: [...existingArr, photo] };
-      primeField(cardId, updated);
-      await saveField(cardId, updated).catch(() => {});
-    });
+    updateField(cardId, (existing) => {
+      const arr = existing[key] || existing.photos || [];
+      return { [key]: [...arr, photo] };
+    }).catch(() => {});
     markStopForPhotoSync(cardId);
   };
 
@@ -288,15 +279,10 @@ Property: ${card.addr || ""}`);
       const existing = cur[key] || fieldCacheRef.current[cardId]?.[key] || [];
       return { ...prev, [cardId]: { ...cur, [key]: existing.filter((_, i) => i !== idx) } };
     });
-    _pipelineQueue(cardId, async () => {
-      const current  = await loadField(cardId).catch(() => ({}));
-      const idbArr   = current?.[key] || [];
-      const cacheArr = fieldCacheRef.current[cardId]?.[key] || [];
-      const existingArr = idbArr.length >= cacheArr.length ? idbArr : cacheArr;
-      const updated = { ...(current || {}), [key]: existingArr.filter((_, i) => i !== idx) };
-      primeField(cardId, updated);
-      await saveField(cardId, updated).catch(() => {});
-    });
+    updateField(cardId, (existing) => {
+      const arr = existing[key] || existing.photos || [];
+      return { [key]: arr.filter((_, i) => i !== idx) };
+    }).catch(() => {});
   };
 
   const detailSaveMarkup = (newDataUrl, idx, section, cardId) => {
@@ -307,17 +293,10 @@ Property: ${card.addr || ""}`);
       const existing = [...(cur[key] || fieldCacheRef.current[cardId]?.[key] || [])];
       return { ...prev, [cardId]: { ...cur, [key]: existing.map(applyMarkup) } };
     });
-    _pipelineQueue(cardId, async () => {
-      const current  = await loadField(cardId).catch(() => ({}));
-      const idbArr   = current?.[key] || [];
-      const cacheArr = fieldCacheRef.current[cardId]?.[key] || [];
-      // Use whichever array is longer — guards against IDB being stale when photos
-      // were loaded from Drive but not yet written back before this queue op runs.
-      const existingArr = [...(idbArr.length >= cacheArr.length ? idbArr : cacheArr)];
-      const updated = { ...(current || {}), [key]: existingArr.map(applyMarkup) };
-      primeField(cardId, updated);
-      await saveField(cardId, updated).catch(() => {});
-    });
+    updateField(cardId, (existing) => {
+      const arr = existing[key] || existing.photos || [];
+      return { [key]: arr.map(applyMarkup) };
+    }).catch(() => {});
     markStopForPhotoSync(cardId);
     setDetailMarkup(null);
   };
