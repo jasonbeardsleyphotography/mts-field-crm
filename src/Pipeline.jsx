@@ -478,7 +478,8 @@ Property: ${card.addr || ""}`);
       ? (fd.addonPhotos || [])
       : (fd.scopePhotos || fd.photos || []);
     const photo = photos[detailMarkup.idx];
-    if (!photo) { setDetailMarkupSrc(null); return; }
+    // "" sentinel = "effect ran but found no usable source" (distinct from null = "not yet resolved")
+    if (!photo) { setDetailMarkupSrc(""); return; }
 
     // Local copy available — no fetch needed
     if (photo.dataUrl) {
@@ -488,7 +489,7 @@ Property: ${card.addr || ""}`);
     }
 
     // Promoted photo — fetch from Drive URL into a blob
-    if (!photo.url) { setDetailMarkupSrc(null); return; }
+    if (!photo.url) { setDetailMarkupSrc(""); return; }
 
     let cancelled = false;
     let blobUrl = null;
@@ -503,7 +504,7 @@ Property: ${card.addr || ""}`);
         setDetailMarkupSrc(blobUrl);
       } catch (e) {
         console.warn("[Pipeline markup] failed to load photo from Drive:", e);
-        if (!cancelled) setDetailMarkupSrc(null);
+        if (!cancelled) setDetailMarkupSrc(""); // "" = failed, not null = pending
       } finally {
         if (!cancelled) setDetailMarkupLoading(false);
       }
@@ -1130,20 +1131,27 @@ Property: ${card.addr || ""}`);
           const photos = detailMarkup.section === "addon" ? addonPhotos : scopePhotos;
           const photo = photos[detailMarkup.idx];
           if (photo) {
-            // Show spinner while fetching a promoted photo from Drive
-            if (detailMarkupLoading || (!detailMarkupSrc && photo.url && !photo.dataUrl)) {
+            // null  = effect not yet run (always show spinner — effect resolves fast for local photos)
+            // ""    = effect ran but found no usable source (show error)
+            // url   = ready to edit
+            if (detailMarkupLoading || detailMarkupSrc === null) {
               return (
                 <div style={{position:"fixed",inset:0,background:"#080a10",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12}}>
                   <div style={{fontSize:13,color:"#5a6580",fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>Loading photo…</div>
-                  <div style={{fontSize:10,color:"#3a4a60"}}>Fetching from Drive</div>
+                  <div style={{fontSize:10,color:"#3a4a60"}}>{photo.url && !photo.dataUrl ? "Fetching from Drive" : "Preparing…"}</div>
                   <button onClick={() => setDetailMarkup(null)} style={{marginTop:8,padding:"8px 20px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#5a6580",fontSize:12,cursor:"pointer"}}>Cancel</button>
                 </div>
               );
             }
-            if (!detailMarkupSrc) {
-              // No source at all (promoted photo failed to load) — dismiss cleanly
-              setDetailMarkup(null);
-              return null;
+            if (detailMarkupSrc === "") {
+              // Effect ran and found no usable source — show error, let user dismiss
+              return (
+                <div style={{position:"fixed",inset:0,background:"#080a10",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12,padding:24}}>
+                  <div style={{fontSize:13,color:"#FF8888",fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>Could not load photo</div>
+                  <div style={{fontSize:11,color:"#5a6580",textAlign:"center"}}>The local copy is unavailable and the cloud copy could not be reached. Check your connection.</div>
+                  <button onClick={() => setDetailMarkup(null)} style={{marginTop:8,padding:"8px 20px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#5a6580",fontSize:12,cursor:"pointer"}}>Back</button>
+                </div>
+              );
             }
             return <PhotoMarkup
               photoDataUrl={detailMarkupSrc}

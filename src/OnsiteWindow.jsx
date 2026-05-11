@@ -544,7 +544,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     }
     // No local copy — fetch from Drive
     if (!photo.url) {
-      setMarkupSrc(null);
+      setMarkupSrc(""); // "" = no usable source (distinct from null = pending)
       setMarkupLoading(false);
       return;
     }
@@ -563,7 +563,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       } catch (e) {
         console.warn("[Markup] failed to load photo from URL:", e);
         if (!cancelled) {
-          setMarkupSrc(null);
+          setMarkupSrc(""); // "" = failed, not null = still pending
           setMarkupLoading(false);
         }
       }
@@ -660,16 +660,17 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   if (markupIdx !== null) {
     const photos = markupSection === "addon" ? addonPhotos : scopePhotos;
     if (photos[markupIdx]) {
-      // Show loading screen while we fetch the photo from Drive (only happens
-      // for promoted photos where the local copy was evicted).
-      if (markupLoading) {
+      // null = effect not yet run; show spinner (resolves in one tick for local photos)
+      // ""   = effect ran, no usable source; show error
+      // url  = ready
+      if (markupLoading || markupSrc === null) {
         return (
           <div style={{ position:"fixed", inset:0, background:"#000", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", color:"#a0b0c0", fontFamily:F, letterSpacing:1, textTransform:"uppercase", fontSize:11 }}>
-            Loading photo from Drive…
+            {markupLoading ? "Loading photo from Drive…" : "Preparing…"}
           </div>
         );
       }
-      if (!markupSrc) {
+      if (markupSrc === "") {
         return (
           <div style={{ position:"fixed", inset:0, background:"#000", zIndex:1000, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", color:"#FF8888", fontFamily:F, padding:20 }}>
             <div style={{ fontSize:14, fontWeight:700, marginBottom:8, letterSpacing:1, textTransform:"uppercase" }}>Could not load photo</div>
