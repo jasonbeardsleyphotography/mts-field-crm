@@ -26,15 +26,21 @@ const STAGES = [
   { id: "declined",        label: "Declined",        short: "Declined", letter: "D", color: "#616161", bg: "rgba(97,97,97,.1)" },
 ];
 
-// Google Calendar colorId for each pipeline stage
+// Google Calendar colorId for each pipeline stage — must match the canonical
+// color system used across the app (parseEvent.js STAGE_COLORS):
+//   Basil (10)    = New Lead          Peacock (7)   = Proposal Sent – Strong
+//   Grape (3)     = Needs Discussion  Lavender (1)  = Proposal Sent – Weak
+//   Banana (5)    = Follow-Up 1       Flamingo (4)  = Follow-Up 2
+//   Sage (2)      = Sold              Tomato (11)   = Declined
+//   Graphite (8)  = Admin/Completed
 const STAGE_CAL_COLOR = {
-  estimate_needed: "7",  // Peacock  #039BE5
-  waiting:         "3",  // Grape    #8E24AA
-  strong:          "2",  // Sage     #33B679
-  weak:            "4",  // Flamingo #E67C73
-  follow_up:       "5",  // Banana   #F6BF26
-  sold:            "10", // Basil    #0B8043
-  declined:        "8",  // Graphite #616161
+  estimate_needed: "10", // Basil    #0B8043  → New Lead
+  waiting:         "3",  // Grape    #8E24AA  → Needs Discussion
+  strong:          "7",  // Peacock  #039BE5  → Proposal Sent – Strong
+  weak:            "1",  // Lavender #7986CB  → Proposal Sent – Weak
+  follow_up:       "5",  // Banana   #F6BF26  → Follow-Up 1
+  sold:            "2",  // Sage     #33B679  → Sold
+  declined:        "11", // Tomato   #D50000  → Declined
 };
 
 async function pushCalendarColor(eventId, stage, token) {
@@ -167,6 +173,10 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   // Detail popup — camera / markup / YouTube upload state
   const [detailShowCamera, setDetailShowCamera] = useState(null); // "scope" | "addon" | null
   const [detailMarkup, setDetailMarkup] = useState(null); // { section, idx } | null
+  // Source URL fed to PhotoMarkup — may be a dataUrl (local), a blob URL
+  // (fetched from Drive for promoted photos), or null while loading.
+  const [detailMarkupSrc, setDetailMarkupSrc] = useState(null);
+  const [detailMarkupLoading, setDetailMarkupLoading] = useState(false);
   // Tracks uploads started from OnsiteWindow that are still running after user tapped Done
   const [externalYtActive, setExternalYtActive] = useState(false);
   const detailScopeLibRef = useRef(null);
@@ -377,7 +387,7 @@ Property: ${card.addr || ""}`);
 
   // Persist
   useEffect(() => { savePipeline(pipeline); }, [pipeline]);
-  useEffect(() => { if (onCloudSync) onCloudSync(); }, [pipeline]);
+  useEffect(() => { if (onCloudSync) onCloudSync(); }, [pipeline, onCloudSync]);
   // Keep pipelineRef current so moveCard can snapshot prev state without a stale closure
   useEffect(() => { pipelineRef.current = pipeline; }, [pipeline]);
 
@@ -447,7 +457,63 @@ Property: ${card.addr || ""}`);
     return unsub;
   }, [detailCard?.id]);
 
-  // ── AUTO-AGING ──────────────────────────────────────────────────────────
+  // ── MARKUP SOURCE LOADER ────────────────────────────────────────────────
+  // When detailMarkup is set, resolve the image source for PhotoMarkup.
+  // If the photo still has a local dataUrl, use it directly. If it has been
+  // promoted (only a Drive url remains), fetch it into a blob URL so the
+  // canvas-based markup tool can read the pixels cross-origin-safely.
+  useEffect(() => {
+    if (!detailMarkup || !detailCard) {
+      if (detailMarkupSrc?.startsWith("blob:")) {
+        try { URL.revokeObjectURL(detailMarkupSrc); } catch {}
+      }
+      setDetailMarkupSrc(null);
+      setDetailMarkupLoading(false);
+      return;
+    }
+    const baseFd = fieldCache[detailCard.id] || peekField(detailCard.id);
+    const overrides = editFields[detailCard.id] || {};
+    const fd = { ...baseFd, ...overrides };
+    const photos = detailMarkup.section === "addon"
+      ? (fd.addonPhotos || [])
+      : (fd.scopePhotos || fd.photos || []);
+    const photo = photos[detailMarkup.idx];
+    if (!photo) { setDetailMarkupSrc(null); return; }
+
+    // Local copy available — no fetch needed
+    if (photo.dataUrl) {
+      setDetailMarkupSrc(photo.dataUrl);
+      setDetailMarkupLoading(false);
+      return;
+    }
+
+    // Promoted photo — fetch from Drive URL into a blob
+    if (!photo.url) { setDetailMarkupSrc(null); return; }
+
+    let cancelled = false;
+    let blobUrl = null;
+    setDetailMarkupLoading(true);
+    (async () => {
+      try {
+        const res = await fetch(photo.url);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const blob = await res.blob();
+        if (cancelled) return;
+        blobUrl = URL.createObjectURL(blob);
+        setDetailMarkupSrc(blobUrl);
+      } catch (e) {
+        console.warn("[Pipeline markup] failed to load photo from Drive:", e);
+        if (!cancelled) setDetailMarkupSrc(null);
+      } finally {
+        if (!cancelled) setDetailMarkupLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (blobUrl) { try { URL.revokeObjectURL(blobUrl); } catch {} }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailMarkup, detailCard?.id]);
   // Runs on mount, on interval (every 5 min when tab visible), and when the
   // tab becomes visible again — catches cards that entered 'waiting' after
   // mount and ages them without requiring a full reload.
@@ -1062,11 +1128,29 @@ Property: ${card.addr || ""}`);
         // Markup overlay
         if (detailMarkup) {
           const photos = detailMarkup.section === "addon" ? addonPhotos : scopePhotos;
-          if (photos[detailMarkup.idx]) return <PhotoMarkup
-            photoDataUrl={photos[detailMarkup.idx].dataUrl}
-            onSave={dataUrl => detailSaveMarkup(dataUrl, detailMarkup.idx, detailMarkup.section, card.id)}
-            onCancel={() => setDetailMarkup(null)}
-          />;
+          const photo = photos[detailMarkup.idx];
+          if (photo) {
+            // Show spinner while fetching a promoted photo from Drive
+            if (detailMarkupLoading || (!detailMarkupSrc && photo.url && !photo.dataUrl)) {
+              return (
+                <div style={{position:"fixed",inset:0,background:"#080a10",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12}}>
+                  <div style={{fontSize:13,color:"#5a6580",fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>Loading photo…</div>
+                  <div style={{fontSize:10,color:"#3a4a60"}}>Fetching from Drive</div>
+                  <button onClick={() => setDetailMarkup(null)} style={{marginTop:8,padding:"8px 20px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#5a6580",fontSize:12,cursor:"pointer"}}>Cancel</button>
+                </div>
+              );
+            }
+            if (!detailMarkupSrc) {
+              // No source at all (promoted photo failed to load) — dismiss cleanly
+              setDetailMarkup(null);
+              return null;
+            }
+            return <PhotoMarkup
+              photoDataUrl={detailMarkupSrc}
+              onSave={dataUrl => detailSaveMarkup(dataUrl, detailMarkup.idx, detailMarkup.section, card.id)}
+              onCancel={() => setDetailMarkup(null)}
+            />;
+          }
         }
 
         return <div onClick={() => setDetailCard(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
@@ -1155,7 +1239,7 @@ Property: ${card.addr || ""}`);
                         <button onClick={() => detailRemovePhoto(i,"scope",card.id)} style={{position:"absolute",top:4,right:4,width:22,height:22,borderRadius:11,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={11} color="#ff6666"/></button>
                         <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:3}}>
                           <div onClick={() => setDetailMarkup({section:"scope",idx:i})} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={10} color="#ccc"/></div>
-                          <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_scope_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer",textDecoration:"none"}}><IconDownload size={10} color="#ccc"/></a>
+                          <a href={p.dataUrl || p.url} download={`${card.cn.replace(/\s+/g,"_")}_scope_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer",textDecoration:"none"}}><IconDownload size={10} color="#ccc"/></a>
                         </div>
                       </div>
                     ))}
@@ -1206,7 +1290,7 @@ Property: ${card.addr || ""}`);
                         <button onClick={() => detailRemovePhoto(i,"addon",card.id)} style={{position:"absolute",top:4,right:4,width:22,height:22,borderRadius:11,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={11} color="#ff6666"/></button>
                         <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:3}}>
                           <div onClick={() => setDetailMarkup({section:"addon",idx:i})} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={10} color="#ccc"/></div>
-                          <a href={p.dataUrl} download={`${card.cn.replace(/\s+/g,"_")}_addon_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer",textDecoration:"none"}}><IconDownload size={10} color="#ccc"/></a>
+                          <a href={p.dataUrl || p.url} download={`${card.cn.replace(/\s+/g,"_")}_addon_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer",textDecoration:"none"}}><IconDownload size={10} color="#ccc"/></a>
                         </div>
                       </div>
                     ))}
