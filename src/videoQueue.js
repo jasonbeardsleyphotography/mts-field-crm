@@ -37,7 +37,7 @@ import {
 
 const CHUNK_SIZE = 5 * 1024 * 1024;       // 5MB chunks
 const CHUNK_RETRY_LIMIT = 5;              // 5 attempts per chunk
-const WORKER_LOCK_WATCHDOG_MS = 10 * 60 * 1000;
+const WORKER_LOCK_WATCHDOG_MS = 2 * 60 * 1000; // 2 min — iOS suspends JS mid-upload
 const RETRY_BACKOFF_MS = [1500, 3000, 6000, 12000, 30000];
 const PAUSE_KEY = "mts-video-uploads-paused";
 
@@ -164,11 +164,20 @@ export async function cancelItem(id) {
 }
 
 export async function retryItem(id) {
+  // Force-release a stuck lock before retrying — iOS can suspend JS mid-upload
+  // leaving _processing true with no active worker.
+  if (_processing && _processingStartMs && Date.now() - _processingStartMs > 30_000) {
+    vlogWarn("worker.retry_unstick", { heldForMs: Date.now() - _processingStartMs });
+    _processing = false;
+  }
   const item = await idbGet(id);
   if (!item) return;
   item.status = "queued";
   item.retries = 0;
   item.error = null;
+  item.sessionUrl = null; // force fresh session — old one may have expired
+  item.bytesUploaded = 0;
+  item.progress = 0;
   item.updatedAt = Date.now();
   await idbPut(item);
   vlogInfo("retry.requested", null, id);
@@ -427,7 +436,18 @@ export function startVideoQueueWatcher(getToken) {
   window.addEventListener("online", () => { vlogInfo("event.online", null); _kick(); });
   window.addEventListener("focus",  () => { vlogInfo("event.focus", null);  _kick(); });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") { vlogInfo("event.visible", null); _kick(); }
+    if (document.visibilityState === "visible") {
+      // iOS suspends JS execution when backgrounded, which can leave a fetch()
+      // hanging forever with _processing locked. Force-release if the lock has
+      // been held longer than 90s — a legitimate chunk upload never takes that
+      // long end-to-end (60s timeout + backoff = ~75s max).
+      if (_processing && _processingStartMs && Date.now() - _processingStartMs > 90_000) {
+        vlogWarn("worker.foreground_unstick", { heldForMs: Date.now() - _processingStartMs });
+        _processing = false;
+      }
+      vlogInfo("event.visible", null);
+      _kick();
+    }
   });
 
   setInterval(() => { _kick(); }, 30 * 1000);

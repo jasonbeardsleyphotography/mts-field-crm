@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import PhotoMarkup from "./PhotoMarkup";
 import CameraView from "./CameraView";
 import { saveFieldToDrive, loadFieldFromDrive } from "./driveSync";
-import { loadField, saveField, peekField, primeField } from "./fieldStore";
+import { loadField, saveField, peekField, primeField, mergeField, updateField, saveFieldSync, getFieldSlim } from "./fieldStore";
 import { incUpload, decUpload } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
 import Linkify from "./Linkify";
@@ -103,60 +103,116 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
 
   // Auto-save on every change — IndexedDB (local) + Drive.
   //
-  // CRITICAL: This effect is GATED on `hydrated`. Without the gate, the
-  // initial render of a re-opened Onsite would write empty scopePhotos/
-  // addonPhotos to IDB (because peekField returns the slim localStorage
-  // mirror, which intentionally strips base64 photo data). That race
-  // permanently wipes photos if anything interrupts JS execution before
-  // the async hydration restore completes. With the gate, no save fires
-  // until loadField has confirmed what IDB already holds.
+  // CRITICAL ARCHITECTURE: This effect ONLY writes text + AI fields via
+  // mergeField. It NEVER touches photos. Photo modifications (add/remove/
+  // markup-edit) go through dedicated updateField calls. This eliminates
+  // the wipe surface entirely — text changes cannot corrupt photo data
+  // because they never write to that field.
   //
-  // Writes are RATE-LIMITED to at most once per 500ms (leading-trailing
-  // pattern: first change in a window schedules a save 500ms out;
-  // subsequent changes update the pending payload without resetting the
-  // timer). This absorbs dictation bursts (which fire setState per
-  // interim result, several times per second with megabyte-sized photo
-  // arrays in state) while still guaranteeing that no change waits more
-  // than 500ms to hit IDB. A pure trailing debounce would defer writes
-  // indefinitely during continuous dictation and lose everything on
-  // crash; pure no-debounce caused iOS memory-pressure context kills.
+  // Gated on `hydrated` so we don't write before knowing what IDB holds.
   //
-  // Photos are added directly to IDB via _processPhoto (separate read-
-  // modify-write path), so rate-limiting here is safe for them — the
-  // raw photo bytes are durable before this effect ever runs.
+  // Rate-limited to at most one write per 500ms (leading-trailing pattern:
+  // first change in a window schedules a save 500ms out; subsequent changes
+  // update pendingDataRef without resetting the timer). Absorbs dictation
+  // bursts while guaranteeing no change waits more than 500ms to hit IDB.
   useEffect(() => {
     if (!hydrated) return;
-    const data = { scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult };
-    // primeField updates the in-memory mirror immediately so Pipeline /
-    // other consumers see the latest. Cheap, no IDB hit.
-    primeField(s.id, data);
-    pendingDataRef.current = data;
-    // If a save is already scheduled, just update pendingDataRef and let
-    // the existing timer fire — it'll pick up the latest data.
-    if (localSaveTimerRef.current) {
-      // still update Drive debounce
-    } else {
+    // Text/AI fields only — these go to IDB via mergeField (which preserves
+    // photos via shallow merge with existing IDB record).
+    const textPartial = {
+      scopeNotes,
+      addonNotes,
+      videoUrls,
+      audioClips,
+      aiScopeSummary: aiScopeResult,
+      aiAddonEmail: aiAddonResult,
+    };
+    // Full snapshot (text + photos) for the in-memory mirror, the
+    // pagehide flush, and the Drive sync. State is authoritative for
+    // what the user is currently looking at.
+    const fullSnapshot = { ...textPartial, scopePhotos, addonPhotos };
+    primeField(s.id, fullSnapshot);
+    pendingDataRef.current = fullSnapshot;
+    // Leading-trailing rate limit — if a save is already scheduled, just
+    // update pendingDataRef and let the existing timer fire.
+    if (!localSaveTimerRef.current) {
       localSaveTimerRef.current = setTimeout(() => {
         localSaveTimerRef.current = null;
-        const toSave = pendingDataRef.current;
-        pendingDataRef.current = null;
-        if (!toSave) return;
-        saveField(s.id, toSave).then(() => {
+        // Re-read pendingDataRef at fire time to get the freshest text.
+        const latest = pendingDataRef.current;
+        if (!latest) return;
+        const latestTextOnly = {
+          scopeNotes: latest.scopeNotes,
+          addonNotes: latest.addonNotes,
+          videoUrls: latest.videoUrls,
+          audioClips: latest.audioClips,
+          aiScopeSummary: latest.aiScopeSummary,
+          aiAddonEmail: latest.aiAddonEmail,
+        };
+        // mergeField is queued — photos in IDB are preserved by the
+        // shallow-merge in fieldStore (existing photos stay because
+        // textPartial doesn't include those keys).
+        mergeField(s.id, latestTextOnly).then(() => {
           try { window.dispatchEvent(new CustomEvent("mts-field-synced")); } catch {}
-        }).catch(() => {});
+        });
       }, 500);
     }
     if (token) {
       if (window._fieldSyncTimer) clearTimeout(window._fieldSyncTimer);
-      window._fieldSyncTimer = setTimeout(() => {
-        saveFieldToDrive(token, s.id, data).catch(() => {});
+      window._fieldSyncTimer = setTimeout(async () => {
+        // Read FRESH full data from IDB before pushing to Drive — picks up
+        // any photo writes that _processPhoto / removeScopePhoto did since
+        // the last render, so Drive never gets a stale photo list.
+        const full = await loadField(s.id).catch(() => null);
+        if (full && Object.keys(full).length) {
+          saveFieldToDrive(token, s.id, full).catch(() => {});
+        }
       }, 3000);
     }
   }, [hydrated, scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeResult, aiAddonResult, s.id, token]);
 
-  // Flush any pending rate-limited save on unmount so closing Onsite
-  // never loses the latest typing. Runs synchronously before React tears
-  // down the component.
+  // ── PANIC FLUSH ──────────────────────────────────────────────────────────
+  // iOS aggressively suspends WKWebView pages on backgrounding / app switch
+  // / memory pressure. When that happens mid-rate-limit-window, the latest
+  // few hundred ms of typing would be lost. These handlers flush the slim
+  // localStorage mirror synchronously (guaranteed to land before suspend)
+  // and fire an async IDB write that may or may not commit before suspend.
+  // On next open, peekField → getFieldSlim returns the latest text.
+  useEffect(() => {
+    const flush = () => {
+      if (!pendingDataRef.current) return;
+      // 1. Synchronous slim mirror update — text is safe even if iOS
+      //    interrupts before IDB commits.
+      saveFieldSync(s.id, pendingDataRef.current);
+      // 2. Cancel the pending timer and fire mergeField now so the IDB
+      //    write at least starts.
+      if (localSaveTimerRef.current) {
+        clearTimeout(localSaveTimerRef.current);
+        localSaveTimerRef.current = null;
+      }
+      const d = pendingDataRef.current;
+      mergeField(s.id, {
+        scopeNotes: d.scopeNotes,
+        addonNotes: d.addonNotes,
+        videoUrls: d.videoUrls,
+        audioClips: d.audioClips,
+        aiScopeSummary: d.aiScopeSummary,
+        aiAddonEmail: d.aiAddonEmail,
+      }).catch(() => {});
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", flush);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.id]);
+
+  // Flush any pending rate-limited save on component unmount.
   useEffect(() => {
     return () => {
       if (localSaveTimerRef.current) {
@@ -164,8 +220,17 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         localSaveTimerRef.current = null;
       }
       if (pendingDataRef.current) {
-        // Fire-and-forget — IDB writes can complete after component unmounts.
-        saveField(s.id, pendingDataRef.current).catch(() => {});
+        const d = pendingDataRef.current;
+        // Slim mirror synchronously, IDB asynchronously (fire-and-forget).
+        saveFieldSync(s.id, d);
+        mergeField(s.id, {
+          scopeNotes: d.scopeNotes,
+          addonNotes: d.addonNotes,
+          videoUrls: d.videoUrls,
+          audioClips: d.audioClips,
+          aiScopeSummary: d.aiScopeSummary,
+          aiAddonEmail: d.aiAddonEmail,
+        }).catch(() => {});
         pendingDataRef.current = null;
       }
     };
@@ -182,10 +247,16 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // would have only the new photo (because _processPhoto's read-modify-
   // write reads from IDB, not state), and a naive "keep state if non-
   // empty" rule would drop the older IDB photos.
+  //
+  // RECOVERY CHECK: After loading, compare IDB photo counts against the
+  // slim localStorage mirror's claimed counts. The slim mirror records
+  // _scopePhotoCount / _addonPhotoCount on every save. If IDB has FEWER
+  // photos than the slim claims, something wiped them (the bug we just
+  // fixed, or a future regression). Attempt restore from Drive.
   useEffect(() => {
     setHydrated(false);
     let dead = false;
-    loadField(s.id).then(data => {
+    loadField(s.id).then(async data => {
       if (dead) return;
       if (data && Object.keys(data).length > 0) {
         primeField(s.id, data);
@@ -215,10 +286,56 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         if (idbAddonPhotos.length) setAddonPhotos(prev => mergeByKey(idbAddonPhotos, prev, p => p.ts || p.url));
         if (idbAudioClips.length)  setAudioClips(prev => mergeByKey(idbAudioClips, prev, a => a.ts || a.timestamp || a.url));
         if (idbVideoUrls.length)   setVideoUrls(prev => prev.length === 0 ? idbVideoUrls : Array.from(new Set([...idbVideoUrls, ...prev])));
+
+        // ── RECOVERY CHECK ──────────────────────────────────────────────
+        // Compare what IDB actually has against what the slim mirror
+        // claimed it had at the last save. If we're missing photos,
+        // attempt restore from Drive.
+        const slim = getFieldSlim(s.id);
+        if (slim) {
+          const expectedScope = slim._scopePhotoCount || 0;
+          const expectedAddon = slim._addonPhotoCount || 0;
+          const actualScope = idbScopePhotos.length;
+          const actualAddon = idbAddonPhotos.length;
+          if (expectedScope > actualScope || expectedAddon > actualAddon) {
+            console.warn(`[Onsite] Photo count mismatch for ${s.id}: scope expected ${expectedScope} got ${actualScope}, addon expected ${expectedAddon} got ${actualAddon}. Attempting Drive restore.`);
+            if (token) {
+              try {
+                const cloud = await loadFieldFromDrive(token, s.id);
+                if (!dead && cloud && (Array.isArray(cloud.scopePhotos) || Array.isArray(cloud.addonPhotos))) {
+                  const cloudScope = cloud.scopePhotos || cloud.photos || [];
+                  const cloudAddon = cloud.addonPhotos || [];
+                  // Restore photos by merging Drive + whatever local has.
+                  if (cloudScope.length > actualScope) {
+                    setScopePhotos(prev => mergeByKey(cloudScope, prev, p => p.ts || p.url));
+                  }
+                  if (cloudAddon.length > actualAddon) {
+                    setAddonPhotos(prev => mergeByKey(cloudAddon, prev, p => p.ts || p.url));
+                  }
+                  // Persist the recovered photos to IDB immediately so
+                  // they're durable even if user closes Onsite right away.
+                  await updateField(s.id, (existing) => {
+                    const merged = {};
+                    if (cloudScope.length > actualScope) {
+                      merged.scopePhotos = mergeByKey(cloudScope, existing.scopePhotos || [], p => p.ts || p.url);
+                    }
+                    if (cloudAddon.length > actualAddon) {
+                      merged.addonPhotos = mergeByKey(cloudAddon, existing.addonPhotos || [], p => p.ts || p.url);
+                    }
+                    return merged;
+                  });
+                  console.log(`[Onsite] Recovered ${Math.max(0, cloudScope.length - actualScope) + Math.max(0, cloudAddon.length - actualAddon)} photo(s) from Drive for ${s.id}`);
+                }
+              } catch (e) {
+                console.warn("[Onsite] Drive recovery failed:", e);
+              }
+            }
+          }
+        }
       }
       // Open the save gate AFTER setState calls are queued. React batches
       // them, so the auto-save effect re-runs once with merged state.
-      setHydrated(true);
+      if (!dead) setHydrated(true);
     });
     return () => { dead = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -298,6 +415,13 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // processing (FileReader + canvas resize) continues even if the user taps
   // Done before the async work completes. The photo is saved to IndexedDB
   // regardless; UI state is only updated if the component is still mounted.
+  // ── PHOTO HANDLERS ────────────────────────────────────────────────────
+  // EVERY mutation here writes to IDB through updateField IMMEDIATELY, so
+  // photos are durable independent of the auto-save effect. The auto-save
+  // never touches photos (text-only payload), which means there is no
+  // code path that can wipe photos via a text change. All writes go
+  // through fieldStore's shared per-stop queue, so they can never race
+  // with each other or with photoSync.
   const processPhoto = (file, section = "scope") => {
     if (!file) return;
     _processPhoto(file, section, s.id).then(photo => {
@@ -308,18 +432,51 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   };
   const handleScopePhotos = (e) => { Array.from(e.target.files || []).forEach(f => processPhoto(f, "scope")); e.target.value = ""; };
   const handleAddonPhotos = (e) => { Array.from(e.target.files || []).forEach(f => processPhoto(f, "addon")); e.target.value = ""; };
-  const removeScopePhoto = (i) => setScopePhotos(prev => prev.filter((_, j) => j !== i));
-  const removeAddonPhoto = (i) => setAddonPhotos(prev => prev.filter((_, j) => j !== i));
+  const removeScopePhoto = (i) => {
+    // Identify the photo by stable key (ts || url) so we never delete the
+    // wrong one if state and IDB orderings drift.
+    const target = scopePhotos[i];
+    const key = target ? (target.ts || target.url) : null;
+    setScopePhotos(prev => prev.filter((_, j) => j !== i));
+    if (key !== null) {
+      updateField(s.id, (existing) => ({
+        scopePhotos: (existing.scopePhotos || existing.photos || []).filter(p => (p.ts || p.url) !== key),
+      })).catch(() => {});
+    }
+  };
+  const removeAddonPhoto = (i) => {
+    const target = addonPhotos[i];
+    const key = target ? (target.ts || target.url) : null;
+    setAddonPhotos(prev => prev.filter((_, j) => j !== i));
+    if (key !== null) {
+      updateField(s.id, (existing) => ({
+        addonPhotos: (existing.addonPhotos || []).filter(p => (p.ts || p.url) !== key),
+      })).catch(() => {});
+    }
+  };
   const removePhoto = (i, section) => {
-    if (section === "addon") setAddonPhotos(prev => prev.filter((_, j) => j !== i));
-    else setScopePhotos(prev => prev.filter((_, j) => j !== i));
+    if (section === "addon") removeAddonPhoto(i);
+    else removeScopePhoto(i);
   };
   const handleMarkupSave = (dataUrl) => {
     // Clear the Drive URL so the freshly-edited version shows immediately,
     // then re-queue this stop so the edited photo gets re-uploaded to Drive.
+    const photos = markupSection === "addon" ? addonPhotos : scopePhotos;
+    const target = photos[markupIdx];
+    const key = target ? (target.ts || target.url) : null;
     const update = (p, i) => i === markupIdx ? { ...p, dataUrl, url: undefined } : p;
     if (markupSection === "addon") setAddonPhotos(prev => prev.map(update));
     else setScopePhotos(prev => prev.map(update));
+    // Write through to IDB by stable key match (not index — IDB ordering
+    // may differ from state ordering).
+    if (key !== null) {
+      const arrKey = markupSection === "addon" ? "addonPhotos" : "scopePhotos";
+      updateField(s.id, (existing) => ({
+        [arrKey]: (existing[arrKey] || existing.photos || []).map(p =>
+          (p.ts || p.url) === key ? { ...p, dataUrl, url: undefined } : p
+        ),
+      })).catch(() => {});
+    }
     markStopForPhotoSync(s.id);
     setMarkupIdx(null);
   };
@@ -544,7 +701,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     }
     // No local copy — fetch from Drive
     if (!photo.url) {
-      setMarkupSrc(null);
+      setMarkupSrc(""); // "" = settled with no usable source (not null = still pending)
       setMarkupLoading(false);
       return;
     }
@@ -563,7 +720,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       } catch (e) {
         console.warn("[Markup] failed to load photo from URL:", e);
         if (!cancelled) {
-          setMarkupSrc(null);
+          setMarkupSrc(""); // "" = failed, not null = still pending
           setMarkupLoading(false);
         }
       }
@@ -636,17 +793,16 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       onPhoto={async (dataUrl) => {
         const photo = { dataUrl, ts: Date.now() };
         const key = cameraSection === "addon" ? "addonPhotos" : "scopePhotos";
-        // CRITICAL: Persist to IDB BEFORE updating React state. The library
-        // pick path does this via _processPhoto; the camera path used to
-        // skip it, which meant photos lived only in React state until the
-        // auto-save effect ran. Any unmount before then erased them. Now
-        // they survive even if the OnsiteWindow re-mounts.
+        // CRITICAL: Persist to IDB BEFORE updating React state, through
+        // fieldStore's shared per-stop queue. The queue serializes this
+        // write with the auto-save's mergeField and any other photo ops,
+        // so concurrent writes can't read the same "before" state and
+        // clobber each other.
         try {
-          const saved = await loadField(s.id).catch(() => ({}));
-          const existing = saved?.[key] || [];
-          const next = { ...(saved || {}), [key]: [...existing, photo], savedAt: Date.now() };
-          primeField(s.id, next);
-          await saveField(s.id, next).catch(() => {});
+          await updateField(s.id, (existing) => {
+            const existingPhotos = existing[key] || existing.photos || [];
+            return { [key]: [...existingPhotos, photo] };
+          });
         } catch (e) { console.warn("Camera photo IDB save failed:", e); }
         // Now reflect in component state so the UI updates
         if (cameraSection === "addon") setAddonPhotos(prev => [...prev, photo]);
@@ -660,16 +816,17 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   if (markupIdx !== null) {
     const photos = markupSection === "addon" ? addonPhotos : scopePhotos;
     if (photos[markupIdx]) {
-      // Show loading screen while we fetch the photo from Drive (only happens
-      // for promoted photos where the local copy was evicted).
-      if (markupLoading) {
+      // null = effect not yet run — always show spinner (resolves in one tick for local photos)
+      // ""   = effect settled with no usable source — show error
+      // url  = ready
+      if (markupLoading || markupSrc === null) {
         return (
           <div style={{ position:"fixed", inset:0, background:"#000", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", color:"#a0b0c0", fontFamily:F, letterSpacing:1, textTransform:"uppercase", fontSize:11 }}>
-            Loading photo from Drive…
+            {markupLoading ? "Loading photo from Drive…" : "Preparing…"}
           </div>
         );
       }
-      if (!markupSrc) {
+      if (markupSrc === "") {
         return (
           <div style={{ position:"fixed", inset:0, background:"#000", zIndex:1000, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", color:"#FF8888", fontFamily:F, padding:20 }}>
             <div style={{ fontSize:14, fontWeight:700, marginBottom:8, letterSpacing:1, textTransform:"uppercase" }}>Could not load photo</div>
@@ -1025,8 +1182,10 @@ Property: ${s.addr || ""}`);
                       <div style={{flex:1,fontSize:9,color:"#5a6580",fontFamily:F,letterSpacing:0.3}}>
                         {sizeMB}MB
                       </div>
-                      {it.status === "error" && (
-                        <button onClick={() => retryVideoQueueItem(it.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Retry</button>
+                      {(it.status === "error" || it.status === "uploading") && (
+                        <button onClick={() => retryVideoQueueItem(it.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
+                          {it.status === "uploading" ? "Restart" : "Retry"}
+                        </button>
                       )}
                       <button onClick={() => { if(window.confirm("Cancel and remove this video from the queue?")) cancelVideoQueueItem(it.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#a06060",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,display:"flex",alignItems:"center"}}>
                         <IconX size={10} color="#a06060"/>
@@ -1088,15 +1247,10 @@ Property: ${s.addr || ""}`);
 /* ═══════════════════════════════════════════════════════════════════════════
    Module-level photo processor — lives OUTSIDE React so FileReader + canvas
    work completes even if OnsiteWindow unmounts (user taps Done mid-pick).
-   The photo is written to IndexedDB immediately; the component only updates
-   its own state if it's still mounted when the promise resolves.
-
-   _photoSaveQueues serializes IDB writes per stop so that bulk imports
-   (many photos selected at once) don't race each other on the read-modify-write
-   cycle. Without this, all N photos read the same "0 existing" state and the
-   last write wins, dropping the rest.
+   The photo is written to IndexedDB immediately via fieldStore's shared
+   per-stop write queue (updateField), so it cannot race with the auto-save
+   effect, the remove handlers, or photoSync's upload-completion writes.
    ═══════════════════════════════════════════════════════════════════════════ */
-const _photoSaveQueues = {};
 
 function _processPhoto(file, section, stopId) {
   return new Promise((resolve) => {
@@ -1113,22 +1267,16 @@ function _processPhoto(file, section, stopId) {
         c.width = w; c.height = h;
         c.getContext("2d").drawImage(img, 0, 0, w, h);
         const photo = { dataUrl: c.toDataURL("image/jpeg", 0.82), ts: Date.now() };
-        // Serialize IDB writes per stop — prevents concurrent bulk-import photos
-        // from all reading the same initial state and clobbering each other.
-        const prev = _photoSaveQueues[stopId] || Promise.resolve();
-        const next = prev.then(async () => {
-          try {
-            const saved = await loadField(stopId).catch(() => ({}));
+        // updateField is queued per-stop in fieldStore, so this composes
+        // safely with concurrent text saves and other photo ops.
+        try {
+          await updateField(stopId, (existing) => {
             const key = section === "addon" ? "addonPhotos" : "scopePhotos";
-            const existing = saved?.[key] || [];
-            const updated = { ...(saved || {}), [key]: [...existing, photo], savedAt: Date.now() };
-            primeField(stopId, updated);
-            await saveField(stopId, updated).catch(() => {});
-            markStopForPhotoSync(stopId);
-          } catch(e) { console.warn("Photo background save failed:", e); }
-        });
-        _photoSaveQueues[stopId] = next;
-        await next;
+            const existingPhotos = existing[key] || existing.photos || [];
+            return { [key]: [...existingPhotos, photo] };
+          });
+          markStopForPhotoSync(stopId);
+        } catch (e) { console.warn("Photo background save failed:", e); }
         resolve(photo);
       };
       img.onerror = () => resolve(null);

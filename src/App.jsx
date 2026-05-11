@@ -452,6 +452,17 @@ export default function App() {
       const te = new Date(targetDay); te.setHours(23,59,59,999);
       const todayEvents = await authedFetchEvents(token, ts, te);
       const localStops1 = localStopsGet();
+      // Roll forward any local stops from past dates to today so they don't disappear.
+      const validDayKeys1 = new Set(days.map(d => d.toDateString()));
+      const todayDk = targetDay.toDateString();
+      let ls1Changed = false;
+      for (const [id, entry] of Object.entries(localStops1)) {
+        if (!validDayKeys1.has(entry.dk)) {
+          localStops1[id] = { ...entry, dk: todayDk };
+          ls1Changed = true;
+        }
+      }
+      if (ls1Changed) localStopsSet(localStops1);
       setRawEvents(prev => {
         const next = { ...prev, [targetDay.toDateString()]: todayEvents };
         for (const [id, { event, dk }] of Object.entries(localStops1)) {
@@ -1478,12 +1489,52 @@ export default function App() {
               colorId: "7",
               description: descParts.join("\n"),
             };
-            // Persist so the stop survives page reloads
+            // Persist locally so the stop is immediately visible (and survives reload
+            // in case the Calendar push below fails while offline).
             const ls = localStopsGet(); ls[id] = { event: localEvent, dk: dayKey }; localStopsSet(ls);
             setRawEvents(prev => {
               const dayEvts = prev[dayKey] || [];
               return { ...prev, [dayKey]: [...dayEvts, localEvent] };
             });
+            // Push to Google Calendar so the stop persists across day rollovers and
+            // syncs to the desktop view. Replace the local event with the real one on
+            // success; on failure (offline) the local stop stays in localStorage and
+            // will roll forward to today on the next load().
+            if (token) {
+              (async () => {
+                try {
+                  const res = await fetch(`${CAL_BASE}/events`, {
+                    method: "POST",
+                    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      summary: localEvent.summary,
+                      location: localEvent.location,
+                      start: localEvent.start,
+                      end: localEvent.end,
+                      colorId: localEvent.colorId,
+                      description: localEvent.description,
+                    }),
+                  });
+                  if (res.ok) {
+                    const created = await res.json();
+                    const realId = created.id;
+                    // Remove from localStorage — it's now a real Calendar event
+                    const lsNow = localStopsGet(); delete lsNow[id]; localStopsSet(lsNow);
+                    // Swap the local placeholder with the real Calendar event
+                    setRawEvents(prev => {
+                      const dayEvts = (prev[dayKey] || []).filter(e => e.id !== id);
+                      return { ...prev, [dayKey]: [...dayEvts, created] };
+                    });
+                    setOrdIds(prev => {
+                      const order = prev[dayKey] || [];
+                      return { ...prev, [dayKey]: order.map(oid => oid === id ? realId : oid) };
+                    });
+                  }
+                } catch(e) {
+                  console.warn("Calendar push for local stop failed (offline?):", e);
+                }
+              })();
+            }
           }
         }}
       />
