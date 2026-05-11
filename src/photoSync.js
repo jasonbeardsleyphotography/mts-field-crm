@@ -34,7 +34,7 @@
      photo entry (the original stays uploaded; the new one starts fresh).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-import { loadField, saveField, primeField } from "./fieldStore";
+import { loadField, updateField } from "./fieldStore";
 import { uploadPhotoToDrive } from "./driveSync";
 
 const QUEUE_KEY = "mts-photo-queue";
@@ -91,52 +91,64 @@ async function syncStop(stopId, token) {
   if (!data) return;
 
   const sections = ["scopePhotos", "addonPhotos"];
-  let changed = false;
+  // Track uploads per-section, indexed by stable key (ts || filename), so
+  // we can write back through updateField without losing concurrent
+  // photo adds/removes/edits.
+  const uploadsBySection = {};
   let anyNewlySynced = false;
 
   for (const key of sections) {
     const photos = data[key];
     if (!Array.isArray(photos)) continue;
+    uploadsBySection[key] = new Map();
 
-    const updated = await Promise.all(photos.map(async (p) => {
-      // Already uploaded — has a Drive URL
-      if (p.url) return p;
-      // No base64 to upload
-      if (!p.dataUrl) return p;
-
+    await Promise.all(photos.map(async (p) => {
+      if (p.url) return;           // Already uploaded
+      if (!p.dataUrl) return;      // Nothing to upload
       try {
         const ext = p.dataUrl.startsWith("data:image/png") ? "png" : "jpg";
         const filename = `${stopId}_${key}_${p.ts || Date.now()}.${ext}`;
         const url = await uploadPhotoToDrive(token, p.dataUrl, filename);
         if (url) {
-          changed = true;
           anyNewlySynced = true;
-          // Mark with syncedAt so we can later evict the dataUrl after grace period
-          return { ...p, url, syncedAt: Date.now() };
+          uploadsBySection[key].set(p.ts || p.dataUrl, { url, syncedAt: Date.now() });
         }
       } catch(e) {
         console.warn("Photo upload failed for", stopId, e);
       }
-      return p;
     }));
-
-    data = { ...data, [key]: updated };
   }
 
-  if (changed) {
-    primeField(stopId, data);
-    await saveField(stopId, data).catch(() => {});
+  // Write all upload results through updateField — queued, atomic, and
+  // composes safely with concurrent text saves / photo adds / removes.
+  if (anyNewlySynced) {
+    await updateField(stopId, (existing) => {
+      const updates = {};
+      for (const key of sections) {
+        const uploads = uploadsBySection[key];
+        if (!uploads || uploads.size === 0) continue;
+        const current = existing[key] || (key === "scopePhotos" ? existing.photos : null) || [];
+        updates[key] = current.map(p => {
+          const id = p.ts || p.dataUrl;
+          const result = uploads.get(id);
+          return result ? { ...p, ...result } : p;
+        });
+      }
+      return updates;
+    }).catch(() => {});
     try { window.dispatchEvent(new CustomEvent("mts-field-synced")); } catch {}
+    markStopForPromotion(stopId);
   }
 
-  // If anything was just synced, queue this stop for promotion-eviction later
-  if (anyNewlySynced) markStopForPromotion(stopId);
-
-  // If no more pending photos remain, remove from upload queue
-  const allUploaded = sections.every(key =>
-    !Array.isArray(data[key]) || data[key].every(p => p.url || !p.dataUrl)
-  );
-  if (allUploaded) unmarkStop(stopId);
+  // If no more pending photos remain, remove from upload queue. Re-read
+  // since updateField may have changed the photo records.
+  try {
+    const fresh = await loadField(stopId);
+    const allUploaded = sections.every(key =>
+      !Array.isArray(fresh[key]) || fresh[key].every(p => p.url || !p.dataUrl)
+    );
+    if (allUploaded) unmarkStop(stopId);
+  } catch {}
 }
 
 // ── Promote (evict dataUrl after grace period) ──────────────────────────
@@ -148,33 +160,42 @@ async function promoteStop(stopId) {
   if (!data) return;
 
   const sections = ["scopePhotos", "addonPhotos"];
-  let changed = false;
+  // Track which ts/url keys should have their dataUrl evicted.
+  const toEvict = new Set();
   let stillHasFresh = false;
 
   const now = Date.now();
   for (const key of sections) {
     const photos = data[key];
     if (!Array.isArray(photos)) continue;
-    const updated = photos.map(p => {
-      if (!p.url || !p.dataUrl) return p; // already promoted or never synced
+    photos.forEach(p => {
+      if (!p.url || !p.dataUrl) return; // already promoted or never synced
       const age = now - (p.syncedAt || 0);
       if (age >= PROMOTION_GRACE_MS) {
-        // Evict the dataUrl, keep everything else
-        const { dataUrl, ...rest } = p;
-        changed = true;
-        return rest;
+        toEvict.add(p.ts || p.url);
+      } else {
+        stillHasFresh = true;
       }
-      stillHasFresh = true;
-      return p;
     });
-    data = { ...data, [key]: updated };
   }
 
-  if (changed) {
-    primeField(stopId, data);
-    await saveField(stopId, data).catch(() => {});
+  if (toEvict.size > 0) {
+    await updateField(stopId, (existing) => {
+      const updates = {};
+      for (const key of sections) {
+        const photos = existing[key];
+        if (!Array.isArray(photos)) continue;
+        updates[key] = photos.map(p => {
+          if (toEvict.has(p.ts || p.url)) {
+            const { dataUrl, ...rest } = p;
+            return rest;
+          }
+          return p;
+        });
+      }
+      return updates;
+    }).catch(() => {});
   }
-  // If nothing left in grace window, remove from promotion queue
   if (!stillHasFresh) unmarkStopForPromotion(stopId);
 }
 

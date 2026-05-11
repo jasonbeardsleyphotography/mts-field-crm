@@ -146,6 +146,92 @@ export function primeField(id, data) {
   mirror.set(id, data || {});
 }
 
+// ── SHARED WRITE QUEUE ──────────────────────────────────────────────────────
+// Per-stop serialization for read-modify-write operations. Both the auto-
+// save (text/AI changes) and photo modifications (add/remove/edit/upload)
+// must go through this queue. Without it, two concurrent writes to the
+// same stop would read the same "before" state and clobber each other's
+// changes — exactly the bug that wiped photos when auto-save raced with
+// _processPhoto.
+const writeQueues = new Map();
+function _enqueueWrite(id, fn) {
+  const prev = writeQueues.get(id) || Promise.resolve();
+  const next = prev.then(fn, fn); // chain even if prev rejected
+  writeQueues.set(id, next);
+  // Drop the entry when the chain settles so the map doesn't leak.
+  next.finally(() => {
+    if (writeQueues.get(id) === next) writeQueues.delete(id);
+  });
+  return next;
+}
+
+// ── MERGE / UPDATE: surgical writes that don't clobber other fields ────────
+// mergeField(id, partial)         — shallow merge of `partial` into existing
+// updateField(id, fn)             — fn(existing) returns the partial to merge
+// Both are queued per-id so concurrent calls don't race. Both update the
+// in-memory mirror so peekField sees the latest. Use these for any write
+// that touches a SUBSET of the field record (text without photos, photos
+// without text, etc.). Use saveField only when you have the entire record.
+export function mergeField(id, partial) {
+  if (!id) return Promise.resolve();
+  return _enqueueWrite(id, async () => {
+    const existing = await loadField(id).catch(() => ({}));
+    const merged = { ...existing, ...partial, savedAt: Date.now() };
+    mirror.set(id, merged);
+    await saveField(id, merged).catch((e) => console.warn("mergeField save failed:", e));
+  });
+}
+export function updateField(id, transformer) {
+  if (!id || typeof transformer !== "function") return Promise.resolve();
+  return _enqueueWrite(id, async () => {
+    const existing = await loadField(id).catch(() => ({}));
+    const updates = transformer(existing) || {};
+    const merged = { ...existing, ...updates, savedAt: Date.now() };
+    mirror.set(id, merged);
+    await saveField(id, merged).catch((e) => console.warn("updateField save failed:", e));
+  });
+}
+
+// ── SYNCHRONOUS SLIM FLUSH ──────────────────────────────────────────────────
+// For pagehide/visibilitychange handlers where async writes can be cut off
+// before they commit. localStorage writes are synchronous, so the slim
+// mirror always lands before iOS suspends the page. On next open, peekField
+// reads this slim mirror and state initializes from the latest text — even
+// if the matching IDB write was interrupted mid-flight.
+export function saveFieldSync(id, data) {
+  if (!id || !data) return;
+  try {
+    const slim = {
+      scopeNotes: data.scopeNotes,
+      addonNotes: data.addonNotes,
+      videoUrls:  data.videoUrls,
+      aiScopeSummary: data.aiScopeSummary,
+      aiAddonEmail:   data.aiAddonEmail,
+      savedAt: Date.now(),
+      _scopePhotoCount: (data.scopePhotos || data.photos || []).length,
+      _addonPhotoCount: (data.addonPhotos || []).length,
+      _audioCount:      (data.audioClips  || []).length,
+    };
+    localStorage.setItem(LS_PREFIX + id, JSON.stringify(slim));
+  } catch {
+    try { localStorage.removeItem(LS_PREFIX + id); } catch {}
+  }
+}
+
+// ── SLIM MIRROR DIRECT READ ─────────────────────────────────────────────────
+// Reads localStorage directly, bypassing the in-memory mirror. Needed for
+// the recovery check on hydration: we compare the slim mirror's photo count
+// (what we last claimed to have) against IDB's actual photo count (what we
+// actually have). A mismatch signals possible data loss and we can pull
+// from Drive to recover.
+export function getFieldSlim(id) {
+  if (!id) return null;
+  try {
+    const raw = localStorage.getItem(LS_PREFIX + id);
+    return raw ? (JSON.parse(raw) || null) : null;
+  } catch { return null; }
+}
+
 // ── LIST IDS ────────────────────────────────────────────────────────────────
 export async function listFieldIds() {
   try {
