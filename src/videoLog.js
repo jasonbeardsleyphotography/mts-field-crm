@@ -163,7 +163,6 @@ export async function pruneLog() {
     });
     // Also cap at MAX_ENTRIES — delete oldest if we have more
     const total = await new Promise((resolve) => {
-      const db2 = _dbPromise; // already resolved
       const t = db.transaction(STORE, "readonly");
       const req = t.objectStore(STORE).count();
       req.onsuccess = () => resolve(req.result);

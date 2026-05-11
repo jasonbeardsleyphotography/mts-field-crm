@@ -86,53 +86,143 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const recTimerRef = useRef(null);
   const audioElRef = useRef(null);
   const notesRef = useRef(null);
-  const hydratedRef = useRef(false);
+  // CRITICAL: 'hydrated' is STATE, not a ref, because the auto-save effect
+  // must re-run when it flips true. With a ref, React doesn't know to
+  // re-evaluate dependent effects, so saves stay gated forever after the
+  // initial pass.
+  const [hydrated, setHydrated] = useState(false);
+  // Pending local-save timer — debounces writes to absorb dictation bursts
+  // (which fire setState per character). Without this, a single dictated
+  // sentence triggers ~30 multi-MB IDB writes, raising iOS memory pressure
+  // enough to kill the JS context.
+  const localSaveTimerRef = useRef(null);
+  const pendingDataRef = useRef(null);
 
   // Reset scroll on unmount so route screen isn't left zoomed
   useEffect(() => { return () => { setTimeout(() => { try { window.scrollTo(0,0); } catch(e){} }, 80); }; }, []);
 
   // Auto-save on every change — IndexedDB (local) + Drive.
-  // Emit "mts-field-synced" so Pipeline's field-summary memo refreshes if the
-  // user flips to Pipeline with OnsiteWindow already open.
-useEffect(() => {
-  const data = { scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult };
-  primeField(s.id, data);
-  const hasData = scopeNotes || addonNotes || scopePhotos.length || addonPhotos.length || videoUrls.length || audioClips.length || aiScopeResult || aiAddonResult;
-  if (!hydratedRef.current && !hasData) return;
-  saveField(s.id, data).then(() => {
-    try { window.dispatchEvent(new CustomEvent("mts-field-synced")); } catch {}
-  }).catch(() => {});
-  if (token) {
-    if (window._fieldSyncTimer) clearTimeout(window._fieldSyncTimer);
-    window._fieldSyncTimer = setTimeout(() => {
-      saveFieldToDrive(token, s.id, data).catch(() => {});
-    }, 3000);
-  }
-}, [scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeResult, aiAddonResult, s.id]);
+  //
+  // CRITICAL: This effect is GATED on `hydrated`. Without the gate, the
+  // initial render of a re-opened Onsite would write empty scopePhotos/
+  // addonPhotos to IDB (because peekField returns the slim localStorage
+  // mirror, which intentionally strips base64 photo data). That race
+  // permanently wipes photos if anything interrupts JS execution before
+  // the async hydration restore completes. With the gate, no save fires
+  // until loadField has confirmed what IDB already holds.
+  //
+  // Writes are RATE-LIMITED to at most once per 500ms (leading-trailing
+  // pattern: first change in a window schedules a save 500ms out;
+  // subsequent changes update the pending payload without resetting the
+  // timer). This absorbs dictation bursts (which fire setState per
+  // interim result, several times per second with megabyte-sized photo
+  // arrays in state) while still guaranteeing that no change waits more
+  // than 500ms to hit IDB. A pure trailing debounce would defer writes
+  // indefinitely during continuous dictation and lose everything on
+  // crash; pure no-debounce caused iOS memory-pressure context kills.
+  //
+  // Photos are added directly to IDB via _processPhoto (separate read-
+  // modify-write path), so rate-limiting here is safe for them — the
+  // raw photo bytes are durable before this effect ever runs.
+  useEffect(() => {
+    if (!hydrated) return;
+    const data = { scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult };
+    // primeField updates the in-memory mirror immediately so Pipeline /
+    // other consumers see the latest. Cheap, no IDB hit.
+    primeField(s.id, data);
+    pendingDataRef.current = data;
+    // If a save is already scheduled, just update pendingDataRef and let
+    // the existing timer fire — it'll pick up the latest data.
+    if (localSaveTimerRef.current) {
+      // still update Drive debounce
+    } else {
+      localSaveTimerRef.current = setTimeout(() => {
+        localSaveTimerRef.current = null;
+        const toSave = pendingDataRef.current;
+        pendingDataRef.current = null;
+        if (!toSave) return;
+        saveField(s.id, toSave).then(() => {
+          try { window.dispatchEvent(new CustomEvent("mts-field-synced")); } catch {}
+        }).catch(() => {});
+      }, 500);
+    }
+    if (token) {
+      if (window._fieldSyncTimer) clearTimeout(window._fieldSyncTimer);
+      window._fieldSyncTimer = setTimeout(() => {
+        saveFieldToDrive(token, s.id, data).catch(() => {});
+      }, 3000);
+    }
+  }, [hydrated, scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeResult, aiAddonResult, s.id, token]);
+
+  // Flush any pending rate-limited save on unmount so closing Onsite
+  // never loses the latest typing. Runs synchronously before React tears
+  // down the component.
+  useEffect(() => {
+    return () => {
+      if (localSaveTimerRef.current) {
+        clearTimeout(localSaveTimerRef.current);
+        localSaveTimerRef.current = null;
+      }
+      if (pendingDataRef.current) {
+        // Fire-and-forget — IDB writes can complete after component unmounts.
+        saveField(s.id, pendingDataRef.current).catch(() => {});
+        pendingDataRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.id]);
 
   // On mount (or when stop changes), hydrate from IndexedDB.
   // If peekField returned empty we'll get the data here; if it had a
   // localStorage-mirror value we'll still get the fresher IDB read.
+  //
+  // CRITICAL: For arrays (photos, audio, videos) we MERGE by timestamp
+  // rather than choosing IDB-or-state. This handles the case where the
+  // user captures a photo within the 50-200ms hydration window — state
+  // would have only the new photo (because _processPhoto's read-modify-
+  // write reads from IDB, not state), and a naive "keep state if non-
+  // empty" rule would drop the older IDB photos.
   useEffect(() => {
-  hydratedRef.current = false;
-  let dead = false;
-  loadField(s.id).then(data => {
-    if (dead) return;
-    hydratedRef.current = true;
-    if (!data || Object.keys(data).length === 0) return;
-    primeField(s.id, data);
-    if (!scopeNotes && (data.scopeNotes || data.myNotes)) setScopeNotes(data.scopeNotes || data.myNotes || "");
-    if (!addonNotes && data.addonNotes) setAddonNotes(data.addonNotes);
-    if (scopePhotos.length === 0 && (data.scopePhotos || data.photos)) setScopePhotos(data.scopePhotos || data.photos || []);
-    if (addonPhotos.length === 0 && data.addonPhotos) setAddonPhotos(data.addonPhotos);
-    if (videoUrls.length === 0 && (data.videoUrls || data.videoUrl)) setVideoUrls(data.videoUrls || (data.videoUrl ? [data.videoUrl] : []));
-    if (audioClips.length === 0 && data.audioClips) setAudioClips(data.audioClips);
-    if (!aiScopeResult && data.aiScopeSummary) setAiScopeResult(data.aiScopeSummary);
-    if (!aiAddonResult && data.aiAddonEmail) setAiAddonResult(data.aiAddonEmail);
-  });
-  return () => { dead = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [s.id]);
+    setHydrated(false);
+    let dead = false;
+    loadField(s.id).then(data => {
+      if (dead) return;
+      if (data && Object.keys(data).length > 0) {
+        primeField(s.id, data);
+        const idbScopeNotes = data.scopeNotes || data.myNotes || "";
+        const idbScopePhotos = data.scopePhotos || data.photos || [];
+        const idbAddonPhotos = data.addonPhotos || [];
+        const idbVideoUrls = data.videoUrls || (data.videoUrl ? [data.videoUrl] : []);
+        const idbAudioClips = data.audioClips || [];
+
+        // Scalars: only adopt IDB value if state is still the initial default.
+        if (idbScopeNotes)        setScopeNotes(prev => prev || idbScopeNotes);
+        if (data.addonNotes)      setAddonNotes(prev => prev || data.addonNotes);
+        if (data.aiScopeSummary)  setAiScopeResult(prev => prev || data.aiScopeSummary);
+        if (data.aiAddonEmail)    setAiAddonResult(prev => prev || data.aiAddonEmail);
+
+        // Arrays: merge by ts/timestamp/url so anything captured during the
+        // hydration window survives alongside whatever was already in IDB.
+        // State takes precedence on collision (preserves PhotoMarkup edits).
+        const mergeByKey = (idb, prev, getKey) => {
+          if (prev.length === 0) return idb;
+          const map = new Map();
+          idb.forEach(item => map.set(getKey(item), item));
+          prev.forEach(item => map.set(getKey(item), item)); // prev wins on key collision
+          return [...map.values()].sort((a, b) => (a.ts || a.timestamp || 0) - (b.ts || b.timestamp || 0));
+        };
+        if (idbScopePhotos.length) setScopePhotos(prev => mergeByKey(idbScopePhotos, prev, p => p.ts || p.url));
+        if (idbAddonPhotos.length) setAddonPhotos(prev => mergeByKey(idbAddonPhotos, prev, p => p.ts || p.url));
+        if (idbAudioClips.length)  setAudioClips(prev => mergeByKey(idbAudioClips, prev, a => a.ts || a.timestamp || a.url));
+        if (idbVideoUrls.length)   setVideoUrls(prev => prev.length === 0 ? idbVideoUrls : Array.from(new Set([...idbVideoUrls, ...prev])));
+      }
+      // Open the save gate AFTER setState calls are queued. React batches
+      // them, so the auto-save effect re-runs once with merged state.
+      setHydrated(true);
+    });
+    return () => { dead = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.id]);
   
   // If no local data, pull from Drive to populate on first open.
   // _scopePhotoCount/_addonPhotoCount are stored in the slim localStorage mirror
@@ -152,24 +242,35 @@ useEffect(() => {
         // this session get erased when a slow Drive response arrives.
         const local = await loadField(s.id).catch(() => ({}));
         if (dead) return;
-        const mergeArr = (a, b) => (a || []).length >= (b || []).length ? (a || []) : (b || []);
+        // Merge by ts/url so duplicates from cloud vs local collapse and any
+        // photos captured DURING the Drive fetch (already in state, may not
+        // yet be in IDB) survive.
+        const mergeByKey = (a, b, getKey) => {
+          const map = new Map();
+          (a || []).forEach(item => map.set(getKey(item), item));
+          (b || []).forEach(item => map.set(getKey(item), item));
+          return [...map.values()].sort((x, y) => (x.ts || x.timestamp || 0) - (y.ts || y.timestamp || 0));
+        };
         const merged = {
           ...local,
           ...cloud,
-          scopePhotos: mergeArr(cloud.scopePhotos || cloud.photos, local.scopePhotos || local.photos),
-          addonPhotos: mergeArr(cloud.addonPhotos, local.addonPhotos),
-          audioClips:  mergeArr(cloud.audioClips,  local.audioClips),
-          videoUrls:   mergeArr(cloud.videoUrls,   local.videoUrls),
+          scopePhotos: mergeByKey(cloud.scopePhotos || cloud.photos, local.scopePhotos || local.photos, p => p.ts || p.url),
+          addonPhotos: mergeByKey(cloud.addonPhotos, local.addonPhotos, p => p.ts || p.url),
+          audioClips:  mergeByKey(cloud.audioClips,  local.audioClips, a => a.ts || a.timestamp || a.url),
+          videoUrls:   Array.from(new Set([...(cloud.videoUrls || []), ...(local.videoUrls || [])])),
         };
-        if (cloud.scopeNotes || cloud.myNotes) setScopeNotes(cloud.scopeNotes || cloud.myNotes || "");
-        if (cloud.addonNotes) setAddonNotes(cloud.addonNotes);
-        if ((merged.scopePhotos || []).length) setScopePhotos(merged.scopePhotos);
-        if ((merged.addonPhotos || []).length) setAddonPhotos(merged.addonPhotos);
-        if (merged.videoUrls?.length) setVideoUrls(merged.videoUrls);
-        else if (cloud.videoUrl) setVideoUrls([cloud.videoUrl]);
-        if (merged.audioClips?.length) setAudioClips(merged.audioClips);
-        if (cloud.aiScopeSummary) setAiScopeResult(cloud.aiScopeSummary);
-        if (cloud.aiAddonEmail) setAiAddonResult(cloud.aiAddonEmail);
+        // Functional setState everywhere — preserves anything the user
+        // captured/typed during the Drive fetch window (state takes
+        // precedence on key collision via the merge above).
+        if (cloud.scopeNotes || cloud.myNotes) setScopeNotes(prev => prev || cloud.scopeNotes || cloud.myNotes || "");
+        if (cloud.addonNotes) setAddonNotes(prev => prev || cloud.addonNotes);
+        if ((merged.scopePhotos || []).length) setScopePhotos(prev => mergeByKey(merged.scopePhotos, prev, p => p.ts || p.url));
+        if ((merged.addonPhotos || []).length) setAddonPhotos(prev => mergeByKey(merged.addonPhotos, prev, p => p.ts || p.url));
+        if (merged.videoUrls?.length) setVideoUrls(prev => Array.from(new Set([...merged.videoUrls, ...prev])));
+        else if (cloud.videoUrl) setVideoUrls(prev => prev.length === 0 ? [cloud.videoUrl] : prev);
+        if (merged.audioClips?.length) setAudioClips(prev => mergeByKey(merged.audioClips, prev, a => a.ts || a.timestamp || a.url));
+        if (cloud.aiScopeSummary) setAiScopeResult(prev => prev || cloud.aiScopeSummary);
+        if (cloud.aiAddonEmail) setAiAddonResult(prev => prev || cloud.aiAddonEmail);
         saveField(s.id, merged).catch(() => {});
         primeField(s.id, merged);
         setCloudLoading(false);

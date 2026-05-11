@@ -6,6 +6,14 @@ self.addEventListener("install", (e) => {
   self.skipWaiting();
 });
 
+// App.jsx posts "SKIP_WAITING" when a new SW is installed and ready.
+// Required because skipWaiting() in install only works when no other
+// tab is controlled by the old SW — with multiple tabs the new SW
+// otherwise gets stuck in "waiting" indefinitely.
+self.addEventListener("message", (e) => {
+  if (e.data === "SKIP_WAITING") self.skipWaiting();
+});
+
 self.addEventListener("activate", (e) => {
   e.waitUntil(caches.keys().then(keys => Promise.all(
     keys.filter(k => k !== CACHE).map(k => caches.delete(k))

@@ -192,6 +192,11 @@ export default function App() {
   const [rawEvents, setRawEvents] = useState({});
   const [businessDays, setBusinessDays] = useState(() => getBusinessDays(10));
   const [selDay, setSelDay] = useState(0);
+  // Always-current ref so load(preserveDay=true) reads the real selDay
+  // without needing selDay in its useCallback deps (which would cause a
+  // full re-fetch every time the user switches days).
+  const selDayRef = useRef(0);
+  useEffect(() => { selDayRef.current = selDay; }, [selDay]);
   const [expanded, setExpanded] = useState(null);
   const [dismissed, setDismissed] = useState(() => lsGet("mts-dismissed", {}));
   useEffect(() => { lsSet("mts-dismissed", dismissed); }, [dismissed]);
@@ -441,7 +446,7 @@ export default function App() {
       // PHASE 1: Load the currently-selected day first (or today on initial load)
       // When preserveDay=true (manual refresh), stay on the current selDay index.
       // On initial load, always jump to today (index 0).
-      const targetIdx = preserveDay ? selDay : 0;
+      const targetIdx = preserveDay ? selDayRef.current : 0;
       const targetDay = days[targetIdx] || days[0];
       const ts = new Date(targetDay); ts.setHours(0,0,0,0);
       const te = new Date(targetDay); te.setHours(23,59,59,999);
