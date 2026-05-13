@@ -21,7 +21,7 @@
    - Diagnostic log to videoLog.js
    ═══════════════════════════════════════════════════════════════════════════ */
 
-import { loadField, saveField, primeField } from "./fieldStore";
+import { loadField, saveField, primeField, updateField } from "./fieldStore";
 import { incUpload, decUpload } from "./uploadStatus";
 import { vlogInfo, vlogWarn, vlogError } from "./videoLog";
 import {
@@ -35,7 +35,7 @@ import {
 
 // ── Tunables ─────────────────────────────────────────────────────────────
 
-const CHUNK_SIZE = 5 * 1024 * 1024;       // 5MB chunks
+const CHUNK_SIZE = 512 * 1024;            // 512KB chunks — small enough to complete before iOS suspends JS
 const CHUNK_RETRY_LIMIT = 5;              // 5 attempts per chunk
 const WORKER_LOCK_WATCHDOG_MS = 2 * 60 * 1000; // 2 min — iOS suspends JS mid-upload
 const RETRY_BACKOFF_MS = [1500, 3000, 6000, 12000, 30000];
@@ -99,6 +99,24 @@ export function setPaused(p) {
   vlogInfo("queue.paused", { paused: _isPaused });
   notify();
   if (!_isPaused) _kick();
+}
+
+// ── Wake Lock ─────────────────────────────────────────────────────────────
+// Keeps the screen on while uploading so iOS doesn't suspend JS mid-chunk.
+// Supported on iOS 16.4+ and modern Android Chrome. Silently no-ops on older
+// browsers — the chunk-size reduction covers those cases instead.
+
+let _wakeLock = null;
+async function _acquireWakeLock() {
+  if (!("wakeLock" in navigator) || _wakeLock) return;
+  try {
+    _wakeLock = await navigator.wakeLock.request("screen");
+    _wakeLock.addEventListener("release", () => { _wakeLock = null; });
+  } catch {}
+}
+function _releaseWakeLock() {
+  try { _wakeLock?.release(); } catch {}
+  _wakeLock = null;
 }
 
 // ── Subscribers ──────────────────────────────────────────────────────────
@@ -216,6 +234,7 @@ async function _processNext() {
   if (_processing || _isPaused) return;
   _processing = true;
   _processingStartMs = Date.now();
+  await _acquireWakeLock();
   try {
     while (true) {
       if (_isPaused) break;
@@ -228,6 +247,7 @@ async function _processNext() {
   } finally {
     _processing = false;
     _processingStartMs = 0;
+    _releaseWakeLock();
   }
 }
 
@@ -404,16 +424,15 @@ async function _finalize(id, fileId, token) {
 
   const shareUrl = buildShareUrl(fileId);
 
-  // Save the link to the card's field data
+  // Save the link to the card's field data via the shared write queue so
+  // this doesn't race with concurrent photo operations on the same stop.
   try {
-    const saved = await loadField(item.stopId).catch(() => ({}));
-    const existing = saved?.videoUrls || (saved?.videoUrl ? [saved.videoUrl] : []);
-    if (!existing.includes(shareUrl)) {
-      const next = { ...(saved || {}), videoUrls: [...existing, shareUrl], savedAt: Date.now() };
-      primeField(item.stopId, next);
-      await saveField(item.stopId, next).catch(() => {});
-      try { window.dispatchEvent(new CustomEvent("mts-video-uploaded", { detail: { stopId: item.stopId, shareUrl, fileId } })); } catch {}
-    }
+    await updateField(item.stopId, (existing) => {
+      const urls = existing.videoUrls || (existing.videoUrl ? [existing.videoUrl] : []);
+      if (urls.includes(shareUrl)) return {};
+      return { videoUrls: [...urls, shareUrl] };
+    });
+    try { window.dispatchEvent(new CustomEvent("mts-video-uploaded", { detail: { stopId: item.stopId, shareUrl, fileId } })); } catch {}
   } catch (e) {
     vlogWarn("finalize.field_write_failed", { msg: e?.message }, id);
   }
@@ -439,14 +458,21 @@ export function startVideoQueueWatcher(getToken) {
     if (document.visibilityState === "visible") {
       // iOS suspends JS execution when backgrounded, which can leave a fetch()
       // hanging forever with _processing locked. Force-release if the lock has
-      // been held longer than 90s — a legitimate chunk upload never takes that
-      // long end-to-end (60s timeout + backoff = ~75s max).
+      // been held longer than 90s — with 512KB chunks a legitimate upload
+      // never takes that long end-to-end.
       if (_processing && _processingStartMs && Date.now() - _processingStartMs > 90_000) {
         vlogWarn("worker.foreground_unstick", { heldForMs: Date.now() - _processingStartMs });
         _processing = false;
       }
       vlogInfo("event.visible", null);
+      // Re-acquire wake lock — the system releases it when the screen dims
+      // and may not restore it automatically when the user returns.
+      if (_processing) _acquireWakeLock();
       _kick();
+    } else {
+      // Screen going off — release so battery isn't drained if upload finishes
+      // while backgrounded.
+      _releaseWakeLock();
     }
   });
 

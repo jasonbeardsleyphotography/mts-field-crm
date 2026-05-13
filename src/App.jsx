@@ -142,26 +142,24 @@ export default function App() {
     return () => clearInterval(interval);
   }, [token, silentReauth]);
 
-  // Visibility-change refresh. Gated on having a token in state so we don't
-  // forcibly re-auth a user who explicitly signed out — `token` only becomes
-  // null on explicit sign-out, on confirmed silent-reauth failure, or before
-  // boot completes (in which case the cold-start effect handles it). For a
-  // session that's been alive in memory while the phone was asleep, `token`
-  // is still the last value we held, so this handler refreshes it on wake.
-  // Threshold widened from 10 min to 20 min so cellular reauth has time to
-  // complete before the next API call needs the token.
+  // Visibility-change refresh — installed unconditionally so it fires even
+  // when the in-memory token is null (e.g. after an error cleared it, or on
+  // boot before cold-start reauth completes). Checks localStorage directly
+  // rather than relying on `token` state, and skips if the user explicitly
+  // signed out (no stored token at all and authBootChecked is true).
   useEffect(() => {
-    if (!token) return;
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       const saved = lsGet("mts-token", null);
-      if (!saved || saved.expiry - Date.now() < 20 * 60 * 1000) {
-        silentReauth();
-      }
+      // If there's no stored record at all AND boot already finished, the user
+      // explicitly signed out — respect that and don't auto-reauth.
+      if (!saved && authBootChecked) return;
+      const needsRefresh = !saved || saved.expiry - Date.now() < 20 * 60 * 1000;
+      if (needsRefresh) silentReauth();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [token, silentReauth]);
+  }, [silentReauth, authBootChecked]);
 
   // ── DRIVE AUTH ERROR HANDLER ─────────────────────────────────────────────
   // When any Drive API call returns 401/403, automatically attempt a silent

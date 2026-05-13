@@ -140,6 +140,30 @@ function _pipelineQueue(stopId, fn) {
   return next;
 }
 
+// Union-merge two photo arrays by ts (timestamp key). Neither array is
+// discarded — photos present only in local get kept (not yet synced to Drive),
+// photos present only in cloud get kept (Drive is the canonical record).
+// When the same photo appears in both, local dataUrl wins (highest fidelity,
+// includes markup edits) and cloud url wins (canonical share link).
+function _mergePhotoArrays(local = [], cloud = []) {
+  const byKey = new Map();
+  for (const p of local) {
+    const k = p.ts || p.url;
+    if (k) byKey.set(k, p);
+  }
+  for (const p of cloud) {
+    const k = p.ts || p.url;
+    if (!k) continue;
+    if (byKey.has(k)) {
+      const ex = byKey.get(k);
+      byKey.set(k, { ...ex, ...p, dataUrl: ex.dataUrl || p.dataUrl });
+    } else {
+      byKey.set(k, p);
+    }
+  }
+  return [...byKey.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+}
+
 const F = "'Oswald',sans-serif";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -389,22 +413,25 @@ Property: ${card.addr || ""}`);
         const cloud = await loadFieldFromDrive(token, id);
         if (dead) return;
         if (cloud && Object.keys(cloud).length > 0) {
-          // Merge: Drive wins on text/AI, but keep whichever photo array is longer
+          // Merge: Drive wins on text/AI fields.
+          // Photos: union-merge by ts key so neither local-only (new, unsynced)
+          // nor cloud-only (synced from another device) photos are dropped.
+          // Video/audio: union dedup.
+          const localScope = local.scopePhotos || local.photos || [];
+          const localAddon = local.addonPhotos || [];
+          const localAudio = local.audioClips || [];
+          const localVids  = local.videoUrls || (local.videoUrl ? [local.videoUrl] : []);
+          const cloudScope = cloud.scopePhotos || cloud.photos || [];
+          const cloudAddon = cloud.addonPhotos || [];
+          const cloudAudio = cloud.audioClips || [];
+          const cloudVids  = cloud.videoUrls || [];
           const merged = {
             ...local,
             ...cloud,
-            scopePhotos: (cloud.scopePhotos || cloud.photos || []).length >= (local.scopePhotos || local.photos || []).length
-              ? (cloud.scopePhotos || cloud.photos || [])
-              : (local.scopePhotos || local.photos || []),
-            addonPhotos: (cloud.addonPhotos || []).length >= (local.addonPhotos || []).length
-              ? (cloud.addonPhotos || [])
-              : (local.addonPhotos || []),
-            audioClips: (cloud.audioClips || []).length >= (local.audioClips || []).length
-              ? (cloud.audioClips || [])
-              : (local.audioClips || []),
-            videoUrls: (cloud.videoUrls?.length || 0) >= (local.videoUrls?.length || 0)
-              ? (cloud.videoUrls || [])
-              : (local.videoUrls || (local.videoUrl ? [local.videoUrl] : [])),
+            scopePhotos: _mergePhotoArrays(localScope, cloudScope),
+            addonPhotos: _mergePhotoArrays(localAddon, cloudAddon),
+            audioClips: cloudAudio.length >= localAudio.length ? cloudAudio : localAudio,
+            videoUrls: [...new Set([...localVids, ...cloudVids])],
           };
           // CRITICAL: write merged data back to IDB so that any queue operations
           // (markup, add/remove photo) that call loadField() see the full photo
@@ -869,6 +896,9 @@ Property: ${card.addr || ""}`);
         onDragStart={e => onDragStart(e, card.id)}
         onClick={() => {
           if (selectMode) { toggleSelect(card.id); return; }
+          // Clear stale cache so the render uses peekField (in-memory mirror,
+          // always current) until the async IDB+Drive load completes.
+          setFieldCache(prev => { const n = { ...prev }; delete n[card.id]; return n; });
           setDetailCard(card);
         }}
         style={{
