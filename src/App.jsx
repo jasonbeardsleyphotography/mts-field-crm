@@ -17,7 +17,8 @@ import {
   IconArrowLeft, IconNavigation, IconMessageSquare, IconVolume2,
   IconClipboard, IconX, IconRotateCcw, IconRefresh, IconReorder, IconUndo,
   IconPlus, IconSearch, IconTrash, IconChevronDown, IconChevronRight,
-  IconCloud, IconCloudOff, IconCheckCircle, IconEdit, IconPhone, IconMail, IconClock, IconCalendar
+  IconCloud, IconCloudOff, IconCheckCircle, IconEdit, IconPhone, IconMail, IconClock, IconCalendar,
+  IconNoSymbol
 } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -142,26 +143,24 @@ export default function App() {
     return () => clearInterval(interval);
   }, [token, silentReauth]);
 
-  // Visibility-change refresh. Gated on having a token in state so we don't
-  // forcibly re-auth a user who explicitly signed out — `token` only becomes
-  // null on explicit sign-out, on confirmed silent-reauth failure, or before
-  // boot completes (in which case the cold-start effect handles it). For a
-  // session that's been alive in memory while the phone was asleep, `token`
-  // is still the last value we held, so this handler refreshes it on wake.
-  // Threshold widened from 10 min to 20 min so cellular reauth has time to
-  // complete before the next API call needs the token.
+  // Visibility-change refresh — installed unconditionally so it fires even
+  // when the in-memory token is null (e.g. after an error cleared it, or on
+  // boot before cold-start reauth completes). Checks localStorage directly
+  // rather than relying on `token` state, and skips if the user explicitly
+  // signed out (no stored token at all and authBootChecked is true).
   useEffect(() => {
-    if (!token) return;
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       const saved = lsGet("mts-token", null);
-      if (!saved || saved.expiry - Date.now() < 20 * 60 * 1000) {
-        silentReauth();
-      }
+      // If there's no stored record at all AND boot already finished, the user
+      // explicitly signed out — respect that and don't auto-reauth.
+      if (!saved && authBootChecked) return;
+      const needsRefresh = !saved || saved.expiry - Date.now() < 20 * 60 * 1000;
+      if (needsRefresh) silentReauth();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [token, silentReauth]);
+  }, [silentReauth, authBootChecked]);
 
   // ── DRIVE AUTH ERROR HANDLER ─────────────────────────────────────────────
   // When any Drive API call returns 401/403, automatically attempt a silent
@@ -793,6 +792,7 @@ export default function App() {
   // ── ACTIONS ──────────────────────────────────────────────────────────────
   const openOnsite = (stop) => { setOnsiteStop(stop); setExpanded(null); };
   const [declineConfirm, setDeclineConfirm] = useState(null); // stop id awaiting confirm
+  const [rejectConfirm, setRejectConfirm] = useState(null);  // stop id awaiting reject confirm
   const [signOutConfirm, setSignOutConfirm] = useState(false);
   // (addStopOpen is declared above, near the clientIndex computation — its
   // useEffect needs to fire when this flag flips, and the effect lives there.)
@@ -918,6 +918,26 @@ export default function App() {
     setDeclineConfirm(null);
     setOnsiteStop(null);
   };
+
+  // markReject = flag the stop for rejection in SingleOps and push to pipeline
+  const markReject = (id) => {
+    const stop = stopMap[id];
+    if (stop) {
+      const pl = loadPipeline();
+      pl[id] = {
+        id, cn: stop.cn, addr: stop.addr, phone: stop.phone, email: stop.email,
+        jn: stop.jn, notes: stop.notes, constraint: stop.constraint,
+        stage: "estimate_needed", addedAt: Date.now(), stageChangedAt: Date.now(),
+        hot: false, pendingRejectInSingleops: true,
+      };
+      savePipeline(pl);
+      if (token) pushCalendarColor(id, "estimate_needed", token);
+    }
+    setDismissed(p => ({...p,[id]:Date.now()}));
+    setExpanded(null);
+    setRejectConfirm(null);
+  };
+
   // markDone = move to pipeline as "estimate_needed"
   const markDone = (id) => {
     const stop = stopMap[id];
@@ -999,16 +1019,13 @@ export default function App() {
     if (!window.speechSynthesis) { setTtsError("TTS not supported in this browser"); return; }
 
     const text = stop.notes || "No notes available.";
-    setTtsSpeaking(true);
     setTtsError(null);
 
-    // Clear any stale iOS synthesis queue before starting — required on iOS to
-    // prevent a stuck previous utterance from blocking the new one.
+    // Clear any stale iOS synthesis queue before starting.
     window.speechSynthesis.cancel();
 
     // iOS pauses speechSynthesis when the audio route changes (CarPlay plug/unplug,
-    // Bluetooth handoff). Without intervention it stays paused indefinitely.
-    // This interval resumes it whenever that happens.
+    // Bluetooth handoff). This interval resumes it whenever that happens.
     const resumeInterval = setInterval(() => {
       if (window.speechSynthesis.paused && window.speechSynthesis.speaking) {
         window.speechSynthesis.resume();
@@ -1023,6 +1040,14 @@ export default function App() {
       u.rate = 0.88;
       u.pitch = 1;
 
+      // Only flip the button to "active" when speech actually begins. On iOS,
+      // setting ttsSpeaking=true before speak() causes a stuck-active state when
+      // the system silently fails to start: the button shows active with no audio,
+      // the next tap resets it, and the tap after that finally works. Waiting for
+      // onstart means if iOS drops the utterance silently, the button stays tappable
+      // and the next tap retries normally.
+      u.onstart = () => { setTtsSpeaking(true); };
+
       u.onend = () => {
         clearInterval(resumeInterval);
         ttsSafetyTimer.current = null;
@@ -1031,14 +1056,13 @@ export default function App() {
 
       u.onerror = (ev) => {
         // "interrupted" = stopped by another utterance; "canceled" = user/cancel() call.
-        // Both are intentional stops — do not show an error.
         if (ev.error === "interrupted" || ev.error === "canceled") {
           clearInterval(resumeInterval);
           ttsSafetyTimer.current = null;
           setTtsSpeaking(false);
           return;
         }
-        // Retry once — transient failure is common during CarPlay/Bluetooth audio handoff.
+        // Retry once on transient failures (CarPlay/Bluetooth handoff).
         if (attempts < 2) {
           setTimeout(attempt, 350);
           return;
@@ -1056,8 +1080,7 @@ export default function App() {
       window.speechSynthesis.speak(u);
     };
 
-    // Small delay after cancel() so iOS finishes clearing audio state before
-    // we queue the new utterance.
+    // Small delay after cancel() so iOS finishes clearing audio state.
     const voices = window.speechSynthesis.getVoices();
     if (voices.length) { setTimeout(attempt, 50); }
     else { window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.onvoiceschanged = null; setTimeout(attempt, 50); }; }
@@ -1213,9 +1236,14 @@ export default function App() {
           {lastSyncTime>0 && <span style={{fontSize:9,color:"#3a5060",fontFamily:"'Oswald',sans-serif"}}>{Math.floor((Date.now()-lastSyncTime)/60000)<1?"now":`${Math.floor((Date.now()-lastSyncTime)/60000)}m`}</span>}
         </button>}
         <div style={{flex:1}}/>
-        {view === "route" && <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"5px 10px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0b10",color:"#f0f4fa",fontSize:11,fontWeight:600,cursor:"pointer",outline:"none",appearance:"auto",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
-          {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
-        </select>}
+        {view === "route" && <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <button onClick={()=>setRouteSearchOpen(!routeSearchOpen)} style={{padding:"5px 7px",borderRadius:8,background:routeSearchOpen?"rgba(59,130,246,.12)":"transparent",border:`1px solid ${routeSearchOpen?"rgba(59,130,246,.35)":"#2a3560"}`,color:routeSearchOpen?"#3B82F6":"#3a4a60",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <IconSearch size={14} color={routeSearchOpen?"#3B82F6":"#3a4a60"} />
+          </button>
+          <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"5px 10px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0b10",color:"#f0f4fa",fontSize:11,fontWeight:600,cursor:"pointer",outline:"none",appearance:"auto",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
+            {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
+          </select>
+        </div>}
         {view === "pipeline" && <input value={pipelineSearch} onChange={e=>setPipelineSearch(e.target.value)} placeholder="Search..." style={{maxWidth:180,padding:"5px 10px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:12,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none"}} />}
       </div>
 
@@ -1301,15 +1329,16 @@ export default function App() {
                 {s.email && <div style={{fontSize:13,color:"#a0b8d0",marginBottom:8,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#a0b8d0"/>{s.email}</div>}
                 {declineConfirm === s.id ? (
                   <button onClick={()=>decline(s.id)} style={{width:"100%",padding:"11px 0",marginTop:4,borderRadius:8,background:"rgba(200,60,60,.15)",border:"1px solid rgba(200,60,60,.3)",color:"#FF5555",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",animation:"pulse 1s infinite",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconX size={14} color="#FF5555"/>CONFIRM DECLINE?</button>
+                ) : rejectConfirm === s.id ? (
+                  <button onClick={()=>markReject(s.id)} style={{width:"100%",padding:"11px 0",marginTop:4,borderRadius:8,background:"rgba(255,140,0,.15)",border:"1px solid rgba(255,140,0,.4)",color:"#FF8C00",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",animation:"pulse 1s infinite",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconNoSymbol size={14} color="#FF8C00"/>CONFIRM REJECT?</button>
                 ) : (
                   <div style={{display:"flex",gap:6,marginTop:4}}>
                     {s.phone && <button onClick={()=>{setTextSheet(s);setOtwMinutes(null);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#1a2035",border:"1px solid #2a3560",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconMessageSquare size={16} color="#a0b8d0"/></button>}
-                    {s.addr && <button onClick={()=>navigate(s.addr)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconNavigation size={16} color="#3B82F6"/></button>}
                     {s.notes && <button onClick={()=>speakStop(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:ttsSpeaking?"rgba(100,80,200,.18)":"rgba(100,80,200,.08)",border:"1px solid rgba(100,80,200,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{ttsSpeaking ? <IconX size={16} color="#8a80c0"/> : <IconVolume2 size={16} color="#8a80c0"/>}</button>}
                     <button onClick={()=>openOnsite(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(16,185,129,.06)",border:"1px solid rgba(16,185,129,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconClipboard size={16} color="#10B981"/></button>
-                    {/* Move to a different day — patches Google Calendar */}
                     <button onClick={()=>setMovePicker(movePicker?.stopId === s.id ? null : { stopId: s.id })} title="Move to another day" style={{flex:1,padding:"10px 0",borderRadius:8,background:movePicker?.stopId===s.id?"rgba(246,191,38,.18)":"rgba(246,191,38,.06)",border:`1px solid ${movePicker?.stopId===s.id?"rgba(246,191,38,.4)":"rgba(246,191,38,.15)"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconCalendar size={16} color="#F6BF26"/></button>
-                    <button onClick={()=>setDeclineConfirm(s.id)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(200,60,60,.06)",border:"1px solid rgba(200,60,60,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={16} color="#a06060"/></button>
+                    <button onClick={()=>{setDeclineConfirm(s.id);setRejectConfirm(null);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(200,60,60,.06)",border:"1px solid rgba(200,60,60,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={16} color="#a06060"/></button>
+                    <button onClick={()=>{setRejectConfirm(s.id);setDeclineConfirm(null);}} title="Flag: reject in SingleOps" style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(255,140,0,.06)",border:"1px solid rgba(255,140,0,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconNoSymbol size={16} color="#a07030"/></button>
                     {!s.isTask && <button onClick={()=>deleteStop(s.id)} title="Delete permanently" style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(100,100,100,.06)",border:"1px solid rgba(100,100,100,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconTrash size={16} color="#4a5a70"/></button>}
                   </div>
                 )}
@@ -1361,6 +1390,10 @@ export default function App() {
             <button onClick={()=>{setRouteSearchOpen(false);setRouteSearch("");}} style={{padding:"6px 8px",borderRadius:6,background:"transparent",border:"none",color:"#4a5a70",fontSize:12,cursor:"pointer"}}><IconX size={13} color="#4a5a70"/></button>
           </div>}
           <div style={{display:"flex",alignItems:"center",padding:"4px 8px",gap:4}}>
+            <button onClick={undo} disabled={!undoStack.length} title="Undo"
+              style={{padding:"7px",borderRadius:8,background:"transparent",border:`1px solid ${undoStack.length?"#1a2035":"transparent"}`,cursor:undoStack.length?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <IconUndo size={14} color={undoStack.length?"#5a6580":"#1a2035"}/>
+            </button>
             {completed.length>0 ? (
               <button onClick={()=>{
                 const next = !completedOpen;
@@ -1373,19 +1406,16 @@ export default function App() {
                 <span style={{transform:completedOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7}}>▶</span>
                 <IconCheckCircle size={13} color="#10B981"/> {completed.length}
               </button>
-            ) : <div style={{width:8}}/>}
+            ) : null}
             <div style={{flex:1}}/>
-            <button onClick={()=>setRouteSearchOpen(!routeSearchOpen)} style={{padding:"7px",borderRadius:8,background:routeSearchOpen?"rgba(59,130,246,.12)":"transparent",border:"1px solid #1a2030",color:routeSearchOpen?"#3B82F6":"#3a4a60",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <IconSearch size={15} color={routeSearchOpen?"#3B82F6":"#3a4a60"} />
-            </button>
-            <button onClick={() => load(true)} disabled={loading} style={{padding:"7px",borderRadius:8,background:"#1a2035",border:"1px solid #1a2030",color:loading?"#2a3050":"#5a6580",cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <IconRefresh size={15} color={loading?"#2a3050":"#5a6580"} style={{animation:loading?"spin 1s linear infinite":undefined}} />
-            </button>
             {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"7px",borderRadius:8,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
               <IconNavigation size={15} color="#3B82F6" />
             </button>}
-            <button onClick={()=>setAddStopOpen(true)} style={{padding:"7px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#3a4a60",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <IconPlus size={15} color="#3a4a60" />
+            <button
+              onClick={()=>{ if(signOutConfirm){ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
+              title={signOutConfirm ? "Tap again to confirm" : "Sign out"}
+              style={{padding:"7px",borderRadius:8,background:signOutConfirm?"rgba(255,85,85,.15)":"transparent",border:`1px solid ${signOutConfirm?"rgba(255,85,85,.4)":"#1a2035"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s"}}>
+              <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={signOutConfirm?"#FF5555":"#3a4a60"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
             </button>
           </div>
         </div>
@@ -1412,24 +1442,22 @@ export default function App() {
 
       {/* ── BOTTOM BAR ──────────────────────────────────────────────── */}
       {view === "route" && <div style={{borderTop:"1px solid #0e1520",padding:"4px 10px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,background:"#080a10",flexShrink:0}}>
-        {/* Undo — left */}
-        <button onClick={undo} disabled={!undoStack.length} title="Undo"
-          style={{width:32,height:32,borderRadius:8,background:"transparent",border:`1px solid ${undoStack.length?"#1a2035":"transparent"}`,cursor:undoStack.length?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <IconUndo size={14} color={undoStack.length?"#5a6580":"#1a2035"}/>
+        {/* Refresh — left */}
+        <button onClick={() => load(true)} disabled={loading} title="Refresh"
+          style={{width:36,height:36,borderRadius:8,background:"#1a2035",border:"1px solid #1a2030",color:loading?"#2a3050":"#5a6580",cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <IconRefresh size={16} color={loading?"#2a3050":"#5a6580"} style={{animation:loading?"spin 1s linear infinite":undefined}} />
         </button>
-        {/* Reorder — center, 60% wide */}
+        {/* Reorder — center */}
         <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}}
           title={reorderMode?"Done reordering":"Reorder stops"}
-          style={{width:"60%",height:32,borderRadius:8,background:reorderMode?"rgba(142,36,170,.2)":"rgba(255,255,255,.04)",border:`1px solid ${reorderMode?"rgba(142,36,170,.5)":"#252d47"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,transition:"all .15s",flexShrink:0}}>
+          style={{flex:1,height:36,borderRadius:8,background:reorderMode?"rgba(142,36,170,.2)":"rgba(255,255,255,.04)",border:`1px solid ${reorderMode?"rgba(142,36,170,.5)":"#252d47"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,transition:"all .15s"}}>
           <IconReorder size={15} color={reorderMode?"#c8a0e8":"#5a6890"}/>
           <span style={{fontSize:11,fontWeight:700,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",color:reorderMode?"#c8a0e8":"#5a6890"}}>{reorderMode?"DONE":"REORDER"}</span>
         </button>
-        {/* Sign out — right */}
-        <button
-          onClick={()=>{ if(signOutConfirm){ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
-          title={signOutConfirm ? "Tap again to confirm" : "Sign out"}
-          style={{width:32,height:32,borderRadius:8,background:signOutConfirm?"rgba(255,85,85,.15)":"transparent",border:`1px solid ${signOutConfirm?"rgba(255,85,85,.4)":"#1a2035"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all .15s"}}>
-          <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={signOutConfirm?"#FF5555":"#3a4a60"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        {/* Add Visit — right */}
+        <button onClick={()=>setAddStopOpen(true)} title="Add a stop"
+          style={{width:36,height:36,borderRadius:8,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <IconPlus size={16} color="#3B82F6" />
         </button>
       </div>}
       {view === "pipeline" && <div style={{borderTop:"1px solid #0e1520",padding:"4px 10px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"flex-end",background:"#080a10",flexShrink:0}}>
