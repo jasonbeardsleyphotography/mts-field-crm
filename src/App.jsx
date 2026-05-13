@@ -1211,9 +1211,14 @@ export default function App() {
           {lastSyncTime>0 && <span style={{fontSize:9,color:"#3a5060",fontFamily:"'Oswald',sans-serif"}}>{Math.floor((Date.now()-lastSyncTime)/60000)<1?"now":`${Math.floor((Date.now()-lastSyncTime)/60000)}m`}</span>}
         </button>}
         <div style={{flex:1}}/>
-        {view === "route" && <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"5px 10px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0b10",color:"#f0f4fa",fontSize:11,fontWeight:600,cursor:"pointer",outline:"none",appearance:"auto",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
-          {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
-        </select>}
+        {view === "route" && <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <button onClick={()=>setRouteSearchOpen(!routeSearchOpen)} style={{padding:"5px 7px",borderRadius:8,background:routeSearchOpen?"rgba(59,130,246,.12)":"transparent",border:`1px solid ${routeSearchOpen?"rgba(59,130,246,.35)":"#2a3560"}`,color:routeSearchOpen?"#3B82F6":"#3a4a60",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <IconSearch size={14} color={routeSearchOpen?"#3B82F6":"#3a4a60"} />
+          </button>
+          <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"5px 10px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0b10",color:"#f0f4fa",fontSize:11,fontWeight:600,cursor:"pointer",outline:"none",appearance:"auto",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
+            {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
+          </select>
+        </div>}
         {view === "pipeline" && <input value={pipelineSearch} onChange={e=>setPipelineSearch(e.target.value)} placeholder="Search..." style={{maxWidth:180,padding:"5px 10px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:12,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none"}} />}
       </div>
 
@@ -1359,6 +1364,10 @@ export default function App() {
             <button onClick={()=>{setRouteSearchOpen(false);setRouteSearch("");}} style={{padding:"6px 8px",borderRadius:6,background:"transparent",border:"none",color:"#4a5a70",fontSize:12,cursor:"pointer"}}><IconX size={13} color="#4a5a70"/></button>
           </div>}
           <div style={{display:"flex",alignItems:"center",padding:"4px 8px",gap:4}}>
+            <button onClick={undo} disabled={!undoStack.length} title="Undo"
+              style={{padding:"7px",borderRadius:8,background:"transparent",border:`1px solid ${undoStack.length?"#1a2035":"transparent"}`,cursor:undoStack.length?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <IconUndo size={14} color={undoStack.length?"#5a6580":"#1a2035"}/>
+            </button>
             {completed.length>0 ? (
               <button onClick={()=>{
                 const next = !completedOpen;
@@ -1371,19 +1380,16 @@ export default function App() {
                 <span style={{transform:completedOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7}}>▶</span>
                 <IconCheckCircle size={13} color="#10B981"/> {completed.length}
               </button>
-            ) : <div style={{width:8}}/>}
+            ) : null}
             <div style={{flex:1}}/>
-            <button onClick={()=>setRouteSearchOpen(!routeSearchOpen)} style={{padding:"7px",borderRadius:8,background:routeSearchOpen?"rgba(59,130,246,.12)":"transparent",border:"1px solid #1a2030",color:routeSearchOpen?"#3B82F6":"#3a4a60",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <IconSearch size={15} color={routeSearchOpen?"#3B82F6":"#3a4a60"} />
-            </button>
-            <button onClick={() => load(true)} disabled={loading} style={{padding:"7px",borderRadius:8,background:"#1a2035",border:"1px solid #1a2030",color:loading?"#2a3050":"#5a6580",cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <IconRefresh size={15} color={loading?"#2a3050":"#5a6580"} style={{animation:loading?"spin 1s linear infinite":undefined}} />
-            </button>
             {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"7px",borderRadius:8,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
               <IconNavigation size={15} color="#3B82F6" />
             </button>}
-            <button onClick={()=>setAddStopOpen(true)} style={{padding:"7px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#3a4a60",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <IconPlus size={15} color="#3a4a60" />
+            <button
+              onClick={()=>{ if(signOutConfirm){ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
+              title={signOutConfirm ? "Tap again to confirm" : "Sign out"}
+              style={{padding:"7px",borderRadius:8,background:signOutConfirm?"rgba(255,85,85,.15)":"transparent",border:`1px solid ${signOutConfirm?"rgba(255,85,85,.4)":"#1a2035"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s"}}>
+              <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={signOutConfirm?"#FF5555":"#3a4a60"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
             </button>
           </div>
         </div>
@@ -1410,24 +1416,22 @@ export default function App() {
 
       {/* ── BOTTOM BAR ──────────────────────────────────────────────── */}
       {view === "route" && <div style={{borderTop:"1px solid #0e1520",padding:"4px 10px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,background:"#080a10",flexShrink:0}}>
-        {/* Undo — left */}
-        <button onClick={undo} disabled={!undoStack.length} title="Undo"
-          style={{width:32,height:32,borderRadius:8,background:"transparent",border:`1px solid ${undoStack.length?"#1a2035":"transparent"}`,cursor:undoStack.length?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <IconUndo size={14} color={undoStack.length?"#5a6580":"#1a2035"}/>
+        {/* Refresh — left */}
+        <button onClick={() => load(true)} disabled={loading} title="Refresh"
+          style={{width:36,height:36,borderRadius:8,background:"#1a2035",border:"1px solid #1a2030",color:loading?"#2a3050":"#5a6580",cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <IconRefresh size={16} color={loading?"#2a3050":"#5a6580"} style={{animation:loading?"spin 1s linear infinite":undefined}} />
         </button>
-        {/* Reorder — center, 60% wide */}
+        {/* Reorder — center */}
         <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}}
           title={reorderMode?"Done reordering":"Reorder stops"}
-          style={{width:"60%",height:32,borderRadius:8,background:reorderMode?"rgba(142,36,170,.2)":"rgba(255,255,255,.04)",border:`1px solid ${reorderMode?"rgba(142,36,170,.5)":"#252d47"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,transition:"all .15s",flexShrink:0}}>
+          style={{flex:1,height:36,borderRadius:8,background:reorderMode?"rgba(142,36,170,.2)":"rgba(255,255,255,.04)",border:`1px solid ${reorderMode?"rgba(142,36,170,.5)":"#252d47"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,transition:"all .15s"}}>
           <IconReorder size={15} color={reorderMode?"#c8a0e8":"#5a6890"}/>
           <span style={{fontSize:11,fontWeight:700,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",color:reorderMode?"#c8a0e8":"#5a6890"}}>{reorderMode?"DONE":"REORDER"}</span>
         </button>
-        {/* Sign out — right */}
-        <button
-          onClick={()=>{ if(signOutConfirm){ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
-          title={signOutConfirm ? "Tap again to confirm" : "Sign out"}
-          style={{width:32,height:32,borderRadius:8,background:signOutConfirm?"rgba(255,85,85,.15)":"transparent",border:`1px solid ${signOutConfirm?"rgba(255,85,85,.4)":"#1a2035"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all .15s"}}>
-          <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={signOutConfirm?"#FF5555":"#3a4a60"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        {/* Add Visit — right */}
+        <button onClick={()=>setAddStopOpen(true)} title="Add a stop"
+          style={{width:36,height:36,borderRadius:8,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <IconPlus size={16} color="#3B82F6" />
         </button>
       </div>}
       {view === "pipeline" && <div style={{borderTop:"1px solid #0e1520",padding:"4px 10px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"flex-end",background:"#080a10",flexShrink:0}}>
