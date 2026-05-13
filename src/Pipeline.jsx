@@ -167,12 +167,11 @@ function _mergePhotoArrays(local = [], cloud = []) {
 const F = "'Oswald',sans-serif";
 
 // ═════════════════════════════════════════════════════════════════════════════
-export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, token, lastContact = {}, markContact = () => {} }) {
+export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, token, lastContact = {}, markContact = () => {}, selectMode = false, setSelectMode = () => {}, onSelectCountChange = () => {} }) {
   const [pipeline, setPipeline] = useState(() => loadPipeline());
   const [activeTab, setActiveTab] = useState("estimate_needed");
   const [selectedCard, setSelectedCard] = useState(null);
   const [dragId, setDragId] = useState(null);
-  const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState({}); // {id: true}
   const [emailSheet, setEmailSheet] = useState(false);
   const [emailPreview, setEmailPreview] = useState(null);
@@ -808,6 +807,8 @@ Property: ${card.addr || ""}`);
   const toggleSelect = (id) => { setSelected(prev => { const n = { ...prev }; if (n[id]) delete n[id]; else n[id] = true; return n; }); };
   const selectedCards = useMemo(() => Object.keys(selected).map(id => pipeline[id]).filter(Boolean), [selected, pipeline]);
   const selectedCount = selectedCards.length;
+  useEffect(() => { onSelectCountChange(selectedCount); }, [selectedCount, onSelectCountChange]);
+  useEffect(() => { if (!selectMode) setSelected({}); }, [selectMode]);
 
   // ── BULK EMAIL + SMS ────────────────────────────────────────
   // ── EMAIL COMPOSE HELPER ─────────────────────────────────────────────
@@ -939,36 +940,20 @@ Property: ${card.addr || ""}`);
               const lc = formatContact(lastContact[card.id]);
               return lc ? <span style={{fontSize:9,color:"#64B5F6",fontWeight:600,fontFamily:F,letterSpacing:0.3,textTransform:"uppercase"}}>{lc}</span> : null;
             })()}
-            <span style={{fontSize:10,color:card.stage==="weak"?"#FF8A65":"#4a5a70"}} title="Days since estimate was sent">{daysSince(card.estimateSentAt || (card.stage !== "estimate_needed" ? card.stageChangedAt : null) || card.addedAt)}</span>
+            <div style={{display:"flex",alignItems:"center",gap:4}}>
+              <span style={{fontSize:10,color:card.stage==="weak"?"#FF8A65":"#4a5a70"}}>{daysSince(card.estimateSentAt || (card.stage !== "estimate_needed" ? card.stageChangedAt : null) || card.addedAt)}</span>
+              {contactWarning && <span style={{fontSize:9,padding:"1px 4px",borderRadius:4,background:"rgba(230,124,115,.12)",border:"1px solid rgba(230,124,115,.25)",color:"#E67C73",fontWeight:700,fontFamily:F}}>⚠{daysSinceContact}d</span>}
+              {(() => {
+                const q = queueByStop[card.id] || [];
+                if (q.length === 0) return null;
+                const hasErr = q.some(i => i.status === "error");
+                const color = hasErr ? "#FF5555" : "#10B981";
+                return <span style={{fontSize:9,padding:"1px 4px",borderRadius:4,background:`${color}18`,border:`1px solid ${color}44`,color,fontWeight:700}}>↑</span>;
+              })()}
+            </div>
           </div>
         </div>
 
-        {/* Indicators — passive only, all actions live in the card detail */}
-        {!selectMode && <div style={{display:"flex",gap:5,marginTop:5,alignItems:"center",flexWrap:"nowrap",overflow:"hidden"}}>
-          {photoCount > 0 && <span style={{display:"flex",alignItems:"center",gap:2,fontSize:10,color:"#5a6580",flexShrink:0}}><IconCamera size={10} color="#5a6580"/>{photoCount}</span>}
-          {hasNotes && <IconEdit size={10} color="#5a6580" style={{flexShrink:0}}/>}
-          {hasVideo && <IconVideo size={10} color="#5a6580" style={{flexShrink:0}}/>}
-          {card.hot && <IconFire size={10} color="#FFB300" style={{flexShrink:0}}/>}
-          {card.revision && <IconRevision size={10} color="#FF6B9D" style={{flexShrink:0}}/>}
-          {card.pauseUntil && Date.now() < card.pauseUntil && <span style={{display:"flex",alignItems:"center",gap:2,fontSize:9,color:"#5a6580",flexShrink:0}}><IconPause size={9} color="#5a6580"/>{Math.ceil((card.pauseUntil - Date.now()) / (24*60*60*1000))}d</span>}
-          {repeatClients[card.id] && <span style={{fontSize:9,padding:"1px 5px",borderRadius:99,background:"rgba(139,92,246,.1)",border:"1px solid rgba(139,92,246,.2)",color:"#a78bfa",fontWeight:700,fontFamily:F,letterSpacing:0.3,flexShrink:0}}>↩</span>}
-          {card.jn && <span style={{fontSize:9,color:"#3a5070",fontWeight:600,fontFamily:F,flexShrink:0}}>#{card.jn}</span>}
-          {contactWarning && <span style={{fontSize:9,padding:"1px 5px",borderRadius:99,background:"rgba(230,124,115,.1)",border:"1px solid rgba(230,124,115,.25)",color:"#E67C73",fontWeight:700,fontFamily:F,letterSpacing:0.3,flexShrink:0}}>⚠ {daysSinceContact}d</span>}
-          {/* Upload status pill */}
-          {(() => {
-            const q = queueByStop[card.id] || [];
-            if (q.length === 0) return null;
-            const hasErr = q.some(i => i.status === "error");
-            const active = q.find(i => i.status === "uploading" || i.status === "compressing");
-            const pct = active ? Math.round(q.reduce((s,i)=>s+(i.progress||0),0)/q.length) : null;
-            const color = hasErr ? "#FF5555" : "#10B981";
-            return (
-              <span style={{display:"flex",alignItems:"center",gap:2,fontSize:9,padding:"1px 5px",borderRadius:99,background:`${color}1a`,border:`1px solid ${color}44`,color,fontWeight:700,fontFamily:F,letterSpacing:0.3,textTransform:"uppercase",flexShrink:0,animation:active?"pulse 1.5s infinite":undefined}}>
-                ↑{hasErr ? ` ${q.length}!` : active ? ` ${pct}%` : ` ${q.length}`}
-              </span>
-            );
-          })()}
-        </div>}
       </div>
     );
   };
@@ -980,12 +965,6 @@ Property: ${card.addr || ""}`);
 
     return (
       <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
-        {/* Select toggle */}
-        <div style={{display:"flex",gap:6,padding:"6px 10px",background:"#0d0f18",borderBottom:"1px solid #1a2030",flexShrink:0,alignItems:"center"}}>
-          <div style={{flex:1}}/>
-          <button onClick={()=>{setSelectMode(!selectMode);setSelected({});}} style={{padding:"5px 10px",borderRadius:8,background:selectMode?"rgba(59,130,246,.15)":"#1a2035",border:`1px solid ${selectMode?"rgba(59,130,246,.3)":"#252d47"}`,color:selectMode?"#3B82F6":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}>{selectMode ? <><IconX size={13}/>Done</> : "Select"}</span></button>
-        </div>
-
         {/* Tabs */}
         <div style={{display:"flex",overflowX:"auto",borderBottom:"1px solid #1a2030",flexShrink:0,background:"#0d0f18"}}>
           <button onClick={()=>setActiveTab("all")} style={{padding:"8px 14px",fontSize:11,fontWeight:activeTab==="all"?700:500,color:activeTab==="all"?"#3B82F6":"#4a5a70",borderBottom:activeTab==="all"?"2px solid #039BE5":"2px solid transparent",background:"transparent",border:"none",borderBottomStyle:"solid",cursor:"pointer",whiteSpace:"nowrap",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>All ({allCards.length})</button>
@@ -1052,12 +1031,6 @@ Property: ${card.addr || ""}`);
   // ── DESKTOP: Kanban columns ──────────────────────────────────────────────
   const desktopView = () => (
     <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
-      {/* Select toggle */}
-      <div style={{display:"flex",gap:6,padding:"6px 10px",background:"#0d0f18",borderBottom:"1px solid #1a2030",flexShrink:0,alignItems:"center"}}>
-        <div style={{flex:1}}/>
-        <button onClick={()=>{setSelectMode(!selectMode);setSelected({});}} style={{padding:"5px 10px",borderRadius:8,background:selectMode?"rgba(59,130,246,.15)":"#1a2035",border:`1px solid ${selectMode?"rgba(59,130,246,.3)":"#252d47"}`,color:selectMode?"#3B82F6":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}>{selectMode ? <><IconX size={13}/>Done</> : "Select"}</span></button>
-        {selectMode && selectedCount > 0 && <button onClick={()=>setEmailSheet(true)} style={{padding:"5px 10px",borderRadius:8,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#3B82F6"/>{selectedCount} selected</span></button>}
-      </div>
       <div style={{display:"flex",flex:1,overflow:"hidden",gap:0}}>
         {STAGES.map(st => {
           const cards = (cardsByStage[st.id] || []).filter(searchFilter);
