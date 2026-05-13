@@ -1402,10 +1402,6 @@ export default function App() {
             <button onClick={()=>{setRouteSearchOpen(false);setRouteSearch("");}} style={{padding:"6px 8px",borderRadius:6,background:"transparent",border:"none",color:"#4a5a70",fontSize:12,cursor:"pointer"}}><IconX size={13} color="#4a5a70"/></button>
           </div>}
           <div style={{display:"flex",alignItems:"center",padding:"4px 8px",gap:4}}>
-            <button onClick={undo} disabled={!undoStack.length} title="Undo"
-              style={{padding:"7px",borderRadius:8,background:"transparent",border:`1px solid ${undoStack.length?"#1a2035":"transparent"}`,cursor:undoStack.length?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              <IconUndo size={14} color={undoStack.length?"#5a6580":"#1a2035"}/>
-            </button>
             {completed.length>0 ? (
               <button onClick={()=>{
                 const next = !completedOpen;
@@ -1419,16 +1415,6 @@ export default function App() {
                 <IconCheckCircle size={13} color="#10B981"/> {completed.length}
               </button>
             ) : null}
-            <div style={{flex:1}}/>
-            {hasStopsWithAddr && !reorderMode && <button onClick={navAll} style={{padding:"7px",borderRadius:8,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <IconNavigation size={15} color="#3B82F6" />
-            </button>}
-            <button
-              onClick={()=>{ if(signOutConfirm){ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
-              title={signOutConfirm ? "Tap again to confirm" : "Sign out"}
-              style={{padding:"7px",borderRadius:8,background:signOutConfirm?"rgba(255,85,85,.15)":"transparent",border:`1px solid ${signOutConfirm?"rgba(255,85,85,.4)":"#1a2035"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s"}}>
-              <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={signOutConfirm?"#FF5555":"#3a4a60"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-            </button>
           </div>
         </div>
         {completedOpen && completed.length > 0 && <div id="mts-completed-list">
@@ -1453,23 +1439,37 @@ export default function App() {
       <UploadTracker stopMap={stopMap} inline />
 
       {/* ── BOTTOM BAR ──────────────────────────────────────────────── */}
-      {view === "route" && <div style={{borderTop:"1px solid #0e1520",padding:"4px 10px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,background:"#080a10",flexShrink:0}}>
-        {/* Refresh — left */}
+      {view === "route" && <div style={{borderTop:"1px solid #0e1520",padding:"4px 8px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",gap:5,background:"#080a10",flexShrink:0}}>
+        {/* Refresh */}
         <button onClick={() => load(true)} disabled={loading} title="Refresh"
-          style={{width:36,height:36,borderRadius:8,background:"#1a2035",border:"1px solid #1a2030",color:loading?"#2a3050":"#5a6580",cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <IconRefresh size={16} color={loading?"#2a3050":"#5a6580"} style={{animation:loading?"spin 1s linear infinite":undefined}} />
+          style={{width:34,height:34,borderRadius:8,background:"#1a2035",border:"1px solid #1a2030",cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <IconRefresh size={15} color={loading?"#2a3050":"#5a6580"} style={{animation:loading?"spin 1s linear infinite":undefined}} />
         </button>
-        {/* Reorder — center */}
-        <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}}
-          title={reorderMode?"Done reordering":"Reorder stops"}
-          style={{flex:1,height:36,borderRadius:8,background:reorderMode?"rgba(142,36,170,.2)":"rgba(255,255,255,.04)",border:`1px solid ${reorderMode?"rgba(142,36,170,.5)":"#252d47"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,transition:"all .15s"}}>
-          <IconReorder size={15} color={reorderMode?"#c8a0e8":"#5a6890"}/>
-          <span style={{fontSize:11,fontWeight:700,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",color:reorderMode?"#c8a0e8":"#5a6890"}}>{reorderMode?"DONE":"REORDER"}</span>
+        {/* Undo */}
+        <button onClick={undo} disabled={!undoStack.length} title="Undo"
+          style={{width:34,height:34,borderRadius:8,background:"transparent",border:`1px solid ${undoStack.length?"#1a2035":"transparent"}`,cursor:undoStack.length?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <IconUndo size={15} color={undoStack.length?"#5a6580":"#1a2035"}/>
         </button>
-        {/* Add Visit — right */}
+        {/* Reorder — narrower, centered */}
+        <div style={{flex:1,display:"flex",justifyContent:"center"}}>
+          <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}}
+            title={reorderMode?"Done reordering":"Reorder stops"}
+            style={{height:34,padding:"0 16px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.2)":"rgba(255,255,255,.04)",border:`1px solid ${reorderMode?"rgba(142,36,170,.5)":"#252d47"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:5,transition:"all .15s"}}>
+            <IconReorder size={14} color={reorderMode?"#c8a0e8":"#5a6890"}/>
+            <span style={{fontSize:11,fontWeight:700,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",color:reorderMode?"#c8a0e8":"#5a6890"}}>{reorderMode?"DONE":"REORDER"}</span>
+          </button>
+        </div>
+        {/* Sign Out */}
+        <button
+          onClick={()=>{ if(signOutConfirm){ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
+          title={signOutConfirm ? "Tap again to confirm" : "Sign out"}
+          style={{width:34,height:34,borderRadius:8,background:signOutConfirm?"rgba(255,85,85,.15)":"transparent",border:`1px solid ${signOutConfirm?"rgba(255,85,85,.4)":"#1a2035"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all .15s"}}>
+          <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={signOutConfirm?"#FF5555":"#3a4a60"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </button>
+        {/* Add Visit */}
         <button onClick={()=>setAddStopOpen(true)} title="Add a stop"
-          style={{width:36,height:36,borderRadius:8,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <IconPlus size={16} color="#3B82F6" />
+          style={{width:34,height:34,borderRadius:8,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <IconPlus size={15} color="#3B82F6" />
         </button>
       </div>}
       {view === "pipeline" && <div style={{borderTop:"1px solid #0e1520",padding:"4px 10px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"flex-end",background:"#080a10",flexShrink:0}}>
