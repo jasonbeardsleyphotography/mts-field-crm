@@ -167,12 +167,11 @@ function _mergePhotoArrays(local = [], cloud = []) {
 const F = "'Oswald',sans-serif";
 
 // ═════════════════════════════════════════════════════════════════════════════
-export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, token, lastContact = {}, markContact = () => {} }) {
+export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, token, lastContact = {}, markContact = () => {}, selectMode = false, setSelectMode = () => {}, onSelectCountChange = () => {} }) {
   const [pipeline, setPipeline] = useState(() => loadPipeline());
   const [activeTab, setActiveTab] = useState("estimate_needed");
   const [selectedCard, setSelectedCard] = useState(null);
   const [dragId, setDragId] = useState(null);
-  const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState({}); // {id: true}
   const [emailSheet, setEmailSheet] = useState(false);
   const [emailPreview, setEmailPreview] = useState(null);
@@ -808,6 +807,8 @@ Property: ${card.addr || ""}`);
   const toggleSelect = (id) => { setSelected(prev => { const n = { ...prev }; if (n[id]) delete n[id]; else n[id] = true; return n; }); };
   const selectedCards = useMemo(() => Object.keys(selected).map(id => pipeline[id]).filter(Boolean), [selected, pipeline]);
   const selectedCount = selectedCards.length;
+  useEffect(() => { onSelectCountChange(selectedCount); }, [selectedCount, onSelectCountChange]);
+  useEffect(() => { if (!selectMode) setSelected({}); }, [selectMode]);
 
   // ── BULK EMAIL + SMS ────────────────────────────────────────
   // ── EMAIL COMPOSE HELPER ─────────────────────────────────────────────
@@ -964,12 +965,6 @@ Property: ${card.addr || ""}`);
 
     return (
       <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
-        {/* Select toggle */}
-        <div style={{display:"flex",gap:6,padding:"6px 10px",background:"#0d0f18",borderBottom:"1px solid #1a2030",flexShrink:0,alignItems:"center"}}>
-          <div style={{flex:1}}/>
-          <button onClick={()=>{setSelectMode(!selectMode);setSelected({});}} style={{padding:"5px 10px",borderRadius:8,background:selectMode?"rgba(59,130,246,.15)":"#1a2035",border:`1px solid ${selectMode?"rgba(59,130,246,.3)":"#252d47"}`,color:selectMode?"#3B82F6":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}>{selectMode ? <><IconX size={13}/>Done</> : "Select"}</span></button>
-        </div>
-
         {/* Tabs */}
         <div style={{display:"flex",overflowX:"auto",borderBottom:"1px solid #1a2030",flexShrink:0,background:"#0d0f18"}}>
           <button onClick={()=>setActiveTab("all")} style={{padding:"8px 14px",fontSize:11,fontWeight:activeTab==="all"?700:500,color:activeTab==="all"?"#3B82F6":"#4a5a70",borderBottom:activeTab==="all"?"2px solid #039BE5":"2px solid transparent",background:"transparent",border:"none",borderBottomStyle:"solid",cursor:"pointer",whiteSpace:"nowrap",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>All ({allCards.length})</button>
@@ -1036,12 +1031,6 @@ Property: ${card.addr || ""}`);
   // ── DESKTOP: Kanban columns ──────────────────────────────────────────────
   const desktopView = () => (
     <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
-      {/* Select toggle */}
-      <div style={{display:"flex",gap:6,padding:"6px 10px",background:"#0d0f18",borderBottom:"1px solid #1a2030",flexShrink:0,alignItems:"center"}}>
-        <div style={{flex:1}}/>
-        <button onClick={()=>{setSelectMode(!selectMode);setSelected({});}} style={{padding:"5px 10px",borderRadius:8,background:selectMode?"rgba(59,130,246,.15)":"#1a2035",border:`1px solid ${selectMode?"rgba(59,130,246,.3)":"#252d47"}`,color:selectMode?"#3B82F6":"#5a6580",fontSize:11,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}>{selectMode ? <><IconX size={13}/>Done</> : "Select"}</span></button>
-        {selectMode && selectedCount > 0 && <button onClick={()=>setEmailSheet(true)} style={{padding:"5px 10px",borderRadius:8,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#3B82F6"/>{selectedCount} selected</span></button>}
-      </div>
       <div style={{display:"flex",flex:1,overflow:"hidden",gap:0}}>
         {STAGES.map(st => {
           const cards = (cardsByStage[st.id] || []).filter(searchFilter);

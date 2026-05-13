@@ -382,6 +382,8 @@ export default function App() {
 
   const [view, setView] = useState(() => lsGet("mts-view", "route"));
   const [pipelineSearch, setPipelineSearch] = useState("");
+  const [pipelineSelectMode, setPipelineSelectMode] = useState(false);
+  const [pipelineSelectedCount, setPipelineSelectedCount] = useState(0);
   const [routeSearch, setRouteSearch] = useState("");
   const [routeSearchOpen, setRouteSearchOpen] = useState(false);
 
@@ -1249,6 +1251,12 @@ export default function App() {
           </select>
         </div>}
         {view === "pipeline" && <input value={pipelineSearch} onChange={e=>setPipelineSearch(e.target.value)} placeholder="Search..." style={{maxWidth:180,padding:"5px 10px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:12,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none"}} />}
+        {view === "pipeline" && (
+          <button onClick={()=>{setPipelineSelectMode(s=>!s);setPipelineSelectedCount(0);}} style={{padding:"5px 10px",borderRadius:8,background:pipelineSelectMode?"rgba(59,130,246,.15)":"transparent",border:`1px solid ${pipelineSelectMode?"rgba(59,130,246,.3)":"#2a3560"}`,color:pipelineSelectMode?"#3B82F6":"#4a5a70",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
+            {pipelineSelectMode ? <><svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Done</> : "Select"}
+            {pipelineSelectMode && pipelineSelectedCount > 0 && <span style={{fontSize:9,padding:"1px 5px",borderRadius:99,background:"rgba(59,130,246,.25)",color:"#3B82F6",fontWeight:800}}>{pipelineSelectedCount}</span>}
+          </button>
+        )}
       </div>
 
       {/* ── ROUTE VIEW ──────────────────────────────────────────────── */}
@@ -1573,7 +1581,7 @@ export default function App() {
       </>}{/* end route view */}
 
       {/* ── PIPELINE VIEW ──────────────────────────────────────────── */}
-      {view === "pipeline" && <Pipeline onSwitchToRoute={(cardId) => { setView("route"); if (cardId) { setDismissed(prev => { const n={...prev}; delete n[cardId]; return n; }); const pl=loadPipeline(); delete pl[cardId]; savePipeline(pl); } }} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} lastContact={lastContact} markContact={markContact} />}
+      {view === "pipeline" && <Pipeline onSwitchToRoute={(cardId) => { setView("route"); if (cardId) { setDismissed(prev => { const n={...prev}; delete n[cardId]; return n; }); const pl=loadPipeline(); delete pl[cardId]; savePipeline(pl); } }} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} lastContact={lastContact} markContact={markContact} selectMode={pipelineSelectMode} setSelectMode={setPipelineSelectMode} onSelectCountChange={setPipelineSelectedCount} />}
 
       {/* ── TEXT SHEET ─────────────────────────────────────────────────── */}
       {textSheet && <div onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
