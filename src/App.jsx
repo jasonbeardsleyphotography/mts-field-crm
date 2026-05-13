@@ -17,7 +17,8 @@ import {
   IconArrowLeft, IconNavigation, IconMessageSquare, IconVolume2,
   IconClipboard, IconX, IconRotateCcw, IconRefresh, IconReorder, IconUndo,
   IconPlus, IconSearch, IconTrash, IconChevronDown, IconChevronRight,
-  IconCloud, IconCloudOff, IconCheckCircle, IconEdit, IconPhone, IconMail, IconClock, IconCalendar
+  IconCloud, IconCloudOff, IconCheckCircle, IconEdit, IconPhone, IconMail, IconClock, IconCalendar,
+  IconNoSymbol
 } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -791,6 +792,7 @@ export default function App() {
   // ── ACTIONS ──────────────────────────────────────────────────────────────
   const openOnsite = (stop) => { setOnsiteStop(stop); setExpanded(null); };
   const [declineConfirm, setDeclineConfirm] = useState(null); // stop id awaiting confirm
+  const [rejectConfirm, setRejectConfirm] = useState(null);  // stop id awaiting reject confirm
   const [signOutConfirm, setSignOutConfirm] = useState(false);
   // (addStopOpen is declared above, near the clientIndex computation — its
   // useEffect needs to fire when this flag flips, and the effect lives there.)
@@ -916,6 +918,26 @@ export default function App() {
     setDeclineConfirm(null);
     setOnsiteStop(null);
   };
+
+  // markReject = flag the stop for rejection in SingleOps and push to pipeline
+  const markReject = (id) => {
+    const stop = stopMap[id];
+    if (stop) {
+      const pl = loadPipeline();
+      pl[id] = {
+        id, cn: stop.cn, addr: stop.addr, phone: stop.phone, email: stop.email,
+        jn: stop.jn, notes: stop.notes, constraint: stop.constraint,
+        stage: "estimate_needed", addedAt: Date.now(), stageChangedAt: Date.now(),
+        hot: false, pendingRejectInSingleops: true,
+      };
+      savePipeline(pl);
+      if (token) pushCalendarColor(id, "estimate_needed", token);
+    }
+    setDismissed(p => ({...p,[id]:Date.now()}));
+    setExpanded(null);
+    setRejectConfirm(null);
+  };
+
   // markDone = move to pipeline as "estimate_needed"
   const markDone = (id) => {
     const stop = stopMap[id];
@@ -997,16 +1019,13 @@ export default function App() {
     if (!window.speechSynthesis) { setTtsError("TTS not supported in this browser"); return; }
 
     const text = stop.notes || "No notes available.";
-    setTtsSpeaking(true);
     setTtsError(null);
 
-    // Clear any stale iOS synthesis queue before starting — required on iOS to
-    // prevent a stuck previous utterance from blocking the new one.
+    // Clear any stale iOS synthesis queue before starting.
     window.speechSynthesis.cancel();
 
     // iOS pauses speechSynthesis when the audio route changes (CarPlay plug/unplug,
-    // Bluetooth handoff). Without intervention it stays paused indefinitely.
-    // This interval resumes it whenever that happens.
+    // Bluetooth handoff). This interval resumes it whenever that happens.
     const resumeInterval = setInterval(() => {
       if (window.speechSynthesis.paused && window.speechSynthesis.speaking) {
         window.speechSynthesis.resume();
@@ -1021,6 +1040,14 @@ export default function App() {
       u.rate = 0.88;
       u.pitch = 1;
 
+      // Only flip the button to "active" when speech actually begins. On iOS,
+      // setting ttsSpeaking=true before speak() causes a stuck-active state when
+      // the system silently fails to start: the button shows active with no audio,
+      // the next tap resets it, and the tap after that finally works. Waiting for
+      // onstart means if iOS drops the utterance silently, the button stays tappable
+      // and the next tap retries normally.
+      u.onstart = () => { setTtsSpeaking(true); };
+
       u.onend = () => {
         clearInterval(resumeInterval);
         ttsSafetyTimer.current = null;
@@ -1029,14 +1056,13 @@ export default function App() {
 
       u.onerror = (ev) => {
         // "interrupted" = stopped by another utterance; "canceled" = user/cancel() call.
-        // Both are intentional stops — do not show an error.
         if (ev.error === "interrupted" || ev.error === "canceled") {
           clearInterval(resumeInterval);
           ttsSafetyTimer.current = null;
           setTtsSpeaking(false);
           return;
         }
-        // Retry once — transient failure is common during CarPlay/Bluetooth audio handoff.
+        // Retry once on transient failures (CarPlay/Bluetooth handoff).
         if (attempts < 2) {
           setTimeout(attempt, 350);
           return;
@@ -1054,8 +1080,7 @@ export default function App() {
       window.speechSynthesis.speak(u);
     };
 
-    // Small delay after cancel() so iOS finishes clearing audio state before
-    // we queue the new utterance.
+    // Small delay after cancel() so iOS finishes clearing audio state.
     const voices = window.speechSynthesis.getVoices();
     if (voices.length) { setTimeout(attempt, 50); }
     else { window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.onvoiceschanged = null; setTimeout(attempt, 50); }; }
@@ -1304,15 +1329,16 @@ export default function App() {
                 {s.email && <div style={{fontSize:13,color:"#a0b8d0",marginBottom:8,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#a0b8d0"/>{s.email}</div>}
                 {declineConfirm === s.id ? (
                   <button onClick={()=>decline(s.id)} style={{width:"100%",padding:"11px 0",marginTop:4,borderRadius:8,background:"rgba(200,60,60,.15)",border:"1px solid rgba(200,60,60,.3)",color:"#FF5555",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",animation:"pulse 1s infinite",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconX size={14} color="#FF5555"/>CONFIRM DECLINE?</button>
+                ) : rejectConfirm === s.id ? (
+                  <button onClick={()=>markReject(s.id)} style={{width:"100%",padding:"11px 0",marginTop:4,borderRadius:8,background:"rgba(255,140,0,.15)",border:"1px solid rgba(255,140,0,.4)",color:"#FF8C00",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",animation:"pulse 1s infinite",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconNoSymbol size={14} color="#FF8C00"/>CONFIRM REJECT?</button>
                 ) : (
                   <div style={{display:"flex",gap:6,marginTop:4}}>
                     {s.phone && <button onClick={()=>{setTextSheet(s);setOtwMinutes(null);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#1a2035",border:"1px solid #2a3560",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconMessageSquare size={16} color="#a0b8d0"/></button>}
-                    {s.addr && <button onClick={()=>navigate(s.addr)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconNavigation size={16} color="#3B82F6"/></button>}
                     {s.notes && <button onClick={()=>speakStop(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:ttsSpeaking?"rgba(100,80,200,.18)":"rgba(100,80,200,.08)",border:"1px solid rgba(100,80,200,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{ttsSpeaking ? <IconX size={16} color="#8a80c0"/> : <IconVolume2 size={16} color="#8a80c0"/>}</button>}
                     <button onClick={()=>openOnsite(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(16,185,129,.06)",border:"1px solid rgba(16,185,129,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconClipboard size={16} color="#10B981"/></button>
-                    {/* Move to a different day — patches Google Calendar */}
                     <button onClick={()=>setMovePicker(movePicker?.stopId === s.id ? null : { stopId: s.id })} title="Move to another day" style={{flex:1,padding:"10px 0",borderRadius:8,background:movePicker?.stopId===s.id?"rgba(246,191,38,.18)":"rgba(246,191,38,.06)",border:`1px solid ${movePicker?.stopId===s.id?"rgba(246,191,38,.4)":"rgba(246,191,38,.15)"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconCalendar size={16} color="#F6BF26"/></button>
-                    <button onClick={()=>setDeclineConfirm(s.id)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(200,60,60,.06)",border:"1px solid rgba(200,60,60,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={16} color="#a06060"/></button>
+                    <button onClick={()=>{setDeclineConfirm(s.id);setRejectConfirm(null);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(200,60,60,.06)",border:"1px solid rgba(200,60,60,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={16} color="#a06060"/></button>
+                    <button onClick={()=>{setRejectConfirm(s.id);setDeclineConfirm(null);}} title="Flag: reject in SingleOps" style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(255,140,0,.06)",border:"1px solid rgba(255,140,0,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconNoSymbol size={16} color="#a07030"/></button>
                     {!s.isTask && <button onClick={()=>deleteStop(s.id)} title="Delete permanently" style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(100,100,100,.06)",border:"1px solid rgba(100,100,100,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconTrash size={16} color="#4a5a70"/></button>}
                   </div>
                 )}
