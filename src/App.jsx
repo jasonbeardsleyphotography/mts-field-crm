@@ -1187,6 +1187,10 @@ export default function App() {
     <div style={{height:"100dvh",width:"100%",background:"#0a0b10",display:"flex",flexDirection:"column",fontFamily:"'DM Sans',system-ui,sans-serif",color:"#f0f4fa",overflow:"hidden",paddingTop:"env(safe-area-inset-top)",boxSizing:"border-box"}}>
       <style>{`
 .scr::-webkit-scrollbar{width:0}
+.mts-pl-col{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.07) transparent}
+.mts-pl-col::-webkit-scrollbar{width:3px}
+.mts-pl-col::-webkit-scrollbar-track{background:transparent}
+.mts-pl-col::-webkit-scrollbar-thumb{background:rgba(255,255,255,.09);border-radius:99px}
 .gmnoprint,.gm-bundled-control,.gm-style-cc,.gm-control-active,.gm-fullscreen-control,.gm-style .adp,.gm-style button[title]{display:none!important}
 .mts-body{display:flex;flex-direction:column;flex:1;overflow:hidden}
 .mts-map{flex-shrink:0;border-bottom:1px solid #1a2030}

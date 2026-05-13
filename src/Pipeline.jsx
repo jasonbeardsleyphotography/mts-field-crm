@@ -1,4 +1,4 @@
-import { IconFire, IconRevision, IconPause, IconMail, IconX, IconCheckCircle, IconPhone, IconTrash, IconEdit, IconClipboard, IconSingleops, IconVideo, IconStar, IconCamera, IconImage, IconDownload, IconPen } from "./icons";
+import { IconFire, IconRevision, IconPause, IconMail, IconX, IconCheckCircle, IconPhone, IconTrash, IconEdit, IconClipboard, IconSingleops, IconVideo, IconStar, IconCamera, IconImage, IconDownload, IconPen, IconNoSymbol } from "./icons";
 import CameraView from "./CameraView";
 import PhotoMarkup from "./PhotoMarkup";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
@@ -913,7 +913,7 @@ Property: ${card.addr || ""}`);
       >
         {/* Reject-in-SingleOps banner */}
         {isPendingReject && <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,padding:"4px 8px",borderRadius:6,background:"rgba(255,140,0,.2)",border:"1px solid rgba(255,140,0,.4)"}}>
-          <span style={{fontSize:12}}>🚫</span>
+          <IconNoSymbol size={12} color="#FF8C00"/>
           <span style={{fontSize:10,fontWeight:800,color:"#FF8C00",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",flex:1}}>REJECT IN SINGLEOPS</span>
           <button onClick={e=>{e.stopPropagation();setPipeline(prev=>{const next={...prev};if(next[card.id]){next[card.id]={...next[card.id],pendingRejectInSingleops:false};}return next;});}} style={{padding:"2px 6px",borderRadius:4,background:"rgba(255,140,0,.2)",border:"1px solid rgba(255,140,0,.4)",color:"#FF8C00",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.3}}>DONE</button>
         </div>}
@@ -943,12 +943,18 @@ Property: ${card.addr || ""}`);
           </div>
         </div>
 
-        {/* Indicators */}
-        {!selectMode && <div style={{display:"flex",gap:6,marginTop:6,alignItems:"center"}}>
-          {photoCount > 0 && <span style={{display:"flex",alignItems:"center",gap:2,fontSize:10,color:"#5a6580"}}><IconCamera size={11} color="#5a6580"/>{photoCount}</span>}
-          {hasNotes && <IconEdit size={11} color="#5a6580"/>}
-          {hasVideo && <IconVideo size={11} color="#5a6580"/>}
-          {/* Live upload indicator — visible whenever this card has queued / in-flight uploads */}
+        {/* Indicators — passive only, all actions live in the card detail */}
+        {!selectMode && <div style={{display:"flex",gap:5,marginTop:5,alignItems:"center",flexWrap:"nowrap",overflow:"hidden"}}>
+          {photoCount > 0 && <span style={{display:"flex",alignItems:"center",gap:2,fontSize:10,color:"#5a6580",flexShrink:0}}><IconCamera size={10} color="#5a6580"/>{photoCount}</span>}
+          {hasNotes && <IconEdit size={10} color="#5a6580" style={{flexShrink:0}}/>}
+          {hasVideo && <IconVideo size={10} color="#5a6580" style={{flexShrink:0}}/>}
+          {card.hot && <IconFire size={10} color="#FFB300" style={{flexShrink:0}}/>}
+          {card.revision && <IconRevision size={10} color="#FF6B9D" style={{flexShrink:0}}/>}
+          {card.pauseUntil && Date.now() < card.pauseUntil && <span style={{display:"flex",alignItems:"center",gap:2,fontSize:9,color:"#5a6580",flexShrink:0}}><IconPause size={9} color="#5a6580"/>{Math.ceil((card.pauseUntil - Date.now()) / (24*60*60*1000))}d</span>}
+          {repeatClients[card.id] && <span style={{fontSize:9,padding:"1px 5px",borderRadius:99,background:"rgba(139,92,246,.1)",border:"1px solid rgba(139,92,246,.2)",color:"#a78bfa",fontWeight:700,fontFamily:F,letterSpacing:0.3,flexShrink:0}}>↩</span>}
+          {card.jn && <span style={{fontSize:9,color:"#3a5070",fontWeight:600,fontFamily:F,flexShrink:0}}>#{card.jn}</span>}
+          {contactWarning && <span style={{fontSize:9,padding:"1px 5px",borderRadius:99,background:"rgba(230,124,115,.1)",border:"1px solid rgba(230,124,115,.25)",color:"#E67C73",fontWeight:700,fontFamily:F,letterSpacing:0.3,flexShrink:0}}>⚠ {daysSinceContact}d</span>}
+          {/* Upload status pill */}
           {(() => {
             const q = queueByStop[card.id] || [];
             if (q.length === 0) return null;
@@ -956,36 +962,12 @@ Property: ${card.addr || ""}`);
             const active = q.find(i => i.status === "uploading" || i.status === "compressing");
             const pct = active ? Math.round(q.reduce((s,i)=>s+(i.progress||0),0)/q.length) : null;
             const color = hasErr ? "#FF5555" : "#10B981";
-            const label = hasErr
-              ? `↑ ${q.length} failed`
-              : active
-                ? `↑ ${q.length} uploading ${pct}%`
-                : `↑ ${q.length} pending`;
             return (
-              <span title="Tap the bar at the bottom of the screen to manage uploads" style={{display:"flex",alignItems:"center",gap:3,fontSize:9,padding:"1px 6px",borderRadius:99,background:`${color}1a`,border:`1px solid ${color}55`,color,fontWeight:800,fontFamily:F,letterSpacing:0.3,textTransform:"uppercase",animation:active?"pulse 1.5s infinite":undefined}}>
-                {label}
+              <span style={{display:"flex",alignItems:"center",gap:2,fontSize:9,padding:"1px 5px",borderRadius:99,background:`${color}1a`,border:`1px solid ${color}44`,color,fontWeight:700,fontFamily:F,letterSpacing:0.3,textTransform:"uppercase",flexShrink:0,animation:active?"pulse 1.5s infinite":undefined}}>
+                ↑{hasErr ? ` ${q.length}!` : active ? ` ${pct}%` : ` ${q.length}`}
               </span>
             );
           })()}
-          {contactWarning && <button onClick={e=>{e.stopPropagation();setPipelineSheet({card,type:"email"});}} title={`${daysSinceContact} days since last contact — tap to email`} style={{fontSize:9,padding:"1px 6px",borderRadius:99,background:"rgba(230,124,115,.12)",border:"1px solid rgba(230,124,115,.3)",color:"#E67C73",fontWeight:700,fontFamily:F,letterSpacing:0.3,cursor:"pointer"}}>⚠ {daysSinceContact}d · email</button>}
-          {repeatClients[card.id] && <span title={`Return client — previously ${STAGES.find(s=>s.id===repeatClients[card.id].stage)?.short}`} style={{fontSize:9,padding:"1px 6px",borderRadius:99,background:"rgba(139,92,246,.1)",border:"1px solid rgba(139,92,246,.25)",color:"#a78bfa",fontWeight:700,fontFamily:F,letterSpacing:0.3}}>↩ return</span>}
-          {card.jn && <button onClick={e=>{e.stopPropagation();openSingleOps(card.jn);}} style={{fontSize:10,color:"#3B82F6",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}>SO #{card.jn}</button>}
-          <div style={{flex:1}}/>
-          {/* Quick email + SMS shortcuts */}
-          {card.email && <button onClick={e=>{e.stopPropagation();setPipelineSheet({card,type:"email"});}} style={{padding:"2px 7px",borderRadius:4,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",fontSize:9,fontWeight:700,cursor:"pointer"}}>✉</button>}
-          {card.phone && <button onClick={e=>{e.stopPropagation();setPipelineSheet({card,type:"sms"});}} style={{padding:"2px 7px",borderRadius:4,background:"rgba(16,185,129,.08)",border:"1px solid rgba(16,185,129,.2)",color:"#10B981",fontSize:9,fontWeight:700,cursor:"pointer"}}>💬</button>}
-          <div style={{position:"relative"}}>
-            {card.pauseUntil && Date.now() < card.pauseUntil ? (
-              <button onClick={e=>{e.stopPropagation();unpause(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:"rgba(138,150,168,.12)",border:"1px solid rgba(138,150,168,.25)",color:"#8a96a8",fontSize:9,cursor:"pointer",fontWeight:600}}><span style={{display:"flex",alignItems:"center",gap:3}}><IconPause size={10} color="#8a96a8"/>{Math.ceil((card.pauseUntil - Date.now()) / (24*60*60*1000))}d</span></button>
-            ) : (
-              <button onClick={e=>{e.stopPropagation();setPauseMenu(pauseMenu===card.id?null:card.id);}} style={{padding:"2px 6px",borderRadius:4,background:pauseMenu===card.id?"rgba(138,150,168,.12)":"transparent",border:"1px solid #1a2030",color:"#2a3050",fontSize:10,cursor:"pointer"}}><IconPause size={12} color={pauseMenu===card.id?"#8a96a8":"#2a3050"}/></button>
-            )}
-            {pauseMenu === card.id && <div style={{position:"absolute",top:"100%",right:0,marginTop:4,background:"#0d0f18",border:"1px solid #1a2540",borderRadius:8,padding:4,zIndex:30,display:"flex",gap:3}}>
-              {[3,7,14].map(d => <button key={d} onClick={e=>{e.stopPropagation();pauseFor(card.id,d);}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(138,150,168,.08)",border:"1px solid #1a2540",color:"#8a96a8",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>{d}d</button>)}
-            </div>}
-          </div>
-          <button onClick={e=>{e.stopPropagation();toggleHot(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:card.hot?"rgba(255,179,0,.12)":"transparent",border:card.hot?"1px solid rgba(255,179,0,.3)":"1px solid #1a2030",color:card.hot?"#FFB300":"#2a3050",fontSize:10,cursor:"pointer"}}><IconFire size={13} color={card.hot?"#FFB300":"#2a3050"}/></button>
-          <button onClick={e=>{e.stopPropagation();toggleRevision(card.id);}} style={{padding:"2px 6px",borderRadius:4,background:card.revision?"rgba(255,107,157,.12)":"transparent",border:card.revision?"1px solid rgba(255,107,157,.3)":"1px solid #1a2030",color:card.revision?"#FF6B9D":"#2a3050",fontSize:10,cursor:"pointer"}}><IconRevision size={13} color={card.revision?"#FF6B9D":"#2a3050"}/></button>
         </div>}
       </div>
     );
@@ -1029,7 +1011,7 @@ Property: ${card.addr || ""}`);
         </div>}
 
         {/* Card list */}
-        <div style={{flex:1,overflowY:"auto",paddingBottom:selectMode && selectedCount>0?"max(70px,calc(60px + env(safe-area-inset-bottom)))":"max(12px,env(safe-area-inset-bottom))"}}>
+        <div className="mts-pl-col" style={{flex:1,overflowY:"auto",paddingBottom:selectMode && selectedCount>0?"max(70px,calc(60px + env(safe-area-inset-bottom)))":"max(12px,env(safe-area-inset-bottom))"}}>
           {sorted.length === 0 && <div style={{padding:40,textAlign:"center",color:"#2a3050",fontSize:14,fontWeight:600}}>No cards{search ? ` matching "${search}"` : ""}</div>}
           {sorted.map(card => renderCard(card, false))}
         </div>
@@ -1089,7 +1071,7 @@ Property: ${card.addr || ""}`);
                   <span style={{fontSize:10,color:"#4a5a70",fontWeight:600}}>{cards.length}</span>
                 </div>
               </div>
-              <div style={{flex:1,overflowY:"auto",padding:4}}>
+              <div className="mts-pl-col" style={{flex:1,overflowY:"auto",padding:4}}>
                 {cards.map(card => <div key={card.id} style={{marginBottom:4}}>{renderCard(card, true)}</div>)}
               </div>
             </div>
