@@ -1447,14 +1447,14 @@ export default function App() {
         </button>
         {/* Undo */}
         <button onClick={undo} disabled={!undoStack.length} title="Undo"
-          style={{width:34,height:34,borderRadius:8,background:"transparent",border:`1px solid ${undoStack.length?"#1a2035":"transparent"}`,cursor:undoStack.length?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          style={{width:34,height:34,borderRadius:8,background:"#1a2035",border:"1px solid #1a2030",cursor:undoStack.length?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
           <IconUndo size={15} color={undoStack.length?"#5a6580":"#1a2035"}/>
         </button>
         {/* Reorder — narrower, centered */}
         <div style={{flex:1,display:"flex",justifyContent:"center"}}>
           <button onClick={()=>{if(reorderMode){setReorderMode(false);setMoving(null);}else{setReorderMode(true);setMoving(null);setExpanded(null);}}}
             title={reorderMode?"Done reordering":"Reorder stops"}
-            style={{height:34,padding:"0 16px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.2)":"rgba(255,255,255,.04)",border:`1px solid ${reorderMode?"rgba(142,36,170,.5)":"#252d47"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:5,transition:"all .15s"}}>
+            style={{height:34,padding:"0 20px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.2)":"rgba(255,255,255,.04)",border:`1px solid ${reorderMode?"rgba(142,36,170,.5)":"#252d47"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:5,transition:"all .15s"}}>
             <IconReorder size={14} color={reorderMode?"#c8a0e8":"#5a6890"}/>
             <span style={{fontSize:11,fontWeight:700,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",color:reorderMode?"#c8a0e8":"#5a6890"}}>{reorderMode?"DONE":"REORDER"}</span>
           </button>
