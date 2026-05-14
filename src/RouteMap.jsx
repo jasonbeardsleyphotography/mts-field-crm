@@ -172,26 +172,56 @@ export default function RouteMap({ stops, selectedId }) {
     if (route.current) { route.current.setMap(null); route.current = null; }
     if (!Object.keys(coords).length) return;
 
+    // Offset markers that share nearly the same geocoded position so they
+    // remain individually visible when zoomed out.
+    const NEAR = 0.0004;
+    const adjustedCoords = Object.assign({}, coords);
+    const stopsWithPos = stops.filter(s => coords[s.id]);
+    const clusterVisited = new Set();
+    for (let i = 0; i < stopsWithPos.length; i++) {
+      if (clusterVisited.has(stopsWithPos[i].id)) continue;
+      const base = coords[stopsWithPos[i].id];
+      const group = [stopsWithPos[i].id];
+      for (let j = i + 1; j < stopsWithPos.length; j++) {
+        if (clusterVisited.has(stopsWithPos[j].id)) continue;
+        const p = coords[stopsWithPos[j].id];
+        if (Math.abs(base.lat - p.lat) < NEAR && Math.abs(base.lng - p.lng) < NEAR) {
+          group.push(stopsWithPos[j].id);
+        }
+      }
+      if (group.length > 1) {
+        group.forEach((id, ci) => {
+          clusterVisited.add(id);
+          const angle = (ci / group.length) * 2 * Math.PI;
+          adjustedCoords[id] = {
+            lat: base.lat + 0.00028 * Math.cos(angle),
+            lng: base.lng + 0.00040 * Math.sin(angle),
+          };
+        });
+      }
+    }
+
     const positions = [];
     const bounds = new window.google.maps.LatLngBounds();
     let n = 0;
     stops.forEach(s => {
-      const pos = coords[s.id]; if (!pos) return; n++;
+      const pos = adjustedCoords[s.id]; if (!pos) return; n++;
       const isAM = (s.window||"").startsWith("AM");
       const pinColor = isAM ? AM_COLOR : PM_COLOR;
       const hasConstraint = !!s.constraint;
       const isSel = s.id === selectedId;
       const m = new window.google.maps.Marker({
         position:pos, map:map.current,
+        optimized: false,
         label:{text:String(n),color:"#fff",fontWeight:"800",fontSize: isSel ? "11px" : "10px"},
         icon:{path:window.google.maps.SymbolPath.CIRCLE,
           scale: isSel ? 12 : 10,
           fillColor:pinColor, fillOpacity: s.db ? .7 : 1,
           strokeColor: isSel ? "#FFD600" : hasConstraint ? "#FF4081" : "#fff",
           strokeWeight: isSel ? 3 : hasConstraint ? 2 : 1.5},
-        zIndex: isSel ? 20 : 10,
+        zIndex: isSel ? 9999 : (stops.length - n + 11),
       });
-      markers.current.push({ marker: m, stopId: s.id });
+      markers.current.push({ marker: m, stopId: s.id, order: n });
       positions.push(pos); bounds.extend(pos);
     });
 
@@ -270,7 +300,7 @@ export default function RouteMap({ stops, selectedId }) {
   // ── HIGHLIGHT SELECTED MARKER ──────────────────────────────────────────
   useEffect(() => {
     if (!map.current) return;
-    markers.current.forEach(({ marker, stopId }) => {
+    markers.current.forEach(({ marker, stopId, order }) => {
       const isSel = stopId === selectedId;
       const s = stops.find(x => x.id === stopId);
       if (!s) return;
@@ -284,7 +314,7 @@ export default function RouteMap({ stops, selectedId }) {
         strokeColor: isSel ? "#FFD600" : hasConstraint ? "#FF4081" : "#fff",
         strokeWeight: isSel ? 3 : hasConstraint ? 2 : 1.5,
       });
-      marker.setZIndex(isSel ? 20 : 10);
+      marker.setZIndex(isSel ? 9999 : (stops.length - order + 11));
       marker.setLabel({ text: marker.getLabel().text, color: "#fff", fontWeight: "800", fontSize: isSel ? "11px" : "10px" });
     });
   }, [selectedId]);
