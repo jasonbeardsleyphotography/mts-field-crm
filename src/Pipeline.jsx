@@ -285,7 +285,8 @@ Property: ${card.addr || ""}`);
     const key = section === "addon" ? "addonPhotos" : "scopePhotos";
     setEditFields(prev => {
       const cur = prev[cardId] || {};
-      const existing = cur[key] || fieldCacheRef.current[cardId]?.[key] || [];
+      const cached = fieldCacheRef.current[cardId] || peekField(cardId);
+      const existing = cur[key] || cached?.[key] || cached?.photos || [];
       return { ...prev, [cardId]: { ...cur, [key]: [...existing, photo] } };
     });
     updateField(cardId, (existing) => {
@@ -299,7 +300,8 @@ Property: ${card.addr || ""}`);
     const key = section === "addon" ? "addonPhotos" : "scopePhotos";
     setEditFields(prev => {
       const cur = prev[cardId] || {};
-      const existing = cur[key] || fieldCacheRef.current[cardId]?.[key] || [];
+      const cached = fieldCacheRef.current[cardId] || peekField(cardId);
+      const existing = cur[key] || cached?.[key] || cached?.photos || [];
       return { ...prev, [cardId]: { ...cur, [key]: existing.filter((_, i) => i !== idx) } };
     });
     updateField(cardId, (existing) => {
@@ -313,7 +315,8 @@ Property: ${card.addr || ""}`);
     const applyMarkup = (p, i) => i === idx ? { ...p, dataUrl: newDataUrl, url: undefined } : p;
     setEditFields(prev => {
       const cur = prev[cardId] || {};
-      const existing = [...(cur[key] || fieldCacheRef.current[cardId]?.[key] || [])];
+      const cached = fieldCacheRef.current[cardId] || peekField(cardId);
+      const existing = [...(cur[key] || cached?.[key] || cached?.photos || [])];
       return { ...prev, [cardId]: { ...cur, [key]: existing.map(applyMarkup) } };
     });
     updateField(cardId, (existing) => {
