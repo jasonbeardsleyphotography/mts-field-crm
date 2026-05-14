@@ -39,6 +39,7 @@ const COLORS = [
 ];
 
 const SIZES = [3, 6, 10];           // brush sizes in CSS pixels at scale=1
+const ARROWHEAD_SCALES = [1, 2, 3]; // multipliers: small / medium / large
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 5;
 const INIT_SCALE = 1;               // fit-to-screen on open
@@ -76,9 +77,9 @@ function analyzeStroke(points) {
   return null;
 }
 
-function buildArrowStroke(info, color, size) {
+function buildArrowStroke(info, color, size, headScale = 1) {
   const { start, end, angle } = info;
-  const headLen = Math.max(16, size * 4);
+  const headLen = Math.max(16, size * 4) * headScale;
   const headAngle = 0.45; // ~25deg
   const tip = end;
   const left = {
@@ -90,6 +91,11 @@ function buildArrowStroke(info, color, size) {
     y: tip.y - headLen * Math.sin(angle + headAngle),
   };
   return { type: "arrow", start, end, left, right, color, size };
+}
+
+function buildXStroke(center, color, size, cssToImg) {
+  const armLen = Math.max(24, size * 8) * cssToImg;
+  return { type: "x", cx: center.x, cy: center.y, armLen, color, size };
 }
 
 // ── DRAWING ──────────────────────────────────────────────────────────────────
@@ -138,6 +144,21 @@ function drawArrow(ctx, a, lineWidth) {
   ctx.stroke();
 }
 
+function drawX(ctx, s, lineWidth) {
+  const { cx, cy, armLen } = s;
+  ctx.strokeStyle = s.color;
+  ctx.lineWidth = lineWidth;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(cx - armLen, cy - armLen);
+  ctx.lineTo(cx + armLen, cy + armLen);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx + armLen, cy - armLen);
+  ctx.lineTo(cx - armLen, cy + armLen);
+  ctx.stroke();
+}
+
 // Distance from point to segment — for eraser hit-testing.
 function distToSegment(px, py, x1, y1, x2, y2) {
   const dx = x2 - x1, dy = y2 - y1;
@@ -163,12 +184,17 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
   const [brushSize, setBrushSize]   = useState(() => {
     try { return Number(localStorage.getItem("pm.brushSize")) || SIZES[1]; } catch { return SIZES[1]; }
   });
-  const [arrowMode, setArrowMode]   = useState(false);
-  const [eraserMode, setEraserMode] = useState(false);
+  const [arrowMode, setArrowMode]         = useState(false);
+  const [eraserMode, setEraserMode]       = useState(false);
+  const [xMode, setXMode]                 = useState(false);
+  const [arrowHeadScale, setArrowHeadScale] = useState(() => {
+    try { return Number(localStorage.getItem("pm.arrowHeadScale")) || 1; } catch { return 1; }
+  });
 
   // Persist tool preferences
   useEffect(() => { try { localStorage.setItem("pm.color", color); } catch {} }, [color]);
   useEffect(() => { try { localStorage.setItem("pm.brushSize", String(brushSize)); } catch {} }, [brushSize]);
+  useEffect(() => { try { localStorage.setItem("pm.arrowHeadScale", String(arrowHeadScale)); } catch {} }, [arrowHeadScale]);
 
   // Committed strokes in image-natural coords (drives base canvas)
   const [strokes, setStrokes]   = useState([]);
@@ -281,8 +307,9 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
     const cssToImg = fit.w > 0 ? imgDims.w / fit.w : 1;
     strokes.forEach(s => {
       const lw = s.size * cssToImg;
-      if (s.type === "arrow") drawArrow(ctx, s, lw);
-      else                    drawFreehand(ctx, s, lw);
+      if (s.type === "arrow")   drawArrow(ctx, s, lw);
+      else if (s.type === "x") drawX(ctx, s, lw);
+      else                     drawFreehand(ctx, s, lw);
     });
   }, [strokes, backing.w, backing.h, imgDims.w, imgDims.h, fit.w]);
 
@@ -307,8 +334,13 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
     ctx.scale(bs, bs);
     const cssToImg = fit.w > 0 ? imgDims.w / fit.w : 1;
 
-    if (cs && cs.points.length >= 2) {
-      drawFreehand(ctx, cs, cs.size * cssToImg);
+    if (cs) {
+      if (cs.type === "x-preview") {
+        const xStroke = buildXStroke(cs.center, cs.color, cs.size, cssToImg);
+        drawX(ctx, xStroke, cs.size * cssToImg);
+      } else if (cs.points.length >= 2) {
+        drawFreehand(ctx, cs, cs.size * cssToImg);
+      }
     }
     if (ap) {
       drawArrow(ctx, ap, ap.size * cssToImg);
@@ -387,6 +419,12 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
           if (distToSegment(pImg.x, pImg.y, s.start.x, s.start.y, s.end.x, s.end.y) < HIT) {
             return prev.filter((_, j) => j !== i);
           }
+        } else if (s.type === "x") {
+          const { cx, cy, armLen: arm } = s;
+          if (distToSegment(pImg.x, pImg.y, cx - arm, cy - arm, cx + arm, cy + arm) < HIT ||
+              distToSegment(pImg.x, pImg.y, cx + arm, cy - arm, cx - arm, cy + arm) < HIT) {
+            return prev.filter((_, j) => j !== i);
+          }
         } else if (s.points) {
           for (let k = 0; k < s.points.length - 1; k++) {
             if (distToSegment(pImg.x, pImg.y,
@@ -433,6 +471,13 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
       const pImg = clientToImage(e.clientX, e.clientY);
       if (eraserMode) {
         eraseAt(pImg);
+        return;
+      }
+      if (xMode) {
+        drawingRef.current = true;
+        currentStrokeRef.current = { type: "x-preview", center: pImg, color, size: brushSize };
+        forceUpdate(n => n + 1);
+        scheduleOverlay();
         return;
       }
       drawingRef.current = true;
@@ -511,7 +556,17 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
       const cs = currentStrokeRef.current;
       if (!cs) return;
 
-      if (cs.points.length < 2) {
+      // X-stamp: commit on pointer up at the stored center position
+      if (cs.type === "x-preview") {
+        currentStrokeRef.current = null;
+        const cssToImg = fit.w > 0 ? imgDims.w / fit.w : 1;
+        const xStroke = buildXStroke(cs.center, cs.color, cs.size, cssToImg);
+        scheduleOverlay();
+        setStrokes(prev => [...prev, xStroke]);
+        return;
+      }
+
+      if (!cs.points || cs.points.length < 2) {
         currentStrokeRef.current = null;
         scheduleOverlay();
         forceUpdate(n => n + 1);
@@ -520,7 +575,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
 
       const arrowInfo = arrowMode ? analyzeStroke(cs.points) : null;
       if (arrowInfo) {
-        const arrow = buildArrowStroke(arrowInfo, cs.color, cs.size);
+        const arrow = buildArrowStroke(arrowInfo, cs.color, cs.size, arrowHeadScale);
         arrowPreviewRef.current = arrow;
         currentStrokeRef.current = null;
         scheduleOverlay();
@@ -558,8 +613,9 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
     const cssToImg = fit.w > 0 ? imgDims.w / fit.w : 1;
     strokes.forEach(s => {
       const lw = s.size * cssToImg;
-      if (s.type === "arrow") drawArrow(ctx, s, lw);
-      else                    drawFreehand(ctx, s, lw);
+      if (s.type === "arrow")   drawArrow(ctx, s, lw);
+      else if (s.type === "x") drawX(ctx, s, lw);
+      else                     drawFreehand(ctx, s, lw);
     });
 
     onSave(fc.toDataURL("image/jpeg", 0.9));
@@ -665,14 +721,24 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
         display: "flex", gap: 8, alignItems: "center",
       }}>
         <button
-          onClick={() => { setArrowMode(m => !m); setEraserMode(false); }}
+          onClick={() => { setArrowMode(m => !m); setEraserMode(false); setXMode(false); }}
           style={fab(arrowMode)}
           title="Arrow (straight strokes snap to arrows)"
         >
           <IconArrowUpRight size={20} color="#fff" />
         </button>
         <button
-          onClick={() => { setEraserMode(m => !m); setArrowMode(false); }}
+          onClick={() => { setXMode(m => !m); setArrowMode(false); setEraserMode(false); }}
+          style={fab(xMode)}
+          title="Stamp an X mark"
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <line x1="3" y1="3" x2="17" y2="17" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"/>
+            <line x1="17" y1="3" x2="3" y2="17" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"/>
+          </svg>
+        </button>
+        <button
+          onClick={() => { setEraserMode(m => !m); setArrowMode(false); setXMode(false); }}
           style={fab(eraserMode, true)}
           title="Eraser"
         >
@@ -705,6 +771,50 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
         display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
         pointerEvents: "none", // outer wrapper lets touches pass through; pills opt in
       }}>
+        {/* Arrowhead size — only shown when arrow mode is active */}
+        {arrowMode && (
+          <div style={{
+            display: "flex", gap: 4, padding: "6px 10px",
+            background: "rgba(28,28,30,.72)",
+            WebkitBackdropFilter: "blur(20px) saturate(180%)",
+            backdropFilter: "blur(20px) saturate(180%)",
+            borderRadius: 999,
+            border: "1px solid rgba(0,122,255,.45)",
+            boxShadow: "0 2px 10px rgba(0,0,0,.35)",
+            pointerEvents: "auto",
+            alignItems: "center",
+          }}>
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,.5)", fontWeight: 600, marginRight: 4, letterSpacing: 0.5 }}>HEAD</span>
+            {ARROWHEAD_SCALES.map((scale, i) => {
+              const active = arrowHeadScale === scale;
+              // Arrow SVG with head size proportional to scale
+              const headSize = 5 + i * 5; // 5, 10, 15 px
+              return (
+                <button
+                  key={scale}
+                  onClick={() => setArrowHeadScale(scale)}
+                  title={["Small", "Medium", "Large"][i] + " arrowhead"}
+                  style={{
+                    width: 42, height: 34, borderRadius: 8,
+                    background: active ? "rgba(0,122,255,.35)" : "transparent",
+                    border: active ? "1px solid rgba(0,122,255,.7)" : "1px solid transparent",
+                    cursor: "pointer", padding: 0,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}
+                >
+                  <svg width="36" height="18" viewBox="0 0 36 18" fill="none">
+                    <line x1="2" y1="9" x2={34 - headSize} y2="9" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/>
+                    <polyline
+                      points={`${34 - headSize},${9 - headSize} 34,9 ${34 - headSize},${9 + headSize}`}
+                      fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* Colors */}
         <div style={{
           display: "flex", gap: 10, padding: "8px 14px",

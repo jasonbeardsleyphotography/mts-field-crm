@@ -787,6 +787,11 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   }, [s.id]);
 
   // ── MARKUP OVERLAY ──────────────────────────────────────────────────
+  // Font shorthands — declared before any early return so they're in scope
+  // for the camera/markup loading spinners that use fontFamily:F.
+  const F = "'Oswald',sans-serif";
+  const B = "'DM Sans',system-ui,sans-serif";
+
   // Camera view — rapid capture mode
   if (showCamera) {
     return <CameraView
@@ -917,9 +922,6 @@ Property: ${s.addr || ""}`);
     }
     e.target.value = "";
   };
-
-  const F = "'Oswald',sans-serif";
-  const B = "'DM Sans',system-ui,sans-serif";
 
   // Explicit final save then call onDone — guarantees current React state
   // (all visible photos/notes) is persisted to IDB before the component unmounts
