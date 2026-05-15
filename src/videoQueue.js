@@ -278,7 +278,7 @@ async function _processItem(id) {
   vlogInfo("process.start", { fileSize: item.fileSize, status: item.status, bytesUploaded: item.bytesUploaded }, id);
   incUpload(item.stopId);
   try {
-    await _setItem(id, { status: "uploading" });
+    await _setItem(id, { status: "uploading", statusSetAt: Date.now() });
 
     // Resolve target folder (cached)
     let folderId = item.folderId;
@@ -456,22 +456,32 @@ export function startVideoQueueWatcher(getToken) {
   window.addEventListener("focus",  () => { vlogInfo("event.focus", null);  _kick(); });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
-      // iOS suspends JS execution when backgrounded, which can leave a fetch()
-      // hanging forever with _processing locked. Force-release if the lock has
-      // been held longer than 90s — with 512KB chunks a legitimate upload
-      // never takes that long end-to-end.
+      // In-memory unstick: _processingStartMs freezes while iOS suspends JS,
+      // so it can undercount elapsed time. Unstick if it looks long enough.
       if (_processing && _processingStartMs && Date.now() - _processingStartMs > 90_000) {
         vlogWarn("worker.foreground_unstick", { heldForMs: Date.now() - _processingStartMs });
         _processing = false;
       }
       vlogInfo("event.visible", null);
-      // Re-acquire wake lock — the system releases it when the screen dims
-      // and may not restore it automatically when the user returns.
       if (_processing) _acquireWakeLock();
       _kick();
+
+      // Wall-clock IDB unstick: _processingStartMs is an in-memory clock that
+      // iOS freezes when the app is backgrounded (e.g. during a phone call).
+      // Compare statusSetAt written to IDB (real wall time) to catch uploads
+      // that have been stalled across a context switch. Resets them to "queued"
+      // so _kick() restarts within seconds instead of waiting 2 minutes.
+      idbAll().then(all => {
+        const stale = all.filter(
+          i => i.status === "uploading" && Date.now() - (i.statusSetAt || 0) > 90_000
+        );
+        if (!stale.length) return;
+        vlogWarn("worker.idb_wall_unstick", { count: stale.length });
+        Promise.all(stale.map(i => idbPut({ ...i, status: "queued", statusSetAt: Date.now() })))
+          .then(() => { _processing = false; notify(); _kick(); })
+          .catch(() => {});
+      }).catch(() => {});
     } else {
-      // Screen going off — release so battery isn't drained if upload finishes
-      // while backgrounded.
       _releaseWakeLock();
     }
   });

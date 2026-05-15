@@ -10,6 +10,7 @@ import { startPhotoSyncWatcher } from "./photoSync";
 import { startVideoQueueWatcher } from "./videoQueue";
 import { pruneLog as pruneVideoLog } from "./videoLog";
 import UploadTracker from "./UploadTracker";
+import VideoUploads from "./VideoUploads";
 import Linkify from "./Linkify";
 import AddStopModal from "./AddStopModal";
 import { buildClientIndex } from "./clientIndex";
@@ -797,6 +798,7 @@ export default function App() {
   const [declineConfirm, setDeclineConfirm] = useState(null); // stop id awaiting confirm
   const [rejectConfirm, setRejectConfirm] = useState(null);  // stop id awaiting reject confirm
   const [signOutConfirm, setSignOutConfirm] = useState(false);
+  const [uploadsOpen, setUploadsOpen] = useState(false);
   // (addStopOpen is declared above, near the clientIndex computation — its
   // useEffect needs to fire when this flag flips, and the effect lives there.)
 
@@ -1439,7 +1441,7 @@ export default function App() {
       {/* ── INLINE UPLOAD TRACKER ─────────────────────────────────────
           Sits in the document flow above the bottom bar so the Reorder
           button is never hidden by upload progress. */}
-      <UploadTracker stopMap={stopMap} inline />
+      <UploadTracker stopMap={stopMap} inline onOpenUploads={() => setUploadsOpen(true)} />
 
       {/* ── BOTTOM BAR ──────────────────────────────────────────────── */}
       {view === "route" && <div style={{borderTop:"1px solid #0e1520",padding:"4px 8px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",gap:5,background:"#080a10",flexShrink:0}}>
@@ -1649,6 +1651,9 @@ export default function App() {
           setOnsiteStop(null);
         }}
       />}
+
+      {/* ── VIDEO UPLOAD MANAGER ──────────────────────────────────── */}
+      <VideoUploads open={uploadsOpen} onClose={() => setUploadsOpen(false)} stopMap={stopMap} />
 
       {/* ── UNDO TOAST ─────────────────────────────────────────────── */}
       {undoToast && <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"10px 16px",paddingBottom:"max(10px,env(safe-area-inset-bottom))",background:"#1a2a20",borderTop:"1px solid rgba(16,185,129,.3)",display:"flex",alignItems:"center",gap:10,zIndex:150}}>
