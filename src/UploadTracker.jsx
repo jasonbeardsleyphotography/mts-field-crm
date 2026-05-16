@@ -37,7 +37,7 @@ function describeStatus(item) {
   }
 }
 
-export default function UploadTracker({ stopMap = {}, bottomOffset = 0, inline = false }) {
+export default function UploadTracker({ stopMap = {}, bottomOffset = 0, inline = false, onOpenUploads }) {
   const [items, setItems] = useState([]);
   const [expanded, setExpanded] = useState(false);
   const [paused, setPausedState] = useState(isPaused());
@@ -114,13 +114,11 @@ export default function UploadTracker({ stopMap = {}, bottomOffset = 0, inline =
       display: "flex",
       flexDirection: "column",
     }}>
-      {/* Collapsed bar — TRUE thin strip (6px tall). No text, no icon —
-          just a progress indicator the user can tap to expand. The expanded
-          view has all the details. This preserves bottom UI real estate
-          (especially the Reorder button). */}
+      {/* Collapsed bar — thin strip (6px). Tapping opens the full upload
+          manager screen (VideoUploads). Preserves bottom UI real estate. */}
       {items.length > 0 && (
         <button
-          onClick={() => setExpanded(v => !v)}
+          onClick={() => onOpenUploads ? onOpenUploads() : setExpanded(v => !v)}
           style={{
             width: "100%", background: "#0a0d15", border: "none",
             padding: 0, cursor: "pointer", textAlign: "left",
@@ -129,7 +127,7 @@ export default function UploadTracker({ stopMap = {}, bottomOffset = 0, inline =
             display: "block",
           }}
           aria-label={`Uploads: ${summary}`}
-          title={summary}
+          title={`${summary} — tap to manage`}
         >
           {/* Progress fill */}
           {!errorCount && !paused && activeCount > 0 && (

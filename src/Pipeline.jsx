@@ -2,6 +2,7 @@ import { IconFire, IconRevision, IconPause, IconMail, IconX, IconCheckCircle, Ic
 import CameraView from "./CameraView";
 import PhotoMarkup from "./PhotoMarkup";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import JSZip from "jszip";
 import { loadFieldFromDrive, saveFieldToDrive } from "./driveSync";
 import { loadField, saveField, peekField, primeField, updateField } from "./fieldStore";
 import { isUploadPending, onUploadChange } from "./uploadStatus";
@@ -326,6 +327,51 @@ Property: ${card.addr || ""}`);
     markStopForPhotoSync(cardId);
     setDetailMarkup(null);
   };
+
+  // ── DOWNLOAD ALL PHOTOS ───────────────────────────────────────────────
+  const [downloadingPhotos, setDownloadingPhotos] = useState(false);
+
+  const downloadAllPhotos = useCallback(async (card, scopePhotos, addonPhotos) => {
+    const all = [
+      ...scopePhotos.map((p, i) => ({ p, name: `scope_${String(i + 1).padStart(2, "0")}.jpg` })),
+      ...addonPhotos.map((p, i) => ({ p, name: `addon_${String(i + 1).padStart(2, "0")}.jpg` })),
+    ].filter(x => x.p.dataUrl || x.p.url);
+    if (!all.length) return;
+
+    setDownloadingPhotos(true);
+    try {
+      const zip = new JSZip();
+      const folder = zip.folder(card.cn.replace(/[^a-z0-9_\- ]/gi, "_"));
+      await Promise.all(all.map(async ({ p, name }) => {
+        try {
+          if (p.dataUrl) {
+            // dataURL → binary string
+            const b64 = p.dataUrl.split(",")[1] || p.dataUrl;
+            folder.file(name, b64, { base64: true });
+          } else {
+            // Drive/remote URL → fetch blob
+            const res = await fetch(p.url);
+            if (!res.ok) return;
+            const blob = await res.blob();
+            folder.file(name, blob);
+          }
+        } catch {}
+      }));
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${card.cn.replace(/[^a-z0-9_\- ]/gi, "_")}_photos.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) {
+      console.warn("downloadAllPhotos failed:", e);
+    } finally {
+      setDownloadingPhotos(false);
+    }
+  }, []);
 
   const detailHandleLibraryPhotos = (e, section, cardId) => {
     Array.from(e.target.files || []).forEach(file => {
@@ -1205,6 +1251,18 @@ Property: ${card.addr || ""}`);
 
               {/* Scope photos — fully editable */}
               <div style={{marginBottom:16}}>
+                {(scopePhotos.length > 0 || addonPhotos.length > 0) && (
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",marginBottom:8}}>
+                    <button
+                      onClick={() => downloadAllPhotos(card, scopePhotos, addonPhotos)}
+                      disabled={downloadingPhotos}
+                      style={{padding:"5px 12px",borderRadius:7,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.3)",color:"#3B82F6",fontSize:10,fontWeight:700,cursor:downloadingPhotos?"default":"pointer",display:"flex",alignItems:"center",gap:5,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",opacity:downloadingPhotos?0.6:1}}
+                    >
+                      <IconDownload size={11} color="#3B82F6"/>
+                      {downloadingPhotos ? "Zipping…" : `Download All (${scopePhotos.length + addonPhotos.length})`}
+                    </button>
+                  </div>
+                )}
                 {scopePhotos.length > 0 && <>
                   <div style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>SCOPE PHOTOS ({scopePhotos.length})</div>
                   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:8,marginBottom:8}}>
