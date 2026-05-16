@@ -525,7 +525,13 @@ export default function App() {
           // Merge pipeline: cloud wins
           if (cloud.pipeline && Object.keys(cloud.pipeline).length > 0) {
             const local = loadPipeline();
-            const merged = { ...local, ...cloud.pipeline };
+            // Use timestamp-based merge (same as pullFromDrive) so a stale
+            // cloud version never silently clobbers a locally-moved card.
+            const merged = { ...local };
+            for (const [cid, dc] of Object.entries(cloud.pipeline)) {
+              const lc = local[cid];
+              if (!lc || (dc.stageChangedAt || 0) >= (lc.stageChangedAt || 0)) merged[cid] = dc;
+            }
             savePipeline(merged);
           }
           // Merge dismissed: cloud wins, keep local-only
@@ -929,14 +935,23 @@ export default function App() {
     const stop = stopMap[id];
     if (stop) {
       const pl = loadPipeline();
+      const ex = pl[id];
+      // If the card has already been moved beyond estimate_needed, preserve
+      // the stage — only update contact info and mark the reject flag.
+      const keepStage = ex && ex.stage !== "estimate_needed";
       pl[id] = {
         id, cn: stop.cn, addr: stop.addr, phone: stop.phone, email: stop.email,
         jn: stop.jn, notes: stop.notes, constraint: stop.constraint,
-        stage: "estimate_needed", addedAt: Date.now(), stageChangedAt: Date.now(),
-        hot: false, pendingRejectInSingleops: true,
+        stage: keepStage ? ex.stage : "estimate_needed",
+        addedAt: ex?.addedAt || Date.now(),
+        stageChangedAt: keepStage ? ex.stageChangedAt : Date.now(),
+        hot: ex?.hot ?? false,
+        ...(ex?.estimateSentAt ? { estimateSentAt: ex.estimateSentAt } : {}),
+        ...(ex?.pauseUntil ? { pauseUntil: ex.pauseUntil } : {}),
+        pendingRejectInSingleops: true,
       };
       savePipeline(pl);
-      if (token) pushCalendarColor(id, "estimate_needed", token);
+      if (token) pushCalendarColor(id, pl[id].stage, token);
     }
     setDismissed(p => ({...p,[id]:Date.now()}));
     setExpanded(null);
@@ -952,15 +967,23 @@ export default function App() {
     setOnsiteStop(null);
     if (stop) {
       const pl = loadPipeline();
+      const ex = pl[id];
+      // Preserve the stage if the card has already been moved off estimate_needed.
+      // The same GCal event can show up on multiple days' routes; marking it
+      // "done" again must not reset work the user already did in the pipeline.
+      const keepStage = ex && ex.stage !== "estimate_needed";
       pl[id] = {
         id, cn: stop.cn, addr: stop.addr, phone: stop.phone, email: stop.email,
         jn: stop.jn, notes: stop.notes, constraint: stop.constraint,
-        stage: "estimate_needed", addedAt: Date.now(), stageChangedAt: Date.now(),
-        hot: false,
+        stage: keepStage ? ex.stage : "estimate_needed",
+        addedAt: ex?.addedAt || Date.now(),
+        stageChangedAt: keepStage ? ex.stageChangedAt : Date.now(),
+        hot: ex?.hot ?? false,
+        ...(ex?.estimateSentAt ? { estimateSentAt: ex.estimateSentAt } : {}),
+        ...(ex?.pauseUntil ? { pauseUntil: ex.pauseUntil } : {}),
       };
       savePipeline(pl);
-      // Push calendar color to "estimate_needed" (yellow/banana)
-      if (token) pushCalendarColor(id, "estimate_needed", token);
+      if (token) pushCalendarColor(id, pl[id].stage, token);
       // Also sync field data to Drive — read from IDB so base64 media is included
       if (token) {
         loadField(id).then(fd => {
@@ -1636,15 +1659,21 @@ export default function App() {
           const stop = stopMap[onsiteStop.id];
           if (stop) {
             const pl = loadPipeline();
+            const ex = pl[onsiteStop.id];
+            const keepStage = ex && ex.stage !== "estimate_needed";
             pl[onsiteStop.id] = {
               id: onsiteStop.id, cn: stop.cn, addr: stop.addr, phone: stop.phone, email: stop.email,
               jn: stop.jn, notes: stop.notes, constraint: stop.constraint,
-              stage: "estimate_needed", addedAt: Date.now(), stageChangedAt: Date.now(),
-              hot: false,
-              pendingRejectInSingleops: true, // 🚩 flag for color-coding
+              stage: keepStage ? ex.stage : "estimate_needed",
+              addedAt: ex?.addedAt || Date.now(),
+              stageChangedAt: keepStage ? ex.stageChangedAt : Date.now(),
+              hot: ex?.hot ?? false,
+              ...(ex?.estimateSentAt ? { estimateSentAt: ex.estimateSentAt } : {}),
+              ...(ex?.pauseUntil ? { pauseUntil: ex.pauseUntil } : {}),
+              pendingRejectInSingleops: true,
             };
             savePipeline(pl);
-            if (token) pushCalendarColor(onsiteStop.id, "estimate_needed", token);
+            if (token) pushCalendarColor(onsiteStop.id, pl[onsiteStop.id].stage, token);
           }
           setDismissed(p => ({...p,[onsiteStop.id]:Date.now()}));
           setExpanded(null);
