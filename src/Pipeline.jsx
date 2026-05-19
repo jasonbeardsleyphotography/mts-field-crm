@@ -456,6 +456,16 @@ Property: ${card.addr || ""}`);
         (local.addonPhotos || []).length ||
         local.videoUrls?.length || local.videoUrl ||
         local.audioClips?.length);
+
+      // Show local IDB data immediately — don't wait for the Drive round-trip.
+      // This eliminates the first-open blank-photo window: IDB reads take ~10ms
+      // while Drive takes 1–3s. The Drive merge below will update fieldCache
+      // again with any cross-device photos once it arrives.
+      if (hasLocal) {
+        primeField(id, local);
+        setFieldCache(prev => ({ ...prev, [id]: local }));
+      }
+
       // Always try Drive to get freshest data (especially cross-device)
       try {
         const cloud = await loadFieldFromDrive(token, id);
@@ -487,11 +497,11 @@ Property: ${card.addr || ""}`);
           primeField(id, merged);
           saveField(id, merged).catch(() => {});
           setFieldCache(prev => ({ ...prev, [id]: merged }));
-        } else if (hasLocal) {
-          setFieldCache(prev => ({ ...prev, [id]: local }));
+        } else if (!hasLocal) {
+          // No local data and Drive returned empty — nothing to show
         }
       } catch {
-        if (hasLocal) setFieldCache(prev => ({ ...prev, [id]: local }));
+        // Drive failed — local data was already shown above
       }
       if (!dead) setDetailLoading(false);
     })();
