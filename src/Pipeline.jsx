@@ -4,7 +4,7 @@ import PhotoMarkup from "./PhotoMarkup";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import JSZip from "jszip";
 import { loadFieldFromDrive, saveFieldToDrive } from "./driveSync";
-import { loadField, saveField, peekField, primeField, updateField } from "./fieldStore";
+import { loadField, peekField, primeField, updateField } from "./fieldStore";
 import { isUploadPending, onUploadChange } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
 import { listAll as listAllQueue, onQueueChange, enqueueVideo } from "./videoQueue";
@@ -132,15 +132,6 @@ const SMS_TEMPLATES = [
 function loadPipeline() { try { return JSON.parse(localStorage.getItem(PIPELINE_KEY)) || {}; } catch(e) { return {}; } }
 function savePipeline(data) { try { localStorage.setItem(PIPELINE_KEY, JSON.stringify(data)); } catch(e) {} }
 
-// Serialization queue per stop ID — prevents concurrent read-modify-write races on IDB.
-const _pipelinePhotoQueues = {};
-function _pipelineQueue(stopId, fn) {
-  const prev = _pipelinePhotoQueues[stopId] || Promise.resolve();
-  const next = prev.then(fn).catch(e => console.warn("Pipeline IDB op failed:", e));
-  _pipelinePhotoQueues[stopId] = next;
-  return next;
-}
-
 // Union-merge two photo arrays by ts (timestamp key). Neither array is
 // discarded — photos present only in local get kept (not yet synced to Drive),
 // photos present only in cloud get kept (Drive is the canonical record).
@@ -215,21 +206,24 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   useEffect(() => { fieldCacheRef.current = fieldCache; }, [fieldCache]);
 
   // Save edited field data to IndexedDB (and Drive if token available).
-  // Uses loadField (IDB) as the base so photo arrays are never clobbered.
+  // Uses fieldStore.updateField (the shared per-stop queue) so this serializes
+  // with photoSync uploads, OnsiteWindow auto-saves, and any other writes —
+  // no concurrent path can clobber the photo array via a stale read.
   const saveEditedField = useCallback((id, key, value) => {
     setEditFields(prev => ({ ...prev, [id]: { ...(prev[id] || {}), [key]: value } }));
-    _pipelineQueue(id, async () => {
-      const current = await loadField(id).catch(() => ({}));
-      const updated = { ...(current || {}), [key]: value };
-      primeField(id, updated);
-      await saveField(id, updated).catch(() => {});
+    updateField(id, () => ({ [key]: value })).then(() => {
       if (token) {
-        if (window._pipelineFieldSync) clearTimeout(window._pipelineFieldSync);
-        window._pipelineFieldSync = setTimeout(() => {
-          saveFieldToDrive(token, id, updated).catch(() => {});
+        const syncKey = `_mtsPipelineFieldSync_${id}`;
+        if (window[syncKey]) clearTimeout(window[syncKey]);
+        window[syncKey] = setTimeout(async () => {
+          window[syncKey] = null;
+          const fresh = await loadField(id).catch(() => null);
+          if (fresh && Object.keys(fresh).length) {
+            saveFieldToDrive(token, id, fresh).catch(() => {});
+          }
         }, 2000);
       }
-    });
+    }).catch(() => {});
   }, [token]);
 
   // ── GEMINI AI — used in detail popup ─────────────────────────────────
@@ -428,12 +422,9 @@ Property: ${card.addr || ""}`);
       const existing = cur[key] || fieldCacheRef.current[card.id]?.videoUrls || fd.videoUrls || [];
       return { ...prev, [card.id]: { ...cur, [key]: existing.filter((_, i) => i !== idx) } };
     });
-    _pipelineQueue(card.id, async () => {
-      const current = await loadField(card.id).catch(() => ({}));
-      const updated = { ...(current || {}), videoUrls: (current?.videoUrls || []).filter((_, i) => i !== idx) };
-      primeField(card.id, updated);
-      await saveField(card.id, updated).catch(() => {});
-    });
+    updateField(card.id, (existing) => ({
+      videoUrls: (existing.videoUrls || []).filter((_, i) => i !== idx),
+    })).catch(() => {});
   };
 
   // Persist
@@ -471,32 +462,36 @@ Property: ${card.addr || ""}`);
         const cloud = await loadFieldFromDrive(token, id);
         if (dead) return;
         if (cloud && Object.keys(cloud).length > 0) {
-          // Merge: Drive wins on text/AI fields.
-          // Photos: union-merge by ts key so neither local-only (new, unsynced)
-          // nor cloud-only (synced from another device) photos are dropped.
-          // Video/audio: union dedup.
-          const localScope = local.scopePhotos || local.photos || [];
-          const localAddon = local.addonPhotos || [];
-          const localAudio = local.audioClips || [];
-          const localVids  = local.videoUrls || (local.videoUrl ? [local.videoUrl] : []);
-          const cloudScope = cloud.scopePhotos || cloud.photos || [];
-          const cloudAddon = cloud.addonPhotos || [];
-          const cloudAudio = cloud.audioClips || [];
-          const cloudVids  = cloud.videoUrls || [];
-          const merged = {
-            ...local,
-            ...cloud,
-            scopePhotos: _mergePhotoArrays(localScope, cloudScope),
-            addonPhotos: _mergePhotoArrays(localAddon, cloudAddon),
-            audioClips: cloudAudio.length >= localAudio.length ? cloudAudio : localAudio,
-            videoUrls: [...new Set([...localVids, ...cloudVids])],
-          };
-          // CRITICAL: write merged data back to IDB so that any queue operations
-          // (markup, add/remove photo) that call loadField() see the full photo
-          // array — not a stale IDB that's missing Drive-sourced photos.
-          primeField(id, merged);
-          saveField(id, merged).catch(() => {});
-          setFieldCache(prev => ({ ...prev, [id]: merged }));
+          // Run the merge through fieldStore's per-stop queue (updateField)
+          // so it serializes with any concurrent writes (photoSync upload
+          // completions, OnsiteWindow auto-save, photo capture). Reading
+          // `existing` FRESHLY inside the transformer guarantees we don't
+          // clobber photos added during the ~1-3s Drive round-trip.
+          let merged = null;
+          await updateField(id, (existing) => {
+            const ex = existing || {};
+            const localScope = ex.scopePhotos || ex.photos || [];
+            const localAddon = ex.addonPhotos || [];
+            const localAudio = ex.audioClips  || [];
+            const localVids  = ex.videoUrls   || (ex.videoUrl ? [ex.videoUrl] : []);
+            const cloudScope = cloud.scopePhotos || cloud.photos || [];
+            const cloudAddon = cloud.addonPhotos || [];
+            const cloudAudio = cloud.audioClips || [];
+            const cloudVids  = cloud.videoUrls  || [];
+            merged = {
+              ...ex,
+              ...cloud,
+              scopePhotos: _mergePhotoArrays(localScope, cloudScope),
+              addonPhotos: _mergePhotoArrays(localAddon, cloudAddon),
+              audioClips: cloudAudio.length >= localAudio.length ? cloudAudio : localAudio,
+              videoUrls: [...new Set([...localVids, ...cloudVids])],
+            };
+            return merged;
+          }).catch(() => {});
+          if (merged) {
+            primeField(id, merged);
+            setFieldCache(prev => ({ ...prev, [id]: merged }));
+          }
         } else if (!hasLocal) {
           // No local data and Drive returned empty — nothing to show
         }

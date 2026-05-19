@@ -5,7 +5,7 @@ import SwipeCard from "./SwipeCard";
 import OnsiteWindow from "./OnsiteWindow";
 import Pipeline, { savePipeline, loadPipeline, pushCalendarColor } from "./Pipeline";
 import { saveAppState, loadAppState, saveFieldToDrive, loadFieldFromDrive, listFieldFiles, onSyncStatus, onAuthError } from "./driveSync";
-import { loadField, saveField, listFieldIds } from "./fieldStore";
+import { loadField, listFieldIds, updateField } from "./fieldStore";
 import { startPhotoSyncWatcher } from "./photoSync";
 import { startVideoQueueWatcher } from "./videoQueue";
 import { pruneLog as pruneVideoLog } from "./videoLog";
@@ -626,9 +626,54 @@ export default function App() {
         const localData = await loadField(id);
         const localTs = localData?.savedAt || 0;
         const remoteTs = f.modifiedTime ? new Date(f.modifiedTime).getTime() : 0;
+        // Always try to pull from Drive — but MERGE photo/audio/video arrays
+        // by key (union) rather than overwriting. Cross-device safety: photos
+        // captured locally that haven't yet synced to Drive must never be
+        // erased by a stale Drive snapshot. Only fire the merge if Drive is
+        // strictly newer OR local is empty.
         if (localTs === 0 || remoteTs > localTs) {
           const data = await loadFieldFromDrive(token, id);
-          if (data) await saveField(id, data).catch(() => {});
+          if (data) {
+            await updateField(id, (existing) => {
+              const ex = existing || {};
+              const pick = (k) => (ex[k] !== undefined ? ex[k] : data[k]);
+              // Union-merge photo arrays by ts/url so neither side loses items.
+              const unionByKey = (a = [], b = [], getKey) => {
+                const map = new Map();
+                for (const item of a) { const k = getKey(item); if (k != null) map.set(k, item); }
+                for (const item of b) {
+                  const k = getKey(item);
+                  if (k == null) continue;
+                  if (map.has(k)) {
+                    const ex2 = map.get(k);
+                    // Prefer local dataUrl (highest fidelity, may include unsynced markup edits)
+                    map.set(k, { ...item, ...ex2, dataUrl: ex2.dataUrl || item.dataUrl });
+                  } else map.set(k, item);
+                }
+                return [...map.values()].sort((x, y) => (x.ts || x.timestamp || 0) - (y.ts || y.timestamp || 0));
+              };
+              const localScope = ex.scopePhotos || ex.photos || [];
+              const localAddon = ex.addonPhotos || [];
+              const localAudio = ex.audioClips  || [];
+              const localVids  = ex.videoUrls   || (ex.videoUrl ? [ex.videoUrl] : []);
+              const cloudScope = data.scopePhotos || data.photos || [];
+              const cloudAddon = data.addonPhotos || [];
+              const cloudAudio = data.audioClips  || [];
+              const cloudVids  = data.videoUrls   || (data.videoUrl ? [data.videoUrl] : []);
+              // For text/AI fields, prefer Drive's value when local is empty,
+              // otherwise keep local (it's the freshest typed input on this device).
+              return {
+                scopeNotes:     ex.scopeNotes || data.scopeNotes || data.myNotes || "",
+                addonNotes:     ex.addonNotes || data.addonNotes || "",
+                aiScopeSummary: ex.aiScopeSummary || data.aiScopeSummary || "",
+                aiAddonEmail:   ex.aiAddonEmail   || data.aiAddonEmail   || "",
+                scopePhotos: unionByKey(localScope, cloudScope, p => p.ts || p.url),
+                addonPhotos: unionByKey(localAddon, cloudAddon, p => p.ts || p.url),
+                audioClips:  unionByKey(localAudio, cloudAudio, a => a.ts || a.timestamp || a.url),
+                videoUrls:   Array.from(new Set([...localVids, ...cloudVids])),
+              };
+            }).catch(() => {});
+          }
         }
       }
       setLastSyncTime(Date.now());

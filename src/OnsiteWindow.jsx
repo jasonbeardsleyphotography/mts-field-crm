@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import PhotoMarkup from "./PhotoMarkup";
 import CameraView from "./CameraView";
 import { saveFieldToDrive, loadFieldFromDrive } from "./driveSync";
-import { loadField, saveField, peekField, primeField, mergeField, updateField, saveFieldSync, getFieldSlim } from "./fieldStore";
+import { loadField, peekField, primeField, mergeField, updateField, saveFieldSync, getFieldSlim } from "./fieldStore";
 import { incUpload, decUpload } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
 import Linkify from "./Linkify";
@@ -204,6 +204,19 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         aiScopeSummary: d.aiScopeSummary,
         aiAddonEmail: d.aiAddonEmail,
       }).catch(() => {});
+      // 3. Also try to push the full record (photos included) to Drive now.
+      //    iOS may suspend before this completes, but if it lands the data
+      //    is durable cross-device. Fire from a fresh IDB read so we don't
+      //    push stale state.
+      const timerKey = `_mtsFieldSync_${s.id}`;
+      if (window[timerKey]) { clearTimeout(window[timerKey]); window[timerKey] = null; }
+      if (token) {
+        loadField(s.id).then(fresh => {
+          if (fresh && Object.keys(fresh).length) {
+            saveFieldToDrive(token, s.id, fresh).catch(() => {});
+          }
+        }).catch(() => {});
+      }
     };
     const onVisibility = () => {
       if (document.visibilityState === "hidden") flush();
@@ -215,10 +228,12 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       window.removeEventListener("pagehide", flush);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.id]);
+  }, [s.id, token]);
 
   // Flush any pending rate-limited save on component unmount.
   useEffect(() => {
+    const stopId = s.id;
+    const capturedToken = token;
     return () => {
       if (localSaveTimerRef.current) {
         clearTimeout(localSaveTimerRef.current);
@@ -227,8 +242,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       if (pendingDataRef.current) {
         const d = pendingDataRef.current;
         // Slim mirror synchronously, IDB asynchronously (fire-and-forget).
-        saveFieldSync(s.id, d);
-        mergeField(s.id, {
+        saveFieldSync(stopId, d);
+        mergeField(stopId, {
           scopeNotes: d.scopeNotes,
           addonNotes: d.addonNotes,
           videoUrls: d.videoUrls,
@@ -238,9 +253,21 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         }).catch(() => {});
         pendingDataRef.current = null;
       }
+      // Promote the pending 3-sec Drive timer to fire immediately so photos
+      // captured right before Done don't sit local-only for 3 seconds.
+      // (Critical for cross-device: Chromebook only sees what's on Drive.)
+      const timerKey = `_mtsFieldSync_${stopId}`;
+      if (window[timerKey]) { clearTimeout(window[timerKey]); window[timerKey] = null; }
+      if (capturedToken) {
+        loadField(stopId).then(fresh => {
+          if (fresh && Object.keys(fresh).length) {
+            saveFieldToDrive(capturedToken, stopId, fresh).catch(() => {});
+          }
+        }).catch(() => {});
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.id]);
+  }, [s.id, token]);
 
   // On mount (or when stop changes), hydrate from IndexedDB.
   // If peekField returned empty we'll get the data here; if it had a
@@ -393,7 +420,23 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         if (merged.audioClips?.length) setAudioClips(prev => mergeByKey(merged.audioClips, prev, a => a.ts || a.timestamp || a.url));
         if (cloud.aiScopeSummary) setAiScopeResult(prev => prev || cloud.aiScopeSummary);
         if (cloud.aiAddonEmail) setAiAddonResult(prev => prev || cloud.aiAddonEmail);
-        saveField(s.id, merged).catch(() => {});
+        // Route through the per-stop write queue so this can't clobber
+        // concurrent photoSync writes that may have completed during the
+        // Drive fetch above.
+        updateField(s.id, (existing) => {
+          const ex = existing || {};
+          const exScope = ex.scopePhotos || ex.photos || [];
+          const exAddon = ex.addonPhotos || [];
+          const exAudio = ex.audioClips || [];
+          const exVids  = ex.videoUrls || (ex.videoUrl ? [ex.videoUrl] : []);
+          return {
+            ...merged,
+            scopePhotos: mergeByKey(merged.scopePhotos || [], exScope, p => p.ts || p.url),
+            addonPhotos: mergeByKey(merged.addonPhotos || [], exAddon, p => p.ts || p.url),
+            audioClips:  mergeByKey(merged.audioClips  || [], exAudio, a => a.ts || a.timestamp || a.url),
+            videoUrls:   Array.from(new Set([...(merged.videoUrls || []), ...exVids])),
+          };
+        }).catch(() => {});
         primeField(s.id, merged);
         setCloudLoading(false);
       }).catch(() => { if (!dead) setCloudLoading(false); });
@@ -433,6 +476,17 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       if (!photo || !mountedRef.current) return;
       if (section === "addon") setAddonPhotos(prev => [...prev, photo]);
       else setScopePhotos(prev => [...prev, photo]);
+      // Immediate Drive sync — see camera onPhoto for the same rationale.
+      if (token) {
+        (async () => {
+          try {
+            const fresh = await loadField(s.id);
+            if (fresh && Object.keys(fresh).length) {
+              await saveFieldToDrive(token, s.id, fresh);
+            }
+          } catch (e) { /* photoSync will retry later */ }
+        })();
+      }
     });
   };
   const handleScopePhotos = (e) => { Array.from(e.target.files || []).forEach(f => processPhoto(f, "scope")); e.target.value = ""; };
@@ -818,6 +872,19 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         if (cameraSection === "addon") setAddonPhotos(prev => [...prev, photo]);
         else setScopePhotos(prev => [...prev, photo]);
         markStopForPhotoSync(s.id); // queue for Drive upload
+        // Fire-and-forget IMMEDIATE Drive sync so photos can't be lost if the
+        // user closes the app before the 3-sec auto-save timer fires.
+        // Reads FRESH from IDB so all in-flight photo writes are included.
+        if (token) {
+          (async () => {
+            try {
+              const fresh = await loadField(s.id);
+              if (fresh && Object.keys(fresh).length) {
+                await saveFieldToDrive(token, s.id, fresh);
+              }
+            } catch (e) { /* photoSync will retry later */ }
+          })();
+        }
       }}
       onClose={() => setShowCamera(false)}
     />;
@@ -931,10 +998,30 @@ Property: ${s.addr || ""}`);
   // Explicit final save then call onDone — guarantees current React state
   // (all visible photos/notes) is persisted to IDB before the component unmounts
   // and markDone reads from IDB to upload to Drive.
+  // Goes through the per-stop write queue so concurrent photoSync URL writes
+  // aren't clobbered — we merge state's photos with IDB's photos by ts/url,
+  // preferring state's dataUrl (newer markup) and IDB's url (newer sync).
   const handleDone = async () => {
-    const data = { scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult };
-    primeField(s.id, data);
-    await saveField(s.id, data).catch(() => {});
+    await updateField(s.id, (existing) => {
+      const ex = existing || {};
+      const mergePhotos = (state = [], idb = []) => {
+        const map = new Map();
+        for (const p of idb) { const k = p.ts || p.url; if (k != null) map.set(k, p); }
+        for (const p of state) {
+          const k = p.ts || p.url;
+          if (k == null) continue;
+          const ex2 = map.get(k);
+          map.set(k, ex2 ? { ...ex2, ...p, url: p.url || ex2.url, syncedAt: p.syncedAt || ex2.syncedAt } : p);
+        }
+        return [...map.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+      };
+      return {
+        scopeNotes, addonNotes, videoUrls, audioClips,
+        aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult,
+        scopePhotos: mergePhotos(scopePhotos, ex.scopePhotos || ex.photos || []),
+        addonPhotos: mergePhotos(addonPhotos, ex.addonPhotos || []),
+      };
+    }).catch(() => {});
     onDone();
   };
 
