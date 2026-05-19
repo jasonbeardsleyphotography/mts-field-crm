@@ -456,6 +456,16 @@ Property: ${card.addr || ""}`);
         (local.addonPhotos || []).length ||
         local.videoUrls?.length || local.videoUrl ||
         local.audioClips?.length);
+
+      // Show local IDB data immediately — don't wait for the Drive round-trip.
+      // This eliminates the first-open blank-photo window: IDB reads take ~10ms
+      // while Drive takes 1–3s. The Drive merge below will update fieldCache
+      // again with any cross-device photos once it arrives.
+      if (hasLocal) {
+        primeField(id, local);
+        setFieldCache(prev => ({ ...prev, [id]: local }));
+      }
+
       // Always try Drive to get freshest data (especially cross-device)
       try {
         const cloud = await loadFieldFromDrive(token, id);
@@ -487,11 +497,11 @@ Property: ${card.addr || ""}`);
           primeField(id, merged);
           saveField(id, merged).catch(() => {});
           setFieldCache(prev => ({ ...prev, [id]: merged }));
-        } else if (hasLocal) {
-          setFieldCache(prev => ({ ...prev, [id]: local }));
+        } else if (!hasLocal) {
+          // No local data and Drive returned empty — nothing to show
         }
       } catch {
-        if (hasLocal) setFieldCache(prev => ({ ...prev, [id]: local }));
+        // Drive failed — local data was already shown above
       }
       if (!dead) setDetailLoading(false);
     })();
@@ -1030,6 +1040,18 @@ Property: ${card.addr || ""}`);
         <div style={{padding:"6px 14px",background:"#0a0b10",borderBottom:"1px solid #1a2030",display:"flex",gap:12,alignItems:"center",flexShrink:0}}>
           <span style={{fontSize:14,fontWeight:600,color:"#f0f4fa"}}>{sorted.length} cards</span>
           {(cardsByStage.weak || []).length > 0 && <span style={{fontSize:11,color:"#FF8A65",fontWeight:600}}>{cardsByStage.weak.length} stale</span>}
+          {selectMode && sorted.length > 0 && (
+            <button onClick={()=>{
+              const allInTab = sorted.every(c => selected[c.id]);
+              if (allInTab) {
+                setSelected(prev => { const n={...prev}; sorted.forEach(c=>delete n[c.id]); return n; });
+              } else {
+                setSelected(prev => { const n={...prev}; sorted.forEach(c=>{n[c.id]=true;}); return n; });
+              }
+            }} style={{marginLeft:"auto",padding:"3px 9px",borderRadius:5,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
+              {sorted.every(c => selected[c.id]) ? "Deselect All" : "Select All"}
+            </button>
+          )}
         </div>
 
         {/* Follow-up reminder banner */}
@@ -1044,35 +1066,6 @@ Property: ${card.addr || ""}`);
           {sorted.map(card => renderCard(card, false))}
         </div>
 
-        {/* Select mode action bar */}
-        {selectMode && selectedCount > 0 && (
-          <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"10px 16px",background:"#0d0f18",borderTop:"1px solid #1a2030",display:"flex",gap:8,alignItems:"center",paddingBottom:"max(10px,env(safe-area-inset-bottom))",zIndex:50}}>
-            <span style={{fontSize:12,color:"#90a8c0",fontWeight:600}}>{selectedCount} selected</span>
-            <div style={{flex:1}}/>
-            <button onClick={()=>setEmailSheet(true)} style={{padding:"8px 14px",borderRadius:8,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:12,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#3B82F6"/>Email</span></button>
-            <button onClick={()=>setPipelineSheet({card:null,type:"sms_bulk"})} style={{padding:"8px 14px",borderRadius:8,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.2)",color:"#10B981",fontSize:12,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}>💬 Text</span></button>
-            <button onClick={()=>setBulkMoveOpen(true)} style={{padding:"8px 14px",borderRadius:8,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>Move →</button>
-            {/* Bulk stage picker popover */}
-            {bulkMoveOpen && (
-              <div onClick={()=>setBulkMoveOpen(false)} style={{position:"fixed",inset:0,zIndex:200}}>
-                <div onClick={e=>e.stopPropagation()} style={{position:"absolute",bottom:"calc(max(10px,env(safe-area-inset-bottom)) + 54px)",right:16,background:"#0d0f18",border:"1px solid #1a2030",borderRadius:12,padding:"8px 0",minWidth:180,boxShadow:"0 4px 20px rgba(0,0,0,.5)"}}>
-                  <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",padding:"4px 14px 8px",fontFamily:F}}>Move {selectedCount} cards to</div>
-                  {STAGES.filter(st => st.id !== "declined").map(st => (
-                    <button key={st.id} onClick={()=>{
-                      selectedCards.forEach(c => moveCard(c.id, st.id));
-                      setBulkMoveOpen(false);
-                      setSelected({});
-                      setSelectMode(false);
-                    }} style={{width:"100%",padding:"9px 14px",background:"transparent",border:"none",cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",gap:8}}>
-                      <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:16,height:16,borderRadius:8,background:st.color,color:"#fff",fontSize:9,fontWeight:800,flexShrink:0}}>{st.letter}</span>
-                      <span style={{fontSize:13,color:"#c0d0e0",fontWeight:600}}>{st.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
       </div>
     );
   };
@@ -1091,9 +1084,21 @@ Property: ${card.addr || ""}`);
                   <div style={{width:8,height:8,borderRadius:4,background:st.color,flexShrink:0}}/>
                   <span style={{fontSize:11,fontWeight:600,color:st.color,fontFamily:F,textTransform:"uppercase",letterSpacing:1,flex:1}}>{st.label}</span>
                   <span style={{fontSize:10,color:"#4a5a70",fontWeight:600}}>{cards.length}</span>
+                  {selectMode && cards.length > 0 && (
+                    <button onClick={()=>{
+                      const allInCol = cards.every(c => selected[c.id]);
+                      if (allInCol) {
+                        setSelected(prev => { const n={...prev}; cards.forEach(c=>delete n[c.id]); return n; });
+                      } else {
+                        setSelected(prev => { const n={...prev}; cards.forEach(c=>{n[c.id]=true;}); return n; });
+                      }
+                    }} style={{padding:"2px 7px",borderRadius:5,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",flexShrink:0}}>
+                      {cards.every(c => selected[c.id]) ? "Deselect" : "All"}
+                    </button>
+                  )}
                 </div>
               </div>
-              <div className="mts-pl-col" style={{flex:1,overflowY:"auto",padding:4}}>
+              <div className="mts-pl-col" style={{flex:1,overflowY:"auto",padding:4,paddingBottom:selectMode && selectedCount>0?"max(70px,calc(60px + env(safe-area-inset-bottom)))":4}}>
                 {cards.map(card => <div key={card.id} style={{marginBottom:4}}>{renderCard(card, true)}</div>)}
               </div>
             </div>
@@ -1107,6 +1112,35 @@ Property: ${card.addr || ""}`);
     <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
       <div className="mts-pipeline-mobile" style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>{mobileView()}</div>
       <div className="mts-pipeline-desktop" style={{display:"none",flex:1,overflow:"hidden"}}>{desktopView()}</div>
+
+      {/* ── SELECT MODE ACTION BAR (shared mobile + desktop) ───────── */}
+      {selectMode && selectedCount > 0 && (
+        <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"10px 16px",background:"#0d0f18",borderTop:"1px solid #1a2030",display:"flex",gap:8,alignItems:"center",paddingBottom:"max(10px,env(safe-area-inset-bottom))",zIndex:50}}>
+          <span style={{fontSize:12,color:"#90a8c0",fontWeight:600}}>{selectedCount} selected</span>
+          <div style={{flex:1}}/>
+          <button onClick={()=>setEmailSheet(true)} style={{padding:"8px 14px",borderRadius:8,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:12,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#3B82F6"/>Email</span></button>
+          <button onClick={()=>setPipelineSheet({card:null,type:"sms_bulk"})} style={{padding:"8px 14px",borderRadius:8,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.2)",color:"#10B981",fontSize:12,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}>💬 Text</span></button>
+          <button onClick={()=>setBulkMoveOpen(true)} style={{padding:"8px 14px",borderRadius:8,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>Move →</button>
+          {bulkMoveOpen && (
+            <div onClick={()=>setBulkMoveOpen(false)} style={{position:"fixed",inset:0,zIndex:200}}>
+              <div onClick={e=>e.stopPropagation()} style={{position:"absolute",bottom:"calc(max(10px,env(safe-area-inset-bottom)) + 54px)",right:16,background:"#0d0f18",border:"1px solid #1a2030",borderRadius:12,padding:"8px 0",minWidth:180,boxShadow:"0 4px 20px rgba(0,0,0,.5)"}}>
+                <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",padding:"4px 14px 8px",fontFamily:F}}>Move {selectedCount} cards to</div>
+                {STAGES.filter(st => st.id !== "declined").map(st => (
+                  <button key={st.id} onClick={()=>{
+                    selectedCards.forEach(c => moveCard(c.id, st.id));
+                    setBulkMoveOpen(false);
+                    setSelected({});
+                    setSelectMode(false);
+                  }} style={{width:"100%",padding:"9px 14px",background:"transparent",border:"none",cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:16,height:16,borderRadius:8,background:st.color,color:"#fff",fontSize:9,fontWeight:800,flexShrink:0}}>{st.letter}</span>
+                    <span style={{fontSize:13,color:"#c0d0e0",fontWeight:600}}>{st.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── UNDO TOAST ─────────────────────────────────────────────── */}
       {undoAction && (

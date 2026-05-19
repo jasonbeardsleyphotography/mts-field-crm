@@ -39,7 +39,8 @@ const COLORS = [
 ];
 
 const SIZES = [3, 6, 10];           // brush sizes in CSS pixels at scale=1
-const ARROWHEAD_SCALES = [1, 2, 3]; // multipliers: small / medium / large
+const ARROWHEAD_SCALES = [3, 4.5];  // large / XL — user requested 2 sizes only
+const X_SCALES = [1, 2, 3];         // small / medium / large X stamp size
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 5;
 const INIT_SCALE = 1;               // fit-to-screen on open
@@ -93,8 +94,8 @@ function buildArrowStroke(info, color, size, headScale = 1) {
   return { type: "arrow", start, end, left, right, color, size };
 }
 
-function buildXStroke(center, color, size, cssToImg) {
-  const armLen = Math.max(24, size * 8) * cssToImg;
+function buildXStroke(center, color, size, cssToImg, xHeadScale = 1) {
+  const armLen = Math.max(24, size * 8) * xHeadScale * cssToImg;
   return { type: "x", cx: center.x, cy: center.y, armLen, color, size };
 }
 
@@ -188,13 +189,21 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
   const [eraserMode, setEraserMode]       = useState(false);
   const [xMode, setXMode]                 = useState(false);
   const [arrowHeadScale, setArrowHeadScale] = useState(() => {
-    try { return Number(localStorage.getItem("pm.arrowHeadScale")) || 1; } catch { return 1; }
+    try {
+      const s = Number(localStorage.getItem("pm.arrowHeadScale")) || 3;
+      // Validate against the new 2-option set; reset old small/medium values to large
+      return ARROWHEAD_SCALES.includes(s) ? s : 3;
+    } catch { return 3; }
+  });
+  const [xHeadScale, setXHeadScale] = useState(() => {
+    try { return Number(localStorage.getItem("pm.xHeadScale")) || 1; } catch { return 1; }
   });
 
   // Persist tool preferences
   useEffect(() => { try { localStorage.setItem("pm.color", color); } catch {} }, [color]);
   useEffect(() => { try { localStorage.setItem("pm.brushSize", String(brushSize)); } catch {} }, [brushSize]);
   useEffect(() => { try { localStorage.setItem("pm.arrowHeadScale", String(arrowHeadScale)); } catch {} }, [arrowHeadScale]);
+  useEffect(() => { try { localStorage.setItem("pm.xHeadScale", String(xHeadScale)); } catch {} }, [xHeadScale]);
 
   // Committed strokes in image-natural coords (drives base canvas)
   const [strokes, setStrokes]   = useState([]);
@@ -336,7 +345,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
 
     if (cs) {
       if (cs.type === "x-preview") {
-        const xStroke = buildXStroke(cs.center, cs.color, cs.size, cssToImg);
+        const xStroke = buildXStroke(cs.center, cs.color, cs.size, cssToImg, cs.xHeadScale || 1);
         drawX(ctx, xStroke, cs.size * cssToImg);
       } else if (cs.points.length >= 2) {
         drawFreehand(ctx, cs, cs.size * cssToImg);
@@ -475,7 +484,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
       }
       if (xMode) {
         drawingRef.current = true;
-        currentStrokeRef.current = { type: "x-preview", center: pImg, color, size: brushSize };
+        currentStrokeRef.current = { type: "x-preview", center: pImg, color, size: brushSize, xHeadScale };
         forceUpdate(n => n + 1);
         scheduleOverlay();
         return;
@@ -560,7 +569,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
       if (cs.type === "x-preview") {
         currentStrokeRef.current = null;
         const cssToImg = fit.w > 0 ? imgDims.w / fit.w : 1;
-        const xStroke = buildXStroke(cs.center, cs.color, cs.size, cssToImg);
+        const xStroke = buildXStroke(cs.center, cs.color, cs.size, cssToImg, cs.xHeadScale || 1);
         scheduleOverlay();
         setStrokes(prev => [...prev, xStroke]);
         return;
@@ -771,7 +780,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
         display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
         pointerEvents: "none", // outer wrapper lets touches pass through; pills opt in
       }}>
-        {/* Arrowhead size — only shown when arrow mode is active */}
+        {/* Arrowhead size — only shown when arrow mode is active (2 sizes: large / XL) */}
         {arrowMode && (
           <div style={{
             display: "flex", gap: 4, padding: "6px 10px",
@@ -787,13 +796,12 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
             <span style={{ fontSize: 10, color: "rgba(255,255,255,.5)", fontWeight: 600, marginRight: 4, letterSpacing: 0.5 }}>HEAD</span>
             {ARROWHEAD_SCALES.map((scale, i) => {
               const active = arrowHeadScale === scale;
-              // Arrow SVG with head size proportional to scale
-              const headSize = 5 + i * 5; // 5, 10, 15 px
+              const headSize = i === 0 ? 10 : 15; // large / XL preview sizes
               return (
                 <button
                   key={scale}
                   onClick={() => setArrowHeadScale(scale)}
-                  title={["Small", "Medium", "Large"][i] + " arrowhead"}
+                  title={["Large", "XL"][i] + " arrowhead"}
                   style={{
                     width: 42, height: 34, borderRadius: 8,
                     background: active ? "rgba(0,122,255,.35)" : "transparent",
@@ -808,6 +816,46 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
                       points={`${34 - headSize},${9 - headSize} 34,9 ${34 - headSize},${9 + headSize}`}
                       fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
                     />
+                  </svg>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* X stamp size — only shown when X mode is active */}
+        {xMode && (
+          <div style={{
+            display: "flex", gap: 4, padding: "6px 10px",
+            background: "rgba(28,28,30,.72)",
+            WebkitBackdropFilter: "blur(20px) saturate(180%)",
+            backdropFilter: "blur(20px) saturate(180%)",
+            borderRadius: 999,
+            border: "1px solid rgba(0,122,255,.45)",
+            boxShadow: "0 2px 10px rgba(0,0,0,.35)",
+            pointerEvents: "auto",
+            alignItems: "center",
+          }}>
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,.5)", fontWeight: 600, marginRight: 4, letterSpacing: 0.5 }}>SIZE</span>
+            {X_SCALES.map((scale, i) => {
+              const active = xHeadScale === scale;
+              const arm = 4 + i * 5; // 4, 9, 14 px — arm half-length in SVG preview
+              return (
+                <button
+                  key={scale}
+                  onClick={() => setXHeadScale(scale)}
+                  title={["Small", "Medium", "Large"][i] + " X"}
+                  style={{
+                    width: 42, height: 34, borderRadius: 8,
+                    background: active ? "rgba(0,122,255,.35)" : "transparent",
+                    border: active ? "1px solid rgba(0,122,255,.7)" : "1px solid transparent",
+                    cursor: "pointer", padding: 0,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}
+                >
+                  <svg width="36" height="34" viewBox="0 0 36 34" fill="none">
+                    <line x1={18 - arm} y1={17 - arm} x2={18 + arm} y2={17 + arm} stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/>
+                    <line x1={18 + arm} y1={17 - arm} x2={18 - arm} y2={17 + arm} stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/>
                   </svg>
                 </button>
               );

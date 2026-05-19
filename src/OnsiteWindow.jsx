@@ -158,8 +158,13 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       }, 500);
     }
     if (token) {
-      if (window._fieldSyncTimer) clearTimeout(window._fieldSyncTimer);
-      window._fieldSyncTimer = setTimeout(async () => {
+      // Per-stop timer key — opening OnsiteWindow for a different stop must
+      // not cancel the pending Drive save for this stop. A shared
+      // window._fieldSyncTimer would be cleared by the next stop's effect.
+      const timerKey = `_mtsFieldSync_${s.id}`;
+      if (window[timerKey]) clearTimeout(window[timerKey]);
+      window[timerKey] = setTimeout(async () => {
+        window[timerKey] = null;
         // Read FRESH full data from IDB before pushing to Drive — picks up
         // any photo writes that _processPhoto / removeScopePhoto did since
         // the last render, so Drive never gets a stale photo list.
