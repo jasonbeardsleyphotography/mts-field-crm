@@ -5,6 +5,7 @@ import { saveFieldToDrive, loadFieldFromDrive } from "./driveSync";
 import { loadField, peekField, primeField, mergeField, updateField, saveFieldSync, getFieldSlim } from "./fieldStore";
 import { incUpload, decUpload } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
+import { downscaleDataUrl } from "./imageUtils";
 import Linkify from "./Linkify";
 import {
   enqueueVideo,
@@ -854,7 +855,11 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // Camera view — rapid capture mode
   if (showCamera) {
     return <CameraView
-      onPhoto={async (dataUrl) => {
+      onPhoto={async (rawDataUrl) => {
+        // Downscale to the 2400px budget BEFORE storing. The camera captures at
+        // up to 4K; raw 4K base64 OOM-crashes the renderer when several are
+        // shown and bloats the Drive payload so sync fails.
+        const dataUrl = await downscaleDataUrl(rawDataUrl);
         const photo = { dataUrl, ts: Date.now() };
         const key = cameraSection === "addon" ? "addonPhotos" : "scopePhotos";
         // CRITICAL: Persist to IDB BEFORE updating React state, through

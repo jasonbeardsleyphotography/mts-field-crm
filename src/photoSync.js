@@ -36,6 +36,7 @@
 
 import { loadField, updateField } from "./fieldStore";
 import { uploadPhotoToDrive } from "./driveSync";
+import { downscaleDataUrl, OVERSIZE_DATAURL_LEN } from "./imageUtils";
 
 const QUEUE_KEY = "mts-photo-queue";
 const PROMOTED_QUEUE_KEY = "mts-photo-promote-queue"; // stops that may have evictable photos
@@ -89,6 +90,13 @@ async function syncStop(stopId, token) {
   try { data = await loadField(stopId); }
   catch { return; }
   if (!data) return;
+
+  // Recovery: shrink any legacy 4K photos before upload. Keeps the Drive
+  // payload small (so sync actually succeeds) and shrinks IDB. One photo at a
+  // time to bound peak memory. Re-load after so the upload sees small versions.
+  try {
+    if (await _shrinkOversized(stopId, data)) data = await loadField(stopId);
+  } catch {}
 
   const sections = ["scopePhotos", "addonPhotos"];
   // Track uploads per-section, indexed by stable key (ts || filename), so
@@ -149,6 +157,32 @@ async function syncStop(stopId, token) {
     );
     if (allUploaded) unmarkStop(stopId);
   } catch {}
+}
+
+// ── Downscale oversized (legacy 4K) photos in place ──────────────────────
+
+async function _shrinkOversized(stopId, data) {
+  const sections = ["scopePhotos", "addonPhotos", "photos"];
+  let changed = false;
+  const next = {};
+  for (const key of sections) {
+    const arr = data[key];
+    if (!Array.isArray(arr) || arr.length === 0) continue;
+    const out = [];
+    for (const p of arr) {
+      if (p && p.dataUrl && typeof p.dataUrl === "string" && p.dataUrl.length > OVERSIZE_DATAURL_LEN) {
+        const small = await downscaleDataUrl(p.dataUrl);
+        if (small !== p.dataUrl) { out.push({ ...p, dataUrl: small }); changed = true; }
+        else out.push(p);
+      } else {
+        out.push(p);
+      }
+    }
+    next[key] = out;
+  }
+  if (!changed) return false;
+  await updateField(stopId, () => next).catch(() => {});
+  return true;
 }
 
 // ── Promote (evict dataUrl after grace period) ──────────────────────────
