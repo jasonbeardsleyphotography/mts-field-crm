@@ -709,13 +709,19 @@ export default function App() {
               const cloudAddon = data.addonPhotos || [];
               const cloudAudio = data.audioClips  || [];
               const cloudVids  = data.videoUrls   || (data.videoUrl ? [data.videoUrl] : []);
-              // For text/AI fields, prefer Drive's value when local is empty,
-              // otherwise keep local (it's the freshest typed input on this device).
+              // For text/AI fields: use whichever device's record has the newer
+              // savedAt. Drive's savedAt is the phone's IDB write time (embedded
+              // in the JSON); local savedAt is this device's last write time.
+              // This fixes the case where the phone edits notes and the
+              // Chromebook's pullFromDrive kept its own older text because
+              // "local || drive" always preferred the non-empty local value.
+              // Photos are always union-merged regardless of which text wins.
+              const cloudNewer = (data.savedAt || 0) >= (ex.savedAt || 0);
               return {
-                scopeNotes:     ex.scopeNotes || data.scopeNotes || data.myNotes || "",
-                addonNotes:     ex.addonNotes || data.addonNotes || "",
-                aiScopeSummary: ex.aiScopeSummary || data.aiScopeSummary || "",
-                aiAddonEmail:   ex.aiAddonEmail   || data.aiAddonEmail   || "",
+                scopeNotes:     cloudNewer ? (data.scopeNotes || data.myNotes || ex.scopeNotes || "") : (ex.scopeNotes || data.scopeNotes || data.myNotes || ""),
+                addonNotes:     cloudNewer ? (data.addonNotes || ex.addonNotes || "") : (ex.addonNotes || data.addonNotes || ""),
+                aiScopeSummary: cloudNewer ? (data.aiScopeSummary || ex.aiScopeSummary || "") : (ex.aiScopeSummary || data.aiScopeSummary || ""),
+                aiAddonEmail:   cloudNewer ? (data.aiAddonEmail   || ex.aiAddonEmail   || "") : (ex.aiAddonEmail   || data.aiAddonEmail   || ""),
                 scopePhotos: unionByKey(localScope, cloudScope, p => p.ts || p.url),
                 addonPhotos: unionByKey(localAddon, cloudAddon, p => p.ts || p.url),
                 audioClips:  unionByKey(localAudio, cloudAudio, a => a.ts || a.timestamp || a.url),
