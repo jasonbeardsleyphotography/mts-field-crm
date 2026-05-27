@@ -386,6 +386,9 @@ export default function App() {
   const [pipelineSearchOpen, setPipelineSearchOpen] = useState(false);
   const [pipelineSelectMode, setPipelineSelectMode] = useState(false);
   const [pipelineSelectedCount, setPipelineSelectedCount] = useState(0);
+  // Incrementing this tick tells Pipeline to open its email sheet (avoids
+  // lifting emailSheet state up into App — Pipeline owns all email logic).
+  const [pipelineBulkEmailTick, setPipelineBulkEmailTick] = useState(0);
   const [routeSearch, setRouteSearch] = useState("");
   const [routeSearchOpen, setRouteSearchOpen] = useState(false);
 
@@ -1336,6 +1339,12 @@ export default function App() {
         {view === "pipeline" && <button onClick={()=>{setPipelineSearchOpen(o=>!o);if(pipelineSearchOpen){setPipelineSearch("");}}} style={{padding:"5px 7px",borderRadius:8,background:pipelineSearchOpen?"rgba(59,130,246,.12)":"transparent",border:`1px solid ${pipelineSearchOpen?"rgba(59,130,246,.35)":"#2a3560"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
           <IconSearch size={14} color={pipelineSearchOpen?"#3B82F6":"#3a4a60"} />
         </button>}
+        {view === "pipeline" && pipelineSelectMode && pipelineSelectedCount > 0 && (
+          <button onClick={()=>setPipelineBulkEmailTick(t=>t+1)} style={{padding:"5px 10px",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.3)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
+            <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg>
+            Email {pipelineSelectedCount}
+          </button>
+        )}
         {view === "pipeline" && (
           <button onClick={()=>{setPipelineSelectMode(s=>!s);setPipelineSelectedCount(0);}} style={{padding:"5px 10px",borderRadius:8,background:pipelineSelectMode?"rgba(59,130,246,.15)":"transparent",border:`1px solid ${pipelineSelectMode?"rgba(59,130,246,.3)":"#2a3560"}`,color:pipelineSelectMode?"#3B82F6":"#4a5a70",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
             {pipelineSelectMode ? <><svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Done</> : "Select"}
@@ -1676,7 +1685,7 @@ export default function App() {
         <input value={pipelineSearch} onChange={e=>setPipelineSearch(e.target.value)} autoFocus placeholder="Search pipeline..." style={{flex:1,padding:"6px 10px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:16,fontFamily:"'DM Sans',system-ui",outline:"none"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
         <button onClick={()=>{setPipelineSearchOpen(false);setPipelineSearch("");}} style={{padding:"6px 8px",borderRadius:6,background:"transparent",border:"none",color:"#4a5a70",cursor:"pointer"}}><IconX size={13} color="#4a5a70"/></button>
       </div>}
-      {view === "pipeline" && <Pipeline onSwitchToRoute={(cardId) => { setView("route"); if (cardId) { setDismissed(prev => { const n={...prev}; delete n[cardId]; return n; }); const pl=loadPipeline(); delete pl[cardId]; savePipeline(pl); } }} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} lastContact={lastContact} markContact={markContact} selectMode={pipelineSelectMode} setSelectMode={setPipelineSelectMode} onSelectCountChange={setPipelineSelectedCount} />}
+      {view === "pipeline" && <Pipeline onSwitchToRoute={(cardId) => { setView("route"); if (cardId) { setDismissed(prev => { const n={...prev}; delete n[cardId]; return n; }); const pl=loadPipeline(); delete pl[cardId]; savePipeline(pl); } }} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} lastContact={lastContact} markContact={markContact} selectMode={pipelineSelectMode} setSelectMode={setPipelineSelectMode} onSelectCountChange={setPipelineSelectedCount} bulkEmailTick={pipelineBulkEmailTick} />}
 
       {/* ── TEXT SHEET ─────────────────────────────────────────────────── */}
       {textSheet && <div onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>

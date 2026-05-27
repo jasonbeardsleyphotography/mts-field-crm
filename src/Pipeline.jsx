@@ -192,7 +192,7 @@ async function _shrinkOversizedPhotosInField(id, field) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, token, lastContact = {}, markContact = () => {}, selectMode = false, setSelectMode = () => {}, onSelectCountChange = () => {} }) {
+export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, token, lastContact = {}, markContact = () => {}, selectMode = false, setSelectMode = () => {}, onSelectCountChange = () => {}, bulkEmailTick = 0 }) {
   const [pipeline, setPipeline] = useState(() => loadPipeline());
   const [activeTab, setActiveTab] = useState("estimate_needed");
   const [selectedCard, setSelectedCard] = useState(null);
@@ -910,6 +910,8 @@ Property: ${card.addr || ""}`);
   const selectedCount = selectedCards.length;
   useEffect(() => { onSelectCountChange(selectedCount); }, [selectedCount, onSelectCountChange]);
   useEffect(() => { if (!selectMode) setSelected({}); }, [selectMode]);
+  // Header Email button (App.jsx) increments bulkEmailTick to open the sheet.
+  useEffect(() => { if (bulkEmailTick > 0) setEmailSheet(true); }, [bulkEmailTick]);
 
   // ── BULK EMAIL + SMS ────────────────────────────────────────
   // ── EMAIL COMPOSE HELPER ─────────────────────────────────────────────
