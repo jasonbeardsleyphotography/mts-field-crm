@@ -461,7 +461,9 @@ export default function App() {
       let ls1Changed = false;
       for (const [id, entry] of Object.entries(localStops1)) {
         if (!validDayKeys1.has(entry.dk)) {
-          localStops1[id] = { ...entry, dk: todayDk };
+          // Confirmed-pushed stops whose date passed — Calendar already owns them, safe to drop.
+          if (entry.pushedId) { delete localStops1[id]; }
+          else { localStops1[id] = { ...entry, dk: todayDk }; }
           ls1Changed = true;
         }
       }
@@ -469,7 +471,7 @@ export default function App() {
       setRawEvents(prev => {
         const next = { ...prev, [targetDay.toDateString()]: todayEvents };
         for (const [id, { event, dk }] of Object.entries(localStops1)) {
-          next[dk] = [...(next[dk] || []).filter(e => e.id !== id), event];
+          next[dk] = [...(next[dk] || []).filter(e => e.id !== id && e.id !== event.id), event];
         }
         return next;
       });
@@ -486,11 +488,21 @@ export default function App() {
             const e = new Date(day); e.setHours(23,59,59,999);
             const events = await authedFetchEvents(token, s, e);
             const localStops2 = localStopsGet();
+            // Clean up confirmed-pushed local stops whose real Calendar event came back.
+            const fetchedIds = new Set(events.map(ev => ev.id));
+            let lsChanged2 = false;
+            for (const [sid, entry] of Object.entries(localStops2)) {
+              if (entry.dk === day.toDateString() && entry.pushedId && fetchedIds.has(entry.pushedId)) {
+                delete localStops2[sid];
+                lsChanged2 = true;
+              }
+            }
+            if (lsChanged2) localStopsSet(localStops2);
             setRawEvents(prev => {
               const next = { ...prev, [day.toDateString()]: events };
               for (const [id, { event, dk }] of Object.entries(localStops2)) {
                 if (dk === day.toDateString())
-                  next[dk] = [...(next[dk] || []).filter(e => e.id !== id), event];
+                  next[dk] = [...(next[dk] || []).filter(e => e.id !== id && e.id !== event.id), event];
               }
               return next;
             });
@@ -1631,8 +1643,14 @@ export default function App() {
                   if (res.ok) {
                     const created = await res.json();
                     const realId = created.id;
-                    // Remove from localStorage — it's now a real Calendar event
-                    const lsNow = localStopsGet(); delete lsNow[id]; localStopsSet(lsNow);
+                    // Keep local stop as a fallback until Phase 2 confirms Calendar API
+                    // returns the event. Without this, a transient API miss on next reload
+                    // would silently lose the appointment with no recovery path.
+                    const lsNow = localStopsGet();
+                    if (lsNow[id]) {
+                      lsNow[id] = { event: created, dk: lsNow[id].dk || dayKey, pushedId: realId };
+                      localStopsSet(lsNow);
+                    }
                     // Swap the local placeholder with the real Calendar event
                     setRawEvents(prev => {
                       const dayEvts = (prev[dayKey] || []).filter(e => e.id !== id);

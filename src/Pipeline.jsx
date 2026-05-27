@@ -7,6 +7,7 @@ import { loadFieldFromDrive, saveFieldToDrive } from "./driveSync";
 import { loadField, peekField, primeField, updateField } from "./fieldStore";
 import { isUploadPending, onUploadChange } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
+import { downscaleDataUrl, stripPhotoDataUrls, OVERSIZE_DATAURL_LEN } from "./imageUtils";
 import { listAll as listAllQueue, onQueueChange, enqueueVideo } from "./videoQueue";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -158,6 +159,38 @@ function _mergePhotoArrays(local = [], cloud = []) {
 
 const F = "'Oswald',sans-serif";
 
+// Downscale any oversized (legacy 4K) photo dataUrls in a stop's field, one at
+// a time to keep peak memory low, and persist the result through fieldStore's
+// queue. Returns the updated field if anything shrank, else null.
+async function _shrinkOversizedPhotosInField(id, field) {
+  if (!field) return null;
+  const sections = ["scopePhotos", "addonPhotos", "photos"];
+  let changed = false;
+  const next = { ...field };
+  for (const key of sections) {
+    const arr = field[key];
+    if (!Array.isArray(arr) || arr.length === 0) continue;
+    const out = [];
+    for (const p of arr) {
+      if (p && p.dataUrl && typeof p.dataUrl === "string" && p.dataUrl.length > OVERSIZE_DATAURL_LEN) {
+        const small = await downscaleDataUrl(p.dataUrl);
+        if (small !== p.dataUrl) { out.push({ ...p, dataUrl: small }); changed = true; }
+        else out.push(p);
+      } else {
+        out.push(p);
+      }
+    }
+    next[key] = out;
+  }
+  if (!changed) return null;
+  await updateField(id, () => {
+    const u = {};
+    for (const key of sections) if (Array.isArray(next[key])) u[key] = next[key];
+    return u;
+  }).catch(() => {});
+  return next;
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, token, lastContact = {}, markContact = () => {}, selectMode = false, setSelectMode = () => {}, onSelectCountChange = () => {} }) {
   const [pipeline, setPipeline] = useState(() => loadPipeline());
@@ -275,7 +308,9 @@ Property: ${card.addr || ""}`);
   };
 
   // ── DETAIL POPUP — PHOTO / VIDEO HELPERS ─────────────────────────────
-  const detailAddPhoto = (dataUrl, section, cardId) => {
+  const detailAddPhoto = async (rawDataUrl, section, cardId) => {
+    // Downscale to the 2400px budget before storing (camera shoots up to 4K).
+    const dataUrl = await downscaleDataUrl(rawDataUrl);
     const photo = { dataUrl, ts: Date.now() };
     const key = section === "addon" ? "addonPhotos" : "scopePhotos";
     setEditFields(prev => {
@@ -440,8 +475,17 @@ Property: ${card.addr || ""}`);
     let dead = false;
     setDetailLoading(true);
     (async () => {
-      const local = await loadField(id);
+      let local = await loadField(id);
       if (dead) return;
+
+      // Recovery: legacy photos captured at full 4K resolution OOM-crash the
+      // renderer on open. Downscale any oversized photos (one at a time, so peak
+      // memory stays low) and persist the shrink so the card renders safely AND
+      // syncs a small payload to Drive. No-ops once photos are within budget.
+      const shrunk = await _shrinkOversizedPhotosInField(id, local);
+      if (dead) return;
+      if (shrunk) local = shrunk;
+
       const hasLocal = !!(local.scopeNotes || local.myNotes || local.addonNotes ||
         (local.scopePhotos || local.photos || []).length ||
         (local.addonPhotos || []).length ||
@@ -659,7 +703,10 @@ Property: ${card.addr || ""}`);
           const fresh = await loadField(card.id);
           if (dead) return;
           if (fresh && Object.keys(fresh).length > 0) {
-            primeField(card.id, fresh);
+            // Prime a base64-stripped copy: the summary only needs photo COUNTS,
+            // and holding every card's full-res base64 in the mirror OOM-crashes
+            // the renderer. The open card's full data lives in fieldCache.
+            primeField(card.id, stripPhotoDataUrls(fresh));
             hydrated = true;
           }
         } catch {}
