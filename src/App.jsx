@@ -129,18 +129,34 @@ export default function App() {
   useEffect(() => {
     if (authBootChecked) return;
     let cancelled = false;
-    const tryOnce = async () => {
+    // Retry silent reauth a few times with backoff before giving up and
+    // showing the sign-in screen. Most cold-start failures are transient (GIS
+    // script still warming up, a network blip, app resumed from deep
+    // background) rather than a genuinely dead Google session — retrying
+    // absorbs those so the user isn't bounced to "Sign in" unnecessarily. If
+    // the session really is gone, every attempt fails and we still land on the
+    // sign-in screen, just a couple seconds later.
+    const BACKOFFS = [600, 1200, 2400]; // ms between attempts
+    let attempt = 0;
+    const run = async () => {
       if (cancelled) return;
       if (!window.google?.accounts?.oauth2) {
-        setTimeout(tryOnce, 200);
+        setTimeout(run, 200); // GIS not loaded yet — poll, doesn't count as an attempt
         return;
       }
       const ok = await silentReauth();
       if (cancelled) return;
-      if (!ok) saveToken(null);
+      if (ok) { setAuthBootChecked(true); return; }
+      if (attempt < BACKOFFS.length) {
+        const delay = BACKOFFS[attempt++];
+        setTimeout(run, delay);
+        return;
+      }
+      // Exhausted retries — session is genuinely unavailable, show sign-in.
+      saveToken(null);
       setAuthBootChecked(true);
     };
-    tryOnce();
+    run();
     return () => { cancelled = true; };
   }, [authBootChecked, silentReauth]);
 
