@@ -11,6 +11,7 @@ import { startVideoQueueWatcher } from "./videoQueue";
 import { pruneLog as pruneVideoLog } from "./videoLog";
 import UploadTracker from "./UploadTracker";
 import VideoUploads from "./VideoUploads";
+import RecoveryScreen from "./RecoveryScreen";
 import Linkify from "./Linkify";
 import AddStopModal from "./AddStopModal";
 import { buildClientIndex } from "./clientIndex";
@@ -905,6 +906,7 @@ export default function App() {
   const [rejectConfirm, setRejectConfirm] = useState(null);  // stop id awaiting reject confirm
   const [signOutConfirm, setSignOutConfirm] = useState(false);
   const [uploadsOpen, setUploadsOpen] = useState(false);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
   // (addStopOpen is declared above, near the clientIndex computation — its
   // useEffect needs to fire when this flag flips, and the effect lives there.)
 
@@ -1593,6 +1595,11 @@ export default function App() {
             <span style={{fontSize:11,fontWeight:700,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",color:reorderMode?"#c8a0e8":"#5a6890"}}>{reorderMode?"DONE":"REORDER"}</span>
           </button>
         </div>
+        {/* Data Recovery */}
+        <button onClick={()=>setRecoveryOpen(true)} title="Find old job photos"
+          style={{width:34,height:34,borderRadius:8,background:"rgba(99,102,241,.1)",border:"1px solid rgba(99,102,241,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <IconSearch size={15} color="#818cf8" />
+        </button>
         {/* Sign Out */}
         <button
           onClick={()=>{ if(signOutConfirm){ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
@@ -1606,7 +1613,12 @@ export default function App() {
           <IconPlus size={15} color="#3B82F6" />
         </button>
       </div>}
-      {view === "pipeline" && <div style={{borderTop:"1px solid #0e1520",padding:"4px 10px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"flex-end",background:"#080a10",flexShrink:0}}>
+      {view === "pipeline" && <div style={{borderTop:"1px solid #0e1520",padding:"4px 10px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"flex-end",gap:6,background:"#080a10",flexShrink:0}}>
+        {/* Data Recovery */}
+        <button onClick={()=>setRecoveryOpen(true)} title="Find old job photos"
+          style={{width:32,height:32,borderRadius:8,background:"rgba(99,102,241,.1)",border:"1px solid rgba(99,102,241,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <IconSearch size={14} color="#818cf8" />
+        </button>
         <button
           onClick={()=>{ if(signOutConfirm){ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
           title={signOutConfirm ? "Tap again to confirm" : "Sign out"}
@@ -1795,6 +1807,13 @@ export default function App() {
 
       {/* ── VIDEO UPLOAD MANAGER ──────────────────────────────────── */}
       <VideoUploads open={uploadsOpen} onClose={() => setUploadsOpen(false)} stopMap={stopMap} />
+
+      {/* ── DATA RECOVERY SCREEN ─────────────────────────────────── */}
+      {recoveryOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 300 }}>
+          <RecoveryScreen token={token} onBack={() => setRecoveryOpen(false)} />
+        </div>
+      )}
 
       {/* ── UNDO TOAST ─────────────────────────────────────────────── */}
       {undoToast && <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"10px 16px",paddingBottom:"max(10px,env(safe-area-inset-bottom))",background:"#1a2a20",borderTop:"1px solid rgba(16,185,129,.3)",display:"flex",alignItems:"center",gap:10,zIndex:150}}>
