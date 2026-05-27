@@ -635,11 +635,10 @@ Property: ${card.addr || ""}`);
             return;
           }
           const age = now - (card.stageChangedAt || card.addedAt || now);
+          // NOTE: "estimate_needed" and "waiting" never auto-age — cards only
+          // leave those columns when the user explicitly moves them.
           if (card.stage === "strong" && age > FIVE_DAYS) {
             updated[id] = { ...card, stage: "follow_up", stageChangedAt: now };
-            changed = true;
-          } else if (card.stage === "waiting" && age > THREE_DAYS) {
-            updated[id] = { ...card, stage: "weak", stageChangedAt: now };
             changed = true;
           } else if (card.stage === "weak" && age > THREE_DAYS) {
             updated[id] = { ...card, stage: "declined", stageChangedAt: now, autoDeclined: true };
