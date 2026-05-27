@@ -97,19 +97,27 @@ export default function App() {
   };
 
   // ── SILENT RE-AUTH ────────────────────────────────────────────────────────
+  // Singleton guard: if a silent reauth is already in flight, return the same
+  // promise instead of launching a second token request. This prevents the
+  // rapid-fire popup loop that occurs when multiple concurrent Drive/Calendar
+  // 401 responses each independently call silentReauth().
+  const _reauthInFlight = useRef(null);
   const silentReauth = useCallback(() => {
-    return new Promise((resolve) => {
-      if (!window.google?.accounts?.oauth2) { resolve(false); return; }
+    if (_reauthInFlight.current) return _reauthInFlight.current;
+    _reauthInFlight.current = new Promise((resolve) => {
+      if (!window.google?.accounts?.oauth2) { _reauthInFlight.current = null; resolve(false); return; }
       const client = window.google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID, scope: SCOPES,
         callback: r => {
+          _reauthInFlight.current = null;
           if (r.access_token) { saveToken(r.access_token, r.expires_in); resolve(true); }
           else resolve(false);
         },
-        error_callback: () => resolve(false),
+        error_callback: () => { _reauthInFlight.current = null; resolve(false); },
       });
       client.requestAccessToken({ prompt: "" });
     });
+    return _reauthInFlight.current;
   }, []);
 
   // ── COLD-START SILENT REAUTH ──────────────────────────────────────────────
@@ -525,7 +533,17 @@ export default function App() {
     }
   }, [token, authedFetchEvents]);
 
-  useEffect(() => { if (token) load(); }, [token, load]);
+  // Only call load() when the token transitions from null → non-null (initial
+  // sign-in or cold-start reauth). A mid-session token refresh via silentReauth
+  // changes token from t1 → t2 — triggering load() there resets all route state
+  // (loading flash, expanded=null, selDay=0) mid-use, causing the mobile flicker
+  // loop where the app appears to reload on every token refresh.
+  const _prevTokenRef = useRef(token);
+  useEffect(() => {
+    const wasNull = !_prevTokenRef.current;
+    _prevTokenRef.current = token;
+    if (token && wasNull) load();
+  }, [token, load]);
 
   // ── CLOUD SYNC: Pull app state from Drive on startup ───────────────
   const [syncIndicator, setSyncIndicator] = useState("idle");
