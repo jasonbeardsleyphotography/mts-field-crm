@@ -3,7 +3,7 @@ import CameraView from "./CameraView";
 import PhotoMarkup from "./PhotoMarkup";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import JSZip from "jszip";
-import { loadFieldFromDrive, saveFieldToDrive } from "./driveSync";
+import { loadFieldFromDrive, queueFieldDriveSync } from "./driveSync";
 import { loadField, peekField, primeField, updateField } from "./fieldStore";
 import { isUploadPending, onUploadChange } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
@@ -192,7 +192,7 @@ async function _shrinkOversizedPhotosInField(id, field) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, token, lastContact = {}, markContact = () => {}, selectMode = false, setSelectMode = () => {}, onSelectCountChange = () => {} }) {
+export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, token, lastContact = {}, markContact = () => {}, selectMode = false, setSelectMode = () => {}, onSelectCountChange = () => {}, bulkEmailTick = 0 }) {
   const [pipeline, setPipeline] = useState(() => loadPipeline());
   const [activeTab, setActiveTab] = useState("estimate_needed");
   const [selectedCard, setSelectedCard] = useState(null);
@@ -248,12 +248,11 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
       if (token) {
         const syncKey = `_mtsPipelineFieldSync_${id}`;
         if (window[syncKey]) clearTimeout(window[syncKey]);
-        window[syncKey] = setTimeout(async () => {
+        window[syncKey] = setTimeout(() => {
           window[syncKey] = null;
-          const fresh = await loadField(id).catch(() => null);
-          if (fresh && Object.keys(fresh).length) {
-            saveFieldToDrive(token, id, fresh).catch(() => {});
-          }
+          // Serialized + coalesced so a pipeline edit can't race with an
+          // OnsiteWindow capture for the same stop and push stale data.
+          queueFieldDriveSync(token, id);
         }, 2000);
       }
     }).catch(() => {});
@@ -636,11 +635,10 @@ Property: ${card.addr || ""}`);
             return;
           }
           const age = now - (card.stageChangedAt || card.addedAt || now);
+          // NOTE: "estimate_needed" and "waiting" never auto-age — cards only
+          // leave those columns when the user explicitly moves them.
           if (card.stage === "strong" && age > FIVE_DAYS) {
             updated[id] = { ...card, stage: "follow_up", stageChangedAt: now };
-            changed = true;
-          } else if (card.stage === "waiting" && age > THREE_DAYS) {
-            updated[id] = { ...card, stage: "weak", stageChangedAt: now };
             changed = true;
           } else if (card.stage === "weak" && age > THREE_DAYS) {
             updated[id] = { ...card, stage: "declined", stageChangedAt: now, autoDeclined: true };
@@ -910,6 +908,8 @@ Property: ${card.addr || ""}`);
   const selectedCount = selectedCards.length;
   useEffect(() => { onSelectCountChange(selectedCount); }, [selectedCount, onSelectCountChange]);
   useEffect(() => { if (!selectMode) setSelected({}); }, [selectMode]);
+  // Header Email button (App.jsx) increments bulkEmailTick to open the sheet.
+  useEffect(() => { if (bulkEmailTick > 0) setEmailSheet(true); }, [bulkEmailTick]);
 
   // ── BULK EMAIL + SMS ────────────────────────────────────────
   // ── EMAIL COMPOSE HELPER ─────────────────────────────────────────────

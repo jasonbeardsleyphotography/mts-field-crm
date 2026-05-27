@@ -11,6 +11,7 @@ import { startVideoQueueWatcher } from "./videoQueue";
 import { pruneLog as pruneVideoLog } from "./videoLog";
 import UploadTracker from "./UploadTracker";
 import VideoUploads from "./VideoUploads";
+import RecoveryScreen from "./RecoveryScreen";
 import Linkify from "./Linkify";
 import AddStopModal from "./AddStopModal";
 import { buildClientIndex } from "./clientIndex";
@@ -97,19 +98,40 @@ export default function App() {
   };
 
   // ── SILENT RE-AUTH ────────────────────────────────────────────────────────
+  // Singleton guard: if a silent reauth is already in flight, return the same
+  // promise instead of launching a second token request. This prevents the
+  // rapid-fire popup loop that occurs when multiple concurrent Drive/Calendar
+  // 401 responses each independently call silentReauth().
+  const _reauthInFlight = useRef(null);
   const silentReauth = useCallback(() => {
-    return new Promise((resolve) => {
-      if (!window.google?.accounts?.oauth2) { resolve(false); return; }
+    if (_reauthInFlight.current) return _reauthInFlight.current;
+    _reauthInFlight.current = new Promise((resolve) => {
+      // Watchdog: GIS occasionally fires neither callback nor error_callback
+      // (popup dismissed, network stall). Without this, _reauthInFlight would
+      // stay set forever and permanently block all future token refreshes.
+      // Bound the lock to 30s; settle as failure and clear so the next attempt
+      // can proceed.
+      let settled = false;
+      const finish = (ok) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(watchdog);
+        _reauthInFlight.current = null;
+        resolve(ok);
+      };
+      const watchdog = setTimeout(() => finish(false), 30000);
+      if (!window.google?.accounts?.oauth2) { finish(false); return; }
       const client = window.google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID, scope: SCOPES,
         callback: r => {
-          if (r.access_token) { saveToken(r.access_token, r.expires_in); resolve(true); }
-          else resolve(false);
+          if (r.access_token) { saveToken(r.access_token, r.expires_in); finish(true); }
+          else finish(false);
         },
-        error_callback: () => resolve(false),
+        error_callback: () => finish(false),
       });
       client.requestAccessToken({ prompt: "" });
     });
+    return _reauthInFlight.current;
   }, []);
 
   // ── COLD-START SILENT REAUTH ──────────────────────────────────────────────
@@ -121,18 +143,34 @@ export default function App() {
   useEffect(() => {
     if (authBootChecked) return;
     let cancelled = false;
-    const tryOnce = async () => {
+    // Retry silent reauth a few times with backoff before giving up and
+    // showing the sign-in screen. Most cold-start failures are transient (GIS
+    // script still warming up, a network blip, app resumed from deep
+    // background) rather than a genuinely dead Google session — retrying
+    // absorbs those so the user isn't bounced to "Sign in" unnecessarily. If
+    // the session really is gone, every attempt fails and we still land on the
+    // sign-in screen, just a couple seconds later.
+    const BACKOFFS = [600, 1200, 2400]; // ms between attempts
+    let attempt = 0;
+    const run = async () => {
       if (cancelled) return;
       if (!window.google?.accounts?.oauth2) {
-        setTimeout(tryOnce, 200);
+        setTimeout(run, 200); // GIS not loaded yet — poll, doesn't count as an attempt
         return;
       }
       const ok = await silentReauth();
       if (cancelled) return;
-      if (!ok) saveToken(null);
+      if (ok) { setAuthBootChecked(true); return; }
+      if (attempt < BACKOFFS.length) {
+        const delay = BACKOFFS[attempt++];
+        setTimeout(run, delay);
+        return;
+      }
+      // Exhausted retries — session is genuinely unavailable, show sign-in.
+      saveToken(null);
       setAuthBootChecked(true);
     };
-    tryOnce();
+    run();
     return () => { cancelled = true; };
   }, [authBootChecked, silentReauth]);
 
@@ -386,6 +424,9 @@ export default function App() {
   const [pipelineSearchOpen, setPipelineSearchOpen] = useState(false);
   const [pipelineSelectMode, setPipelineSelectMode] = useState(false);
   const [pipelineSelectedCount, setPipelineSelectedCount] = useState(0);
+  // Incrementing this tick tells Pipeline to open its email sheet (avoids
+  // lifting emailSheet state up into App — Pipeline owns all email logic).
+  const [pipelineBulkEmailTick, setPipelineBulkEmailTick] = useState(0);
   const [routeSearch, setRouteSearch] = useState("");
   const [routeSearchOpen, setRouteSearchOpen] = useState(false);
 
@@ -522,7 +563,22 @@ export default function App() {
     }
   }, [token, authedFetchEvents]);
 
-  useEffect(() => { if (token) load(); }, [token, load]);
+  // Only call load() when the token transitions from null → non-null (initial
+  // sign-in or cold-start reauth). A mid-session token refresh via silentReauth
+  // changes token from t1 → t2 — triggering load() there resets all route state
+  // (loading flash, expanded=null, selDay=0) mid-use, causing the mobile flicker
+  // loop where the app appears to reload on every token refresh.
+  //
+  // Initialized to null (NOT the current token) so that a warm boot with a
+  // cached token is still treated as a null → token transition and fires the
+  // initial load(). Initializing to `token` would skip that load and leave the
+  // route screen empty until a manual refresh.
+  const _prevTokenRef = useRef(null);
+  useEffect(() => {
+    const wasNull = !_prevTokenRef.current;
+    _prevTokenRef.current = token;
+    if (token && wasNull) load();
+  }, [token, load]);
 
   // ── CLOUD SYNC: Pull app state from Drive on startup ───────────────
   const [syncIndicator, setSyncIndicator] = useState("idle");
@@ -672,13 +728,19 @@ export default function App() {
               const cloudAddon = data.addonPhotos || [];
               const cloudAudio = data.audioClips  || [];
               const cloudVids  = data.videoUrls   || (data.videoUrl ? [data.videoUrl] : []);
-              // For text/AI fields, prefer Drive's value when local is empty,
-              // otherwise keep local (it's the freshest typed input on this device).
+              // For text/AI fields: use whichever device's record has the newer
+              // savedAt. Drive's savedAt is the phone's IDB write time (embedded
+              // in the JSON); local savedAt is this device's last write time.
+              // This fixes the case where the phone edits notes and the
+              // Chromebook's pullFromDrive kept its own older text because
+              // "local || drive" always preferred the non-empty local value.
+              // Photos are always union-merged regardless of which text wins.
+              const cloudNewer = (data.savedAt || 0) >= (ex.savedAt || 0);
               return {
-                scopeNotes:     ex.scopeNotes || data.scopeNotes || data.myNotes || "",
-                addonNotes:     ex.addonNotes || data.addonNotes || "",
-                aiScopeSummary: ex.aiScopeSummary || data.aiScopeSummary || "",
-                aiAddonEmail:   ex.aiAddonEmail   || data.aiAddonEmail   || "",
+                scopeNotes:     cloudNewer ? (data.scopeNotes || data.myNotes || ex.scopeNotes || "") : (ex.scopeNotes || data.scopeNotes || data.myNotes || ""),
+                addonNotes:     cloudNewer ? (data.addonNotes || ex.addonNotes || "") : (ex.addonNotes || data.addonNotes || ""),
+                aiScopeSummary: cloudNewer ? (data.aiScopeSummary || ex.aiScopeSummary || "") : (ex.aiScopeSummary || data.aiScopeSummary || ""),
+                aiAddonEmail:   cloudNewer ? (data.aiAddonEmail   || ex.aiAddonEmail   || "") : (ex.aiAddonEmail   || data.aiAddonEmail   || ""),
                 scopePhotos: unionByKey(localScope, cloudScope, p => p.ts || p.url),
                 addonPhotos: unionByKey(localAddon, cloudAddon, p => p.ts || p.url),
                 audioClips:  unionByKey(localAudio, cloudAudio, a => a.ts || a.timestamp || a.url),
@@ -862,6 +924,7 @@ export default function App() {
   const [rejectConfirm, setRejectConfirm] = useState(null);  // stop id awaiting reject confirm
   const [signOutConfirm, setSignOutConfirm] = useState(false);
   const [uploadsOpen, setUploadsOpen] = useState(false);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
   // (addStopOpen is declared above, near the clientIndex computation — its
   // useEffect needs to fire when this flag flips, and the effect lives there.)
 
@@ -1336,6 +1399,12 @@ export default function App() {
         {view === "pipeline" && <button onClick={()=>{setPipelineSearchOpen(o=>!o);if(pipelineSearchOpen){setPipelineSearch("");}}} style={{padding:"5px 7px",borderRadius:8,background:pipelineSearchOpen?"rgba(59,130,246,.12)":"transparent",border:`1px solid ${pipelineSearchOpen?"rgba(59,130,246,.35)":"#2a3560"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
           <IconSearch size={14} color={pipelineSearchOpen?"#3B82F6":"#3a4a60"} />
         </button>}
+        {view === "pipeline" && pipelineSelectMode && pipelineSelectedCount > 0 && (
+          <button onClick={()=>setPipelineBulkEmailTick(t=>t+1)} style={{padding:"5px 10px",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.3)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
+            <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg>
+            Email {pipelineSelectedCount}
+          </button>
+        )}
         {view === "pipeline" && (
           <button onClick={()=>{setPipelineSelectMode(s=>!s);setPipelineSelectedCount(0);}} style={{padding:"5px 10px",borderRadius:8,background:pipelineSelectMode?"rgba(59,130,246,.15)":"transparent",border:`1px solid ${pipelineSelectMode?"rgba(59,130,246,.3)":"#2a3560"}`,color:pipelineSelectMode?"#3B82F6":"#4a5a70",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
             {pipelineSelectMode ? <><svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Done</> : "Select"}
@@ -1544,6 +1613,11 @@ export default function App() {
             <span style={{fontSize:11,fontWeight:700,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",color:reorderMode?"#c8a0e8":"#5a6890"}}>{reorderMode?"DONE":"REORDER"}</span>
           </button>
         </div>
+        {/* Data Recovery */}
+        <button onClick={()=>setRecoveryOpen(true)} title="Find old job photos"
+          style={{width:34,height:34,borderRadius:8,background:"rgba(99,102,241,.1)",border:"1px solid rgba(99,102,241,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <IconSearch size={15} color="#818cf8" />
+        </button>
         {/* Sign Out */}
         <button
           onClick={()=>{ if(signOutConfirm){ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
@@ -1557,7 +1631,12 @@ export default function App() {
           <IconPlus size={15} color="#3B82F6" />
         </button>
       </div>}
-      {view === "pipeline" && <div style={{borderTop:"1px solid #0e1520",padding:"4px 10px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"flex-end",background:"#080a10",flexShrink:0}}>
+      {view === "pipeline" && <div style={{borderTop:"1px solid #0e1520",padding:"4px 10px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"flex-end",gap:6,background:"#080a10",flexShrink:0}}>
+        {/* Data Recovery */}
+        <button onClick={()=>setRecoveryOpen(true)} title="Find old job photos"
+          style={{width:32,height:32,borderRadius:8,background:"rgba(99,102,241,.1)",border:"1px solid rgba(99,102,241,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <IconSearch size={14} color="#818cf8" />
+        </button>
         <button
           onClick={()=>{ if(signOutConfirm){ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
           title={signOutConfirm ? "Tap again to confirm" : "Sign out"}
@@ -1676,7 +1755,7 @@ export default function App() {
         <input value={pipelineSearch} onChange={e=>setPipelineSearch(e.target.value)} autoFocus placeholder="Search pipeline..." style={{flex:1,padding:"6px 10px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:16,fontFamily:"'DM Sans',system-ui",outline:"none"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
         <button onClick={()=>{setPipelineSearchOpen(false);setPipelineSearch("");}} style={{padding:"6px 8px",borderRadius:6,background:"transparent",border:"none",color:"#4a5a70",cursor:"pointer"}}><IconX size={13} color="#4a5a70"/></button>
       </div>}
-      {view === "pipeline" && <Pipeline onSwitchToRoute={(cardId) => { setView("route"); if (cardId) { setDismissed(prev => { const n={...prev}; delete n[cardId]; return n; }); const pl=loadPipeline(); delete pl[cardId]; savePipeline(pl); } }} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} lastContact={lastContact} markContact={markContact} selectMode={pipelineSelectMode} setSelectMode={setPipelineSelectMode} onSelectCountChange={setPipelineSelectedCount} />}
+      {view === "pipeline" && <Pipeline onSwitchToRoute={(cardId) => { setView("route"); if (cardId) { setDismissed(prev => { const n={...prev}; delete n[cardId]; return n; }); const pl=loadPipeline(); delete pl[cardId]; savePipeline(pl); } }} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} lastContact={lastContact} markContact={markContact} selectMode={pipelineSelectMode} setSelectMode={setPipelineSelectMode} onSelectCountChange={setPipelineSelectedCount} bulkEmailTick={pipelineBulkEmailTick} />}
 
       {/* ── TEXT SHEET ─────────────────────────────────────────────────── */}
       {textSheet && <div onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
@@ -1746,6 +1825,13 @@ export default function App() {
 
       {/* ── VIDEO UPLOAD MANAGER ──────────────────────────────────── */}
       <VideoUploads open={uploadsOpen} onClose={() => setUploadsOpen(false)} stopMap={stopMap} />
+
+      {/* ── DATA RECOVERY SCREEN ─────────────────────────────────── */}
+      {recoveryOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 300 }}>
+          <RecoveryScreen token={token} onBack={() => setRecoveryOpen(false)} />
+        </div>
+      )}
 
       {/* ── UNDO TOAST ─────────────────────────────────────────────── */}
       {undoToast && <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"10px 16px",paddingBottom:"max(10px,env(safe-area-inset-bottom))",background:"#1a2a20",borderTop:"1px solid rgba(16,185,129,.3)",display:"flex",alignItems:"center",gap:10,zIndex:150}}>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import PhotoMarkup from "./PhotoMarkup";
 import CameraView from "./CameraView";
-import { saveFieldToDrive, loadFieldFromDrive } from "./driveSync";
+import { loadFieldFromDrive, queueFieldDriveSync } from "./driveSync";
 import { loadField, peekField, primeField, mergeField, updateField, saveFieldSync, getFieldSlim } from "./fieldStore";
 import { incUpload, decUpload } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
@@ -164,15 +164,11 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       // window._fieldSyncTimer would be cleared by the next stop's effect.
       const timerKey = `_mtsFieldSync_${s.id}`;
       if (window[timerKey]) clearTimeout(window[timerKey]);
-      window[timerKey] = setTimeout(async () => {
+      window[timerKey] = setTimeout(() => {
         window[timerKey] = null;
-        // Read FRESH full data from IDB before pushing to Drive — picks up
-        // any photo writes that _processPhoto / removeScopePhoto did since
-        // the last render, so Drive never gets a stale photo list.
-        const full = await loadField(s.id).catch(() => null);
-        if (full && Object.keys(full).length) {
-          saveFieldToDrive(token, s.id, full).catch(() => {});
-        }
+        // Serialized + coalesced; reads fresh IDB at execution time so Drive
+        // never gets a stale photo/text snapshot.
+        queueFieldDriveSync(token, s.id);
       }, 3000);
     }
   }, [hydrated, scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeResult, aiAddonResult, s.id, token]);
@@ -211,13 +207,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       //    push stale state.
       const timerKey = `_mtsFieldSync_${s.id}`;
       if (window[timerKey]) { clearTimeout(window[timerKey]); window[timerKey] = null; }
-      if (token) {
-        loadField(s.id).then(fresh => {
-          if (fresh && Object.keys(fresh).length) {
-            saveFieldToDrive(token, s.id, fresh).catch(() => {});
-          }
-        }).catch(() => {});
-      }
+      if (token) queueFieldDriveSync(token, s.id);
     };
     const onVisibility = () => {
       if (document.visibilityState === "hidden") flush();
@@ -259,13 +249,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       // (Critical for cross-device: Chromebook only sees what's on Drive.)
       const timerKey = `_mtsFieldSync_${stopId}`;
       if (window[timerKey]) { clearTimeout(window[timerKey]); window[timerKey] = null; }
-      if (capturedToken) {
-        loadField(stopId).then(fresh => {
-          if (fresh && Object.keys(fresh).length) {
-            saveFieldToDrive(capturedToken, stopId, fresh).catch(() => {});
-          }
-        }).catch(() => {});
-      }
+      if (capturedToken) queueFieldDriveSync(capturedToken, stopId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.id, token]);
@@ -477,17 +461,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       if (!photo || !mountedRef.current) return;
       if (section === "addon") setAddonPhotos(prev => [...prev, photo]);
       else setScopePhotos(prev => [...prev, photo]);
-      // Immediate Drive sync — see camera onPhoto for the same rationale.
-      if (token) {
-        (async () => {
-          try {
-            const fresh = await loadField(s.id);
-            if (fresh && Object.keys(fresh).length) {
-              await saveFieldToDrive(token, s.id, fresh);
-            }
-          } catch (e) { /* photoSync will retry later */ }
-        })();
-      }
+      // Immediate, serialized Drive sync — see camera onPhoto for the rationale.
+      if (token) queueFieldDriveSync(token, s.id);
     });
   };
   const handleScopePhotos = (e) => { Array.from(e.target.files || []).forEach(f => processPhoto(f, "scope")); e.target.value = ""; };
@@ -877,19 +852,11 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         if (cameraSection === "addon") setAddonPhotos(prev => [...prev, photo]);
         else setScopePhotos(prev => [...prev, photo]);
         markStopForPhotoSync(s.id); // queue for Drive upload
-        // Fire-and-forget IMMEDIATE Drive sync so photos can't be lost if the
-        // user closes the app before the 3-sec auto-save timer fires.
-        // Reads FRESH from IDB so all in-flight photo writes are included.
-        if (token) {
-          (async () => {
-            try {
-              const fresh = await loadField(s.id);
-              if (fresh && Object.keys(fresh).length) {
-                await saveFieldToDrive(token, s.id, fresh);
-              }
-            } catch (e) { /* photoSync will retry later */ }
-          })();
-        }
+        // IMMEDIATE Drive sync so photos can't be lost if the user closes the
+        // app before the 3-sec auto-save timer fires. Serialized + coalesced
+        // per stop so rapid captures can't race and overwrite each other with
+        // a stale snapshot — reads fresh IDB at execution time.
+        if (token) queueFieldDriveSync(token, s.id);
       }}
       onClose={() => setShowCamera(false)}
     />;
