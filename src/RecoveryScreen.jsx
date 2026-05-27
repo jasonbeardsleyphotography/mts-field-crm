@@ -4,7 +4,7 @@ import { loadFieldFromDrive } from "./driveSync";
 import { loadPipeline, savePipeline } from "./Pipeline";
 import {
   IconArrowLeft, IconSearch, IconImage, IconPlus, IconX,
-  IconCamera, IconCheckCircle, IconCalendar,
+  IconCheckCircle, IconCalendar,
 } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════

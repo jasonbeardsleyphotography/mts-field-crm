@@ -106,15 +106,28 @@ export default function App() {
   const silentReauth = useCallback(() => {
     if (_reauthInFlight.current) return _reauthInFlight.current;
     _reauthInFlight.current = new Promise((resolve) => {
-      if (!window.google?.accounts?.oauth2) { _reauthInFlight.current = null; resolve(false); return; }
+      // Watchdog: GIS occasionally fires neither callback nor error_callback
+      // (popup dismissed, network stall). Without this, _reauthInFlight would
+      // stay set forever and permanently block all future token refreshes.
+      // Bound the lock to 30s; settle as failure and clear so the next attempt
+      // can proceed.
+      let settled = false;
+      const finish = (ok) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(watchdog);
+        _reauthInFlight.current = null;
+        resolve(ok);
+      };
+      const watchdog = setTimeout(() => finish(false), 30000);
+      if (!window.google?.accounts?.oauth2) { finish(false); return; }
       const client = window.google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID, scope: SCOPES,
         callback: r => {
-          _reauthInFlight.current = null;
-          if (r.access_token) { saveToken(r.access_token, r.expires_in); resolve(true); }
-          else resolve(false);
+          if (r.access_token) { saveToken(r.access_token, r.expires_in); finish(true); }
+          else finish(false);
         },
-        error_callback: () => { _reauthInFlight.current = null; resolve(false); },
+        error_callback: () => finish(false),
       });
       client.requestAccessToken({ prompt: "" });
     });
@@ -555,7 +568,12 @@ export default function App() {
   // changes token from t1 → t2 — triggering load() there resets all route state
   // (loading flash, expanded=null, selDay=0) mid-use, causing the mobile flicker
   // loop where the app appears to reload on every token refresh.
-  const _prevTokenRef = useRef(token);
+  //
+  // Initialized to null (NOT the current token) so that a warm boot with a
+  // cached token is still treated as a null → token transition and fires the
+  // initial load(). Initializing to `token` would skip that load and leave the
+  // route screen empty until a manual refresh.
+  const _prevTokenRef = useRef(null);
   useEffect(() => {
     const wasNull = !_prevTokenRef.current;
     _prevTokenRef.current = token;
