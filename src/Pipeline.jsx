@@ -3,7 +3,7 @@ import CameraView from "./CameraView";
 import PhotoMarkup from "./PhotoMarkup";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import JSZip from "jszip";
-import { loadFieldFromDrive, saveFieldToDrive } from "./driveSync";
+import { loadFieldFromDrive, queueFieldDriveSync } from "./driveSync";
 import { loadField, peekField, primeField, updateField } from "./fieldStore";
 import { isUploadPending, onUploadChange } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
@@ -248,12 +248,11 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
       if (token) {
         const syncKey = `_mtsPipelineFieldSync_${id}`;
         if (window[syncKey]) clearTimeout(window[syncKey]);
-        window[syncKey] = setTimeout(async () => {
+        window[syncKey] = setTimeout(() => {
           window[syncKey] = null;
-          const fresh = await loadField(id).catch(() => null);
-          if (fresh && Object.keys(fresh).length) {
-            saveFieldToDrive(token, id, fresh).catch(() => {});
-          }
+          // Serialized + coalesced so a pipeline edit can't race with an
+          // OnsiteWindow capture for the same stop and push stale data.
+          queueFieldDriveSync(token, id);
         }, 2000);
       }
     }).catch(() => {});

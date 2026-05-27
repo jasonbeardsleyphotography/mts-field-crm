@@ -3,6 +3,8 @@
    Unified app state: pipeline + dismissed in one file for cross-device sync.
    ═══════════════════════════════════════════════════════════════════════════ */
 
+import { loadField } from "./fieldStore";
+
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 const FOLDER_NAME = "MTS Field";
@@ -54,7 +56,11 @@ export async function findOrCreateFolder(token, name, parentId = null) {
 
 async function findFile(token, name, folderId) {
   const q = `name='${name}' and '${folderId}' in parents and trashed=false`;
-  const r = await driveReq(token, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id)&spaces=drive`);
+  // orderBy modifiedTime desc → if past races created duplicate files with the
+  // same name, both reads and writes consistently target the NEWEST copy. Without
+  // this, Drive's default ordering is non-deterministic and reads/writes could
+  // land on different copies, permanently splitting a stop's data.
+  const r = await driveReq(token, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id)&orderBy=modifiedTime desc&spaces=drive`);
   const d = await r.json();
   return d.files?.[0]?.id || null;
 }
@@ -177,6 +183,40 @@ export async function saveFieldToDrive(token, eventId, fieldData) {
   } catch(e) {
     console.warn("Drive field save failed:", e);
   }
+}
+
+// ── SERIALIZED + COALESCED FIELD SYNC ────────────────────────────────────────
+// All field-JSON pushes for a stop MUST go through here. Previously every photo
+// capture, the auto-save timer, and the pagehide/unmount flushes each fired
+// their own saveFieldToDrive independently. On slow networks these overlap and
+// a push started earlier (fewer photos, no text yet) can LAND AFTER a later push
+// that had everything — so the stale snapshot wins and the other device sees
+// partial data. This queue guarantees: (1) at most one push per stop in flight,
+// (2) it reads the FRESHEST data from IDB at execution time, and (3) bursts of
+// requests collapse into a single trailing run that captures all changes.
+const _fieldChain    = new Map();   // id -> tail promise
+const _fieldTrailing = new Set();   // ids with a not-yet-started run already queued
+
+export function queueFieldDriveSync(token, id) {
+  if (!token || !id) return Promise.resolve();
+  // A queued run hasn't started yet — it will read fresh IDB when it does, so
+  // collapse this request into it rather than stacking another.
+  if (_fieldTrailing.has(id)) return _fieldChain.get(id) || Promise.resolve();
+  _fieldTrailing.add(id);
+  const run = async () => {
+    _fieldTrailing.delete(id); // starting now; further calls queue a fresh trailing run
+    try {
+      const fresh = await loadField(id);
+      if (fresh && Object.keys(fresh).length) {
+        await saveFieldToDrive(token, id, fresh);
+      }
+    } catch {}
+  };
+  const prev = _fieldChain.get(id) || Promise.resolve();
+  const next = prev.then(run, run); // run even if the prior link rejected
+  _fieldChain.set(id, next);
+  next.finally(() => { if (_fieldChain.get(id) === next) _fieldChain.delete(id); });
+  return next;
 }
 
 export async function listFieldFiles(token) {
