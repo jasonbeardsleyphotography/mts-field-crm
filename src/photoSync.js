@@ -35,7 +35,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { loadField, updateField } from "./fieldStore";
-import { uploadPhotoToDrive } from "./driveSync";
+import { uploadPhotoToDrive, queueFieldDriveSync } from "./driveSync";
 import { downscaleDataUrl, OVERSIZE_DATAURL_LEN } from "./imageUtils";
 
 const QUEUE_KEY = "mts-photo-queue";
@@ -146,6 +146,11 @@ async function syncStop(stopId, token) {
     }).catch(() => {});
     try { window.dispatchEvent(new CustomEvent("mts-field-synced")); } catch {}
     markStopForPromotion(stopId);
+    // Push the updated field JSON to Drive so the compact url-bearing record
+    // (not just the individual photo files) reaches the other device. Without
+    // this the other device only sees photo URLs after some later text edit
+    // happens to push the field JSON — which may be never.
+    queueFieldDriveSync(token, stopId);
   }
 
   // If no more pending photos remain, remove from upload queue. Re-read

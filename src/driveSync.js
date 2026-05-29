@@ -3,7 +3,7 @@
    Unified app state: pipeline + dismissed in one file for cross-device sync.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-import { loadField } from "./fieldStore";
+import { loadField, markFieldDirty, clearFieldDirty } from "./fieldStore";
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -175,14 +175,14 @@ export async function uploadPhotoToDrive(token, dataUrl, filename) {
 // ── FIELD DATA ───────────────────────────────────────────────────────────────
 
 export async function saveFieldToDrive(token, eventId, fieldData) {
-  try {
-    const rootId = await findOrCreateFolder(token, FOLDER_NAME);
-    const fid = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
-    // Include full field data including photos as base64
-    await saveJson(token, `${eventId}.json`, fid, fieldData);
-  } catch(e) {
-    console.warn("Drive field save failed:", e);
-  }
+  // NOTE: this intentionally lets errors propagate. queueFieldDriveSync relies
+  // on a thrown error to know the push failed (so it keeps the id dirty for
+  // retry and surfaces an error in the sync indicator). Callers that don't
+  // care about the result wrap this in `.catch(() => {})`.
+  const rootId = await findOrCreateFolder(token, FOLDER_NAME);
+  const fid = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
+  // Include full field data including photos as base64
+  await saveJson(token, `${eventId}.json`, fid, fieldData);
 }
 
 // ── SERIALIZED + COALESCED FIELD SYNC ────────────────────────────────────────
@@ -199,18 +199,31 @@ const _fieldTrailing = new Set();   // ids with a not-yet-started run already qu
 
 export function queueFieldDriveSync(token, id) {
   if (!token || !id) return Promise.resolve();
+  // Record that this stop has an unconfirmed Drive push. Cleared on success;
+  // left set on failure so App.jsx's periodic dirty-flush retries it.
+  markFieldDirty(id);
   // A queued run hasn't started yet — it will read fresh IDB when it does, so
   // collapse this request into it rather than stacking another.
   if (_fieldTrailing.has(id)) return _fieldChain.get(id) || Promise.resolve();
   _fieldTrailing.add(id);
   const run = async () => {
     _fieldTrailing.delete(id); // starting now; further calls queue a fresh trailing run
+    setSyncStatus("syncing");
     try {
       const fresh = await loadField(id);
       if (fresh && Object.keys(fresh).length) {
         await saveFieldToDrive(token, id, fresh);
       }
-    } catch {}
+      // Only clear dirty if no newer edit got queued while this push was in
+      // flight. If a trailing run exists, it pushes the newer data and clears
+      // dirty when it succeeds — clearing here would drop the retry guarantee.
+      if (!_fieldTrailing.has(id)) clearFieldDirty(id);
+      setSyncStatus("success");
+      setTimeout(() => setSyncStatus("idle"), 3000);
+    } catch (e) {
+      // Leave the id dirty so the periodic flush retries it.
+      setSyncStatus(e?.isAuthError ? "auth-error" : "error");
+    }
   };
   const prev = _fieldChain.get(id) || Promise.resolve();
   const next = prev.then(run, run); // run even if the prior link rejected

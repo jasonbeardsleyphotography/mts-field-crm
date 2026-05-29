@@ -32,6 +32,7 @@ import {
   getVideosFolderId,
   buildShareUrl,
 } from "./driveUpload";
+import { queueFieldDriveSync } from "./driveSync";
 
 // ── Tunables ─────────────────────────────────────────────────────────────
 
@@ -432,6 +433,9 @@ async function _finalize(id, fileId, token) {
       if (urls.includes(shareUrl)) return {};
       return { videoUrls: [...urls, shareUrl] };
     });
+    // Push the field JSON to Drive so the video link reaches the other device.
+    // Previously this only reached Drive via App's blanket re-upload loop.
+    queueFieldDriveSync(token, item.stopId);
     try { window.dispatchEvent(new CustomEvent("mts-video-uploaded", { detail: { stopId: item.stopId, shareUrl, fileId } })); } catch {}
   } catch (e) {
     vlogWarn("finalize.field_write_failed", { msg: e?.message }, id);

@@ -232,6 +232,36 @@ export function getFieldSlim(id) {
   } catch { return null; }
 }
 
+// ── DIRTY-FIELD TRACKING ─────────────────────────────────────────────────────
+// A persisted set of stop IDs whose local field data has a Drive push that
+// hasn't been confirmed yet. queueFieldDriveSync (driveSync.js) marks an id
+// dirty when a push is requested and clears it only after the push succeeds.
+// App.jsx periodically re-pushes whatever is still dirty, so an edit made
+// offline (or a push that 401'd) is retried automatically instead of being
+// lost. This replaces the old "re-upload every field record on every action"
+// brute-force sync, which saturated the connection and slowed real syncs.
+const DIRTY_KEY = "mts-field-dirty";
+function _readDirty() {
+  try { return new Set(JSON.parse(localStorage.getItem(DIRTY_KEY) || "[]")); }
+  catch { return new Set(); }
+}
+function _writeDirty(set) {
+  try { localStorage.setItem(DIRTY_KEY, JSON.stringify([...set])); } catch {}
+}
+export function markFieldDirty(id) {
+  if (!id) return;
+  const s = _readDirty();
+  if (!s.has(id)) { s.add(id); _writeDirty(s); }
+}
+export function clearFieldDirty(id) {
+  if (!id) return;
+  const s = _readDirty();
+  if (s.delete(id)) _writeDirty(s);
+}
+export function getDirtyFieldIds() {
+  return [..._readDirty()];
+}
+
 // ── LIST IDS ────────────────────────────────────────────────────────────────
 export async function listFieldIds() {
   try {
