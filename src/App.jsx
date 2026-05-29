@@ -4,8 +4,8 @@ import RouteMap, { AM_COLOR, PM_COLOR } from "./RouteMap";
 import SwipeCard from "./SwipeCard";
 import OnsiteWindow from "./OnsiteWindow";
 import Pipeline, { savePipeline, loadPipeline, pushCalendarColor } from "./Pipeline";
-import { saveAppState, loadAppState, saveFieldToDrive, loadFieldFromDrive, listFieldFiles, onSyncStatus, onAuthError } from "./driveSync";
-import { loadField, listFieldIds, updateField } from "./fieldStore";
+import { saveAppState, loadAppState, loadFieldFromDrive, listFieldFiles, onSyncStatus, onAuthError, queueFieldDriveSync } from "./driveSync";
+import { loadField, updateField, getDirtyFieldIds } from "./fieldStore";
 import { startPhotoSyncWatcher } from "./photoSync";
 import { startVideoQueueWatcher } from "./videoQueue";
 import { pruneLog as pruneVideoLog } from "./videoLog";
@@ -629,31 +629,64 @@ export default function App() {
   const [lastSyncTime, setLastSyncTime] = useState(0);
   const [syncPulling, setSyncPulling] = useState(false);
 
+  // Push the small app-state JSON (pipeline + dismissed + lastContact) to
+  // Drive. This deliberately does NOT re-upload field records anymore — every
+  // genuine field edit already pushes itself via queueFieldDriveSync at the
+  // point of edit (OnsiteWindow auto-save/flush/unmount, Pipeline note edits,
+  // photoSync, videoQueue), and any push that failed is retried by the
+  // dirty-flush below. The old "re-upload every field record on every pipeline
+  // or contact change" loop saturated the connection — uploading hundreds of
+  // MB of base64 photos serially each time a card moved or a client was called
+  // — which is what made syncing feel slow, and it also re-stamped Drive
+  // records with this device's clock, corrupting the cross-device merge.
   const triggerCloudSync = useCallback(async (immediate = false) => {
     if (!token) return;
-    const run = async () => {
-      await saveAppState(token, loadPipeline(), dismissed, lastContact).catch(() => {});
-      // Iterate IndexedDB for field data — localStorage now only holds a
-      // slim mirror that omits base64 photo/audio bytes, so reading from
-      // there would push an empty shell to Drive and silently erase media.
-      try {
-        const ids = await listFieldIds();
-        for (const id of ids) {
-          try {
-            const fd = await loadField(id);
-            if (fd && Object.keys(fd).length > 0) {
-              await saveFieldToDrive(token, id, fd).catch(() => {});
-            }
-          } catch {}
-        }
-      } catch {}
-    };
+    const run = () => saveAppState(token, loadPipeline(), dismissed, lastContact).catch(() => {});
     if (immediate) { await run(); return; }
     if (cloudSyncTimer.current) clearTimeout(cloudSyncTimer.current);
     cloudSyncTimer.current = setTimeout(run, 2000);
   }, [token, dismissed, lastContact]);
 
   useEffect(() => { triggerCloudSync(); }, [dismissed, lastContact, triggerCloudSync]);
+
+  // ── DIRTY-FIELD FLUSH ───────────────────────────────────────────────────
+  // Re-push only the field records whose Drive sync hasn't been confirmed
+  // (edited offline, or a push that 401'd / failed). queueFieldDriveSync reads
+  // fresh data from IDB, is serialized + coalesced per stop, and clears the
+  // dirty flag on success. Running it sequentially avoids hammering Drive.
+  const _flushingDirty = useRef(false);
+  const flushDirtyFields = useCallback(async () => {
+    if (!token || _flushingDirty.current) return;
+    const ids = getDirtyFieldIds();
+    if (!ids.length) return;
+    _flushingDirty.current = true;
+    try {
+      for (const id of ids) {
+        await queueFieldDriveSync(token, id);
+      }
+    } finally {
+      _flushingDirty.current = false;
+    }
+  }, [token]);
+
+  // Retry dirty field pushes every 60s while visible, and whenever the tab
+  // regains focus or the device comes back online.
+  useEffect(() => {
+    if (!token) return;
+    const tick = () => { if (document.visibilityState === "visible") flushDirtyFields(); };
+    const iv = setInterval(tick, 60 * 1000);
+    const onOnline = () => flushDirtyFields();
+    window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", tick);
+    // Kick once shortly after boot to drain anything left from a prior session.
+    const boot = setTimeout(flushDirtyFields, 4000);
+    return () => {
+      clearInterval(iv);
+      clearTimeout(boot);
+      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [token, flushDirtyFields]);
 
   const pullFromDrive = useCallback(async () => {
     if (!token) return;
@@ -689,22 +722,30 @@ export default function App() {
         });
       }
       const files = await listFieldFiles(token);
+      // Per-file record of the last Drive modifiedTime we actually pulled.
+      // The download gate compares Drive's CURRENT modifiedTime against this
+      // stored value — both are Drive server timestamps, so the decision is
+      // immune to clock skew between devices and to local savedAt being
+      // re-stamped to "now" on every merge. (The old gate compared Drive's
+      // server clock against this device's local clock, which could wrongly
+      // skip a genuinely-updated remote file.)
+      const seen = lsGet("mts-field-remote-seen", {});
+      let seenChanged = false;
       for (const f of (files || [])) {
         const id = f.name.replace(/\.json$/, "");
         const localData = await loadField(id);
-        const localTs = localData?.savedAt || 0;
+        const localEmpty = !localData || Object.keys(localData).length === 0;
         const remoteTs = f.modifiedTime ? new Date(f.modifiedTime).getTime() : 0;
-        // Always try to pull from Drive — but MERGE photo/audio/video arrays
-        // by key (union) rather than overwriting. Cross-device safety: photos
-        // captured locally that haven't yet synced to Drive must never be
-        // erased by a stale Drive snapshot. Only fire the merge if Drive is
-        // strictly newer OR local is empty.
-        if (localTs === 0 || remoteTs > localTs) {
+        const lastSeen = seen[id] || 0;
+        // Pull when we have no local copy, or when Drive's file changed since
+        // the last time we pulled it. MERGE photo/audio/video arrays by key
+        // (union) rather than overwriting — photos captured locally that
+        // haven't synced yet must never be erased by a stale Drive snapshot.
+        if (localEmpty || remoteTs > lastSeen) {
           const data = await loadFieldFromDrive(token, id);
           if (data) {
             await updateField(id, (existing) => {
               const ex = existing || {};
-              const pick = (k) => (ex[k] !== undefined ? ex[k] : data[k]);
               // Union-merge photo arrays by ts/url so neither side loses items.
               const unionByKey = (a = [], b = [], getKey) => {
                 const map = new Map();
@@ -747,9 +788,13 @@ export default function App() {
                 videoUrls:   Array.from(new Set([...localVids, ...cloudVids])),
               };
             }).catch(() => {});
+            // Record the modifiedTime we just pulled so we don't re-download
+            // this file until Drive changes it again.
+            if (remoteTs) { seen[id] = remoteTs; seenChanged = true; }
           }
         }
       }
+      if (seenChanged) lsSet("mts-field-remote-seen", seen);
       setLastSyncTime(Date.now());
       window.dispatchEvent(new CustomEvent("mts-field-synced"));
     } catch(e) { console.warn("Pull failed:", e); }
@@ -1121,14 +1166,10 @@ export default function App() {
       };
       savePipeline(pl);
       if (token) pushCalendarColor(id, pl[id].stage, token);
-      // Also sync field data to Drive — read from IDB so base64 media is included
-      if (token) {
-        loadField(id).then(fd => {
-          if (fd && Object.keys(fd).length > 0) {
-            saveFieldToDrive(token, id, fd).catch(() => {});
-          }
-        });
-      }
+      // Also sync field data to Drive. queueFieldDriveSync reads fresh data
+      // from IDB (base64 media included), is serialized per stop, and marks the
+      // id dirty for automatic retry if this push fails.
+      if (token) queueFieldDriveSync(token, id);
     }
     if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
     setUndoToast({ id, cn: stop?.cn || "Stop", stop });
@@ -1397,13 +1438,15 @@ export default function App() {
               await new Promise(r => setTimeout(r, 300));
             }
             triggerCloudSync(true);
+            flushDirtyFields();
             pullFromDrive();
           }}
           title={syncPulling ? "Syncing…" : (syncIndicator==="error"||syncIndicator==="auth-error") ? "Sync error — tap to retry" : "Tap to force sync now"}
           style={{background:"none",border:"none",cursor:"pointer",padding:"2px 6px",display:"flex",alignItems:"center",gap:3}}>
           {(syncIndicator==="error"||syncIndicator==="auth-error") ? <IconCloudOff size={13} color="#FF5555"/> : (syncIndicator==="syncing"||syncPulling) ? <IconCloud size={13} color="#F6BF26"/> : <IconCloud size={13} color="#10B981"/>}
-          {/* syncTick makes this re-evaluate every minute so "Xm ago" stays accurate */}
-          {lastSyncTime>0 && <span style={{fontSize:9,color:(syncIndicator==="syncing"||syncPulling)?"#F6BF26":"#3a5060",fontFamily:"'Oswald',sans-serif"}}>{(syncIndicator==="syncing"||syncPulling)?"syncing…":Math.floor((Date.now()-lastSyncTime-syncTick*0)/60000)<1?"now":`${Math.floor((Date.now()-lastSyncTime)/60000)}m`}</span>}
+          {/* data-synctick references syncTick (updated every minute) so the
+              "Xm ago" label re-renders and stays current between syncs. */}
+          {lastSyncTime>0 && <span data-synctick={syncTick} style={{fontSize:9,color:(syncIndicator==="syncing"||syncPulling)?"#F6BF26":"#3a5060",fontFamily:"'Oswald',sans-serif"}}>{(syncIndicator==="syncing"||syncPulling)?"syncing…":Math.floor((Date.now()-lastSyncTime)/60000)<1?"now":`${Math.floor((Date.now()-lastSyncTime)/60000)}m`}</span>}
         </button>}
         <div style={{flex:1}}/>
         {view === "route" && <div style={{display:"flex",alignItems:"center",gap:6}}>
