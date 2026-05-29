@@ -768,6 +768,23 @@ export default function App() {
     return () => document.removeEventListener("visibilitychange", fn);
   }, [token, pullFromDrive]);
 
+  // Periodic pull every 5 minutes while the app is visible — ensures the
+  // desktop picks up phone edits (notes, photos) without requiring a tab-switch.
+  useEffect(() => {
+    if (!token) return;
+    const iv = setInterval(() => {
+      if (document.visibilityState === "visible") pullFromDrive();
+    }, 5 * 60 * 1000);
+    return () => clearInterval(iv);
+  }, [token, pullFromDrive]);
+
+  // 1-minute tick so the "Xm ago" sync counter stays current between re-renders.
+  const [syncTick, setSyncTick] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => setSyncTick(t => t + 1), 60000);
+    return () => clearInterval(iv);
+  }, []);
+
   // ── PARSE ────────────────────────────────────────────────────────────────
   const dayKey = businessDays[selDay]?.toDateString();
   const allParsed = useMemo(() => {
@@ -1382,10 +1399,11 @@ export default function App() {
             triggerCloudSync(true);
             pullFromDrive();
           }}
-          title="Tap to sync"
+          title={syncPulling ? "Syncing…" : (syncIndicator==="error"||syncIndicator==="auth-error") ? "Sync error — tap to retry" : "Tap to force sync now"}
           style={{background:"none",border:"none",cursor:"pointer",padding:"2px 6px",display:"flex",alignItems:"center",gap:3}}>
           {(syncIndicator==="error"||syncIndicator==="auth-error") ? <IconCloudOff size={13} color="#FF5555"/> : (syncIndicator==="syncing"||syncPulling) ? <IconCloud size={13} color="#F6BF26"/> : <IconCloud size={13} color="#10B981"/>}
-          {lastSyncTime>0 && <span style={{fontSize:9,color:"#3a5060",fontFamily:"'Oswald',sans-serif"}}>{Math.floor((Date.now()-lastSyncTime)/60000)<1?"now":`${Math.floor((Date.now()-lastSyncTime)/60000)}m`}</span>}
+          {/* syncTick makes this re-evaluate every minute so "Xm ago" stays accurate */}
+          {lastSyncTime>0 && <span style={{fontSize:9,color:(syncIndicator==="syncing"||syncPulling)?"#F6BF26":"#3a5060",fontFamily:"'Oswald',sans-serif"}}>{(syncIndicator==="syncing"||syncPulling)?"syncing…":Math.floor((Date.now()-lastSyncTime-syncTick*0)/60000)<1?"now":`${Math.floor((Date.now()-lastSyncTime)/60000)}m`}</span>}
         </button>}
         <div style={{flex:1}}/>
         {view === "route" && <div style={{display:"flex",alignItems:"center",gap:6}}>

@@ -205,12 +205,17 @@ export function queueFieldDriveSync(token, id) {
   _fieldTrailing.add(id);
   const run = async () => {
     _fieldTrailing.delete(id); // starting now; further calls queue a fresh trailing run
+    setSyncStatus("syncing");
     try {
       const fresh = await loadField(id);
       if (fresh && Object.keys(fresh).length) {
         await saveFieldToDrive(token, id, fresh);
       }
-    } catch {}
+      setSyncStatus("success");
+      setTimeout(() => setSyncStatus("idle"), 3000);
+    } catch (e) {
+      setSyncStatus(e?.isAuthError ? "auth-error" : "error");
+    }
   };
   const prev = _fieldChain.get(id) || Promise.resolve();
   const next = prev.then(run, run); // run even if the prior link rejected
