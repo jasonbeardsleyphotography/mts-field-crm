@@ -5,7 +5,7 @@ import SwipeCard from "./SwipeCard";
 import OnsiteWindow from "./OnsiteWindow";
 import Pipeline, { savePipeline, loadPipeline, pushCalendarColor } from "./Pipeline";
 import { saveAppState, loadAppState, loadFieldFromDrive, listFieldFiles, onSyncStatus, onAuthError, queueFieldDriveSync } from "./driveSync";
-import { loadField, updateField, getDirtyFieldIds } from "./fieldStore";
+import { loadField, listFieldIds, updateField, getDirtyFieldIds } from "./fieldStore";
 import { startPhotoSyncWatcher } from "./photoSync";
 import { startVideoQueueWatcher } from "./videoQueue";
 import { pruneLog as pruneVideoLog } from "./videoLog";
@@ -669,6 +669,51 @@ export default function App() {
     }
   }, [token]);
 
+  // Push EVERY local field record to Drive (not just dirty ones). Used by the
+  // manual sync button and the one-time post-deploy reconcile, so data captured
+  // before the dirty-tracking existed — or that failed to upload under the old
+  // 5MB-capped path — finally lands on Drive via the resumable/slim path.
+  // queueFieldDriveSync reads fresh IDB per stop, so callers should pull first
+  // (to union-merge Drive into local) before calling this, ensuring we push the
+  // superset and never clobber another device's photos.
+  const _pushingAll = useRef(false);
+  const pushAllFields = useCallback(async () => {
+    if (!token || _pushingAll.current) return;
+    _pushingAll.current = true;
+    try {
+      const ids = await listFieldIds();
+      for (const id of ids) {
+        const fd = await loadField(id);
+        if (fd && Object.keys(fd).length) await queueFieldDriveSync(token, id);
+      }
+    } finally {
+      _pushingAll.current = false;
+    }
+  }, [token]);
+
+  // ── ONE-TIME POST-DEPLOY RECONCILE ──────────────────────────────────────
+  // Bump RECONCILE_VERSION whenever a sync bug fix needs every device to
+  // re-push its local data. Runs once per device per version: pull (union
+  // Drive→local), then push all local fields (union→Drive). This is what
+  // gets the phone's complete-but-never-successfully-uploaded records onto
+  // Drive so other devices can finally see them.
+  const RECONCILE_VERSION = "2026-05-resumable-slim";
+  useEffect(() => {
+    if (!token) return;
+    if (lsGet("mts-reconcile-version", "") === RECONCILE_VERSION) return;
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        await pullFromDrive(true);
+        if (cancelled) return;
+        await pushAllFields();
+        if (cancelled) return;
+        lsSet("mts-reconcile-version", RECONCILE_VERSION);
+      } catch (e) { console.warn("Reconcile failed:", e); }
+    }, 5000);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [token, pullFromDrive, pushAllFields]);
+
   // Retry dirty field pushes every 60s while visible, and whenever the tab
   // regains focus or the device comes back online.
   useEffect(() => {
@@ -688,7 +733,7 @@ export default function App() {
     };
   }, [token, flushDirtyFields]);
 
-  const pullFromDrive = useCallback(async () => {
+  const pullFromDrive = useCallback(async (force = false) => {
     if (!token) return;
     setSyncPulling(true);
     try {
@@ -737,11 +782,12 @@ export default function App() {
         const localEmpty = !localData || Object.keys(localData).length === 0;
         const remoteTs = f.modifiedTime ? new Date(f.modifiedTime).getTime() : 0;
         const lastSeen = seen[id] || 0;
-        // Pull when we have no local copy, or when Drive's file changed since
-        // the last time we pulled it. MERGE photo/audio/video arrays by key
-        // (union) rather than overwriting — photos captured locally that
-        // haven't synced yet must never be erased by a stale Drive snapshot.
-        if (localEmpty || remoteTs > lastSeen) {
+        // Pull when forced (manual sync / reconcile), when we have no local
+        // copy, or when Drive's file changed since the last time we pulled it.
+        // MERGE photo/audio/video arrays by key (union) rather than overwriting
+        // — photos captured locally that haven't synced yet must never be
+        // erased by a stale Drive snapshot.
+        if (force || localEmpty || remoteTs > lastSeen) {
           const data = await loadFieldFromDrive(token, id);
           if (data) {
             await updateField(id, (existing) => {
@@ -1437,11 +1483,16 @@ export default function App() {
               // Give the new token a moment to settle in localStorage
               await new Promise(r => setTimeout(r, 300));
             }
+            // Full reconcile: pull everything (force, ignoring the seen-map),
+            // union-merging Drive into local, THEN push every local field back
+            // so this device's complete data lands on Drive. Pull-before-push
+            // guarantees we upload the superset and never clobber another
+            // device's photos.
             triggerCloudSync(true);
-            flushDirtyFields();
-            pullFromDrive();
+            await pullFromDrive(true);
+            await pushAllFields();
           }}
-          title={syncPulling ? "Syncing…" : (syncIndicator==="error"||syncIndicator==="auth-error") ? "Sync error — tap to retry" : "Tap to force sync now"}
+          title={syncPulling ? "Syncing…" : (syncIndicator==="error"||syncIndicator==="auth-error") ? "Sync error — tap to retry" : "Tap to force full sync"}
           style={{background:"none",border:"none",cursor:"pointer",padding:"2px 6px",display:"flex",alignItems:"center",gap:3}}>
           {(syncIndicator==="error"||syncIndicator==="auth-error") ? <IconCloudOff size={13} color="#FF5555"/> : (syncIndicator==="syncing"||syncPulling) ? <IconCloud size={13} color="#F6BF26"/> : <IconCloud size={13} color="#10B981"/>}
           {/* data-synctick references syncTick (updated every minute) so the
