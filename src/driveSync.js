@@ -65,9 +65,18 @@ async function findFile(token, name, folderId) {
   return d.files?.[0]?.id || null;
 }
 
+// Drive's simple media/multipart upload caps at 5 MB. Field JSON with several
+// base64 photos can exceed that easily. Use resumable upload for anything over
+// 4 MB so large payloads always land regardless of size.
+const RESUMABLE_THRESHOLD = 4 * 1024 * 1024; // 4 MB
+
 async function saveJson(token, fileName, folderId, data) {
   const body = JSON.stringify(data);
   const existingId = await findFile(token, fileName, folderId);
+  if (body.length > RESUMABLE_THRESHOLD) {
+    await _saveJsonResumable(token, body, fileName, folderId, existingId);
+    return;
+  }
   if (existingId) {
     await driveReq(token, `${UPLOAD_API}/files/${existingId}?uploadType=media`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body });
   } else {
@@ -76,6 +85,53 @@ async function saveJson(token, fileName, folderId, data) {
     form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
     form.append("file", new Blob([body], { type: "application/json" }));
     await driveReq(token, `${UPLOAD_API}/files?uploadType=multipart`, { method: "POST", body: form });
+  }
+}
+
+// Initiate a Drive resumable upload session, then PUT the full body.
+// Handles both create (new file) and update (patch existing file).
+async function _saveJsonResumable(token, body, fileName, folderId, existingId) {
+  const initUrl = existingId
+    ? `${UPLOAD_API}/files/${existingId}?uploadType=resumable`
+    : `${UPLOAD_API}/files?uploadType=resumable`;
+  const initMethod = existingId ? "PATCH" : "POST";
+  const initBody = existingId ? undefined : JSON.stringify({ name: fileName, parents: [folderId] });
+
+  const sessionRes = await fetch(initUrl, {
+    method: initMethod,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "X-Upload-Content-Type": "application/json",
+      "X-Upload-Content-Length": String(body.length),
+    },
+    ...(initBody ? { body: initBody } : {}),
+  });
+  if (!sessionRes.ok) {
+    const err = new Error(`Drive resumable init ${sessionRes.status}`);
+    err.status = sessionRes.status;
+    if (sessionRes.status === 401 || sessionRes.status === 403) {
+      err.isAuthError = true;
+      if (authErrorCallback) authErrorCallback();
+    }
+    throw err;
+  }
+  const sessionUrl = sessionRes.headers.get("Location");
+  if (!sessionUrl) throw new Error("Drive resumable: missing Location header");
+
+  const uploadRes = await fetch(sessionUrl, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "Content-Length": String(body.length) },
+    body,
+  });
+  if (!uploadRes.ok) {
+    const err = new Error(`Drive resumable upload ${uploadRes.status}`);
+    err.status = uploadRes.status;
+    if (uploadRes.status === 401 || uploadRes.status === 403) {
+      err.isAuthError = true;
+      if (authErrorCallback) authErrorCallback();
+    }
+    throw err;
   }
 }
 
@@ -174,6 +230,27 @@ export async function uploadPhotoToDrive(token, dataUrl, filename) {
 
 // ── FIELD DATA ───────────────────────────────────────────────────────────────
 
+// Strip `dataUrl` from photos that already have a Drive `url` before pushing
+// the field JSON. Photos without `url` (not yet uploaded as separate Drive
+// files) keep their dataUrl so the other device can see them. This keeps the
+// JSON under 1 MB for stops with uploaded photos, avoiding Drive's 5 MB
+// multipart limit and making every push fast regardless of photo count.
+// Photos with only a local `dataUrl` are small enough (one at a time, freshly
+// captured) that the resumable-upload fallback in saveJson covers any edge case.
+function _slimForDrive(data) {
+  if (!data) return data;
+  const stripUploaded = (arr) => (arr || []).map(p => {
+    if (p && p.url && p.dataUrl) { const { dataUrl, ...rest } = p; return rest; }
+    return p;
+  });
+  return {
+    ...data,
+    scopePhotos: stripUploaded(data.scopePhotos || data.photos),
+    addonPhotos: stripUploaded(data.addonPhotos),
+    photos: undefined, // drop legacy field alias — scopePhotos is canonical on Drive
+  };
+}
+
 export async function saveFieldToDrive(token, eventId, fieldData) {
   // NOTE: this intentionally lets errors propagate. queueFieldDriveSync relies
   // on a thrown error to know the push failed (so it keeps the id dirty for
@@ -181,8 +258,7 @@ export async function saveFieldToDrive(token, eventId, fieldData) {
   // care about the result wrap this in `.catch(() => {})`.
   const rootId = await findOrCreateFolder(token, FOLDER_NAME);
   const fid = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
-  // Include full field data including photos as base64
-  await saveJson(token, `${eventId}.json`, fid, fieldData);
+  await saveJson(token, `${eventId}.json`, fid, _slimForDrive(fieldData));
 }
 
 // ── SERIALIZED + COALESCED FIELD SYNC ────────────────────────────────────────

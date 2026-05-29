@@ -293,6 +293,15 @@ export function startPhotoSyncWatcher(getToken) {
         if (tok) processPhotoQueue(tok);
       }
     });
+
+    // Retry failed photo uploads every 60s while the tab is visible.
+    // Without this, a single network blip leaves photos stuck in the queue
+    // until the user switches tabs or loses/regains connectivity.
+    setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      const tok = _getToken?.();
+      if (tok && navigator.onLine) processPhotoQueue(tok);
+    }, 60 * 1000);
   }
 
   const tok = getToken();
