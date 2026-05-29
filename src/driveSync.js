@@ -22,9 +22,31 @@ let folderCache = {};
 let syncStatus = "idle";
 let statusListeners = [];
 let authErrorCallback = null;
+let _statusDebounceTimer = null;
 
 export function onSyncStatus(fn) { statusListeners.push(fn); return () => { statusListeners = statusListeners.filter(f => f !== fn); }; }
-function setSyncStatus(s) { syncStatus = s; statusListeners.forEach(fn => fn(s)); }
+
+// "syncing" and "auth-error" propagate immediately — the user should see
+// activity start / auth failures right away. All other states (success, error,
+// idle) are debounced 2 seconds so rapid per-stop error→syncing→error cycles
+// during a multi-stop batch upload don't flicker the indicator between yellow
+// and red. After the batch settles, the final state propagates cleanly.
+function setSyncStatus(s) {
+  syncStatus = s;
+  if (s === "syncing" || s === "auth-error") {
+    if (_statusDebounceTimer) { clearTimeout(_statusDebounceTimer); _statusDebounceTimer = null; }
+    statusListeners.forEach(fn => fn(s));
+    return;
+  }
+  if (_statusDebounceTimer) clearTimeout(_statusDebounceTimer);
+  _statusDebounceTimer = setTimeout(() => {
+    _statusDebounceTimer = null;
+    // Use the live syncStatus value at fire time — may have changed since
+    // the debounce started (e.g. another run already queued "syncing" again).
+    statusListeners.forEach(fn => fn(syncStatus));
+  }, 2000);
+}
+
 export function getSyncStatus() { return syncStatus; }
 
 /** Register a callback to be invoked when Drive returns 401/403.
