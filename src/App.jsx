@@ -691,29 +691,6 @@ export default function App() {
     }
   }, [token]);
 
-  // ── ONE-TIME POST-DEPLOY RECONCILE ──────────────────────────────────────
-  // Bump RECONCILE_VERSION whenever a sync bug fix needs every device to
-  // re-push its local data. Runs once per device per version: pull (union
-  // Drive→local), then push all local fields (union→Drive). This is what
-  // gets the phone's complete-but-never-successfully-uploaded records onto
-  // Drive so other devices can finally see them.
-  const RECONCILE_VERSION = "2026-05-resumable-slim";
-  useEffect(() => {
-    if (!token) return;
-    if (lsGet("mts-reconcile-version", "") === RECONCILE_VERSION) return;
-    let cancelled = false;
-    const t = setTimeout(async () => {
-      try {
-        await pullFromDrive(true);
-        if (cancelled) return;
-        await pushAllFields();
-        if (cancelled) return;
-        lsSet("mts-reconcile-version", RECONCILE_VERSION);
-      } catch (e) { console.warn("Reconcile failed:", e); }
-    }, 5000);
-    return () => { cancelled = true; clearTimeout(t); };
-  }, [token, pullFromDrive, pushAllFields]);
-
   // Retry dirty field pushes every 60s while visible, and whenever the tab
   // regains focus or the device comes back online.
   useEffect(() => {
@@ -846,6 +823,31 @@ export default function App() {
     } catch(e) { console.warn("Pull failed:", e); }
     setSyncPulling(false);
   }, [token]);
+
+  // ── ONE-TIME POST-DEPLOY RECONCILE ──────────────────────────────────────
+  // Defined AFTER pullFromDrive so its dependency array doesn't reference that
+  // const before initialization (a temporal-dead-zone crash on render).
+  // Bump RECONCILE_VERSION whenever a sync bug fix needs every device to
+  // re-push its local data. Runs once per device per version: pull (union
+  // Drive→local), then push all local fields (union→Drive). This is what
+  // gets the phone's complete-but-never-successfully-uploaded records onto
+  // Drive so other devices can finally see them.
+  const RECONCILE_VERSION = "2026-05-resumable-slim";
+  useEffect(() => {
+    if (!token) return;
+    if (lsGet("mts-reconcile-version", "") === RECONCILE_VERSION) return;
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        await pullFromDrive(true);
+        if (cancelled) return;
+        await pushAllFields();
+        if (cancelled) return;
+        lsSet("mts-reconcile-version", RECONCILE_VERSION);
+      } catch (e) { console.warn("Reconcile failed:", e); }
+    }, 5000);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [token, pullFromDrive, pushAllFields]);
 
   useEffect(() => {
     if (!token) return;
