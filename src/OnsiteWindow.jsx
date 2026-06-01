@@ -6,6 +6,34 @@ import { loadField, peekField, primeField, mergeField, updateField, saveFieldSyn
 import { incUpload, decUpload } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
 import { downscaleDataUrl } from "./imageUtils";
+
+function _driveFileId(url) {
+  const m = (url || "").match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
+             (url || "").match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  return m?.[1] || null;
+}
+async function _fetchPhotoBlob(p, token) {
+  if (p.dataUrl) { const r = await fetch(p.dataUrl); return r.blob(); }
+  const fileId = _driveFileId(p.url);
+  if (fileId && token) {
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.blob();
+  }
+  const r = await fetch(p.url); if (!r.ok) throw new Error(); return r.blob();
+}
+async function _saveBlobAsFile(blob, filename) {
+  const file = new File([blob], filename, { type: blob.type || "image/jpeg" });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return; }
+    catch (e) { if (e.name === "AbortError") return; }
+  }
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = blobUrl; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
+}
 import Linkify from "./Linkify";
 import {
   enqueueVideo,
@@ -43,6 +71,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [audioClips, setAudioClips] = useState(fd.audioClips || []);
   const [cloudLoading, setCloudLoading] = useState(false);
   const [markupIdx, setMarkupIdx] = useState(null);
+  const [dlSet, setDlSet] = useState(() => new Set());
   // markupSrc is what we actually pass to PhotoMarkup. Normally it's the
   // photo's dataUrl (base64 from IDB). But if the photo has been "promoted"
   // (uploaded to Drive and dataUrl evicted to save space), we fetch it back
@@ -98,6 +127,13 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // enough to kill the JS context.
   const localSaveTimerRef = useRef(null);
   const pendingDataRef = useRef(null);
+
+  const downloadPhoto = async (p, filename, key) => {
+    setDlSet(s => new Set([...s, key]));
+    try { await _saveBlobAsFile(await _fetchPhotoBlob(p, token), filename); }
+    catch (e) { console.warn("Photo download failed:", e); }
+    finally { setDlSet(s => { const n = new Set(s); n.delete(key); return n; }); }
+  };
 
   // Reset scroll on unmount so route screen isn't left zoomed
   useEffect(() => { return () => { setTimeout(() => { try { window.scrollTo(0,0); } catch(e){} }, 80); }; }, []);
@@ -1136,8 +1172,8 @@ Property: ${s.addr || ""}`);
                 <img src={p.url || p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("scope");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
                 <button onClick={e=>{e.stopPropagation();removeScopePhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} color="#ff6666"/></button>
                 <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
-                  <div onClick={()=>{setMarkupIdx(i);setMarkupSection("scope");}} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={10} color="#ccc"/></div>
-                  <a href={p.url || p.dataUrl} download={`scope_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer",textDecoration:"none"}}><IconDownload size={11} color="#ccc"/></a>
+                  <div onClick={()=>{setMarkupIdx(i);setMarkupSection("scope");}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
+                  <button onClick={e=>{e.stopPropagation();downloadPhoto(p,`scope_${i+1}.jpg`,`scope_${i}`);}} disabled={dlSet.has(`scope_${i}`)} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`scope_${i}`)?0.5:1}}><IconDownload size={13} color="#ccc"/></button>
                 </div>
               </div>
             ))}
@@ -1172,8 +1208,8 @@ Property: ${s.addr || ""}`);
                 <img src={p.url || p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("addon");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
                 <button onClick={e=>{e.stopPropagation();removeAddonPhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} color="#ff6666"/></button>
                 <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
-                  <div onClick={()=>{setMarkupIdx(i);setMarkupSection("addon");}} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={10} color="#ccc"/></div>
-                  <a href={p.url || p.dataUrl} download={`addon_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"4px 8px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer",textDecoration:"none"}}><IconDownload size={11} color="#ccc"/></a>
+                  <div onClick={()=>{setMarkupIdx(i);setMarkupSection("addon");}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
+                  <button onClick={e=>{e.stopPropagation();downloadPhoto(p,`addon_${i+1}.jpg`,`addon_${i}`);}} disabled={dlSet.has(`addon_${i}`)} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`addon_${i}`)?0.5:1}}><IconDownload size={13} color="#ccc"/></button>
                 </div>
               </div>
             ))}
