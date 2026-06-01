@@ -710,9 +710,18 @@ export default function App() {
     };
   }, [token, flushDirtyFields]);
 
+  // Tracks a safety watchdog timer for pullFromDrive so setSyncPulling(false)
+  // fires even if iOS freezes JS mid-fetch (AbortController signals handle the
+  // common case; this catches the rare full-freeze scenario).
+  const _pullWatchdog = useRef(null);
   const pullFromDrive = useCallback(async (force = false) => {
     if (!token) return;
+    // Clear any prior watchdog before starting a fresh pull.
+    if (_pullWatchdog.current) clearTimeout(_pullWatchdog.current);
     setSyncPulling(true);
+    // Force-clear the yellow indicator after 3 minutes — belt-and-suspenders
+    // for cases where the AbortController fires but the catch never runs.
+    _pullWatchdog.current = setTimeout(() => { setSyncPulling(false); }, 3 * 60 * 1000);
     try {
       const state = await loadAppState(token);
       if (state?.pipeline) {
@@ -821,7 +830,10 @@ export default function App() {
       setLastSyncTime(Date.now());
       window.dispatchEvent(new CustomEvent("mts-field-synced"));
     } catch(e) { console.warn("Pull failed:", e); }
-    setSyncPulling(false);
+    finally {
+      if (_pullWatchdog.current) { clearTimeout(_pullWatchdog.current); _pullWatchdog.current = null; }
+      setSyncPulling(false);
+    }
   }, [token]);
 
   // ── ONE-TIME POST-DEPLOY RECONCILE ──────────────────────────────────────
@@ -832,7 +844,7 @@ export default function App() {
   // Drive→local), then push all local fields (union→Drive). This is what
   // gets the phone's complete-but-never-successfully-uploaded records onto
   // Drive so other devices can finally see them.
-  const RECONCILE_VERSION = "2026-05-resumable-slim";
+  const RECONCILE_VERSION = "2026-05-fetch-timeout";
   useEffect(() => {
     if (!token) return;
     if (lsGet("mts-reconcile-version", "") === RECONCILE_VERSION) return;

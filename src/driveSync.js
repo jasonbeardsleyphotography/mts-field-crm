@@ -11,13 +11,42 @@ const FOLDER_NAME = "MTS Field";
 const STATE_FILE = "app-state.json";
 const FIELD_FOLDER = "field-data";
 
+// Abort any Drive fetch that hasn't responded in 30 seconds. Without this,
+// a fetch started just before iOS suspends the PWA can hang forever when the
+// app returns to foreground — keeping the sync indicator permanently yellow.
+const FETCH_TIMEOUT_MS = 30_000;
+// Resumable PUT (uploading the actual body) needs more time for large payloads.
+const UPLOAD_TIMEOUT_MS = 90_000;
+
 let folderCache = {};
 let syncStatus = "idle";
 let statusListeners = [];
 let authErrorCallback = null;
+let _statusDebounceTimer = null;
 
 export function onSyncStatus(fn) { statusListeners.push(fn); return () => { statusListeners = statusListeners.filter(f => f !== fn); }; }
-function setSyncStatus(s) { syncStatus = s; statusListeners.forEach(fn => fn(s)); }
+
+// "syncing" and "auth-error" propagate immediately — the user should see
+// activity start / auth failures right away. All other states (success, error,
+// idle) are debounced 2 seconds so rapid per-stop error→syncing→error cycles
+// during a multi-stop batch upload don't flicker the indicator between yellow
+// and red. After the batch settles, the final state propagates cleanly.
+function setSyncStatus(s) {
+  syncStatus = s;
+  if (s === "syncing" || s === "auth-error") {
+    if (_statusDebounceTimer) { clearTimeout(_statusDebounceTimer); _statusDebounceTimer = null; }
+    statusListeners.forEach(fn => fn(s));
+    return;
+  }
+  if (_statusDebounceTimer) clearTimeout(_statusDebounceTimer);
+  _statusDebounceTimer = setTimeout(() => {
+    _statusDebounceTimer = null;
+    // Use the live syncStatus value at fire time — may have changed since
+    // the debounce started (e.g. another run already queued "syncing" again).
+    statusListeners.forEach(fn => fn(syncStatus));
+  }, 2000);
+}
+
 export function getSyncStatus() { return syncStatus; }
 
 /** Register a callback to be invoked when Drive returns 401/403.
@@ -25,7 +54,14 @@ export function getSyncStatus() { return syncStatus; }
 export function onAuthError(fn) { authErrorCallback = fn; }
 
 async function driveReq(token, url, opts = {}) {
-  const res = await fetch(url, { ...opts, headers: { Authorization: `Bearer ${token}`, ...opts.headers } });
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch(url, { ...opts, signal: ac.signal, headers: { Authorization: `Bearer ${token}`, ...opts.headers } });
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     const err = new Error(`Drive ${res.status}`);
     err.status = res.status;
@@ -97,16 +133,26 @@ async function _saveJsonResumable(token, body, fileName, folderId, existingId) {
   const initMethod = existingId ? "PATCH" : "POST";
   const initBody = existingId ? undefined : JSON.stringify({ name: fileName, parents: [folderId] });
 
-  const sessionRes = await fetch(initUrl, {
-    method: initMethod,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      "X-Upload-Content-Type": "application/json",
-      "X-Upload-Content-Length": String(body.length),
-    },
-    ...(initBody ? { body: initBody } : {}),
-  });
+  let sessionRes;
+  {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
+    try {
+      sessionRes = await fetch(initUrl, {
+        method: initMethod,
+        signal: ac.signal,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "X-Upload-Content-Type": "application/json",
+          "X-Upload-Content-Length": String(body.length),
+        },
+        ...(initBody ? { body: initBody } : {}),
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   if (!sessionRes.ok) {
     const err = new Error(`Drive resumable init ${sessionRes.status}`);
     err.status = sessionRes.status;
@@ -119,11 +165,23 @@ async function _saveJsonResumable(token, body, fileName, folderId, existingId) {
   const sessionUrl = sessionRes.headers.get("Location");
   if (!sessionUrl) throw new Error("Drive resumable: missing Location header");
 
-  const uploadRes = await fetch(sessionUrl, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", "Content-Length": String(body.length) },
-    body,
-  });
+  let uploadRes;
+  {
+    const ac = new AbortController();
+    // Give the body upload more time — a large payload over slow cellular
+    // needs longer than the default 30s. 90s covers ~1MB at 10KB/s.
+    const timer = setTimeout(() => ac.abort(), UPLOAD_TIMEOUT_MS);
+    try {
+      uploadRes = await fetch(sessionUrl, {
+        method: "PUT",
+        signal: ac.signal,
+        headers: { "Content-Type": "application/json", "Content-Length": String(body.length) },
+        body,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   if (!uploadRes.ok) {
     const err = new Error(`Drive resumable upload ${uploadRes.status}`);
     err.status = uploadRes.status;

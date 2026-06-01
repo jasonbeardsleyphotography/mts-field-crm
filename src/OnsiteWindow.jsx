@@ -745,7 +745,21 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     setMarkupLoading(true);
     (async () => {
       try {
-        const res = await fetch(photo.url);
+        // Extract Drive file ID so we can download via the Drive API with
+        // Authorization header. The drive.google.com/thumbnail URL is public
+        // but doesn't send CORS headers, so a programmatic fetch() is blocked
+        // by the browser even though the <img> tag displays it fine.
+        const fileIdMatch = photo.url.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
+                            photo.url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+        const fileId = fileIdMatch?.[1];
+        let res;
+        if (fileId && token) {
+          res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        } else {
+          res = await fetch(photo.url);
+        }
         if (!res.ok) throw new Error("HTTP " + res.status);
         const blob = await res.blob();
         if (cancelled) return;

@@ -590,15 +590,36 @@ Property: ${card.addr || ""}`);
       return;
     }
 
-    // Promoted photo — fetch from Drive URL into a blob
+    // Promoted photo — fetch from Drive URL into a blob.
+    // We must use the Drive API with the auth token rather than fetching
+    // the thumbnail URL directly. The thumbnail URL is public (no auth
+    // required to display it in an <img> tag), but browsers block a
+    // programmatic fetch() to drive.google.com because that host doesn't
+    // return Access-Control-Allow-Origin headers for thumbnail URLs. The
+    // Drive files API (?alt=media) does support CORS when an Authorization
+    // header is supplied, so we use that path instead.
     if (!photo.url) { setDetailMarkupSrc(""); return; }
+
+    // Extract the Drive file ID from the stored thumbnail/webContentLink URL.
+    const fileIdMatch = photo.url.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
+                        photo.url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+    const fileId = fileIdMatch?.[1];
 
     let cancelled = false;
     let blobUrl = null;
     setDetailMarkupLoading(true);
     (async () => {
       try {
-        const res = await fetch(photo.url);
+        let res;
+        if (fileId && token) {
+          // Drive API download — CORS-safe with Authorization header
+          res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        } else {
+          // Fallback: try direct URL (may work on some networks/configs)
+          res = await fetch(photo.url);
+        }
         if (!res.ok) throw new Error("HTTP " + res.status);
         const blob = await res.blob();
         if (cancelled) return;
