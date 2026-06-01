@@ -3,6 +3,48 @@ import CameraView from "./CameraView";
 import PhotoMarkup from "./PhotoMarkup";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import JSZip from "jszip";
+
+// Extract a Drive file ID from any Drive URL format we store.
+function _driveFileId(url) {
+  const m = (url || "").match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
+             (url || "").match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  return m?.[1] || null;
+}
+
+// Fetch a photo as a Blob. Uses Drive API with auth for Drive-hosted photos
+// (direct fetch of thumbnail URLs is blocked by CORS on programmatic requests).
+async function _fetchPhotoBlob(p, token) {
+  if (p.dataUrl) {
+    const res = await fetch(p.dataUrl);
+    return await res.blob();
+  }
+  const fileId = _driveFileId(p.url);
+  if (fileId && token) {
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return await res.blob();
+  }
+  const res = await fetch(p.url);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return await res.blob();
+}
+
+// Trigger a browser save for a blob. Uses Web Share API on iOS (shows system
+// share sheet with "Save Image"), falls back to anchor-click on desktop/Android.
+async function _saveBlobAsFile(blob, filename) {
+  const file = new File([blob], filename, { type: blob.type || "image/jpeg" });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return; }
+    catch (e) { if (e.name === "AbortError") return; }
+  }
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = blobUrl; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
+}
 import { loadFieldFromDrive, queueFieldDriveSync } from "./driveSync";
 import { loadField, peekField, primeField, updateField } from "./fieldStore";
 import { isUploadPending, onUploadChange } from "./uploadStatus";
@@ -356,8 +398,22 @@ Property: ${card.addr || ""}`);
     setDetailMarkup(null);
   };
 
-  // ── DOWNLOAD ALL PHOTOS ───────────────────────────────────────────────
+  // ── DOWNLOAD PHOTOS ───────────────────────────────────────────────────
   const [downloadingPhotos, setDownloadingPhotos] = useState(false);
+  // Tracks individual photo downloads in progress: Set of "scope_0", "addon_2", etc.
+  const [downloadingSet, setDownloadingSet] = useState(() => new Set());
+
+  const downloadSinglePhoto = useCallback(async (p, filename, key) => {
+    setDownloadingSet(s => new Set([...s, key]));
+    try {
+      const blob = await _fetchPhotoBlob(p, token);
+      await _saveBlobAsFile(blob, filename);
+    } catch (e) {
+      console.warn("Photo download failed:", e);
+    } finally {
+      setDownloadingSet(s => { const n = new Set(s); n.delete(key); return n; });
+    }
+  }, [token]);
 
   const downloadAllPhotos = useCallback(async (card, scopePhotos, addonPhotos) => {
     const all = [
@@ -370,36 +426,21 @@ Property: ${card.addr || ""}`);
     try {
       const zip = new JSZip();
       const folder = zip.folder(card.cn.replace(/[^a-z0-9_\- ]/gi, "_"));
-      await Promise.all(all.map(async ({ p, name }) => {
+      // Sequential to avoid hammering Drive API with many parallel auth'd fetches
+      for (const { p, name } of all) {
         try {
-          if (p.dataUrl) {
-            // dataURL → binary string
-            const b64 = p.dataUrl.split(",")[1] || p.dataUrl;
-            folder.file(name, b64, { base64: true });
-          } else {
-            // Drive/remote URL → fetch blob
-            const res = await fetch(p.url);
-            if (!res.ok) return;
-            const blob = await res.blob();
-            folder.file(name, blob);
-          }
+          const blob = await _fetchPhotoBlob(p, token);
+          folder.file(name, blob);
         } catch {}
-      }));
+      }
       const blob = await zip.generateAsync({ type: "blob" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${card.cn.replace(/[^a-z0-9_\- ]/gi, "_")}_photos.zip`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      await _saveBlobAsFile(blob, `${card.cn.replace(/[^a-z0-9_\- ]/gi, "_")}_photos.zip`);
     } catch (e) {
       console.warn("downloadAllPhotos failed:", e);
     } finally {
       setDownloadingPhotos(false);
     }
-  }, []);
+  }, [token]);
 
   const detailHandleLibraryPhotos = (e, section, cardId) => {
     Array.from(e.target.files || []).forEach(file => {
@@ -1368,8 +1409,8 @@ Property: ${card.addr || ""}`);
                         <img src={p.url || p.dataUrl} alt="" onClick={() => setDetailMarkup({section:"scope",idx:i})} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
                         <button onClick={() => detailRemovePhoto(i,"scope",card.id)} style={{position:"absolute",top:4,right:4,width:22,height:22,borderRadius:11,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={11} color="#ff6666"/></button>
                         <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:3}}>
-                          <div onClick={() => setDetailMarkup({section:"scope",idx:i})} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={10} color="#ccc"/></div>
-                          <a href={p.dataUrl || p.url} download={`${card.cn.replace(/\s+/g,"_")}_scope_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer",textDecoration:"none"}}><IconDownload size={10} color="#ccc"/></a>
+                          <div onClick={() => setDetailMarkup({section:"scope",idx:i})} style={{padding:"4px 9px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
+                          <button onClick={e=>{e.stopPropagation();downloadSinglePhoto(p,`${card.cn.replace(/\s+/g,"_")}_scope_${i+1}.jpg`,`scope_${i}`);}} disabled={downloadingSet.has(`scope_${i}`)} style={{padding:"4px 9px",borderRadius:5,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:downloadingSet.has(`scope_${i}`)?0.5:1}}><IconDownload size={12} color="#ccc"/></button>
                         </div>
                       </div>
                     ))}
@@ -1419,8 +1460,8 @@ Property: ${card.addr || ""}`);
                         <img src={p.url || p.dataUrl} alt="" onClick={() => setDetailMarkup({section:"addon",idx:i})} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
                         <button onClick={() => detailRemovePhoto(i,"addon",card.id)} style={{position:"absolute",top:4,right:4,width:22,height:22,borderRadius:11,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={11} color="#ff6666"/></button>
                         <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:3}}>
-                          <div onClick={() => setDetailMarkup({section:"addon",idx:i})} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={10} color="#ccc"/></div>
-                          <a href={p.dataUrl || p.url} download={`${card.cn.replace(/\s+/g,"_")}_addon_${i+1}.jpg`} onClick={e=>e.stopPropagation()} style={{padding:"3px 7px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer",textDecoration:"none"}}><IconDownload size={10} color="#ccc"/></a>
+                          <div onClick={() => setDetailMarkup({section:"addon",idx:i})} style={{padding:"4px 9px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
+                          <button onClick={e=>{e.stopPropagation();downloadSinglePhoto(p,`${card.cn.replace(/\s+/g,"_")}_addon_${i+1}.jpg`,`addon_${i}`);}} disabled={downloadingSet.has(`addon_${i}`)} style={{padding:"4px 9px",borderRadius:5,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:downloadingSet.has(`addon_${i}`)?0.5:1}}><IconDownload size={12} color="#ccc"/></button>
                         </div>
                       </div>
                     ))}
