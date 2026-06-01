@@ -160,6 +160,16 @@ function drawX(ctx, s, lineWidth) {
   ctx.stroke();
 }
 
+function drawLine(ctx, s, lineWidth) {
+  ctx.strokeStyle = s.color;
+  ctx.lineWidth = lineWidth;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(s.start.x, s.start.y);
+  ctx.lineTo(s.end.x, s.end.y);
+  ctx.stroke();
+}
+
 // Distance from point to segment — for eraser hit-testing.
 function distToSegment(px, py, x1, y1, x2, y2) {
   const dx = x2 - x1, dy = y2 - y1;
@@ -185,9 +195,22 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
   const [brushSize, setBrushSize]   = useState(() => {
     try { return Number(localStorage.getItem("pm.brushSize")) || SIZES[1]; } catch { return SIZES[1]; }
   });
-  const [arrowMode, setArrowMode]         = useState(false);
-  const [eraserMode, setEraserMode]       = useState(false);
-  const [xMode, setXMode]                 = useState(false);
+  // Active tool. Defaults to "x" so the editor opens ready to stamp X marks —
+  // the most common annotation. Persisted across sessions.
+  // Values: "x" | "freehand" | "line" | "arrow" | "eraser"
+  const [tool, setTool] = useState(() => {
+    try {
+      const t = localStorage.getItem("pm.tool");
+      return ["x", "freehand", "line", "arrow", "eraser"].includes(t) ? t : "x";
+    } catch { return "x"; }
+  });
+  useEffect(() => { try { localStorage.setItem("pm.tool", tool); } catch {} }, [tool]);
+  // Derived booleans keep the rest of the component unchanged.
+  const arrowMode    = tool === "arrow";
+  const eraserMode   = tool === "eraser";
+  const xMode        = tool === "x";
+  const lineMode     = tool === "line";
+  const freehandMode = tool === "freehand";
   const [arrowHeadScale, setArrowHeadScale] = useState(() => {
     try {
       const s = Number(localStorage.getItem("pm.arrowHeadScale")) || 3;
@@ -322,6 +345,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
       const lw = s.size * cssToImg;
       if (s.type === "arrow")   drawArrow(ctx, s, lw);
       else if (s.type === "x") drawX(ctx, s, lw);
+      else if (s.type === "line") drawLine(ctx, s, lw);
       else                     drawFreehand(ctx, s, lw);
     });
   }, [strokes, backing.w, backing.h, imgDims.w, imgDims.h, fit.w]);
@@ -351,6 +375,10 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
       if (cs.type === "x-preview") {
         const xStroke = buildXStroke(cs.center, cs.color, cs.size, cssToImg, cs.xHeadScale || 1);
         drawX(ctx, xStroke, cs.size * cssToImg);
+      } else if (cs.type === "line" && cs.points.length >= 2) {
+        // Straight-line preview: first point → current point.
+        const a = cs.points[0], b = cs.points[cs.points.length - 1];
+        drawLine(ctx, { start: a, end: b, color: cs.color }, cs.size * cssToImg);
       } else if (cs.points.length >= 2) {
         drawFreehand(ctx, cs, cs.size * cssToImg);
       }
@@ -428,7 +456,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
     setStrokes(prev => {
       for (let i = prev.length - 1; i >= 0; i--) {
         const s = prev[i];
-        if (s.type === "arrow") {
+        if (s.type === "arrow" || s.type === "line") {
           if (distToSegment(pImg.x, pImg.y, s.start.x, s.start.y, s.end.x, s.end.y) < HIT) {
             return prev.filter((_, j) => j !== i);
           }
@@ -496,7 +524,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
       drawingRef.current = true;
       arrowPreviewRef.current = null;
       currentStrokeRef.current = {
-        type: "freehand",
+        type: lineMode ? "line" : "freehand",
         points: [pImg],
         color, size: brushSize,
       };
@@ -586,6 +614,16 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
         return;
       }
 
+      // Line tool: commit a clean straight segment from first → last point,
+      // discarding the intermediate freehand jitter.
+      if (cs.type === "line") {
+        const a = cs.points[0], b = cs.points[cs.points.length - 1];
+        currentStrokeRef.current = null;
+        scheduleOverlay();
+        setStrokes(prev => [...prev, { type: "line", start: a, end: b, color: cs.color, size: cs.size }]);
+        return;
+      }
+
       const arrowInfo = arrowMode ? analyzeStroke(cs.points) : null;
       if (arrowInfo) {
         const arrow = buildArrowStroke(arrowInfo, cs.color, cs.size, arrowHeadScale);
@@ -628,6 +666,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
       const lw = s.size * cssToImg;
       if (s.type === "arrow")   drawArrow(ctx, s, lw);
       else if (s.type === "x") drawX(ctx, s, lw);
+      else if (s.type === "line") drawLine(ctx, s, lw);
       else                     drawFreehand(ctx, s, lw);
     });
 
@@ -734,14 +773,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
         display: "flex", gap: 8, alignItems: "center",
       }}>
         <button
-          onClick={() => { setArrowMode(m => !m); setEraserMode(false); setXMode(false); }}
-          style={fab(arrowMode)}
-          title="Arrow (straight strokes snap to arrows)"
-        >
-          <IconArrowUpRight size={20} color="#fff" />
-        </button>
-        <button
-          onClick={() => { setXMode(m => !m); setArrowMode(false); setEraserMode(false); }}
+          onClick={() => setTool("x")}
           style={fab(xMode)}
           title="Stamp an X mark"
         >
@@ -751,7 +783,32 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
           </svg>
         </button>
         <button
-          onClick={() => { setEraserMode(m => !m); setArrowMode(false); setXMode(false); }}
+          onClick={() => setTool("freehand")}
+          style={fab(freehandMode)}
+          title="Freehand draw"
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M3 16c2-1 3-4 5-4s2 3 4 2 2-7 5-9" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+        <button
+          onClick={() => setTool("line")}
+          style={fab(lineMode)}
+          title="Straight line"
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <line x1="3" y1="17" x2="17" y2="3" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"/>
+          </svg>
+        </button>
+        <button
+          onClick={() => setTool("arrow")}
+          style={fab(arrowMode)}
+          title="Arrow (straight strokes snap to arrows)"
+        >
+          <IconArrowUpRight size={20} color="#fff" />
+        </button>
+        <button
+          onClick={() => setTool("eraser")}
           style={fab(eraserMode, true)}
           title="Eraser"
         >
