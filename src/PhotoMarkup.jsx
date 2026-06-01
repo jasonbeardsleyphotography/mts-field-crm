@@ -40,7 +40,7 @@ const COLORS = [
 
 const SIZES = [3, 6, 10];           // brush sizes in CSS pixels at scale=1
 const ARROWHEAD_SCALES = [3, 4.5];  // large / XL — user requested 2 sizes only
-const X_SCALES = [1, 2, 3];         // small / medium / large X stamp size
+const X_SCALES = [0.35, 0.55, 0.85, 1.70, 2.55]; // XS / S / M / L / XL — 2 new smaller sizes + all prior sizes reduced ~15%
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 5;
 const INIT_SCALE = 1;               // fit-to-screen on open
@@ -196,7 +196,11 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
     } catch { return 3; }
   });
   const [xHeadScale, setXHeadScale] = useState(() => {
-    try { return Number(localStorage.getItem("pm.xHeadScale")) || 1; } catch { return 1; }
+    try {
+      const s = Number(localStorage.getItem("pm.xHeadScale"));
+      // Validate against current scale set; old saved values (1/2/3) fall back to medium
+      return X_SCALES.includes(s) ? s : X_SCALES[2];
+    } catch { return X_SCALES[2]; }
   });
 
   // Persist tool preferences
@@ -839,23 +843,23 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
             <span style={{ fontSize: 10, color: "rgba(255,255,255,.5)", fontWeight: 600, marginRight: 4, letterSpacing: 0.5 }}>SIZE</span>
             {X_SCALES.map((scale, i) => {
               const active = xHeadScale === scale;
-              const arm = 4 + i * 5; // 4, 9, 14 px — arm half-length in SVG preview
+              const arm = [2, 4, 7, 11, 15][i]; // XS→XL arm half-lengths in SVG preview
               return (
                 <button
                   key={scale}
                   onClick={() => setXHeadScale(scale)}
-                  title={["Small", "Medium", "Large"][i] + " X"}
+                  title={["XS", "Small", "Medium", "Large", "XL"][i] + " X"}
                   style={{
-                    width: 42, height: 34, borderRadius: 8,
+                    width: 36, height: 34, borderRadius: 8,
                     background: active ? "rgba(0,122,255,.35)" : "transparent",
                     border: active ? "1px solid rgba(0,122,255,.7)" : "1px solid transparent",
                     cursor: "pointer", padding: 0,
                     display: "flex", alignItems: "center", justifyContent: "center",
                   }}
                 >
-                  <svg width="36" height="34" viewBox="0 0 36 34" fill="none">
-                    <line x1={18 - arm} y1={17 - arm} x2={18 + arm} y2={17 + arm} stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/>
-                    <line x1={18 + arm} y1={17 - arm} x2={18 - arm} y2={17 + arm} stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/>
+                  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                    <line x1={16 - arm} y1={16 - arm} x2={16 + arm} y2={16 + arm} stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/>
+                    <line x1={16 + arm} y1={16 - arm} x2={16 - arm} y2={16 + arm} stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/>
                   </svg>
                 </button>
               );
