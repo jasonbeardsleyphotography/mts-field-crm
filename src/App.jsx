@@ -8,7 +8,7 @@ import { saveAppState, loadAppState, loadFieldFromDrive, listFieldFiles, onSyncS
 import { loadField, listFieldIds, updateField, getDirtyFieldIds } from "./fieldStore";
 import { startPhotoSyncWatcher } from "./photoSync";
 import { photoKey } from "./imageUtils";
-import { startVideoQueueWatcher } from "./videoQueue";
+import { startVideoQueueWatcher, pendingCount as videoPendingCount } from "./videoQueue";
 import { pruneLog as pruneVideoLog } from "./videoLog";
 import UploadTracker from "./UploadTracker";
 import DebugPanel from "./DebugPanel";
@@ -1058,6 +1058,73 @@ export default function App() {
     _debugTapTimer.current = setTimeout(() => { _debugTapCount.current = 0; }, 1000);
     if (_debugTapCount.current >= 5) { _debugTapCount.current = 0; setDebugOpen(true); }
   };
+
+  // ── HEALTH BANNER ─────────────────────────────────────────────────────────
+  // Surfaces actionable issues when the app returns to foreground so the user
+  // knows immediately if something needs attention rather than hunting for clues.
+  const [healthBanner, setHealthBanner] = useState(null); // null | { type, message, action?, actionLabel? }
+  const _healthDismissed = useRef(new Set());
+
+  const checkHealth = useCallback(async () => {
+    if (!token || !navigator.onLine) return;
+    try {
+      const photoQ = (() => { try { return JSON.parse(localStorage.getItem("mts-photo-queue") || "[]"); } catch { return []; } })();
+      const dirtyIds = getDirtyFieldIds();
+      const vidPending = await videoPendingCount().catch(() => 0);
+
+      // Priority order: video errors > stuck videos > photos pending > dirty fields
+      // Only show if not already dismissed this session for this type.
+      if (vidPending > 0 && !_healthDismissed.current.has("videos")) {
+        setHealthBanner({
+          type: "videos",
+          message: `${vidPending} video upload${vidPending > 1 ? "s" : ""} pending`,
+          actionLabel: "View",
+          action: () => setUploadsOpen(true),
+        });
+        return;
+      }
+      if (photoQ.length > 0 && !_healthDismissed.current.has("photos")) {
+        setHealthBanner({
+          type: "photos",
+          message: `${photoQ.length} stop${photoQ.length > 1 ? "s" : ""} have photos waiting to upload`,
+          actionLabel: null,
+          action: null,
+        });
+        return;
+      }
+      if (dirtyIds.size > 0 && !_healthDismissed.current.has("dirty")) {
+        setHealthBanner({
+          type: "dirty",
+          message: `${dirtyIds.size} stop${dirtyIds.size > 1 ? "s" : ""} have unsaved changes pending sync`,
+          actionLabel: null,
+          action: null,
+        });
+        return;
+      }
+    } catch {}
+  }, [token]);
+
+  // Run health check on foreground return and once shortly after auth.
+  // Also re-check after sync events so the banner clears when issues resolve.
+  useEffect(() => {
+    if (!token) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        // Clear dismissed set on foreground so the banner reappears if still unresolved.
+        _healthDismissed.current = new Set();
+        checkHealth();
+      }
+    };
+    const onSynced = () => { setHealthBanner(null); checkHealth(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("mts-field-synced", onSynced);
+    const t = setTimeout(checkHealth, 6000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("mts-field-synced", onSynced);
+      clearTimeout(t);
+    };
+  }, [token, checkHealth]);
   // (addStopOpen is declared above, near the clientIndex computation — its
   // useEffect needs to fire when this flag flips, and the effect lives there.)
 
@@ -1549,6 +1616,20 @@ export default function App() {
           </button>
         )}
       </div>
+
+      {/* ── HEALTH BANNER ───────────────────────────────────────────── */}
+      {healthBanner && (
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 12px",background:"rgba(246,191,38,.08)",borderBottom:"1px solid rgba(246,191,38,.2)",flexShrink:0}}>
+          <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="#F6BF26" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span style={{flex:1,fontSize:11,color:"#d4a820",fontWeight:600}}>{healthBanner.message}</span>
+          {healthBanner.action && (
+            <button onClick={() => { healthBanner.action(); setHealthBanner(null); _healthDismissed.current.add(healthBanner.type); }} style={{padding:"3px 10px",borderRadius:6,background:"rgba(246,191,38,.15)",border:"1px solid rgba(246,191,38,.3)",color:"#F6BF26",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0}}>{healthBanner.actionLabel}</button>
+          )}
+          <button onClick={() => { _healthDismissed.current.add(healthBanner.type); setHealthBanner(null); }} style={{background:"none",border:"none",color:"#7a6020",cursor:"pointer",padding:2,display:"flex",flexShrink:0}}>
+            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      )}
 
       {/* ── ROUTE VIEW ──────────────────────────────────────────────── */}
       {view === "route" && <>

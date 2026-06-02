@@ -221,9 +221,12 @@ export async function saveAppState(token, pipeline, dismissed, lastContact) {
 export async function loadAppState(token) {
   try {
     const rootId = await findOrCreateFolder(token, FOLDER_NAME);
-    return await loadJson(token, STATE_FILE, rootId);
+    const data = await loadJson(token, STATE_FILE, rootId);
+    logInfo("driveSync", "App state pull ok");
+    return data;
   } catch(e) {
     console.warn("Drive load failed:", e);
+    logError("driveSync", `loadAppState failed: ${e.message}`, { status: e.status });
     return null;
   }
 }
@@ -355,6 +358,7 @@ export function queueFieldDriveSync(token, id) {
       // flight. If a trailing run exists, it pushes the newer data and clears
       // dirty when it succeeds — clearing here would drop the retry guarantee.
       if (!_fieldTrailing.has(id)) clearFieldDirty(id);
+      logInfo("driveSync", `Field push ok: ${id}`);
       setSyncStatus("success");
       setTimeout(() => setSyncStatus("idle"), 3000);
     } catch (e) {
