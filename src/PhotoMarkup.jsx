@@ -647,6 +647,38 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
     }
   };
 
+  // ── MOUSE WHEEL ZOOM ───────────────────────────────────────────────────────
+  // Must be a non-passive listener so e.preventDefault() can block page scroll.
+  // Uses a ref for the handler so the effect deps stay stable.
+  const onWheelRef = useRef(null);
+  onWheelRef.current = (e) => {
+    e.preventDefault();
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect || !fit.w) return;
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    // ctrlKey=true on macOS trackpad pinch — finer delta; mouse wheel is coarser.
+    const factor = Math.exp(e.ctrlKey ? -e.deltaY * 0.01 : -e.deltaY * 0.002);
+    setView(prev => {
+      const nextScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, prev.scale * factor));
+      const midCanvas = {
+        x: (cx - prev.tx) / prev.scale,
+        y: (cy - prev.ty) / prev.scale,
+      };
+      const nextTx = cx - nextScale * midCanvas.x;
+      const nextTy = cy - nextScale * midCanvas.y;
+      return clampView({ scale: nextScale, tx: nextTx, ty: nextTy });
+    });
+  };
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const handler = (e) => onWheelRef.current?.(e);
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, []); // stable — onWheelRef.current always points to the latest closure
+
   // ── ACTIONS ────────────────────────────────────────────────────────────────
   const undo     = () => setStrokes(p => p.slice(0, -1));
   const clearAll = () => setStrokes([]);
