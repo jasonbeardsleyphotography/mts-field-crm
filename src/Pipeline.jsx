@@ -31,14 +31,10 @@ async function _fetchPhotoBlob(p, token) {
   return await res.blob();
 }
 
-// Trigger a browser save for a blob. Uses Web Share API on iOS (shows system
-// share sheet with "Save Image"), falls back to anchor-click on desktop/Android.
+// Trigger a direct file download via a blob: URL. Works on iOS 13+ (saves to
+// Downloads / Files app), desktop, and Android. Does NOT use the Web Share API
+// — that shows a system share sheet instead of downloading the file directly.
 async function _saveBlobAsFile(blob, filename) {
-  const file = new File([blob], filename, { type: blob.type || "image/jpeg" });
-  if (navigator.canShare?.({ files: [file] })) {
-    try { await navigator.share({ files: [file] }); return; }
-    catch (e) { if (e.name === "AbortError") return; }
-  }
   const blobUrl = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = blobUrl; a.download = filename;

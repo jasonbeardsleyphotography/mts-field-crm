@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
-import { IconArrowUpRight, IconEraser, IconUndo, IconX, IconTrash } from "./icons";
+import { IconArrowUpRight, IconEraser, IconUndo, IconX, IconTrash, IconDownload } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Photo Markup (Rebuild)
@@ -673,6 +673,32 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
     onSave(fc.toDataURL("image/jpeg", 0.9));
   };
 
+  // Download the current canvas (image + all annotations) without saving back.
+  const handleDownload = () => {
+    const img = imgRef.current;
+    if (!img) return;
+    const fc = document.createElement("canvas");
+    fc.width = imgDims.w; fc.height = imgDims.h;
+    const ctx = fc.getContext("2d");
+    ctx.drawImage(img, 0, 0, imgDims.w, imgDims.h);
+    const cssToImg = fit.w > 0 ? imgDims.w / fit.w : 1;
+    strokes.forEach(s => {
+      const lw = s.size * cssToImg;
+      if (s.type === "arrow")      drawArrow(ctx, s, lw);
+      else if (s.type === "x")    drawX(ctx, s, lw);
+      else if (s.type === "line") drawLine(ctx, s, lw);
+      else                        drawFreehand(ctx, s, lw);
+    });
+    fc.toBlob(blob => {
+      if (!blob) return;
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl; a.download = `photo_markup_${Date.now()}.jpg`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
+    }, "image/jpeg", 0.9);
+  };
+
   // ── RENDER ─────────────────────────────────────────────────────────────────
 
   // iOS-style floating "FAB" button base.
@@ -821,6 +847,13 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
           title="Undo"
         >
           <IconUndo size={20} color="#fff" />
+        </button>
+        <button
+          onClick={handleDownload}
+          style={fab()}
+          title="Download photo with annotations"
+        >
+          <IconDownload size={20} color="#fff" />
         </button>
         <button
           onClick={handleSave}

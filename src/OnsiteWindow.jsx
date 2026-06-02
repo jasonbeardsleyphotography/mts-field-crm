@@ -23,11 +23,6 @@ async function _fetchPhotoBlob(p, token) {
   const r = await fetch(p.url); if (!r.ok) throw new Error(); return r.blob();
 }
 async function _saveBlobAsFile(blob, filename) {
-  const file = new File([blob], filename, { type: blob.type || "image/jpeg" });
-  if (navigator.canShare?.({ files: [file] })) {
-    try { await navigator.share({ files: [file] }); return; }
-    catch (e) { if (e.name === "AbortError") return; }
-  }
   const blobUrl = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = blobUrl; a.download = filename;
