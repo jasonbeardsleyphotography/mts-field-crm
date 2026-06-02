@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from "react";
 import { parseEvent } from "./parseEvent";
 import { loadFieldFromDrive } from "./driveSync";
 import { loadPipeline, savePipeline } from "./Pipeline";
+import { photoKey } from "./imageUtils";
 import {
   IconArrowLeft, IconSearch, IconImage, IconPlus, IconX,
   IconCheckCircle, IconCalendar,
@@ -162,7 +163,7 @@ function FieldView({ stop, fieldData, loading, onBack, onAddToPipeline, alreadyI
                     const src = photoSrc(p);
                     return (
                       <div
-                        key={p.ts || p.url || i}
+                        key={photoKey(p) || i}
                         onClick={() => setLightbox(i)}
                         style={{
                           aspectRatio: "1", borderRadius: 8, overflow: "hidden",
@@ -202,7 +203,7 @@ function FieldView({ stop, fieldData, loading, onBack, onAddToPipeline, alreadyI
                     const globalIdx = scopePhotos.length + i;
                     return (
                       <div
-                        key={p.ts || p.url || i}
+                        key={photoKey(p) || i}
                         onClick={() => setLightbox(globalIdx)}
                         style={{
                           aspectRatio: "1", borderRadius: 8, overflow: "hidden",

@@ -14,6 +14,26 @@ export const PHOTO_QUALITY = 0.82;
 // downscale pass. A 2400px q0.82 JPEG is typically < 900 KB; 4K q0.9 is 2–4 MB.
 export const OVERSIZE_DATAURL_LEN = 1_200_000;
 
+// ── PHOTO IDENTITY ───────────────────────────────────────────────────────────
+// Every photo gets a globally-unique `id` at creation. This is the PRIMARY
+// merge/dedup key everywhere photos are unioned (hydration, cross-device pull,
+// upload writeback). Before this, photos were keyed only by `ts` (Date.now()),
+// so two photos created in the same millisecond — easy to hit when importing
+// several library images at once, or bursting the camera — collided and one was
+// silently dropped on the next merge. `id` is stored in the photo object and
+// travels with it through IDB and Drive JSON, so it's stable across devices.
+export function newPhotoId() {
+  try { if (crypto?.randomUUID) return crypto.randomUUID(); } catch {}
+  return `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// Stable key for a photo. Prefers the unique id; falls back to ts/url/dataUrl
+// for legacy photos created before ids existed. The same expression must be
+// used on both sides of any merge so keys line up.
+export function photoKey(p) {
+  return (p && (p.id || p.ts || p.url || p.dataUrl)) || null;
+}
+
 // Downscale a base64 image dataUrl so its longest edge is <= max. Returns the
 // original string unchanged if it's already within bounds or can't be decoded.
 // Memory-safe: decodes one image, draws to a small canvas, releases.

@@ -7,6 +7,7 @@ import Pipeline, { savePipeline, loadPipeline, pushCalendarColor } from "./Pipel
 import { saveAppState, loadAppState, loadFieldFromDrive, listFieldFiles, onSyncStatus, onAuthError, queueFieldDriveSync } from "./driveSync";
 import { loadField, listFieldIds, updateField, getDirtyFieldIds } from "./fieldStore";
 import { startPhotoSyncWatcher } from "./photoSync";
+import { photoKey } from "./imageUtils";
 import { startVideoQueueWatcher } from "./videoQueue";
 import { pruneLog as pruneVideoLog } from "./videoLog";
 import UploadTracker from "./UploadTracker";
@@ -814,8 +815,8 @@ export default function App() {
                 addonNotes:     cloudNewer ? (data.addonNotes || ex.addonNotes || "") : (ex.addonNotes || data.addonNotes || ""),
                 aiScopeSummary: cloudNewer ? (data.aiScopeSummary || ex.aiScopeSummary || "") : (ex.aiScopeSummary || data.aiScopeSummary || ""),
                 aiAddonEmail:   cloudNewer ? (data.aiAddonEmail   || ex.aiAddonEmail   || "") : (ex.aiAddonEmail   || data.aiAddonEmail   || ""),
-                scopePhotos: unionByKey(localScope, cloudScope, p => p.ts || p.url),
-                addonPhotos: unionByKey(localAddon, cloudAddon, p => p.ts || p.url),
+                scopePhotos: unionByKey(localScope, cloudScope, photoKey),
+                addonPhotos: unionByKey(localAddon, cloudAddon, photoKey),
                 audioClips:  unionByKey(localAudio, cloudAudio, a => a.ts || a.timestamp || a.url),
                 videoUrls:   Array.from(new Set([...localVids, ...cloudVids])),
               };

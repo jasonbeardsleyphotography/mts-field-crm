@@ -45,7 +45,7 @@ import { loadFieldFromDrive, queueFieldDriveSync } from "./driveSync";
 import { loadField, peekField, primeField, updateField } from "./fieldStore";
 import { isUploadPending, onUploadChange } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
-import { downscaleDataUrl, stripPhotoDataUrls, OVERSIZE_DATAURL_LEN } from "./imageUtils";
+import { downscaleDataUrl, stripPhotoDataUrls, OVERSIZE_DATAURL_LEN, newPhotoId, photoKey } from "./imageUtils";
 import { listAll as listAllQueue, onQueueChange, enqueueVideo } from "./videoQueue";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -179,11 +179,11 @@ function savePipeline(data) { try { localStorage.setItem(PIPELINE_KEY, JSON.stri
 function _mergePhotoArrays(local = [], cloud = []) {
   const byKey = new Map();
   for (const p of local) {
-    const k = p.ts || p.url;
+    const k = photoKey(p);
     if (k) byKey.set(k, p);
   }
   for (const p of cloud) {
-    const k = p.ts || p.url;
+    const k = photoKey(p);
     if (!k) continue;
     if (byKey.has(k)) {
       const ex = byKey.get(k);
@@ -348,7 +348,7 @@ Property: ${card.addr || ""}`);
   const detailAddPhoto = async (rawDataUrl, section, cardId) => {
     // Downscale to the 2400px budget before storing (camera shoots up to 4K).
     const dataUrl = await downscaleDataUrl(rawDataUrl);
-    const photo = { dataUrl, ts: Date.now() };
+    const photo = { dataUrl, ts: Date.now(), id: newPhotoId() };
     const key = section === "addon" ? "addonPhotos" : "scopePhotos";
     setEditFields(prev => {
       const cur = prev[cardId] || {};
@@ -363,23 +363,39 @@ Property: ${card.addr || ""}`);
     markStopForPhotoSync(cardId);
   };
 
+  // Resolve the stable key of the photo at a rendered index, using the same
+  // array the detail view renders from (editFields override → cached field).
+  const _detailPhotoKeyAt = (idx, key, cardId) => {
+    const cur = editFields[cardId] || {};
+    const cached = fieldCacheRef.current[cardId] || peekField(cardId);
+    const arr = cur[key] || cached?.[key] || cached?.photos || [];
+    return arr[idx] ? photoKey(arr[idx]) : null;
+  };
+
   const detailRemovePhoto = (idx, section, cardId) => {
     const key = section === "addon" ? "addonPhotos" : "scopePhotos";
+    // Match by stable key, not index — IDB ordering can differ from the
+    // rendered order after a cross-device merge, so index-based removal could
+    // delete the wrong photo.
+    const pk = _detailPhotoKeyAt(idx, key, cardId);
+    if (pk === null) return;
     setEditFields(prev => {
       const cur = prev[cardId] || {};
       const cached = fieldCacheRef.current[cardId] || peekField(cardId);
       const existing = cur[key] || cached?.[key] || cached?.photos || [];
-      return { ...prev, [cardId]: { ...cur, [key]: existing.filter((_, i) => i !== idx) } };
+      return { ...prev, [cardId]: { ...cur, [key]: existing.filter(p => photoKey(p) !== pk) } };
     });
     updateField(cardId, (existing) => {
       const arr = existing[key] || existing.photos || [];
-      return { [key]: arr.filter((_, i) => i !== idx) };
+      return { [key]: arr.filter(p => photoKey(p) !== pk) };
     }).catch(() => {});
   };
 
   const detailSaveMarkup = (newDataUrl, idx, section, cardId) => {
     const key = section === "addon" ? "addonPhotos" : "scopePhotos";
-    const applyMarkup = (p, i) => i === idx ? { ...p, dataUrl: newDataUrl, url: undefined } : p;
+    const pk = _detailPhotoKeyAt(idx, key, cardId);
+    if (pk === null) return;
+    const applyMarkup = (p) => photoKey(p) === pk ? { ...p, dataUrl: newDataUrl, url: undefined } : p;
     setEditFields(prev => {
       const cur = prev[cardId] || {};
       const cached = fieldCacheRef.current[cardId] || peekField(cardId);

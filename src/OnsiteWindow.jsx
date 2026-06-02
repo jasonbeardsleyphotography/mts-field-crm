@@ -5,7 +5,7 @@ import { loadFieldFromDrive, queueFieldDriveSync } from "./driveSync";
 import { loadField, peekField, primeField, mergeField, updateField, saveFieldSync, getFieldSlim } from "./fieldStore";
 import { incUpload, decUpload } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
-import { downscaleDataUrl } from "./imageUtils";
+import { downscaleDataUrl, newPhotoId, photoKey } from "./imageUtils";
 
 function _driveFileId(url) {
   const m = (url || "").match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
@@ -330,8 +330,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           prev.forEach(item => map.set(getKey(item), item)); // prev wins on key collision
           return [...map.values()].sort((a, b) => (a.ts || a.timestamp || 0) - (b.ts || b.timestamp || 0));
         };
-        if (idbScopePhotos.length) setScopePhotos(prev => mergeByKey(idbScopePhotos, prev, p => p.ts || p.url));
-        if (idbAddonPhotos.length) setAddonPhotos(prev => mergeByKey(idbAddonPhotos, prev, p => p.ts || p.url));
+        if (idbScopePhotos.length) setScopePhotos(prev => mergeByKey(idbScopePhotos, prev, photoKey));
+        if (idbAddonPhotos.length) setAddonPhotos(prev => mergeByKey(idbAddonPhotos, prev, photoKey));
         if (idbAudioClips.length)  setAudioClips(prev => mergeByKey(idbAudioClips, prev, a => a.ts || a.timestamp || a.url));
         if (idbVideoUrls.length)   setVideoUrls(prev => prev.length === 0 ? idbVideoUrls : Array.from(new Set([...idbVideoUrls, ...prev])));
 
@@ -355,20 +355,20 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
                   const cloudAddon = cloud.addonPhotos || [];
                   // Restore photos by merging Drive + whatever local has.
                   if (cloudScope.length > actualScope) {
-                    setScopePhotos(prev => mergeByKey(cloudScope, prev, p => p.ts || p.url));
+                    setScopePhotos(prev => mergeByKey(cloudScope, prev, photoKey));
                   }
                   if (cloudAddon.length > actualAddon) {
-                    setAddonPhotos(prev => mergeByKey(cloudAddon, prev, p => p.ts || p.url));
+                    setAddonPhotos(prev => mergeByKey(cloudAddon, prev, photoKey));
                   }
                   // Persist the recovered photos to IDB immediately so
                   // they're durable even if user closes Onsite right away.
                   await updateField(s.id, (existing) => {
                     const merged = {};
                     if (cloudScope.length > actualScope) {
-                      merged.scopePhotos = mergeByKey(cloudScope, existing.scopePhotos || [], p => p.ts || p.url);
+                      merged.scopePhotos = mergeByKey(cloudScope, existing.scopePhotos || [], photoKey);
                     }
                     if (cloudAddon.length > actualAddon) {
-                      merged.addonPhotos = mergeByKey(cloudAddon, existing.addonPhotos || [], p => p.ts || p.url);
+                      merged.addonPhotos = mergeByKey(cloudAddon, existing.addonPhotos || [], photoKey);
                     }
                     return merged;
                   });
@@ -419,8 +419,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         const merged = {
           ...local,
           ...cloud,
-          scopePhotos: mergeByKey(cloud.scopePhotos || cloud.photos, local.scopePhotos || local.photos, p => p.ts || p.url),
-          addonPhotos: mergeByKey(cloud.addonPhotos, local.addonPhotos, p => p.ts || p.url),
+          scopePhotos: mergeByKey(cloud.scopePhotos || cloud.photos, local.scopePhotos || local.photos, photoKey),
+          addonPhotos: mergeByKey(cloud.addonPhotos, local.addonPhotos, photoKey),
           audioClips:  mergeByKey(cloud.audioClips,  local.audioClips, a => a.ts || a.timestamp || a.url),
           videoUrls:   Array.from(new Set([...(cloud.videoUrls || []), ...(local.videoUrls || [])])),
         };
@@ -429,8 +429,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         // precedence on key collision via the merge above).
         if (cloud.scopeNotes || cloud.myNotes) setScopeNotes(prev => prev || cloud.scopeNotes || cloud.myNotes || "");
         if (cloud.addonNotes) setAddonNotes(prev => prev || cloud.addonNotes);
-        if ((merged.scopePhotos || []).length) setScopePhotos(prev => mergeByKey(merged.scopePhotos, prev, p => p.ts || p.url));
-        if ((merged.addonPhotos || []).length) setAddonPhotos(prev => mergeByKey(merged.addonPhotos, prev, p => p.ts || p.url));
+        if ((merged.scopePhotos || []).length) setScopePhotos(prev => mergeByKey(merged.scopePhotos, prev, photoKey));
+        if ((merged.addonPhotos || []).length) setAddonPhotos(prev => mergeByKey(merged.addonPhotos, prev, photoKey));
         if (merged.videoUrls?.length) setVideoUrls(prev => Array.from(new Set([...merged.videoUrls, ...prev])));
         else if (cloud.videoUrl) setVideoUrls(prev => prev.length === 0 ? [cloud.videoUrl] : prev);
         if (merged.audioClips?.length) setAudioClips(prev => mergeByKey(merged.audioClips, prev, a => a.ts || a.timestamp || a.url));
@@ -447,8 +447,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           const exVids  = ex.videoUrls || (ex.videoUrl ? [ex.videoUrl] : []);
           return {
             ...merged,
-            scopePhotos: mergeByKey(merged.scopePhotos || [], exScope, p => p.ts || p.url),
-            addonPhotos: mergeByKey(merged.addonPhotos || [], exAddon, p => p.ts || p.url),
+            scopePhotos: mergeByKey(merged.scopePhotos || [], exScope, photoKey),
+            addonPhotos: mergeByKey(merged.addonPhotos || [], exAddon, photoKey),
             audioClips:  mergeByKey(merged.audioClips  || [], exAudio, a => a.ts || a.timestamp || a.url),
             videoUrls:   Array.from(new Set([...(merged.videoUrls || []), ...exVids])),
           };
@@ -499,24 +499,24 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const handleScopePhotos = (e) => { Array.from(e.target.files || []).forEach(f => processPhoto(f, "scope")); e.target.value = ""; };
   const handleAddonPhotos = (e) => { Array.from(e.target.files || []).forEach(f => processPhoto(f, "addon")); e.target.value = ""; };
   const removeScopePhoto = (i) => {
-    // Identify the photo by stable key (ts || url) so we never delete the
+    // Identify the photo by stable key (id/ts/url) so we never delete the
     // wrong one if state and IDB orderings drift.
     const target = scopePhotos[i];
-    const key = target ? (target.ts || target.url) : null;
+    const key = target ? photoKey(target) : null;
     setScopePhotos(prev => prev.filter((_, j) => j !== i));
     if (key !== null) {
       updateField(s.id, (existing) => ({
-        scopePhotos: (existing.scopePhotos || existing.photos || []).filter(p => (p.ts || p.url) !== key),
+        scopePhotos: (existing.scopePhotos || existing.photos || []).filter(p => photoKey(p) !== key),
       })).catch(() => {});
     }
   };
   const removeAddonPhoto = (i) => {
     const target = addonPhotos[i];
-    const key = target ? (target.ts || target.url) : null;
+    const key = target ? photoKey(target) : null;
     setAddonPhotos(prev => prev.filter((_, j) => j !== i));
     if (key !== null) {
       updateField(s.id, (existing) => ({
-        addonPhotos: (existing.addonPhotos || []).filter(p => (p.ts || p.url) !== key),
+        addonPhotos: (existing.addonPhotos || []).filter(p => photoKey(p) !== key),
       })).catch(() => {});
     }
   };
@@ -529,7 +529,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     // then re-queue this stop so the edited photo gets re-uploaded to Drive.
     const photos = markupSection === "addon" ? addonPhotos : scopePhotos;
     const target = photos[markupIdx];
-    const key = target ? (target.ts || target.url) : null;
+    const key = target ? photoKey(target) : null;
     const update = (p, i) => i === markupIdx ? { ...p, dataUrl, url: undefined } : p;
     if (markupSection === "addon") setAddonPhotos(prev => prev.map(update));
     else setScopePhotos(prev => prev.map(update));
@@ -539,7 +539,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       const arrKey = markupSection === "addon" ? "addonPhotos" : "scopePhotos";
       updateField(s.id, (existing) => ({
         [arrKey]: (existing[arrKey] || existing.photos || []).map(p =>
-          (p.ts || p.url) === key ? { ...p, dataUrl, url: undefined } : p
+          photoKey(p) === key ? { ...p, dataUrl, url: undefined } : p
         ),
       })).catch(() => {});
     }
@@ -880,7 +880,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         // up to 4K; raw 4K base64 OOM-crashes the renderer when several are
         // shown and bloats the Drive payload so sync fails.
         const dataUrl = await downscaleDataUrl(rawDataUrl);
-        const photo = { dataUrl, ts: Date.now() };
+        const photo = { dataUrl, ts: Date.now(), id: newPhotoId() };
         const key = cameraSection === "addon" ? "addonPhotos" : "scopePhotos";
         // CRITICAL: Persist to IDB BEFORE updating React state, through
         // fieldStore's shared per-stop queue. The queue serializes this
@@ -1023,9 +1023,9 @@ Property: ${s.addr || ""}`);
       const ex = existing || {};
       const mergePhotos = (state = [], idb = []) => {
         const map = new Map();
-        for (const p of idb) { const k = p.ts || p.url; if (k != null) map.set(k, p); }
+        for (const p of idb) { const k = photoKey(p); if (k != null) map.set(k, p); }
         for (const p of state) {
-          const k = p.ts || p.url;
+          const k = photoKey(p);
           if (k == null) continue;
           const ex2 = map.get(k);
           map.set(k, ex2 ? { ...ex2, ...p, url: p.url || ex2.url, syncedAt: p.syncedAt || ex2.syncedAt } : p);
@@ -1376,7 +1376,7 @@ function _processPhoto(file, section, stopId) {
         const c = document.createElement("canvas");
         c.width = w; c.height = h;
         c.getContext("2d").drawImage(img, 0, 0, w, h);
-        const photo = { dataUrl: c.toDataURL("image/jpeg", 0.82), ts: Date.now() };
+        const photo = { dataUrl: c.toDataURL("image/jpeg", 0.82), ts: Date.now(), id: newPhotoId() };
         // updateField is queued per-stop in fieldStore, so this composes
         // safely with concurrent text saves and other photo ops.
         try {
