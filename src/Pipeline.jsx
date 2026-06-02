@@ -746,7 +746,11 @@ Property: ${card.addr || ""}`);
       if (groups[card.stage]) groups[card.stage].push(card);
     });
     Object.keys(groups).forEach(k => {
-      groups[k].sort((a, b) => (b.hot ? 1 : 0) - (a.hot ? 1 : 0) || (a.addedAt || 0) - (b.addedAt || 0));
+      if (k === "declined") {
+        groups[k].sort((a, b) => (b.stageChangedAt || b.addedAt || 0) - (a.stageChangedAt || a.addedAt || 0));
+      } else {
+        groups[k].sort((a, b) => (b.hot ? 1 : 0) - (a.hot ? 1 : 0) || (a.addedAt || 0) - (b.addedAt || 0));
+      }
     });
     return groups;
   }, [pipeline]);
