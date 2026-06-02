@@ -37,6 +37,7 @@
 import { loadField, updateField } from "./fieldStore";
 import { uploadPhotoToDrive, queueFieldDriveSync } from "./driveSync";
 import { downscaleDataUrl, OVERSIZE_DATAURL_LEN, photoKey } from "./imageUtils";
+import { logError, logWarn, logInfo } from "./debugLog";
 
 const QUEUE_KEY = "mts-photo-queue";
 const PROMOTED_QUEUE_KEY = "mts-photo-promote-queue"; // stops that may have evictable photos
@@ -123,6 +124,7 @@ async function syncStop(stopId, token) {
         }
       } catch(e) {
         console.warn("Photo upload failed for", stopId, e);
+        logError("photoSync", `Photo upload failed for stop ${stopId}: ${e.message}`, { key, status: e.status });
       }
     }));
   }

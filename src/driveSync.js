@@ -4,6 +4,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { loadField, markFieldDirty, clearFieldDirty } from "./fieldStore";
+import { logError, logWarn, logInfo } from "./debugLog";
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -211,6 +212,7 @@ export async function saveAppState(token, pipeline, dismissed, lastContact) {
     setTimeout(() => setSyncStatus("idle"), 3000);
   } catch(e) {
     console.warn("Drive save failed:", e);
+    logError("driveSync", `saveAppState failed: ${e.message}`, { status: e.status });
     // auth errors trigger re-auth via the registered callback; show distinct state
     setSyncStatus(e.isAuthError ? "auth-error" : "error");
   }
@@ -219,9 +221,12 @@ export async function saveAppState(token, pipeline, dismissed, lastContact) {
 export async function loadAppState(token) {
   try {
     const rootId = await findOrCreateFolder(token, FOLDER_NAME);
-    return await loadJson(token, STATE_FILE, rootId);
+    const data = await loadJson(token, STATE_FILE, rootId);
+    logInfo("driveSync", "App state pull ok");
+    return data;
   } catch(e) {
     console.warn("Drive load failed:", e);
+    logError("driveSync", `loadAppState failed: ${e.message}`, { status: e.status });
     return null;
   }
 }
@@ -282,6 +287,7 @@ export async function uploadPhotoToDrive(token, dataUrl, filename) {
     return `https://drive.google.com/thumbnail?id=${data.id}&sz=w1200`;
   } catch(e) {
     console.warn("Photo Drive upload failed:", e);
+    logError("driveSync", `uploadPhotoToDrive failed: ${e.message}`, { filename, status: e.status });
     return null;
   }
 }
@@ -352,10 +358,12 @@ export function queueFieldDriveSync(token, id) {
       // flight. If a trailing run exists, it pushes the newer data and clears
       // dirty when it succeeds — clearing here would drop the retry guarantee.
       if (!_fieldTrailing.has(id)) clearFieldDirty(id);
+      logInfo("driveSync", `Field push ok: ${id}`);
       setSyncStatus("success");
       setTimeout(() => setSyncStatus("idle"), 3000);
     } catch (e) {
       // Leave the id dirty so the periodic flush retries it.
+      logError("driveSync", `queueFieldDriveSync failed for ${id}: ${e.message}`, { status: e?.status });
       setSyncStatus(e?.isAuthError ? "auth-error" : "error");
     }
   };

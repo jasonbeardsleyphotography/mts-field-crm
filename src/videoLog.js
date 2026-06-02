@@ -22,6 +22,8 @@
    grow unboundedly. Cap at 5000 entries.
    ═══════════════════════════════════════════════════════════════════════════ */
 
+import { logError as _dlError, logWarn as _dlWarn } from "./debugLog";
+
 const DB_NAME = "mts-video-log";
 const DB_VER = 1;
 const STORE = "log";
@@ -90,6 +92,11 @@ export function vlog(level, event, data, itemId) {
     if (level === "error") console.error(...args);
     else if (level === "warn") console.warn(...args);
     else console.log(...args);
+  } catch {}
+  // Mirror errors/warnings to the app-wide debug log for the debug panel
+  try {
+    if (level === "error") _dlError("videoQueue", event, data);
+    else if (level === "warn") _dlWarn("videoQueue", event, data);
   } catch {}
   // Serialize writes via promise chain so we don't lose ordering
   _writeQueue = _writeQueue.then(() => _writeEntry(entry)).catch(() => {});
