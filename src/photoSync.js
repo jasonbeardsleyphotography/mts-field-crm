@@ -36,7 +36,7 @@
 
 import { loadField, updateField } from "./fieldStore";
 import { uploadPhotoToDrive, queueFieldDriveSync } from "./driveSync";
-import { downscaleDataUrl, OVERSIZE_DATAURL_LEN } from "./imageUtils";
+import { downscaleDataUrl, OVERSIZE_DATAURL_LEN, photoKey } from "./imageUtils";
 
 const QUEUE_KEY = "mts-photo-queue";
 const PROMOTED_QUEUE_KEY = "mts-photo-promote-queue"; // stops that may have evictable photos
@@ -119,7 +119,7 @@ async function syncStop(stopId, token) {
         const url = await uploadPhotoToDrive(token, p.dataUrl, filename);
         if (url) {
           anyNewlySynced = true;
-          uploadsBySection[key].set(p.ts || p.dataUrl, { url, syncedAt: Date.now() });
+          uploadsBySection[key].set(photoKey(p), { url, syncedAt: Date.now() });
         }
       } catch(e) {
         console.warn("Photo upload failed for", stopId, e);
@@ -137,8 +137,7 @@ async function syncStop(stopId, token) {
         if (!uploads || uploads.size === 0) continue;
         const current = existing[key] || (key === "scopePhotos" ? existing.photos : null) || [];
         updates[key] = current.map(p => {
-          const id = p.ts || p.dataUrl;
-          const result = uploads.get(id);
+          const result = uploads.get(photoKey(p));
           return result ? { ...p, ...result } : p;
         });
       }
@@ -211,7 +210,7 @@ async function promoteStop(stopId) {
       if (!p.url || !p.dataUrl) return; // already promoted or never synced
       const age = now - (p.syncedAt || 0);
       if (age >= PROMOTION_GRACE_MS) {
-        toEvict.add(p.ts || p.url);
+        toEvict.add(photoKey(p));
       } else {
         stillHasFresh = true;
       }
@@ -225,7 +224,7 @@ async function promoteStop(stopId) {
         const photos = existing[key];
         if (!Array.isArray(photos)) continue;
         updates[key] = photos.map(p => {
-          if (toEvict.has(p.ts || p.url)) {
+          if (toEvict.has(photoKey(p))) {
             const { dataUrl, ...rest } = p;
             return rest;
           }
