@@ -11,6 +11,7 @@ import { photoKey } from "./imageUtils";
 import { startVideoQueueWatcher } from "./videoQueue";
 import { pruneLog as pruneVideoLog } from "./videoLog";
 import UploadTracker from "./UploadTracker";
+import DebugPanel from "./DebugPanel";
 import VideoUploads from "./VideoUploads";
 import RecoveryScreen from "./RecoveryScreen";
 import Linkify from "./Linkify";
@@ -1048,6 +1049,15 @@ export default function App() {
   const [signOutConfirm, setSignOutConfirm] = useState(false);
   const [uploadsOpen, setUploadsOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
+  const _debugTapCount = useRef(0);
+  const _debugTapTimer = useRef(null);
+  const handleDebugTap = () => {
+    _debugTapCount.current += 1;
+    if (_debugTapTimer.current) clearTimeout(_debugTapTimer.current);
+    _debugTapTimer.current = setTimeout(() => { _debugTapCount.current = 0; }, 1000);
+    if (_debugTapCount.current >= 5) { _debugTapCount.current = 0; setDebugOpen(true); }
+  };
   // (addStopOpen is declared above, near the clientIndex computation — its
   // useEffect needs to fire when this flag flips, and the effect lives there.)
 
@@ -1514,7 +1524,7 @@ export default function App() {
               "Xm ago" label re-renders and stays current between syncs. */}
           {lastSyncTime>0 && <span data-synctick={syncTick} style={{fontSize:9,color:(syncIndicator==="syncing"||syncPulling)?"#F6BF26":"#3a5060",fontFamily:"'Oswald',sans-serif"}}>{(syncIndicator==="syncing"||syncPulling)?"syncing…":Math.floor((Date.now()-lastSyncTime)/60000)<1?"now":`${Math.floor((Date.now()-lastSyncTime)/60000)}m`}</span>}
         </button>}
-        <div style={{flex:1}}/>
+        <div style={{flex:1}} onClick={handleDebugTap}/>
         {view === "route" && <div style={{display:"flex",alignItems:"center",gap:6}}>
           <button onClick={()=>setRouteSearchOpen(!routeSearchOpen)} style={{padding:"5px 7px",borderRadius:8,background:routeSearchOpen?"rgba(59,130,246,.12)":"transparent",border:`1px solid ${routeSearchOpen?"rgba(59,130,246,.35)":"#2a3560"}`,color:routeSearchOpen?"#3B82F6":"#3a4a60",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
             <IconSearch size={14} color={routeSearchOpen?"#3B82F6":"#3a4a60"} />
@@ -1958,6 +1968,15 @@ export default function App() {
         <div style={{ position: "fixed", inset: 0, zIndex: 300 }}>
           <RecoveryScreen token={token} onBack={() => setRecoveryOpen(false)} />
         </div>
+      )}
+
+      {/* ── DEBUG PANEL (5-tap on header spacer) ─────────────────── */}
+      {debugOpen && (
+        <DebugPanel
+          onClose={() => setDebugOpen(false)}
+          token={token}
+          lastSyncTime={lastSyncTime}
+        />
       )}
 
       {/* ── UNDO TOAST ─────────────────────────────────────────────── */}
