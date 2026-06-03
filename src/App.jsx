@@ -12,6 +12,7 @@ import { startVideoQueueWatcher, pendingCount as videoPendingCount } from "./vid
 import { pruneLog as pruneVideoLog } from "./videoLog";
 import UploadTracker from "./UploadTracker";
 import DebugPanel from "./DebugPanel";
+import NextStopCard from "./NextStopCard";
 import VideoUploads from "./VideoUploads";
 import RecoveryScreen from "./RecoveryScreen";
 import Linkify from "./Linkify";
@@ -1050,6 +1051,7 @@ export default function App() {
   const [uploadsOpen, setUploadsOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [nextStopCard, setNextStopCard] = useState(null); // { stop, stopNumber, totalStops }
   const _debugTapCount = useRef(0);
   const _debugTapTimer = useRef(null);
   const handleDebugTap = () => {
@@ -1312,6 +1314,18 @@ export default function App() {
     if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
     setUndoToast({ id, cn: stop?.cn || "Stop", stop });
     undoToastTimer.current = setTimeout(() => setUndoToast(null), 10000);
+    // Show next-stop card: first undismissed task stop after this one
+    const taskStops = stops.filter(s => s.isTask);
+    const curIdx = taskStops.findIndex(s => s.id === id);
+    const remaining = taskStops.filter((s, i) => i > curIdx && !dismissed[s.id] && s.id !== id);
+    if (remaining.length > 0) {
+      const doneCount = taskStops.filter(s => dismissed[s.id] || s.id === id).length;
+      setNextStopCard({
+        stop: remaining[0],
+        stopNumber: doneCount + 1,
+        totalStops: taskStops.length,
+      });
+    }
     // Contacts auto-save on calendar import — no prompt needed.
   };
   const undoToastAction = () => {
@@ -1646,7 +1660,7 @@ export default function App() {
           </> : <span style={{fontSize:12,fontWeight:500,color:"#9a80c8"}}><span style={{display:"flex",alignItems:"center",gap:4}}><IconReorder size={12} color="#9a80c8"/>Tap a stop to pick it up</span></span>}
         </div>}
         <div className="mts-map-inner">
-          {mapStops.length>0 && <RouteMap stops={mapStops} selectedId={expanded}/>}
+          {mapStops.length>0 && <RouteMap stops={mapStops} selectedId={expanded} pipelineCards={Object.values(loadPipeline())}/>}
         </div>
       </div>
 
@@ -1973,7 +1987,7 @@ export default function App() {
         <input value={pipelineSearch} onChange={e=>setPipelineSearch(e.target.value)} autoFocus placeholder="Search pipeline..." style={{flex:1,padding:"6px 10px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:16,fontFamily:"'DM Sans',system-ui",outline:"none"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
         <button onClick={()=>{setPipelineSearchOpen(false);setPipelineSearch("");}} style={{padding:"6px 8px",borderRadius:6,background:"transparent",border:"none",color:"#4a5a70",cursor:"pointer"}}><IconX size={13} color="#4a5a70"/></button>
       </div>}
-      {view === "pipeline" && <Pipeline onSwitchToRoute={(cardId) => { setView("route"); if (cardId) { setDismissed(prev => { const n={...prev}; delete n[cardId]; return n; }); const pl=loadPipeline(); delete pl[cardId]; savePipeline(pl); } }} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} lastContact={lastContact} markContact={markContact} selectMode={pipelineSelectMode} setSelectMode={setPipelineSelectMode} onSelectCountChange={setPipelineSelectedCount} bulkEmailTick={pipelineBulkEmailTick} />}
+      {view === "pipeline" && <Pipeline onSwitchToRoute={(cardId) => { setView("route"); setSelDay(0); if (cardId) { setDismissed(prev => { const n={...prev}; delete n[cardId]; return n; }); const pl=loadPipeline(); delete pl[cardId]; savePipeline(pl); } }} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} lastContact={lastContact} markContact={markContact} selectMode={pipelineSelectMode} setSelectMode={setPipelineSelectMode} onSelectCountChange={setPipelineSelectedCount} bulkEmailTick={pipelineBulkEmailTick} />}
 
       {/* ── TEXT SHEET ─────────────────────────────────────────────────── */}
       {textSheet && <div onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
@@ -2040,6 +2054,16 @@ export default function App() {
           setOnsiteStop(null);
         }}
       />}
+
+      {/* ── NEXT STOP CARD ───────────────────────────────────────── */}
+      {nextStopCard && (
+        <NextStopCard
+          stop={nextStopCard.stop}
+          stopNumber={nextStopCard.stopNumber}
+          totalStops={nextStopCard.totalStops}
+          onDismiss={() => setNextStopCard(null)}
+        />
+      )}
 
       {/* ── VIDEO UPLOAD MANAGER ──────────────────────────────────── */}
       <VideoUploads open={uploadsOpen} onClose={() => setUploadsOpen(false)} stopMap={stopMap} />

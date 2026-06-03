@@ -77,8 +77,10 @@ export function loadMaps() {
   return mapsPromise;
 }
 
+const HEAT_COLORS = { sold:"#10B981", estimate_needed:"#3B82F6", waiting:"#F6BF26", weak:"#FF8A65", declined:"#ef4444", follow_up:"#a78bfa" };
+
 // ═════════════════════════════════════════════════════════════════════════════
-export default function RouteMap({ stops, selectedId }) {
+export default function RouteMap({ stops, selectedId, pipelineCards = [] }) {
   const ref = useRef(null);
   const map = useRef(null);
   const markers = useRef([]); // [{marker, stopId}]
@@ -90,6 +92,9 @@ export default function RouteMap({ stops, selectedId }) {
   const userLoc = useRef(null); // latest GPS coords
   const [ready, setReady] = useState(false);
   const [coords, setCoords] = useState({});
+  const [heatOn, setHeatOn] = useState(false);
+  const [heatCoords, setHeatCoords] = useState({});
+  const heatMarkers = useRef([]);
 
   useEffect(() => { loadMaps().then(() => setReady(true)).catch(() => {}); }, []);
 
@@ -319,5 +324,73 @@ export default function RouteMap({ stops, selectedId }) {
     });
   }, [selectedId]);
 
-  return <div ref={ref} style={{width:"100%",height:260,background:"#10131a"}}>{!ready && <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:"#5a6580",fontSize:12}}>Loading map...</div>}</div>;
+  // ── HEATMAP: geocode pipeline cards (lazy, only when toggled on) ──────────
+  useEffect(() => {
+    if (!ready || !heatOn || !pipelineCards.length) return;
+    let dead = false;
+    (async () => {
+      const c = {};
+      const BATCH = 4;
+      const cards = pipelineCards.filter(card => card.addr && !heatCoords[card.id]);
+      for (let i = 0; i < cards.length; i += BATCH) {
+        if (dead) break;
+        const batch = cards.slice(i, i + BATCH);
+        const results = await Promise.all(batch.map(card => geocode(card.addr)));
+        batch.forEach((card, j) => { if (results[j]) c[card.id] = results[j]; });
+        if (i + BATCH < cards.length) await new Promise(r => setTimeout(r, 80));
+      }
+      if (!dead && Object.keys(c).length) setHeatCoords(prev => ({ ...prev, ...c }));
+    })();
+    return () => { dead = true; };
+  }, [ready, heatOn, pipelineCards.map(c=>c.id).join(",")]);
+
+  // ── HEATMAP: render/clear markers ─────────────────────────────────────────
+  useEffect(() => {
+    heatMarkers.current.forEach(m => m.setMap(null));
+    heatMarkers.current = [];
+    if (!map.current || !heatOn || !Object.keys(heatCoords).length) return;
+    pipelineCards.forEach(card => {
+      const pos = heatCoords[card.id];
+      if (!pos) return;
+      const col = HEAT_COLORS[card.stage] || "#7a8aaa";
+      const m = new window.google.maps.Marker({
+        position: pos,
+        map: map.current,
+        zIndex: 5,
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          scale: 7,
+          fillColor: col,
+          fillOpacity: 0.75,
+          strokeColor: "#fff",
+          strokeWeight: 1.5,
+        },
+        title: `${card.cn} · ${card.stage?.replace(/_/g," ")}`,
+      });
+      heatMarkers.current.push(m);
+    });
+    return () => { heatMarkers.current.forEach(m => m.setMap(null)); heatMarkers.current = []; };
+  }, [heatOn, heatCoords, pipelineCards.map(c=>c.id+c.stage).join(",")]);
+
+  return (
+    <div style={{position:"relative",width:"100%",height:260,background:"#10131a"}}>
+      <div ref={ref} style={{width:"100%",height:"100%"}}>{!ready && <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:"#5a6580",fontSize:12}}>Loading map...</div>}</div>
+      {ready && pipelineCards.length > 0 && (
+        <button onClick={() => setHeatOn(o => !o)} style={{position:"absolute",top:8,right:8,padding:"5px 10px",borderRadius:7,background:heatOn?"rgba(16,185,129,.2)":"rgba(10,11,16,.85)",border:`1px solid ${heatOn?"rgba(16,185,129,.5)":"rgba(255,255,255,.12)"}`,color:heatOn?"#10B981":"#7a8aaa",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,backdropFilter:"blur(8px)",display:"flex",alignItems:"center",gap:4}}>
+          <svg width={9} height={9} viewBox="0 0 24 24" fill={heatOn?"#10B981":"#7a8aaa"} stroke="none"><circle cx="12" cy="12" r="10"/></svg>
+          HISTORY
+        </button>
+      )}
+      {heatOn && (
+        <div style={{position:"absolute",bottom:8,left:8,display:"flex",gap:6,flexWrap:"wrap"}}>
+          {Object.entries(HEAT_COLORS).map(([stage, col]) => (
+            <div key={stage} style={{display:"flex",alignItems:"center",gap:3,padding:"2px 6px",borderRadius:5,background:"rgba(10,11,16,.8)",backdropFilter:"blur(8px)"}}>
+              <div style={{width:6,height:6,borderRadius:99,background:col}}/>
+              <span style={{fontSize:8,color:col,fontWeight:700,fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>{stage.replace(/_/g," ")}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
