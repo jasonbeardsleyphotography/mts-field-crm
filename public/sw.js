@@ -1,4 +1,4 @@
-const CACHE = "mts-field-v1";
+const CACHE = "mts-field-v3";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
@@ -7,9 +7,6 @@ self.addEventListener("install", (e) => {
 });
 
 // App.jsx posts "SKIP_WAITING" when a new SW is installed and ready.
-// Required because skipWaiting() in install only works when no other
-// tab is controlled by the old SW — with multiple tabs the new SW
-// otherwise gets stuck in "waiting" indefinitely.
 self.addEventListener("message", (e) => {
   if (e.data === "SKIP_WAITING") self.skipWaiting();
 });
@@ -21,16 +18,25 @@ self.addEventListener("activate", (e) => {
   self.clients.claim();
 });
 
+const BYPASS = ["googleapis.com", "generativelanguage", "accounts.google.com",
+                "maps.googleapis.com", "fonts.googleapis.com", "fonts.gstatic.com",
+                "router.project-osrm.org"];
+
 self.addEventListener("fetch", (e) => {
-  // Network-first for API calls, cache-first for assets
-  if (e.request.url.includes("googleapis.com") || e.request.url.includes("generativelanguage")) {
-    return; // Don't cache API calls
-  }
+  const url = e.request.url;
+  if (BYPASS.some(h => url.includes(h))) return; // pass through external APIs
+
+  // Stale-while-revalidate: return cached version immediately (fast startup),
+  // fetch fresh copy in background so next load is up to date.
+  // First-ever load falls through to network since cache is empty.
   e.respondWith(
-    fetch(e.request).then(r => {
-      const clone = r.clone();
-      caches.open(CACHE).then(c => c.put(e.request, clone));
-      return r;
-    }).catch(() => caches.match(e.request))
+    caches.open(CACHE).then(async cache => {
+      const cached = await cache.match(e.request);
+      const networkFetch = fetch(e.request).then(r => {
+        if (r.ok || r.type === "opaque") cache.put(e.request, r.clone());
+        return r;
+      }).catch(() => null);
+      return cached ?? networkFetch;
+    })
   );
 });
