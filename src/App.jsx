@@ -153,7 +153,7 @@ export default function App() {
     // absorbs those so the user isn't bounced to "Sign in" unnecessarily. If
     // the session really is gone, every attempt fails and we still land on the
     // sign-in screen, just a couple seconds later.
-    const BACKOFFS = [600, 1200, 2400]; // ms between attempts
+    const BACKOFFS = [400, 900]; // ms between attempts (2 fast retries)
     let attempt = 0;
     const run = async () => {
       if (cancelled) return;

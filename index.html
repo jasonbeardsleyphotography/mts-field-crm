@@ -33,7 +33,10 @@
     <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- Static dark splash — painted immediately before any JS runs so iOS
+         dismisses its native white splash overlay into a dark screen rather
+         than a blank white one. React replaces this on first render. -->
+    <div id="root"><div style="height:100dvh;background:#090b10;display:flex;align-items:center;justify-content:center;"><div style="font-family:system-ui,sans-serif;font-size:13px;font-weight:600;color:#3a4a60;letter-spacing:1px">MTS FIELD SALES</div></div></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
