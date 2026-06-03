@@ -152,9 +152,9 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [historyOpen, setHistoryOpen] = useState(false);
 
   // ── CONFIDENCE INDICATOR ────────────────────────────────────────────────
-  const [cloudSynced, setCloudSynced] = useState(() => !getDirtyFieldIds().has(s.id));
+  const [cloudSynced, setCloudSynced] = useState(() => !getDirtyFieldIds().includes(s.id));
   useEffect(() => {
-    const check = () => setCloudSynced(!getDirtyFieldIds().has(s.id));
+    const check = () => setCloudSynced(!getDirtyFieldIds().includes(s.id));
     window.addEventListener("mts-field-synced", check);
     return () => window.removeEventListener("mts-field-synced", check);
   }, [s.id]);
