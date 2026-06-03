@@ -1314,16 +1314,18 @@ export default function App() {
     if (undoToastTimer.current) clearTimeout(undoToastTimer.current);
     setUndoToast({ id, cn: stop?.cn || "Stop", stop });
     undoToastTimer.current = setTimeout(() => setUndoToast(null), 10000);
-    // Show next-stop card: first undismissed task stop after this one
-    const taskStops = stops.filter(s => s.isTask);
-    const curIdx = taskStops.findIndex(s => s.id === id);
-    const remaining = taskStops.filter((s, i) => i > curIdx && !dismissed[s.id] && s.id !== id);
-    if (remaining.length > 0) {
-      const doneCount = taskStops.filter(s => dismissed[s.id] || s.id === id).length;
+    // Show next-stop card: first undismissed task stop after this one.
+    // Use active (pre-filtered, excludes already-dismissed) so the index is
+    // relative to what the user actually sees — avoids off-by-one when
+    // earlier dismissed stops exist in the full stops array.
+    const activeTasks = active.filter(s => s.isTask && s.id !== id);
+    const allTasks = stops.filter(s => s.isTask);
+    if (activeTasks.length > 0) {
+      const doneCount = allTasks.filter(s => dismissed[s.id] || s.id === id).length;
       setNextStopCard({
-        stop: remaining[0],
+        stop: activeTasks[0],
         stopNumber: doneCount + 1,
-        totalStops: taskStops.length,
+        totalStops: allTasks.length,
       });
     }
     // Contacts auto-save on calendar import — no prompt needed.
@@ -2062,6 +2064,11 @@ export default function App() {
           stopNumber={nextStopCard.stopNumber}
           totalStops={nextStopCard.totalStops}
           onDismiss={() => setNextStopCard(null)}
+          onNavigate={(stop) => {
+            setNextStopCard(null);
+            setView("route");
+            setExpanded(stop.id);
+          }}
         />
       )}
 
