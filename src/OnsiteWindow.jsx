@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import PhotoMarkup from "./PhotoMarkup";
 import CameraView from "./CameraView";
 import { loadFieldFromDrive, queueFieldDriveSync } from "./driveSync";
-import { loadField, peekField, primeField, mergeField, updateField, saveFieldSync, getFieldSlim } from "./fieldStore";
+import { loadField, peekField, primeField, mergeField, updateField, saveFieldSync, getFieldSlim, getDirtyFieldIds } from "./fieldStore";
+import { loadPipeline } from "./Pipeline";
 import { incUpload, decUpload } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
 import { downscaleDataUrl, newPhotoId, photoKey } from "./imageUtils";
@@ -50,6 +51,34 @@ const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemi
    Saves continuously to IndexedDB (via fieldStore). "← Route" returns
    without marking done. "Done →" moves card to pipeline.
    ═══════════════════════════════════════════════════════════════════════════ */
+
+const ZONES = ["Front", "Back", "Tree", "Other"];
+const ZONE_COLORS = { Front:"#3B82F6", Back:"#8B5CF6", Tree:"#10B981", Other:"#F6BF26" };
+
+function PhotoZoneTag({ zone, onChange }) {
+  const [open, setOpen] = useState(false);
+  const col = zone ? (ZONE_COLORS[zone] || "#7a8aaa") : "#3a4a60";
+  return (
+    <div style={{position:"relative",width:140}}>
+      <button onClick={()=>setOpen(o=>!o)} style={{width:"100%",padding:"3px 6px",borderRadius:5,background:zone?"rgba(255,255,255,.05)":"transparent",border:`1px solid ${zone?col+"40":"#1a2540"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
+        {zone && <div style={{width:5,height:5,borderRadius:99,background:col,flexShrink:0}}/>}
+        <span style={{fontSize:9,fontWeight:700,color:zone?col:"#3a4a60",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,flex:1,textAlign:"left"}}>{zone || "Tag zone"}</span>
+        <svg width={7} height={7} viewBox="0 0 24 24" fill="none" stroke={zone?col:"#3a4a60"} strokeWidth={3}><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      {open && (
+        <div style={{position:"absolute",top:"calc(100% + 2px)",left:0,zIndex:10,background:"#0d1020",border:"1px solid #1a2540",borderRadius:8,padding:4,display:"flex",flexDirection:"column",gap:2,minWidth:100,boxShadow:"0 4px 16px rgba(0,0,0,.5)"}}>
+          {zone && <button onClick={()=>{onChange(null);setOpen(false);}} style={{padding:"4px 8px",borderRadius:5,background:"transparent",border:"none",cursor:"pointer",textAlign:"left",fontSize:10,color:"#5a6a8a",fontWeight:700}}>— Clear</button>}
+          {ZONES.map(z => (
+            <button key={z} onClick={()=>{onChange(z);setOpen(false);}} style={{padding:"4px 8px",borderRadius:5,background:z===zone?"rgba(255,255,255,.06)":"transparent",border:"none",cursor:"pointer",textAlign:"left",fontSize:10,color:ZONE_COLORS[z],fontWeight:700,display:"flex",alignItems:"center",gap:5}}>
+              <div style={{width:5,height:5,borderRadius:99,background:ZONE_COLORS[z]}}/>
+              {z}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkReject, token }) {
   const s = stop;
@@ -99,6 +128,36 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // Prior visit notes — loaded once on mount, shown only when isRevision is true
   const [priorVisit, setPriorVisit] = useState(null);
   const [priorVisitOpen, setPriorVisitOpen] = useState(false);
+
+  // ── PROPERTY MEMORY ──────────────────────────────────────────────────────
+  // Synchronous read from pipeline localStorage — zero async cost.
+  // Matches by address prefix OR client last name. Shows up to 3 prior visits.
+  const propertyHistory = (() => {
+    try {
+      const pl = loadPipeline();
+      const lastName = (s.cn || "").split(/\s+/).pop().toLowerCase();
+      const addrKey  = (s.addr || "").split(",")[0].toLowerCase().trim();
+      return Object.values(pl)
+        .filter(c => {
+          if (c.id === s.id) return false;
+          const cLast = (c.cn || "").split(/\s+/).pop().toLowerCase();
+          const cAddr = (c.addr || "").split(",")[0].toLowerCase().trim();
+          return (addrKey.length > 4 && cAddr.includes(addrKey)) ||
+                 (lastName.length > 2  && cLast === lastName);
+        })
+        .sort((a, b) => (b.stageChangedAt || b.addedAt || 0) - (a.stageChangedAt || a.addedAt || 0))
+        .slice(0, 3);
+    } catch { return []; }
+  })();
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  // ── CONFIDENCE INDICATOR ────────────────────────────────────────────────
+  const [cloudSynced, setCloudSynced] = useState(() => !getDirtyFieldIds().has(s.id));
+  useEffect(() => {
+    const check = () => setCloudSynced(!getDirtyFieldIds().has(s.id));
+    window.addEventListener("mts-field-synced", check);
+    return () => window.removeEventListener("mts-field-synced", check);
+  }, [s.id]);
   const [swipeX, setSwipeX] = useState(0);
   const [swiping, setSwiping] = useState(false);
   const swipeStartX = useRef(0);
@@ -1063,6 +1122,17 @@ Property: ${s.addr || ""}`);
       {/* ── HEADER ────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",paddingTop:"max(10px,env(safe-area-inset-top))",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
         <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:4,padding:"6px 12px",borderRadius:8,background:"transparent",border:"1px solid #252d47",color:"#90a8c0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}><IconArrowLeft size={13} color="#90a8c0"/>Route</button>
+        {/* Confidence indicator — local always green; cloud shows sync state */}
+        <div style={{display:"flex",gap:4,alignItems:"center",flexShrink:0}}>
+          <div title="Saved locally" style={{display:"flex",alignItems:"center",gap:2,padding:"2px 6px",borderRadius:5,background:"rgba(16,185,129,.08)",border:"1px solid rgba(16,185,129,.2)"}}>
+            <svg width={8} height={8} viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="#10B981"/></svg>
+            <span style={{fontSize:9,color:"#10B981",fontWeight:700,fontFamily:F}}>LOCAL</span>
+          </div>
+          <div title={cloudSynced ? "Synced to cloud" : "Pending cloud push"} style={{display:"flex",alignItems:"center",gap:2,padding:"2px 6px",borderRadius:5,background:cloudSynced?"rgba(16,185,129,.08)":"rgba(246,191,38,.08)",border:`1px solid ${cloudSynced?"rgba(16,185,129,.2)":"rgba(246,191,38,.2)"}`}}>
+            <svg width={8} height={8} viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill={cloudSynced?"#10B981":"#F6BF26"}/></svg>
+            <span style={{fontSize:9,color:cloudSynced?"#10B981":"#F6BF26",fontWeight:700,fontFamily:F}}>CLOUD</span>
+          </div>
+        </div>
         <div style={{flex:1,minWidth:0}}/>
         <button onClick={()=>setIsRevision(!isRevision)} title="Revision" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"6px 8px",borderRadius:8,background:isRevision?"rgba(255,107,157,.15)":"transparent",border:isRevision?"1px solid rgba(255,107,157,.3)":"1px solid #252d47",cursor:"pointer",flexShrink:0}}><IconRotateCcw size={15} color={isRevision?"#FF6B9D":"#3a4a60"}/></button>
         {/* Decline — moved from bottom bar so it can't be hit when reaching for DONE */}
@@ -1107,6 +1177,43 @@ Property: ${s.addr || ""}`);
             {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4}}><IconMail size={12} color="#a0b8d0"/>{s.email}</a>}
           </div>
         </div>
+
+        {/* ── PROPERTY MEMORY ────────────────────────────────────────── */}
+        {propertyHistory.length > 0 && (
+          <div style={{borderBottom:"1px solid #1a2030",background:"rgba(139,92,246,.03)"}}>
+            <button onClick={()=>setHistoryOpen(!historyOpen)} style={{width:"100%",padding:"9px 16px",background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
+              <span style={{transform:historyOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7,color:"#8B5CF6"}}>▶</span>
+              <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="#8B5CF6" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span style={{fontSize:10,fontWeight:700,color:"#8B5CF6",letterSpacing:1,textTransform:"uppercase",fontFamily:F}}>Property History</span>
+              <span style={{fontSize:9,color:"#6B46C1",padding:"1px 6px",borderRadius:999,background:"rgba(139,92,246,.12)",border:"1px solid rgba(139,92,246,.2)",fontWeight:700}}>{propertyHistory.length}</span>
+              {!historyOpen && <span style={{flex:1,fontSize:11,color:"#7060a0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginLeft:4}}>{propertyHistory[0].cn} · {propertyHistory[0].stage?.replace(/_/g," ")}</span>}
+            </button>
+            {historyOpen && (
+              <div style={{padding:"0 16px 12px",display:"flex",flexDirection:"column",gap:6}}>
+                {propertyHistory.map(c => {
+                  const stageColors = { sold:"#10B981", declined:"#ef4444", estimate_needed:"#3B82F6", weak:"#FF8A65", waiting:"#F6BF26" };
+                  const col = stageColors[c.stage] || "#7a8aaa";
+                  const ageMs = Date.now() - (c.stageChangedAt || c.addedAt || 0);
+                  const ageDays = Math.round(ageMs / 86400000);
+                  const ageStr = ageDays < 30 ? `${ageDays}d ago` : ageDays < 365 ? `${Math.round(ageDays/30)}mo ago` : `${Math.round(ageDays/365)}yr ago`;
+                  return (
+                    <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,background:"#0d0f1a",border:"1px solid #1a2035"}}>
+                      <div style={{width:7,height:7,borderRadius:99,background:col,flexShrink:0}}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:700,color:"#c8d0e8",fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{c.cn}</div>
+                        <div style={{fontSize:10,color:"#5a6a8a",marginTop:1}}>{c.addr}</div>
+                      </div>
+                      <div style={{textAlign:"right",flexShrink:0}}>
+                        <div style={{fontSize:10,color:col,fontWeight:700,textTransform:"uppercase",fontFamily:F}}>{c.stage?.replace(/_/g," ")}</div>
+                        <div style={{fontSize:9,color:"#4a5a70"}}>{ageStr}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── JOB NOTES (collapsible, always shows preview) ─────────── */}
         {s.notes && (
@@ -1163,13 +1270,23 @@ Property: ${s.addr || ""}`);
           {/* Scope photos */}
           {scopePhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
             {scopePhotos.map((p, i) => (
-              <div key={i} style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
-                <img src={p.url || p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("scope");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
-                <button onClick={e=>{e.stopPropagation();removeScopePhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} color="#ff6666"/></button>
-                <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
-                  <div onClick={()=>{setMarkupIdx(i);setMarkupSection("scope");}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
-                  <button onClick={e=>{e.stopPropagation();downloadPhoto(p,`scope_${i+1}.jpg`,`scope_${i}`);}} disabled={dlSet.has(`scope_${i}`)} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`scope_${i}`)?0.5:1}}><IconDownload size={13} color="#ccc"/></button>
+              <div key={photoKey(p)||i} style={{display:"flex",flexDirection:"column",gap:3}}>
+                <div style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
+                  <img src={p.url || p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("scope");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
+                  <button onClick={e=>{e.stopPropagation();removeScopePhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} color="#ff6666"/></button>
+                  <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
+                    <div onClick={()=>{setMarkupIdx(i);setMarkupSection("scope");}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
+                    <button onClick={e=>{e.stopPropagation();downloadPhoto(p,`scope_${i+1}.jpg`,`scope_${i}`);}} disabled={dlSet.has(`scope_${i}`)} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`scope_${i}`)?0.5:1}}><IconDownload size={13} color="#ccc"/></button>
+                  </div>
                 </div>
+                {/* Zone tag */}
+                <PhotoZoneTag zone={p.zone} onChange={zone => {
+                  updateField(s.id, ex => {
+                    const arr = ex.scopePhotos || ex.photos || [];
+                    return { scopePhotos: arr.map((ph,j) => j===i ? {...ph,zone} : ph) };
+                  }).catch(()=>{});
+                  setScopePhotos(prev => prev.map((ph,j) => j===i ? {...ph,zone} : ph));
+                }} />
               </div>
             ))}
           </div>}
@@ -1199,13 +1316,22 @@ Property: ${s.addr || ""}`);
           {/* Add-on photos */}
           {addonPhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
             {addonPhotos.map((p, i) => (
-              <div key={i} style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
-                <img src={p.url || p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("addon");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
-                <button onClick={e=>{e.stopPropagation();removeAddonPhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} color="#ff6666"/></button>
-                <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
-                  <div onClick={()=>{setMarkupIdx(i);setMarkupSection("addon");}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
-                  <button onClick={e=>{e.stopPropagation();downloadPhoto(p,`addon_${i+1}.jpg`,`addon_${i}`);}} disabled={dlSet.has(`addon_${i}`)} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`addon_${i}`)?0.5:1}}><IconDownload size={13} color="#ccc"/></button>
+              <div key={photoKey(p)||i} style={{display:"flex",flexDirection:"column",gap:3}}>
+                <div style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
+                  <img src={p.url || p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("addon");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
+                  <button onClick={e=>{e.stopPropagation();removeAddonPhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} color="#ff6666"/></button>
+                  <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
+                    <div onClick={()=>{setMarkupIdx(i);setMarkupSection("addon");}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
+                    <button onClick={e=>{e.stopPropagation();downloadPhoto(p,`addon_${i+1}.jpg`,`addon_${i}`);}} disabled={dlSet.has(`addon_${i}`)} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`addon_${i}`)?0.5:1}}><IconDownload size={13} color="#ccc"/></button>
+                  </div>
                 </div>
+                <PhotoZoneTag zone={p.zone} onChange={zone => {
+                  updateField(s.id, ex => {
+                    const arr = ex.addonPhotos || [];
+                    return { addonPhotos: arr.map((ph,j) => j===i ? {...ph,zone} : ph) };
+                  }).catch(()=>{});
+                  setAddonPhotos(prev => prev.map((ph,j) => j===i ? {...ph,zone} : ph));
+                }} />
               </div>
             ))}
           </div>}
