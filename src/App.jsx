@@ -1660,7 +1660,7 @@ export default function App() {
           </> : <span style={{fontSize:12,fontWeight:500,color:"#9a80c8"}}><span style={{display:"flex",alignItems:"center",gap:4}}><IconReorder size={12} color="#9a80c8"/>Tap a stop to pick it up</span></span>}
         </div>}
         <div className="mts-map-inner">
-          {mapStops.length>0 && <RouteMap stops={mapStops} selectedId={expanded} pipelineCards={Object.values(loadPipeline())}/>}
+          {mapStops.length>0 && <RouteMap stops={mapStops} selectedId={expanded}/>}
         </div>
       </div>
 
