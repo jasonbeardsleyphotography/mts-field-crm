@@ -6,7 +6,7 @@ const STROKE = 5;
 const RADIUS = (RING_SIZE - STROKE) / 2;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-export default function NextStopCard({ stop, stopNumber, totalStops, onDismiss }) {
+export default function NextStopCard({ stop, stopNumber, totalStops, onDismiss, onNavigate }) {
   const [timeLeft, setTimeLeft] = useState(COUNTDOWN_SECONDS);
   const [visible, setVisible] = useState(false);
   const timerRef = useRef(null);
@@ -35,8 +35,10 @@ export default function NextStopCard({ stop, stopNumber, totalStops, onDismiss }
   }, [onDismiss]);
 
   const handleNavigate = () => {
+    clearInterval(timerRef.current);
     const encoded = encodeURIComponent(stop.addr || "");
     window.location.href = `comgooglemaps://?daddr=${encoded}&directionsmode=driving`;
+    if (onNavigate) onNavigate(stop);
   };
 
   const handleDismiss = () => {
