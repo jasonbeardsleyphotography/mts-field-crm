@@ -988,7 +988,35 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           </div>
         );
       }
-      return <PhotoMarkup photoDataUrl={markupSrc} onSave={handleMarkupSave} onCancel={() => setMarkupIdx(null)} />;
+      // Save edits to the current photo without closing markup, then switch index.
+      const saveMarkupOnly = (dataUrl) => {
+        const target = photos[markupIdx];
+        const key = target ? photoKey(target) : null;
+        const update = (p, i) => i === markupIdx ? { ...p, dataUrl, url: undefined } : p;
+        if (markupSection === "addon") setAddonPhotos(prev => prev.map(update));
+        else setScopePhotos(prev => prev.map(update));
+        if (key !== null) {
+          const arrKey = markupSection === "addon" ? "addonPhotos" : "scopePhotos";
+          updateField(s.id, (existing) => ({
+            [arrKey]: (existing[arrKey] || existing.photos || []).map(p =>
+              photoKey(p) === key ? { ...p, dataUrl, url: undefined } : p
+            ),
+          })).catch(() => {});
+        }
+        markStopForPhotoSync(s.id);
+      };
+      return (
+        <PhotoMarkup
+          key={markupIdx}
+          photoDataUrl={markupSrc}
+          onSave={handleMarkupSave}
+          onCancel={() => setMarkupIdx(null)}
+          hasPrev={markupIdx > 0}
+          hasNext={markupIdx < photos.length - 1}
+          onPrev={(dataUrl, hasEdits) => { if (hasEdits) saveMarkupOnly(dataUrl); setMarkupIdx(i => i - 1); }}
+          onNext={(dataUrl, hasEdits) => { if (hasEdits) saveMarkupOnly(dataUrl); setMarkupIdx(i => i + 1); }}
+        />
+      );
     }
   }
 
