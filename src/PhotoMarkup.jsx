@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
-import { IconArrowUpRight, IconEraser, IconUndo, IconX, IconTrash, IconDownload } from "./icons";
+import { IconArrowUpRight, IconArrowLeft, IconArrowRight, IconEraser, IconUndo, IconX, IconTrash, IconDownload } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Photo Markup (Rebuild)
@@ -230,7 +230,7 @@ function distToSegment(px, py, x1, y1, x2, y2) {
 
 // ═════════════════════════════════════════════════════════════════════════════
 
-export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
+export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = false, hasNext = false, onPrev, onNext }) {
   const baseCanvasRef    = useRef(null);  // image + committed strokes (static)
   const overlayCanvasRef = useRef(null);  // current stroke / arrow preview (dynamic)
   const imgRef           = useRef(null);
@@ -765,16 +765,15 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
   const undo     = () => setStrokes(p => p.slice(0, -1));
   const clearAll = () => setStrokes([]);
 
-  // Save at full image resolution.
-  const handleSave = () => {
+  // Render image + all strokes to a new canvas and return a dataUrl.
+  const getAnnotatedDataUrl = () => {
     const img = imgRef.current;
-    if (!img) return;
+    if (!img) return null;
     const fc = document.createElement("canvas");
     fc.width = imgDims.w;
     fc.height = imgDims.h;
     const ctx = fc.getContext("2d");
     ctx.drawImage(img, 0, 0, imgDims.w, imgDims.h);
-
     const cssToImg = fit.w > 0 ? imgDims.w / fit.w : 1;
     strokes.forEach(s => {
       const lw = s.size * cssToImg;
@@ -784,8 +783,22 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
       else if (s.type === "measurement") drawMeasurement(ctx, s, lw);
       else                               drawFreehand(ctx, s, lw);
     });
+    return fc.toDataURL("image/jpeg", 0.9);
+  };
 
-    onSave(fc.toDataURL("image/jpeg", 0.9));
+  // Save at full image resolution.
+  const handleSave = () => {
+    const dataUrl = getAnnotatedDataUrl();
+    if (dataUrl) onSave(dataUrl);
+  };
+
+  // Navigate to adjacent photo — passes current dataUrl to parent so it can
+  // save edits before changing the index (without closing the editor).
+  const handleNav = (direction) => {
+    const dataUrl = getAnnotatedDataUrl();
+    const hasEdits = strokes.length > 0;
+    if (direction === "prev" && onPrev) onPrev(dataUrl, hasEdits);
+    if (direction === "next" && onNext) onNext(dataUrl, hasEdits);
   };
 
   // Download the current canvas (image + all annotations) without saving back.
@@ -922,6 +935,42 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel }) {
           <IconX size={22} color="#fff" />
         </button>
       </div>
+
+      {/* ── PREV / NEXT photo navigation ───────────────────────────────── */}
+      {hasPrev && (
+        <div data-pm-ctl style={{
+          position: "absolute",
+          left: "max(12px, env(safe-area-inset-left))",
+          top: "50%",
+          transform: "translateY(-50%)",
+        }}>
+          <button
+            onClick={() => handleNav("prev")}
+            onPointerDown={e => e.stopPropagation()}
+            style={fab()}
+            title="Previous photo"
+          >
+            <IconArrowLeft size={20} color="#fff" />
+          </button>
+        </div>
+      )}
+      {hasNext && (
+        <div data-pm-ctl style={{
+          position: "absolute",
+          right: "max(12px, env(safe-area-inset-right))",
+          top: "50%",
+          transform: "translateY(-50%)",
+        }}>
+          <button
+            onClick={() => handleNav("next")}
+            onPointerDown={e => e.stopPropagation()}
+            style={fab()}
+            title="Next photo"
+          >
+            <IconArrowRight size={20} color="#fff" />
+          </button>
+        </div>
+      )}
 
       {/* ── TOP-RIGHT: Tools + Done ────────────────────────────────────── */}
       <div data-pm-ctl style={{
