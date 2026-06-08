@@ -120,6 +120,23 @@ function _releaseWakeLock() {
   _wakeLock = null;
 }
 
+// iOS suspends network requests when the app is backgrounded mid-chunk,
+// which surfaces as a "Chunk timeout" — not a real network failure. Waiting
+// here (instead of burning a retry) keeps large uploads from hitting the
+// retry limit just because the screen locked or the user switched apps.
+function _waitForVisible() {
+  if (document.visibilityState === "visible") return Promise.resolve();
+  return new Promise(resolve => {
+    const onChange = () => {
+      if (document.visibilityState === "visible") {
+        document.removeEventListener("visibilitychange", onChange);
+        resolve();
+      }
+    };
+    document.addEventListener("visibilitychange", onChange);
+  });
+}
+
 // ── Subscribers ──────────────────────────────────────────────────────────
 
 const _listeners = new Set();
@@ -343,6 +360,14 @@ async function _processItem(id) {
       const probe = await idbGet(id);
       if (!probe) { vlogInfo("chunk.canceled_externally", null, id); return false; }
 
+      // Don't start a chunk while backgrounded — iOS suspends the request
+      // mid-flight and it times out, burning a retry for no real reason.
+      if (document.visibilityState === "hidden") {
+        vlogInfo("chunk.wait_visible", null, id);
+        await _waitForVisible();
+        continue;
+      }
+
       const end = Math.min(bytesUploaded + CHUNK_SIZE, item.fileSize);
       const chunk = item.file.slice(bytesUploaded, end);
       const t0 = Date.now();
@@ -368,6 +393,15 @@ async function _processItem(id) {
         vlogWarn("chunk.session_expired", { ms }, id);
         await _setItem(id, { sessionUrl: null, bytesUploaded: 0 });
         return await _processItem(id);
+      }
+
+      // Error path — if we went to background mid-request, the timeout was
+      // almost certainly caused by iOS suspending the connection, not a real
+      // network failure. Don't spend a retry on it; just wait it out.
+      if (document.visibilityState === "hidden") {
+        vlogInfo("chunk.fail_while_hidden", { ms, error: result.error }, id);
+        await _waitForVisible();
+        continue;
       }
 
       // Error path
