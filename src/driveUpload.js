@@ -90,61 +90,80 @@ export async function initDriveSession(token, title, size, mime, parentId) {
 }
 
 /**
- * Upload one chunk. Includes a per-chunk timeout — if Drive doesn't respond
- * within CHUNK_TIMEOUT_MS, we abort the request and return a network error
- * so the caller can retry. This is THE critical fix for cellular flake:
- * previously, a stalled chunk would hang forever.
+ * Upload one chunk via XMLHttpRequest.
+ *
+ * Why XHR instead of fetch: XHR exposes `upload.onprogress`, giving real
+ * byte-level progress *within* a chunk. With the adaptive chunk sizing in
+ * videoQueue.js (chunks can be many MB), fetch would only update the progress
+ * bar once per chunk — XHR keeps it moving smoothly. XHR also has a native
+ * `timeout` and `abort()`, so we keep the per-chunk timeout that prevents a
+ * stalled request from hanging forever on cellular flake.
+ *
+ * The resumable session URL is pre-authenticated (it embeds an upload_id), so
+ * no Authorization header is needed here — which conveniently means chunk PUTs
+ * keep working even if the OAuth token expires mid-upload on a long transfer.
+ *
+ * @param {string}   sessionUrl  resumable session URL
+ * @param {Blob}     chunkBlob   the slice to send
+ * @param {number}   startByte   absolute start offset of this chunk
+ * @param {number}   endByte     absolute end offset (inclusive)
+ * @param {number}   totalSize   full file size
+ * @param {object}   [opts]
+ * @param {number}   [opts.timeoutMs]   per-chunk timeout
+ * @param {function} [opts.onProgress]  (absoluteBytesUploaded) => void
  *
  * Return shape:
  *   { kind: "ok-final", fileId, webViewLink }
  *   { kind: "ok-progress", nextOffset }
  *   { kind: "session-expired" }
- *   { kind: "error", error }
+ *   { kind: "error", error, timedOut? }
  */
-export async function uploadChunk(sessionUrl, chunkBlob, startByte, endByte, totalSize) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), CHUNK_TIMEOUT_MS);
+export function uploadChunk(sessionUrl, chunkBlob, startByte, endByte, totalSize, opts = {}) {
+  const { timeoutMs = CHUNK_TIMEOUT_MS, onProgress } = opts;
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
 
-  let res;
-  try {
-    res = await fetch(sessionUrl, {
-      method: "PUT",
-      headers: {
-        "Content-Range": `bytes ${startByte}-${endByte}/${totalSize}`,
-      },
-      body: chunkBlob,
-      signal: controller.signal,
-    });
-  } catch (e) {
-    clearTimeout(timeoutId);
-    if (e?.name === "AbortError") {
-      return { kind: "error", error: `Chunk timeout (${CHUNK_TIMEOUT_MS / 1000}s)` };
+    try {
+      xhr.open("PUT", sessionUrl, true);
+    } catch (e) {
+      return done({ kind: "error", error: `Open failed: ${e?.message || e}` });
     }
-    return { kind: "error", error: `Network: ${e?.message || String(e)}` };
-  }
-  clearTimeout(timeoutId);
+    xhr.timeout = timeoutMs;
+    xhr.setRequestHeader("Content-Range", `bytes ${startByte}-${endByte}/${totalSize}`);
 
-  if (res.status === 200 || res.status === 201) {
-    let body;
-    try { body = await res.json(); } catch (e) {
-      return { kind: "error", error: "Final response not JSON" };
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(startByte + e.loaded);
+      };
     }
-    if (body?.id) {
-      return { kind: "ok-final", fileId: body.id, webViewLink: body.webViewLink };
-    }
-    return { kind: "error", error: "Final response missing file id" };
-  }
-  if (res.status === 308) {
-    const range = res.headers.get("Range");
-    if (!range) return { kind: "ok-progress", nextOffset: 0 };
-    const m = range.match(/bytes=0-(\d+)/);
-    return { kind: "ok-progress", nextOffset: m ? parseInt(m[1], 10) + 1 : endByte + 1 };
-  }
-  if (res.status === 404 || res.status === 410) {
-    return { kind: "session-expired" };
-  }
-  const txt = await res.text().catch(() => "");
-  return { kind: "error", error: `HTTP ${res.status}: ${txt.slice(0, 200)}` };
+
+    xhr.onload = () => {
+      const status = xhr.status;
+      if (status === 200 || status === 201) {
+        let body;
+        try { body = JSON.parse(xhr.responseText); }
+        catch { return done({ kind: "error", error: "Final response not JSON" }); }
+        if (body?.id) return done({ kind: "ok-final", fileId: body.id, webViewLink: body.webViewLink });
+        return done({ kind: "error", error: "Final response missing file id" });
+      }
+      if (status === 308) {
+        const range = xhr.getResponseHeader("Range");
+        if (!range) return done({ kind: "ok-progress", nextOffset: 0 });
+        const m = range.match(/bytes=0-(\d+)/);
+        return done({ kind: "ok-progress", nextOffset: m ? parseInt(m[1], 10) + 1 : endByte + 1 });
+      }
+      if (status === 404 || status === 410) return done({ kind: "session-expired" });
+      done({ kind: "error", error: `HTTP ${status}: ${(xhr.responseText || "").slice(0, 200)}` });
+    };
+    xhr.ontimeout = () => done({ kind: "error", error: `Chunk timeout (${Math.round(timeoutMs / 1000)}s)`, timedOut: true });
+    xhr.onerror   = () => done({ kind: "error", error: "Network error during chunk upload" });
+    xhr.onabort   = () => done({ kind: "error", error: "Chunk aborted" });
+
+    try { xhr.send(chunkBlob); }
+    catch (e) { done({ kind: "error", error: `Send failed: ${e?.message || e}` }); }
+  });
 }
 
 /**

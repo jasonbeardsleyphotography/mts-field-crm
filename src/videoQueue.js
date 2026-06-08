@@ -9,14 +9,20 @@
 
    Key changes from v2:
    1. Target is Drive, not YouTube
-   2. Per-chunk timeout (60s) prevents indefinite hangs on cellular flake
-   3. Saves canonical /preview URL to card on completion
-   4. Uses anyone-with-link permission so URLs work in client emails
+   2. Adaptive chunk sizing (256KB–16MB) tuned to a ~12s/chunk time budget
+      from the measured connection speed — fast links use big chunks (few
+      requests, little overhead), slow links use small chunks that still beat
+      the timeout. This is the main throughput fix vs. the old fixed 512KB.
+   3. Per-chunk timeout (scaled to chunk size) prevents indefinite hangs
+   4. Real byte-level progress via XHR upload.onprogress
+   5. Retry/Force-Restart RESUMES from the server offset, never restarts at 0
+   6. Saves canonical /preview URL to card on completion
+   7. Uses anyone-with-link permission so URLs work in client emails
 
    Key invariants kept from v2:
    - Persistent IDB queue survives tab restarts
    - Pause/resume single global toggle
-   - Aggressive retry (5 attempts, exponential backoff)
+   - Aggressive retry with exponential backoff
    - Watchdog releases stuck worker locks
    - Diagnostic log to videoLog.js
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -36,11 +42,29 @@ import { queueFieldDriveSync } from "./driveSync";
 
 // ── Tunables ─────────────────────────────────────────────────────────────
 
-const CHUNK_SIZE = 512 * 1024;            // 512KB chunks — small enough to complete before iOS suspends JS
-const CHUNK_RETRY_LIMIT = 5;              // 5 attempts per chunk
+// Adaptive chunk sizing. The old code used a fixed 512KB chunk, which meant a
+// 400MB file became ~800 sequential HTTP round-trips — minutes of pure
+// per-request overhead. Instead we now target a *time budget* per chunk and
+// size each chunk from the measured connection speed: fast links get big
+// chunks (few requests, little overhead), slow links get small chunks (each
+// still finishes before the timeout). This is the standard resumable-upload
+// best practice and is the single biggest speed win.
+const KB = 1024;
+const MB = 1024 * 1024;
+const MIN_CHUNK    = 256 * KB;        // Drive requires non-final chunks be a multiple of 256KB
+const MAX_CHUNK    = 16 * MB;         // cap so one failed chunk never wastes too much, and memory stays modest
+const START_CHUNK  = 1 * MB;          // conservative first chunk before we know the connection speed
+const TARGET_CHUNK_MS = 12_000;       // aim for each chunk to take ~12s; resize toward that
+const CHUNK_RETRY_LIMIT = 6;          // consecutive failures on the SAME offset before giving up
 const WORKER_LOCK_WATCHDOG_MS = 2 * 60 * 1000; // 2 min — iOS suspends JS mid-upload
-const RETRY_BACKOFF_MS = [1500, 3000, 6000, 12000, 30000];
+const RETRY_BACKOFF_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 const PAUSE_KEY = "mts-video-uploads-paused";
+
+// Round down to a 256KB boundary (Drive's chunk granularity), clamped to range.
+function _roundChunk(n) {
+  const r = Math.floor(n / MIN_CHUNK) * MIN_CHUNK;
+  return Math.max(MIN_CHUNK, Math.min(MAX_CHUNK, r));
+}
 
 // ── IndexedDB ────────────────────────────────────────────────────────────
 
@@ -218,15 +242,17 @@ export async function retryItem(id) {
   }
   const item = await idbGet(id);
   if (!item) return;
+  // Preserve sessionUrl + bytesUploaded so we RESUME from where we stopped
+  // instead of re-uploading the whole file (a near-complete 400MB upload
+  // should never restart from 0). _processItem queries the true server offset
+  // when a session exists; if the session is actually dead it transparently
+  // starts a fresh one. Only the error/retry counters are reset.
   item.status = "queued";
   item.retries = 0;
   item.error = null;
-  item.sessionUrl = null; // force fresh session — old one may have expired
-  item.bytesUploaded = 0;
-  item.progress = 0;
   item.updatedAt = Date.now();
   await idbPut(item);
-  vlogInfo("retry.requested", null, id);
+  vlogInfo("retry.requested", { resumeFrom: item.bytesUploaded || 0, hasSession: !!item.sessionUrl }, id);
   notify();
   _kick();
 }
@@ -356,11 +382,26 @@ async function _processItem(id) {
       await _setItem(id, { bytesUploaded: offset });
     }
 
-    // Phase 2: chunked upload loop
+    // Phase 2: adaptive chunked upload loop
     const refresh = await idbGet(id);
     if (!refresh) return false;
     let bytesUploaded = refresh.bytesUploaded || 0;
-    let chunkRetries = 0;
+    let chunkRetries = 0;            // consecutive failures at the current offset
+    let chunkSize = START_CHUNK;     // grows/shrinks from measured speed
+    let speedBpms = null;            // EMA of bytes-per-ms across chunks
+
+    // Throttle mid-chunk progress writes to IDB so a multi-MB chunk's
+    // onprogress stream doesn't hammer IndexedDB. ~1.5s cadence is smooth
+    // enough for the bar while keeping writes cheap. Note: this persisted
+    // value is display-only — resume always re-queries the true server offset.
+    let lastProgressWrite = 0;
+    const onChunkProgress = (absBytes) => {
+      const now = Date.now();
+      if (now - lastProgressWrite < 1500) return;
+      lastProgressWrite = now;
+      const pct = Math.min(99, Math.floor((absBytes / item.fileSize) * 100));
+      _setItem(id, { progress: pct, bytesUploaded: absBytes }).catch(() => {});
+    };
 
     while (bytesUploaded < item.fileSize) {
       if (_isPaused) {
@@ -378,13 +419,21 @@ async function _processItem(id) {
         continue;
       }
 
-      const end = Math.min(bytesUploaded + CHUNK_SIZE, item.fileSize);
+      const end = Math.min(bytesUploaded + chunkSize, item.fileSize);
+      const chunkBytes = end - bytesUploaded;
       const chunk = item.file.slice(bytesUploaded, end);
+      // Timeout scales with chunk size but is clamped to a sane window: long
+      // enough that a momentarily slow link shrinks the chunk (below) rather
+      // than erroring, short enough that a real stall is caught quickly.
+      const timeoutMs = Math.min(120_000, Math.max(60_000, Math.round((chunkBytes / MIN_CHUNK) * 8_000)));
       const t0 = Date.now();
-      vlogInfo("chunk.start", { rangeStart: bytesUploaded, rangeEnd: end - 1, total: item.fileSize, attempt: chunkRetries + 1 }, id);
+      vlogInfo("chunk.start", { rangeStart: bytesUploaded, rangeEnd: end - 1, sizeKB: Math.round(chunkBytes / KB), total: item.fileSize, attempt: chunkRetries + 1 }, id);
 
-      const result = await uploadChunk(session, chunk, bytesUploaded, end - 1, item.fileSize);
-      const ms = Date.now() - t0;
+      const result = await uploadChunk(session, chunk, bytesUploaded, end - 1, item.fileSize, {
+        timeoutMs,
+        onProgress: onChunkProgress,
+      });
+      const ms = Math.max(1, Date.now() - t0);
 
       if (result.kind === "ok-final") {
         vlogInfo("chunk.final_ok", { ms, fileId: result.fileId }, id);
@@ -392,11 +441,18 @@ async function _processItem(id) {
         return true;
       }
       if (result.kind === "ok-progress") {
-        vlogInfo("chunk.ok", { ms, nextOffset: result.nextOffset }, id);
+        const advanced = result.nextOffset - bytesUploaded;
         bytesUploaded = result.nextOffset;
-        const pct = Math.floor((bytesUploaded / item.fileSize) * 100);
-        await _setItem(id, { progress: pct, bytesUploaded, retries: 0 });
         chunkRetries = 0;
+        // Update the speed EMA and retune the next chunk toward TARGET_CHUNK_MS.
+        if (advanced > 0) {
+          const sample = advanced / ms;             // bytes per ms
+          speedBpms = speedBpms == null ? sample : (speedBpms * 0.6 + sample * 0.4);
+          chunkSize = _roundChunk(speedBpms * TARGET_CHUNK_MS);
+        }
+        const pct = Math.min(99, Math.floor((bytesUploaded / item.fileSize) * 100));
+        await _setItem(id, { progress: pct, bytesUploaded, retries: 0 });
+        vlogInfo("chunk.ok", { ms, nextOffset: bytesUploaded, nextChunkKB: Math.round(chunkSize / KB) }, id);
         continue;
       }
       if (result.kind === "session-expired") {
@@ -414,13 +470,15 @@ async function _processItem(id) {
         continue;
       }
 
-      // Error path
+      // Real error. Shrink the chunk (a timeout usually means it was too big
+      // for the current connection) and count a consecutive failure.
+      chunkSize = _roundChunk(Math.max(MIN_CHUNK, chunkBytes / 2));
       chunkRetries++;
-      vlogWarn("chunk.fail", { ms, attempt: chunkRetries, error: result.error }, id);
+      vlogWarn("chunk.fail", { ms, attempt: chunkRetries, error: result.error, nextChunkKB: Math.round(chunkSize / KB) }, id);
       if (chunkRetries >= CHUNK_RETRY_LIMIT) {
         await _setItem(id, {
           status: "error",
-          error: `Upload chunk failed after ${chunkRetries} retries: ${result.error}`,
+          error: `Upload stalled after ${chunkRetries} retries: ${result.error}`,
         });
         return true;
       }
@@ -430,7 +488,7 @@ async function _processItem(id) {
       await new Promise(r => setTimeout(r, backoff));
 
       // After backoff, query current server offset in case our local view
-      // is stale (e.g. timeout fired but the chunk had actually transferred)
+      // is stale (e.g. timeout fired but the chunk had actually transferred).
       const offset = await queryUploadOffset(session, item.fileSize);
       if (offset === null) {
         await _setItem(id, { sessionUrl: null, bytesUploaded: 0 });
@@ -440,7 +498,11 @@ async function _processItem(id) {
         await _setItem(id, { status: "error", error: "Upload completed but file ID was lost. Check Drive videos folder." });
         return true;
       }
-      bytesUploaded = offset;
+      if (offset > bytesUploaded) {
+        // The chunk actually landed despite the error — don't re-send it.
+        bytesUploaded = offset;
+        chunkRetries = 0;
+      }
       await _setItem(id, { bytesUploaded });
     }
     vlogError("loop.exhausted_without_final", { bytesUploaded, fileSize: item.fileSize }, id);
