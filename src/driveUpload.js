@@ -54,6 +54,8 @@ export async function initDriveSession(token, title, size, mime, parentId) {
     // Description with a tag so we can find these programmatically later
     description: "Uploaded via MTS Field CRM",
   };
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CHUNK_TIMEOUT_MS);
   let res;
   try {
     res = await fetch(
@@ -67,11 +69,17 @@ export async function initDriveSession(token, title, size, mime, parentId) {
           "X-Upload-Content-Length": String(size),
         },
         body: JSON.stringify(metadata),
+        signal: controller.signal,
       }
     );
   } catch (e) {
+    clearTimeout(timeoutId);
+    if (e?.name === "AbortError") {
+      return { ok: false, error: `Session init timeout (${CHUNK_TIMEOUT_MS / 1000}s)` };
+    }
     return { ok: false, error: `Network: ${e?.message || String(e)}` };
   }
+  clearTimeout(timeoutId);
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
     return { ok: false, status: res.status, error: txt.slice(0, 300) };

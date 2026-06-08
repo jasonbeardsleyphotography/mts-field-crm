@@ -127,13 +127,23 @@ function _releaseWakeLock() {
 function _waitForVisible() {
   if (document.visibilityState === "visible") return Promise.resolve();
   return new Promise(resolve => {
-    const onChange = () => {
-      if (document.visibilityState === "visible") {
-        document.removeEventListener("visibilitychange", onChange);
-        resolve();
-      }
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      document.removeEventListener("visibilitychange", onChange);
+      clearInterval(poll);
+      clearTimeout(giveUp);
+      resolve();
     };
+    const onChange = () => { if (document.visibilityState === "visible") finish(); };
     document.addEventListener("visibilitychange", onChange);
+    // visibilitychange doesn't always fire reliably in iOS standalone PWAs —
+    // poll as a backstop so we don't depend on it alone.
+    const poll = setInterval(() => { if (document.visibilityState === "visible") finish(); }, 2000);
+    // Safety valve — if visibilityState is ever stuck misreporting "hidden"
+    // while the app is actually frontmost, don't let an upload hang forever.
+    const giveUp = setTimeout(finish, 20_000);
   });
 }
 
