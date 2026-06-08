@@ -57,6 +57,7 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
   const [items, setItems] = useState([]);
   const [paused, setPausedState] = useState(isPaused());
   const [, tick] = useState(0);
+  const [restarting, setRestarting] = useState({});
 
   useEffect(() => {
     let alive = true;
@@ -237,14 +238,29 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
               <div style={{ display: "flex", gap: 8 }}>
                 {(item.status === "error" || isStuck) && (
                   <button
-                    onClick={() => retryItem(item.id)}
+                    onClick={() => {
+                      // Immediate feedback so the tap reads as registered —
+                      // the queue reset can take a beat to reach the worker,
+                      // and on a flaky connection the retry may fail again
+                      // looking identical, which reads as "did nothing".
+                      setRestarting(r => ({ ...r, [item.id]: true }));
+                      setTimeout(() => setRestarting(r => {
+                        const next = { ...r };
+                        delete next[item.id];
+                        return next;
+                      }), 4000);
+                      retryItem(item.id);
+                    }}
+                    disabled={!!restarting[item.id]}
                     style={{
                       flex: 1, padding: "8px 0", borderRadius: 8,
                       background: "rgba(59,130,246,.1)", border: "1px solid rgba(59,130,246,.3)",
                       color: "#3B82F6", fontSize: 11, fontWeight: 800,
-                      cursor: "pointer", fontFamily: F, letterSpacing: 0.5,
+                      cursor: restarting[item.id] ? "default" : "pointer",
+                      opacity: restarting[item.id] ? 0.6 : 1,
+                      fontFamily: F, letterSpacing: 0.5,
                     }}
-                  >Force Restart</button>
+                  >{restarting[item.id] ? "Restarting…" : "Force Restart"}</button>
                 )}
                 <button
                   onClick={() => {
