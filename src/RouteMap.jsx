@@ -77,11 +77,30 @@ export function loadMaps() {
   return mapsPromise;
 }
 
+// ── PIXEL-CONSTANT MARKER OFFSET ─────────────────────────────────────────────
+// Two stops geocoded to nearly the same point need to stay visually distinct
+// at ANY zoom level. A fixed lat/lng offset shrinks to a few pixels when
+// zoomed out and the markers merge back into one blob. Instead we compute the
+// offset in real-world meters that corresponds to a constant on-screen pixel
+// distance at the map's current zoom (Web Mercator projection), so clustered
+// markers always sit ~CLUSTER_PX apart on screen no matter how far zoomed out.
+const CLUSTER_PX = 15;
+function metersPerPixel(lat, zoom) {
+  return 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+}
+function offsetLatLng(base, angle, meters) {
+  return {
+    lat: base.lat + (meters * Math.cos(angle)) / 111320,
+    lng: base.lng + (meters * Math.sin(angle)) / (111320 * Math.cos(base.lat * Math.PI / 180)),
+  };
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 export default function RouteMap({ stops, selectedId }) {
   const ref = useRef(null);
   const map = useRef(null);
   const markers = useRef([]); // [{marker, stopId}]
+  const clusterInfo = useRef({}); // stopId -> { base:{lat,lng}, angle } for clustered stops only
   const route = useRef(null);
   const nextRoute = useRef(null); // directions to next stop
   const prevSet = useRef("");
@@ -172,10 +191,13 @@ export default function RouteMap({ stops, selectedId }) {
     if (route.current) { route.current.setMap(null); route.current = null; }
     if (!Object.keys(coords).length) return;
 
-    // Offset markers that share nearly the same geocoded position so they
-    // remain individually visible when zoomed out.
+    // Detect stops that geocoded to nearly the same point — they need a
+    // visual offset to stay distinguishable. The angle assignment is
+    // zoom-independent; the actual offset DISTANCE is computed per-render
+    // (and live on zoom change, see the zoom_changed listener below) so the
+    // on-screen pixel separation stays constant at any zoom level.
+    clusterInfo.current = {};
     const NEAR = 0.0004;
-    const adjustedCoords = Object.assign({}, coords);
     const stopsWithPos = stops.filter(s => coords[s.id]);
     const clusterVisited = new Set();
     for (let i = 0; i < stopsWithPos.length; i++) {
@@ -192,20 +214,23 @@ export default function RouteMap({ stops, selectedId }) {
       if (group.length > 1) {
         group.forEach((id, ci) => {
           clusterVisited.add(id);
-          const angle = (ci / group.length) * 2 * Math.PI;
-          adjustedCoords[id] = {
-            lat: base.lat + 0.00028 * Math.cos(angle),
-            lng: base.lng + 0.00040 * Math.sin(angle),
-          };
+          clusterInfo.current[id] = { base, angle: (ci / group.length) * 2 * Math.PI };
         });
       }
     }
+    const zoom = map.current.getZoom() ?? 11;
+    const markerPos = (id) => {
+      const info = clusterInfo.current[id];
+      if (!info) return coords[id];
+      return offsetLatLng(info.base, info.angle, CLUSTER_PX * metersPerPixel(info.base.lat, zoom));
+    };
 
     const positions = [];
     const bounds = new window.google.maps.LatLngBounds();
     let n = 0;
     stops.forEach(s => {
-      const pos = adjustedCoords[s.id]; if (!pos) return; n++;
+      if (!coords[s.id]) return;
+      const pos = markerPos(s.id); if (!pos) return; n++;
       const isAM = (s.window||"").startsWith("AM");
       const pinColor = isAM ? AM_COLOR : PM_COLOR;
       const hasConstraint = !!s.constraint;
@@ -222,7 +247,10 @@ export default function RouteMap({ stops, selectedId }) {
         zIndex: isSel ? 9999 : (stops.length - n + 11),
       });
       markers.current.push({ marker: m, stopId: s.id, order: n });
-      positions.push(pos); bounds.extend(pos);
+      // Route line + bounds use the TRUE geocoded position (not the visual
+      // cluster offset) so the route geometry stays stable across zoom
+      // changes and doesn't trigger redundant Directions lookups.
+      positions.push(coords[s.id]); bounds.extend(coords[s.id]);
     });
 
     // Full route polyline — Google Directions → OSRM fallback → straight-line fallback
@@ -267,6 +295,24 @@ export default function RouteMap({ stops, selectedId }) {
       prevSet.current = set;
     }
   }, [coords, stops, selectedId]);
+
+  // ── LIVE-REPOSITION CLUSTERED MARKERS ON ZOOM ──────────────────────────
+  // Keeps clustered markers ~CLUSTER_PX pixels apart on screen at any zoom
+  // level, instead of the fixed real-world offset shrinking to nothing when
+  // zoomed out. Only touches markers that are actually clustered — cheap.
+  useEffect(() => {
+    if (!map.current) return;
+    const listener = map.current.addListener("zoom_changed", () => {
+      const zoom = map.current.getZoom();
+      if (zoom == null) return;
+      markers.current.forEach(({ marker, stopId }) => {
+        const info = clusterInfo.current[stopId];
+        if (!info) return;
+        marker.setPosition(offsetLatLng(info.base, info.angle, CLUSTER_PX * metersPerPixel(info.base.lat, zoom)));
+      });
+    });
+    return () => listener.remove();
+  }, [ready]);
 
   // ── DIRECTIONS FROM CURRENT LOCATION TO NEXT STOP ─────────────────────
   useEffect(() => {
