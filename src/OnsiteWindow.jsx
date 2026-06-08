@@ -1391,6 +1391,18 @@ Property: ${s.addr || ""}`);
                   </div>}
                   <div style={{padding:"6px 8px",display:"flex",alignItems:"center",gap:6}}>
                     <div style={{fontSize:9,color:"#5a6890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{url}</div>
+                    {typeof navigator !== "undefined" && navigator.share && (
+                      <button onClick={async () => {
+                        const name = (s.cn || "").split(" ")[0];
+                        try {
+                          await navigator.share({
+                            title: "Property Video Review",
+                            text: name ? `${name}, here's your property video review from Monster Tree Service:` : "Your property video review from Monster Tree Service:",
+                            url,
+                          });
+                        } catch { /* user dismissed the share sheet */ }
+                      }} style={{padding:"4px 8px",borderRadius:5,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Share</button>
+                    )}
                     <button onClick={() => {
                       const html = `<a href="${url}">Link to Video Review</a>`;
                       if (navigator.clipboard?.write) {
@@ -1467,6 +1479,9 @@ Property: ${s.addr || ""}`);
           <button onClick={() => ytFileRef.current?.click()} style={{width:"100%",padding:"11px 0",borderRadius:8,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.3)",color:"#4a8ab0",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
             <IconVideo size={15} color="#4a8ab0"/><span>{(videoUrls.length + videoQueueItems.length) > 0 ? `Add another video (${videoUrls.length + videoQueueItems.length + 1})` : "Upload video to Drive"}</span>
           </button>
+          <div style={{marginTop:6,fontSize:9,lineHeight:1.4,color:"#5a6580",fontFamily:F,letterSpacing:0.2,textAlign:"center"}}>
+            Tip: record at <strong style={{color:"#8a93a8"}}>1080p</strong> (iPhone Settings → Camera → Record Video) — uploads ~4× faster than 4K.
+          </div>
         </div>
 
         {/* ── VOICE MEMO ──────────────────────────────────────────────── */}
