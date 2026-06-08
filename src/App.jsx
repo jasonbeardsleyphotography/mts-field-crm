@@ -450,12 +450,41 @@ export default function App() {
   useEffect(() => { lsSet("mts-view", view); }, [view]);
 
   // ── AUTH ─────────────────────────────────────────────────────────────────
+  // Safari requires popups to open SYNCHRONOUSLY inside the user-gesture call
+  // stack — if requestAccessToken() runs even one tick later (e.g. inside a
+  // setTimeout while waiting for the GIS script to load), Safari refuses to
+  // treat it as a real popup and falls back to a top-level redirect to
+  // accounts.google.com that's missing parameters the token-client flow needs,
+  // landing on a "400. That's an error. ... malformed" page. Chrome is more
+  // lenient about the timing, which is why this only showed up in Safari.
+  //
+  // Fix: build the token client ONCE, ahead of time (as soon as GIS loads),
+  // and keep it in a ref. The click handler then does nothing but call
+  // requestAccessToken() on the already-built client — zero async hops
+  // between the tap and the popup request, so Safari honors it as a gesture.
+  const _tokenClientRef = useRef(null);
+  useEffect(() => {
+    let cancelled = false;
+    const tryInit = () => {
+      if (cancelled || _tokenClientRef.current) return;
+      if (!window.google?.accounts?.oauth2) { setTimeout(tryInit, 200); return; }
+      _tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID, scope: SCOPES,
+        callback: r => { if (r.access_token) { saveToken(r.access_token, r.expires_in); setError(null); } else setError("Sign-in failed"); },
+      });
+    };
+    tryInit();
+    return () => { cancelled = true; };
+  }, []);
   const initAuth = useCallback(() => {
-    if (!window.google?.accounts?.oauth2) { setTimeout(initAuth, 200); return; }
-    window.google.accounts.oauth2.initTokenClient({
-      client_id: CLIENT_ID, scope: SCOPES,
-      callback: r => { if (r.access_token) { saveToken(r.access_token, r.expires_in); setError(null); } else setError("Sign-in failed"); },
-    }).requestAccessToken();
+    if (!_tokenClientRef.current) {
+      // GIS still hasn't loaded by the time the user tapped — extremely rare,
+      // but calling requestAccessToken from here would hit the Safari issue
+      // above. Surface a retry prompt instead of silently breaking.
+      setError("Still loading sign-in — try again in a moment");
+      return;
+    }
+    _tokenClientRef.current.requestAccessToken();
   }, []);
 
   // ── AUTHED FETCH — wraps fetchEvents with silent reauth on 401 ────────
