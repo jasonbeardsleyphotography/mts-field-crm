@@ -1,4 +1,4 @@
-const CACHE = "mts-field-v3";
+const CACHE = "mts-field-v4";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
@@ -26,9 +26,25 @@ self.addEventListener("fetch", (e) => {
   const url = e.request.url;
   if (BYPASS.some(h => url.includes(h))) return; // pass through external APIs
 
-  // Stale-while-revalidate: return cached version immediately (fast startup),
-  // fetch fresh copy in background so next load is up to date.
-  // First-ever load falls through to network since cache is empty.
+  // The HTML shell references hashed JS/CSS bundle filenames, so it must
+  // always come from the network when possible — a stale cached copy would
+  // point at a bundle that no longer exists after a new deploy, which is
+  // exactly what was causing users to get stuck on old code even after the
+  // auto-update reload below. Fall back to cache only when offline.
+  if (e.request.mode === "navigate") {
+    e.respondWith(
+      fetch(e.request).then(r => {
+        if (r.ok) caches.open(CACHE).then(c => c.put(e.request, r.clone()));
+        return r;
+      }).catch(async () => (await caches.match(e.request)) || (await caches.match("/index.html")))
+    );
+    return;
+  }
+
+  // Stale-while-revalidate for everything else (hashed assets, images, etc.):
+  // return cached version immediately (fast startup), fetch fresh copy in
+  // background so next load is up to date. First-ever load falls through to
+  // network since cache is empty.
   e.respondWith(
     caches.open(CACHE).then(async cache => {
       const cached = await cache.match(e.request);
