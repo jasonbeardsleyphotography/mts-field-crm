@@ -874,7 +874,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
 
   // ── VIDEO QUEUE STATE — must stay above early returns (Rules of Hooks) ──
   // These power the queue panel UI shown in the VIDEO section. The actual
-  // upload work (compress → chunked PUT to YouTube) runs entirely inside
+  // upload work (streaming PUT to Drive) runs entirely inside
   // videoQueue.js, persisted to IDB, so it survives this component
   // unmounting. These hooks just keep the on-screen queue panel in sync.
   const [videoQueueItems, setVideoQueueItems] = useState([]);

@@ -170,54 +170,6 @@ function drawLine(ctx, s, lineWidth) {
   ctx.stroke();
 }
 
-function formatFeet(decimalFt) {
-  const totalIn = Math.round(decimalFt * 12);
-  const ft = Math.floor(totalIn / 12);
-  const inches = totalIn % 12;
-  return inches === 0 ? `${ft}'` : `${ft}' ${inches}"`;
-}
-
-function drawMeasurement(ctx, s, lineWidth) {
-  ctx.save();
-  ctx.strokeStyle = s.isRef ? "#FFD700" : "#00E5FF";
-  ctx.lineWidth = Math.max(lineWidth * 1.2, 2);
-  ctx.lineCap = "round";
-  ctx.setLineDash([10, 7]);
-  ctx.beginPath();
-  ctx.moveTo(s.start.x, s.start.y);
-  ctx.lineTo(s.end.x, s.end.y);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  const dotR = Math.max(lineWidth * 2.5, 4);
-  ctx.fillStyle = ctx.strokeStyle;
-  [s.start, s.end].forEach(pt => {
-    ctx.beginPath();
-    ctx.arc(pt.x, pt.y, dotR, 0, Math.PI * 2);
-    ctx.fill();
-  });
-  if (s.label) {
-    const mx = (s.start.x + s.end.x) / 2;
-    const my = (s.start.y + s.end.y) / 2;
-    const angle = Math.atan2(s.end.y - s.start.y, s.end.x - s.start.x);
-    const textAngle = Math.abs(angle) > Math.PI / 2 ? angle + Math.PI : angle;
-    const fontSize = Math.max(lineWidth * 9, 22);
-    ctx.save();
-    ctx.translate(mx, my);
-    ctx.rotate(textAngle);
-    ctx.font = `bold ${fontSize}px sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "bottom";
-    const tw = ctx.measureText(s.label).width;
-    const pad = fontSize * 0.35;
-    ctx.fillStyle = "rgba(0,0,0,0.65)";
-    ctx.fillRect(-tw / 2 - pad, -fontSize - pad, tw + pad * 2, fontSize + pad * 2);
-    ctx.fillStyle = s.isRef ? "#FFD700" : "#00E5FF";
-    ctx.fillText(s.label, 0, -pad / 2);
-    ctx.restore();
-  }
-  ctx.restore();
-}
-
 // Distance from point to segment — for eraser hit-testing.
 function distToSegment(px, py, x1, y1, x2, y2) {
   const dx = x2 - x1, dy = y2 - y1;
@@ -249,7 +201,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
   const [tool, setTool] = useState(() => {
     try {
       const t = localStorage.getItem("pm.tool");
-      return ["x", "freehand", "line", "arrow", "eraser", "measure"].includes(t) ? t : "x";
+      return ["x", "freehand", "line", "arrow", "eraser"].includes(t) ? t : "x";
     } catch { return "x"; }
   });
   useEffect(() => { try { localStorage.setItem("pm.tool", tool); } catch {} }, [tool]);
@@ -259,7 +211,6 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
   const xMode        = tool === "x";
   const lineMode     = tool === "line";
   const freehandMode = tool === "freehand";
-  const measureMode  = tool === "measure";
   const [arrowHeadScale, setArrowHeadScale] = useState(() => {
     try {
       const s = Number(localStorage.getItem("pm.arrowHeadScale")) || 3;
@@ -280,13 +231,6 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
   useEffect(() => { try { localStorage.setItem("pm.brushSize", String(brushSize)); } catch {} }, [brushSize]);
   useEffect(() => { try { localStorage.setItem("pm.arrowHeadScale", String(arrowHeadScale)); } catch {} }, [arrowHeadScale]);
   useEffect(() => { try { localStorage.setItem("pm.xHeadScale", String(xHeadScale)); } catch {} }, [xHeadScale]);
-
-  // Measurement ruler state
-  const [refLine, setRefLine]               = useState(null);
-  const [refFt, setRefFt]                   = useState(null);
-  const [refModal, setRefModal]             = useState(false);
-  const [pendingRefSeg, setPendingRefSeg]   = useState(null);
-  const [customRefInput, setCustomRefInput] = useState("");
 
   // Committed strokes in image-natural coords (drives base canvas)
   const [strokes, setStrokes]   = useState([]);
@@ -399,11 +343,10 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
     const cssToImg = fit.w > 0 ? imgDims.w / fit.w : 1;
     strokes.forEach(s => {
       const lw = s.size * cssToImg;
-      if (s.type === "arrow")            drawArrow(ctx, s, lw);
-      else if (s.type === "x")           drawX(ctx, s, lw);
-      else if (s.type === "line")        drawLine(ctx, s, lw);
-      else if (s.type === "measurement") drawMeasurement(ctx, s, lw);
-      else                               drawFreehand(ctx, s, lw);
+      if (s.type === "arrow")     drawArrow(ctx, s, lw);
+      else if (s.type === "x")    drawX(ctx, s, lw);
+      else if (s.type === "line") drawLine(ctx, s, lw);
+      else                        drawFreehand(ctx, s, lw);
     });
   }, [strokes, backing.w, backing.h, imgDims.w, imgDims.h, fit.w]);
 
@@ -435,15 +378,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
       } else if (cs.type === "line" && cs.points.length >= 2) {
         // Straight-line preview: first point → current point.
         const a = cs.points[0], b = cs.points[cs.points.length - 1];
-        if (cs._isMeasure) {
-          ctx.save();
-          ctx.setLineDash([10, 7]);
-          drawLine(ctx, { start: a, end: b, color: cs.color }, cs.size * cssToImg);
-          ctx.setLineDash([]);
-          ctx.restore();
-        } else {
-          drawLine(ctx, { start: a, end: b, color: cs.color }, cs.size * cssToImg);
-        }
+        drawLine(ctx, { start: a, end: b, color: cs.color }, cs.size * cssToImg);
       } else if (cs.points.length >= 2) {
         drawFreehand(ctx, cs, cs.size * cssToImg);
       }
@@ -521,7 +456,7 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
     setStrokes(prev => {
       for (let i = prev.length - 1; i >= 0; i--) {
         const s = prev[i];
-        if (s.type === "arrow" || s.type === "line" || s.type === "measurement") {
+        if (s.type === "arrow" || s.type === "line") {
           if (distToSegment(pImg.x, pImg.y, s.start.x, s.start.y, s.end.x, s.end.y) < HIT) {
             return prev.filter((_, j) => j !== i);
           }
@@ -589,10 +524,9 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
       drawingRef.current = true;
       arrowPreviewRef.current = null;
       currentStrokeRef.current = {
-        type: (lineMode || measureMode) ? "line" : "freehand",
-        _isMeasure: measureMode || undefined,
+        type: lineMode ? "line" : "freehand",
         points: [pImg],
-        color: measureMode ? "#00E5FF" : color,
+        color,
         size: brushSize,
       };
       forceUpdate(n => n + 1); // flip strokes-count badge
@@ -687,21 +621,6 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
         const a = cs.points[0], b = cs.points[cs.points.length - 1];
         currentStrokeRef.current = null;
         scheduleOverlay();
-        if (cs._isMeasure) {
-          const pxLen = Math.hypot(b.x - a.x, b.y - a.y);
-          if (!refLine) {
-            setPendingRefSeg({ start: a, end: b, pxLen });
-            setRefModal(true);
-          } else {
-            const measFt = (pxLen / refLine.pxLen) * refFt;
-            setStrokes(prev => [...prev, {
-              type: "measurement", start: a, end: b,
-              label: formatFeet(measFt), color: "#00E5FF", size: cs.size,
-            }]);
-            forceUpdate(n => n + 1);
-          }
-          return;
-        }
         setStrokes(prev => [...prev, { type: "line", start: a, end: b, color: cs.color, size: cs.size }]);
         return;
       }
@@ -777,11 +696,10 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
     const cssToImg = fit.w > 0 ? imgDims.w / fit.w : 1;
     strokes.forEach(s => {
       const lw = s.size * cssToImg;
-      if (s.type === "arrow")            drawArrow(ctx, s, lw);
-      else if (s.type === "x")           drawX(ctx, s, lw);
-      else if (s.type === "line")        drawLine(ctx, s, lw);
-      else if (s.type === "measurement") drawMeasurement(ctx, s, lw);
-      else                               drawFreehand(ctx, s, lw);
+      if (s.type === "arrow")     drawArrow(ctx, s, lw);
+      else if (s.type === "x")    drawX(ctx, s, lw);
+      else if (s.type === "line") drawLine(ctx, s, lw);
+      else                        drawFreehand(ctx, s, lw);
     });
     return fc.toDataURL("image/jpeg", 0.9);
   };
@@ -812,11 +730,10 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
     const cssToImg = fit.w > 0 ? imgDims.w / fit.w : 1;
     strokes.forEach(s => {
       const lw = s.size * cssToImg;
-      if (s.type === "arrow")            drawArrow(ctx, s, lw);
-      else if (s.type === "x")           drawX(ctx, s, lw);
-      else if (s.type === "line")        drawLine(ctx, s, lw);
-      else if (s.type === "measurement") drawMeasurement(ctx, s, lw);
-      else                               drawFreehand(ctx, s, lw);
+      if (s.type === "arrow")     drawArrow(ctx, s, lw);
+      else if (s.type === "x")    drawX(ctx, s, lw);
+      else if (s.type === "line") drawLine(ctx, s, lw);
+      else                        drawFreehand(ctx, s, lw);
     });
     fc.toBlob(blob => {
       if (!blob) return;
@@ -826,22 +743,6 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
     }, "image/jpeg", 0.9);
-  };
-
-  // ── MEASUREMENT HELPERS ────────────────────────────────────────────────────
-  const confirmRef = (ft) => {
-    if (!pendingRefSeg) return;
-    const { start, end, pxLen } = pendingRefSeg;
-    setRefLine({ start, end, pxLen });
-    setRefFt(ft);
-    setStrokes(prev => [...prev, {
-      type: "measurement", isRef: true, start, end,
-      label: formatFeet(ft) + " ✓", color: "#FFD700", size: brushSize,
-    }]);
-    setPendingRefSeg(null);
-    setRefModal(false);
-    setCustomRefInput("");
-    forceUpdate(n => n + 1);
   };
 
   // ── RENDER ─────────────────────────────────────────────────────────────────
@@ -1020,19 +921,6 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
           title="Eraser"
         >
           <IconEraser size={20} color="#fff" />
-        </button>
-        <button
-          onClick={() => setTool("measure")}
-          style={{ ...fab(measureMode), ...(measureMode ? { background: "rgba(0,229,255,.85)" } : {}) }}
-          title="Measurement ruler"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="2" y="8" width="20" height="8" rx="1.5"/>
-            <line x1="6" y1="8" x2="6" y2="12"/>
-            <line x1="10" y1="8" x2="10" y2="11"/>
-            <line x1="14" y1="8" x2="14" y2="11"/>
-            <line x1="18" y1="8" x2="18" y2="12"/>
-          </svg>
         </button>
         <button
           onClick={undo}
@@ -1240,94 +1128,6 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
           </button>
         </div>
       </div>
-
-      {/* ── MEASURE TOOL STATUS PANEL ──────────────────────────────────── */}
-      {measureMode && (
-        <div data-pm-ctl style={{
-          position: "absolute",
-          top: "max(70px, calc(env(safe-area-inset-top) + 58px))",
-          right: "max(12px, env(safe-area-inset-right))",
-          background: "rgba(18,18,20,.88)",
-          borderRadius: 12, padding: "10px 14px",
-          border: `1px solid ${refLine ? "rgba(0,229,255,0.4)" : "rgba(255,215,0,0.4)"}`,
-          backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
-          maxWidth: 180, boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
-        }}>
-          {refLine ? (
-            <>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#00E5FF", letterSpacing: 0.5, marginBottom: 2 }}>REFERENCE SET</div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: "#fff", marginBottom: 2 }}>{formatFeet(refFt)}</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginBottom: 10 }}>Draw to measure</div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={() => { setRefLine(null); setRefFt(null); }} style={{
-                  flex: 1, padding: "5px 6px", borderRadius: 7,
-                  background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.14)",
-                  color: "rgba(255,255,255,0.6)", fontSize: 11, cursor: "pointer",
-                }}>Reset</button>
-                <button onClick={() => setStrokes(s => s.filter(x => x.type !== "measurement"))} style={{
-                  flex: 1, padding: "5px 6px", borderRadius: 7,
-                  background: "rgba(255,59,48,0.1)", border: "1px solid rgba(255,59,48,0.25)",
-                  color: "#FF3B30", fontSize: 11, cursor: "pointer",
-                }}>Clear</button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#FFD700", letterSpacing: 0.5, marginBottom: 2 }}>STEP 1</div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 2 }}>Draw reference</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>Draw over a known length, then set its value</div>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* ── REFERENCE LENGTH MODAL ─────────────────────────────────────── */}
-      {refModal && (
-        <div data-pm-ctl style={{
-          position: "absolute", inset: 0, background: "rgba(0,0,0,0.75)",
-          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20,
-        }}>
-          <div style={{
-            background: "#1c1c1e", borderRadius: 18, padding: "22px 18px",
-            width: "min(340px, 90vw)",
-            border: "1px solid rgba(255,255,255,0.12)",
-            boxShadow: "0 8px 40px rgba(0,0,0,0.7)",
-          }}>
-            <div style={{ fontSize: 17, fontWeight: 700, color: "#fff", marginBottom: 4 }}>Set Reference Length</div>
-            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 18 }}>How long is the line you just drew?</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
-              {[
-                { label: "Door 6'8\"", ft: 6.667 }, { label: "Door 3'0\"", ft: 3 },
-                { label: "8' Board", ft: 8 }, { label: "10 Feet", ft: 10 },
-                { label: "1 Foot", ft: 1 }, { label: "2 Feet", ft: 2 },
-              ].map(p => (
-                <button key={p.label} onClick={() => confirmRef(p.ft)} style={{
-                  padding: "9px 13px", borderRadius: 9,
-                  background: "rgba(0,229,255,0.12)", border: "1px solid rgba(0,229,255,0.35)",
-                  color: "#00E5FF", fontSize: 13, fontWeight: 600, cursor: "pointer",
-                }}>{p.label}</button>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <input type="number" placeholder="Custom (feet)" value={customRefInput}
-                onChange={e => setCustomRefInput(e.target.value)}
-                style={{ flex: 1, padding: "10px 12px", borderRadius: 9,
-                  background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.18)",
-                  color: "#fff", fontSize: 14, outline: "none" }}
-              />
-              <button onClick={() => { const v = parseFloat(customRefInput); if (v > 0) confirmRef(v); }} style={{
-                padding: "10px 16px", borderRadius: 9,
-                background: "rgba(0,229,255,0.18)", border: "1px solid rgba(0,229,255,0.45)",
-                color: "#00E5FF", fontSize: 14, fontWeight: 700, cursor: "pointer",
-              }}>OK</button>
-            </div>
-            <button onClick={() => { setPendingRefSeg(null); setRefModal(false); }} style={{
-              width: "100%", background: "none", border: "none",
-              color: "rgba(255,255,255,0.35)", fontSize: 13, cursor: "pointer", padding: "6px 0",
-            }}>Cancel</button>
-          </div>
-        </div>
-      )}
 
       {/* ── ZOOM INDICATOR (only when away from default) ───────────────── */}
       {Math.abs(view.scale - INIT_SCALE) > 0.02 && (

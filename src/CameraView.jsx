@@ -35,6 +35,19 @@ const FOCUS_INDICATOR_MS  = 800;
 
 const haptic = (ms = 10) => { try { navigator.vibrate?.(ms); } catch {} };
 
+// Which physical edge of the device the portrait-bottom edge currently sits
+// on. Rotating the phone counterclockwise (angle 90) puts that edge on the
+// right; clockwise (angle 270 / -90) puts it on the left. The shutter strip
+// follows it so the button stays under the same thumb in any orientation —
+// like the native Camera app, which rotates icons but never moves controls.
+function portraitBottomEdge() {
+  let a = 0;
+  try { a = screen.orientation?.angle ?? window.orientation ?? 0; } catch {}
+  if (a === 90) return "right";
+  if (a === -90 || a === 270) return "left";
+  return "bottom";
+}
+
 export default function CameraView({ onPhoto, onClose }) {
   const videoRef     = useRef(null);
   const streamRef    = useRef(null);
@@ -69,6 +82,20 @@ export default function CameraView({ onPhoto, onClose }) {
   const pointersRef = useRef(new Map());
   const pinchRef    = useRef(null);
   const gestureRef  = useRef({ pinched: false, movedFar: false });
+
+  // Orientation — drives where the shutter strip is anchored
+  const [ctrlEdge, setCtrlEdge] = useState(portraitBottomEdge);
+  useEffect(() => {
+    const update = () => setCtrlEdge(portraitBottomEdge());
+    window.addEventListener("orientationchange", update);
+    window.addEventListener("resize", update);
+    try { screen.orientation?.addEventListener?.("change", update); } catch {}
+    return () => {
+      window.removeEventListener("orientationchange", update);
+      window.removeEventListener("resize", update);
+      try { screen.orientation?.removeEventListener?.("change", update); } catch {}
+    };
+  }, []);
 
   // ── CAMERA STREAM SETUP ────────────────────────────────────────────────────
   useEffect(() => {
@@ -454,96 +481,117 @@ export default function CameraView({ onPhoto, onClose }) {
         </div>
       )}
 
-      {/* ── BOTTOM CONTROL STRIP — floats over video, always at the bottom ─ */}
-      {/* Stays anchored to the bottom in both portrait and landscape because   */}
-      {/* we're absolutely-positioned in the fixed viewport, not in a flex box. */}
-      <div
-        data-cam-ctl
-        style={{
-          position: "absolute",
-          bottom: 0, left: 0, right: 0,
-          background: "linear-gradient(to top, rgba(0,0,0,.88) 0%, rgba(0,0,0,.5) 60%, transparent 100%)",
-          paddingTop: 44,
-          paddingBottom: "max(24px, env(safe-area-inset-bottom))",
-          paddingLeft:  "max(16px, env(safe-area-inset-left))",
-          paddingRight: "max(16px, env(safe-area-inset-right))",
-        }}
-      >
-        {/* Lens preset pills */}
-        {presets.length > 1 && (
-          <div style={{
-            display: "flex", justifyContent: "center", gap: 8,
-            marginBottom: 20,
-          }}>
-            {presets.map(p => {
-              const active = Math.abs(zoom - p) < PRESET_TOLERANCE + 0.02;
-              return (
-                <button
-                  key={p}
-                  onClick={() => { applyZoom(p); haptic(6); }}
-                  style={{
-                    minWidth: active ? 52 : 40, height: active ? 40 : 32,
-                    borderRadius: 999, padding: "0 12px",
-                    background: "rgba(28,28,30,.72)",
-                    WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                    backdropFilter:       "blur(20px) saturate(180%)",
-                    border: "1px solid rgba(255,255,255,.14)",
-                    color: active ? "#FFCC00" : "#fff",
-                    fontSize: active ? 14 : 12, fontWeight: 700,
-                    cursor: "pointer",
-                    transition: "all .18s",
-                    boxShadow: "0 2px 10px rgba(0,0,0,.35)",
-                  }}
-                >
-                  {p < 1 ? p.toFixed(1) : p}×
-                </button>
-              );
-            })}
-          </div>
-        )}
+      {/* ── CONTROL STRIP — anchored to the device's portrait-bottom edge ── */}
+      {/* In portrait that's the bottom of the screen; in landscape it's the   */}
+      {/* left or right edge (wherever the bottom of the phone physically is), */}
+      {/* so the shutter never slides away from your thumb when you rotate.    */}
+      {(() => {
+        const sideways = ctrlEdge !== "bottom";
+        const stripStyle = sideways
+          ? {
+              position: "absolute",
+              top: 0, bottom: 0, [ctrlEdge]: 0,
+              background: `linear-gradient(to ${ctrlEdge}, transparent 0%, rgba(0,0,0,.5) 40%, rgba(0,0,0,.88) 100%)`,
+              display: "flex",
+              flexDirection: ctrlEdge === "right" ? "row" : "row-reverse",
+              alignItems: "center",
+              [ctrlEdge === "right" ? "paddingLeft" : "paddingRight"]: 44,
+              [ctrlEdge === "right" ? "paddingRight" : "paddingLeft"]:
+                `max(24px, env(safe-area-inset-${ctrlEdge}))`,
+              paddingTop:    "max(16px, env(safe-area-inset-top))",
+              paddingBottom: "max(16px, env(safe-area-inset-bottom))",
+            }
+          : {
+              position: "absolute",
+              bottom: 0, left: 0, right: 0,
+              background: "linear-gradient(to top, rgba(0,0,0,.88) 0%, rgba(0,0,0,.5) 60%, transparent 100%)",
+              paddingTop: 44,
+              paddingBottom: "max(24px, env(safe-area-inset-bottom))",
+              paddingLeft:  "max(16px, env(safe-area-inset-left))",
+              paddingRight: "max(16px, env(safe-area-inset-right))",
+            };
+        return (
+          <div data-cam-ctl style={stripStyle}>
+            {/* Lens preset pills */}
+            {presets.length > 1 && (
+              <div style={sideways
+                ? { display: "flex", flexDirection: "column", justifyContent: "center", gap: 8, marginRight: ctrlEdge === "right" ? 20 : 0, marginLeft: ctrlEdge === "left" ? 20 : 0 }
+                : { display: "flex", justifyContent: "center", gap: 8, marginBottom: 20 }
+              }>
+                {presets.map(p => {
+                  const active = Math.abs(zoom - p) < PRESET_TOLERANCE + 0.02;
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => { applyZoom(p); haptic(6); }}
+                      style={{
+                        minWidth: active ? 52 : 40, height: active ? 40 : 32,
+                        borderRadius: 999, padding: "0 12px",
+                        background: "rgba(28,28,30,.72)",
+                        WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                        backdropFilter:       "blur(20px) saturate(180%)",
+                        border: "1px solid rgba(255,255,255,.14)",
+                        color: active ? "#FFCC00" : "#fff",
+                        fontSize: active ? 14 : 12, fontWeight: 700,
+                        cursor: "pointer",
+                        transition: "all .18s",
+                        boxShadow: "0 2px 10px rgba(0,0,0,.35)",
+                      }}
+                    >
+                      {p < 1 ? p.toFixed(1) : p}×
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
-        {/* Shutter row — [ Close ✕ ]  [ ◎ Shutter ]  [ spacer ] */}
-        <div style={{
-          display: "flex", alignItems: "center", justifyContent: "center",
-          gap: 50,
-        }}>
-
-          {/* Close — moved here so it stays near the shutter on every rotation */}
-          <button onClick={close} style={fab()} aria-label="Close camera">
-            <IconX size={22} color="#fff" />
-          </button>
-
-          {/* Shutter */}
-          <button
-            onClick={capture}
-            disabled={!ready}
-            aria-label="Capture photo"
-            style={{
-              width: 74, height: 74, borderRadius: 37,
-              background: "#fff",
-              border: "4px solid rgba(255,255,255,.45)",
-              cursor: ready ? "pointer" : "default",
-              opacity: ready ? 1 : 0.45,
-              boxShadow: "0 0 18px rgba(255,255,255,.18)",
-              padding: 0,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              transition: "transform .08s",
-              flexShrink: 0,
-            }}
-            onPointerDown={(e) => { e.currentTarget.style.transform = "scale(.93)"; }}
-            onPointerUp={(e)   => { e.currentTarget.style.transform = "scale(1)"; }}
-            onPointerLeave={(e)=> { e.currentTarget.style.transform = "scale(1)"; }}
-          >
+            {/* Shutter group — [ Close ✕ ]  [ ◎ Shutter ]  [ spacer ]; a column when sideways */}
             <div style={{
-              width: 62, height: 62, borderRadius: 31,
-              border: "2.5px solid #000",
-            }}/>
-          </button>
+              display: "flex",
+              flexDirection: sideways ? "column" : "row",
+              alignItems: "center", justifyContent: "center",
+              gap: 50,
+              ...(sideways ? { height: "100%" } : {}),
+            }}>
 
-          {/* Right spacer — keeps shutter centered */}
-          <div style={{ width: 44, height: 44, flexShrink: 0 }} />
-        </div>
-      </div>
+              {/* Close — stays beside the shutter on every rotation */}
+              <button onClick={close} style={fab()} aria-label="Close camera">
+                <IconX size={22} color="#fff" />
+              </button>
+
+              {/* Shutter */}
+              <button
+                onClick={capture}
+                disabled={!ready}
+                aria-label="Capture photo"
+                style={{
+                  width: 74, height: 74, borderRadius: 37,
+                  background: "#fff",
+                  border: "4px solid rgba(255,255,255,.45)",
+                  cursor: ready ? "pointer" : "default",
+                  opacity: ready ? 1 : 0.45,
+                  boxShadow: "0 0 18px rgba(255,255,255,.18)",
+                  padding: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  transition: "transform .08s",
+                  flexShrink: 0,
+                }}
+                onPointerDown={(e) => { e.currentTarget.style.transform = "scale(.93)"; }}
+                onPointerUp={(e)   => { e.currentTarget.style.transform = "scale(1)"; }}
+                onPointerLeave={(e)=> { e.currentTarget.style.transform = "scale(1)"; }}
+              >
+                <div style={{
+                  width: 62, height: 62, borderRadius: 31,
+                  border: "2.5px solid #000",
+                }}/>
+              </button>
+
+              {/* Spacer — keeps shutter centered */}
+              <div style={{ width: 44, height: 44, flexShrink: 0 }} />
+            </div>
+          </div>
+        );
+      })()}
 
       <style>{`
         @keyframes cv-focus {
