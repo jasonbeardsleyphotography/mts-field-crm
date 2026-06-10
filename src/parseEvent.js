@@ -24,6 +24,18 @@ export function parseEvent(ev) {
   const afterJob = s.replace(/^Task \| #\d+\s*/, "");
   const segments = afterJob.split(/ - /).map(x => x.trim()).filter(Boolean);
 
+  // Some titles carry a job-type code before the street number ("PHC 6 Timber
+  // Ln"). It must NOT end up in the address — Google Maps chokes on it — but
+  // it's real information, so keep it for title context display.
+  let addrPrefix = "";
+  if (segments.length) {
+    const pm = segments[0].match(/^((?:[A-Z]{2,6}\s+)+)(?=\d)/);
+    if (pm) {
+      addrPrefix = pm[1].trim();
+      segments[0] = segments[0].slice(pm[1].length).trim();
+    }
+  }
+
   // Detect if a segment looks like an address (starts with number + street-like words or is a zip)
   const looksLikeAddr = (t) => /^\d+\s+\w/.test(t) && /\b(rd|st|ave|dr|ln|ct|blvd|way|pl|cir|pkwy|hwy|ter|trail|road|street|avenue|drive|lane|court)\b/i.test(t) || /^\d{5}$/.test(t.trim()) || /\b\d{5}\b/.test(t);
 
@@ -99,7 +111,15 @@ export function parseEvent(ev) {
   if (/MEET (?:AT |.+?AT )(.+?)$/i.test(s)) { const m = s.match(/MEET (?:AT |.+?AT )(.+?)$/i); if (m) constraint = (constraint ? constraint + " · " : "") + "📍 " + m[1].slice(0,40); }
   if (/YARD STICK/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "🪧 Yard stick";
   if (/WE CAN MOVE/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "↔ Flexible";
-  if (!constraint && !isDriveBy && durH < 3) constraint = "⏰ " + fmt(start) + "–" + fmt(end);
+  // Call out the time whenever it differs from the standard arrival windows
+  // (AM = 8–12, PM = 11–3). A 12–3 task is exactly 3 hours, so the old
+  // "duration < 3h" check missed it even though it starts an hour late —
+  // anything non-standard must be visible on the card.
+  const endH = end.getHours() + end.getMinutes()/60;
+  const stdStart = window === "AM" ? 8 : 11;
+  const stdEnd   = window === "AM" ? 12 : 15;
+  const nonStandard = Math.abs(startH - stdStart) > 0.01 || Math.abs(endH - stdEnd) > 0.01;
+  if (!constraint && !isDriveBy && nonStandard && durH < 12) constraint = "⏰ " + fmt(start) + "–" + fmt(end);
 
   // Clean up title context — strip visit type prefixes
   if (titleContext) {
@@ -107,6 +127,8 @@ export function parseEvent(ev) {
     titleContext = titleContext.replace(/^DRIVE[\s-]?BY\s*[-–]?\s*/i, "");
     if (titleContext.length <= 2) titleContext = "";
   }
+  // Surface any code stripped off the address (e.g. "PHC") as context instead.
+  if (addrPrefix) titleContext = titleContext ? `${addrPrefix} – ${titleContext}` : addrPrefix;
 
   const color = stageColor(ev.colorId);
 

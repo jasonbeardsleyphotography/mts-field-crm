@@ -17,8 +17,8 @@
 
    Why this file is separate from driveSync.js:
    - driveSync.js does small JSON state and small multipart photo uploads
-   - This file does large chunked uploads with resume, retry, timeout, and
-     a per-chunk timeout enforcement to handle cellular flake correctly
+   - This file does large streaming uploads with stall detection and
+     offset-based resume to handle cellular flake correctly
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { findOrCreateFolder } from "./driveSync";
@@ -31,10 +31,9 @@ const ROOT_FOLDER = "MTS Field";
 const FIELD_FOLDER = "field-data";
 const VIDEOS_FOLDER = "videos";
 
-// Per-chunk timeout. The whole reason we're rewriting: previously a hung
-// fetch() would wait forever. With a 60s timeout we treat any chunk that
-// takes longer than 60s as a network failure that triggers retry/backoff.
-// 60s is generous — even on slow LTE, a 5MB chunk transfers in under 30s.
+// Timeout for the small control requests (session init, offset query). The
+// big data transfer uses a progress-based stall watchdog instead — see
+// uploadFromOffset below.
 const CHUNK_TIMEOUT_MS = 60_000;
 
 /**
@@ -89,55 +88,76 @@ export async function initDriveSession(token, title, size, mime, parentId) {
   return { ok: true, sessionUrl: loc };
 }
 
+// If no bytes move for this long, the request is dead — abort and let the
+// queue re-query the server offset and resume. This replaces a fixed total
+// timeout: a 500MB upload legitimately takes many minutes, but a healthy
+// transfer fires progress events constantly, so 45s of silence means stalled.
+const STALL_TIMEOUT_MS = 45_000;
+
 /**
- * Upload one chunk via XMLHttpRequest.
+ * Upload everything from `startByte` to end-of-file in ONE streaming PUT.
  *
- * Why XHR instead of fetch: XHR exposes `upload.onprogress`, giving real
- * byte-level progress *within* a chunk. With the adaptive chunk sizing in
- * videoQueue.js (chunks can be many MB), fetch would only update the progress
- * bar once per chunk — XHR keeps it moving smoothly. XHR also has a native
- * `timeout` and `abort()`, so we keep the per-chunk timeout that prevents a
- * stalled request from hanging forever on cellular flake.
+ * This is Google's documented best practice: use a single request when you
+ * can, and lean on the resumable protocol only for *recovery*. Chunking every
+ * upload (what we did before) pays a network round-trip per chunk for no
+ * benefit — Drive persists whatever bytes it received even when a request
+ * dies mid-flight, and queryUploadOffset() tells us exactly where to resume.
+ * So the fast path is one request with zero protocol overhead, and the
+ * failure path costs only one offset query before resuming.
  *
- * The resumable session URL is pre-authenticated (it embeds an upload_id), so
- * no Authorization header is needed here — which conveniently means chunk PUTs
- * keep working even if the OAuth token expires mid-upload on a long transfer.
+ * XHR instead of fetch for two reasons: `upload.onprogress` gives real
+ * byte-level progress for the bar, and progress events double as the
+ * liveness signal for the stall watchdog (fetch exposes neither).
+ *
+ * The session URL is pre-authenticated (it embeds an upload_id), so no
+ * Authorization header is needed — uploads keep working even if the OAuth
+ * token expires mid-transfer.
  *
  * @param {string}   sessionUrl  resumable session URL
- * @param {Blob}     chunkBlob   the slice to send
- * @param {number}   startByte   absolute start offset of this chunk
- * @param {number}   endByte     absolute end offset (inclusive)
+ * @param {Blob}     blob        file.slice(startByte) — the remainder to send
+ * @param {number}   startByte   absolute offset this PUT starts at
  * @param {number}   totalSize   full file size
  * @param {object}   [opts]
- * @param {number}   [opts.timeoutMs]   per-chunk timeout
+ * @param {number}   [opts.stallMs]     abort after this long with no progress
  * @param {function} [opts.onProgress]  (absoluteBytesUploaded) => void
  *
  * Return shape:
  *   { kind: "ok-final", fileId, webViewLink }
- *   { kind: "ok-progress", nextOffset }
+ *   { kind: "ok-progress", nextOffset }   (server replied 308 — resume from offset)
  *   { kind: "session-expired" }
  *   { kind: "error", error, timedOut? }
  */
-export function uploadChunk(sessionUrl, chunkBlob, startByte, endByte, totalSize, opts = {}) {
-  const { timeoutMs = CHUNK_TIMEOUT_MS, onProgress } = opts;
+export function uploadFromOffset(sessionUrl, blob, startByte, totalSize, opts = {}) {
+  const { stallMs = STALL_TIMEOUT_MS, onProgress } = opts;
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     let settled = false;
-    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+    let stallTimer = null;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(stallTimer);
+      resolve(v);
+    };
+    const armStallWatchdog = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        try { xhr.abort(); } catch {}
+        done({ kind: "error", error: `No upload progress for ${Math.round(stallMs / 1000)}s`, timedOut: true });
+      }, stallMs);
+    };
 
     try {
       xhr.open("PUT", sessionUrl, true);
     } catch (e) {
       return done({ kind: "error", error: `Open failed: ${e?.message || e}` });
     }
-    xhr.timeout = timeoutMs;
-    xhr.setRequestHeader("Content-Range", `bytes ${startByte}-${endByte}/${totalSize}`);
+    xhr.setRequestHeader("Content-Range", `bytes ${startByte}-${totalSize - 1}/${totalSize}`);
 
-    if (onProgress) {
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) onProgress(startByte + e.loaded);
-      };
-    }
+    xhr.upload.onprogress = (e) => {
+      armStallWatchdog();
+      if (onProgress && e.lengthComputable) onProgress(startByte + e.loaded);
+    };
 
     xhr.onload = () => {
       const status = xhr.status;
@@ -152,16 +172,16 @@ export function uploadChunk(sessionUrl, chunkBlob, startByte, endByte, totalSize
         const range = xhr.getResponseHeader("Range");
         if (!range) return done({ kind: "ok-progress", nextOffset: 0 });
         const m = range.match(/bytes=0-(\d+)/);
-        return done({ kind: "ok-progress", nextOffset: m ? parseInt(m[1], 10) + 1 : endByte + 1 });
+        return done({ kind: "ok-progress", nextOffset: m ? parseInt(m[1], 10) + 1 : startByte });
       }
       if (status === 404 || status === 410) return done({ kind: "session-expired" });
       done({ kind: "error", error: `HTTP ${status}: ${(xhr.responseText || "").slice(0, 200)}` });
     };
-    xhr.ontimeout = () => done({ kind: "error", error: `Chunk timeout (${Math.round(timeoutMs / 1000)}s)`, timedOut: true });
-    xhr.onerror   = () => done({ kind: "error", error: "Network error during chunk upload" });
-    xhr.onabort   = () => done({ kind: "error", error: "Chunk aborted" });
+    xhr.onerror = () => done({ kind: "error", error: "Network error during upload" });
+    xhr.onabort = () => done({ kind: "error", error: "Upload aborted" });
 
-    try { xhr.send(chunkBlob); }
+    armStallWatchdog();
+    try { xhr.send(blob); }
     catch (e) { done({ kind: "error", error: `Send failed: ${e?.message || e}` }); }
   });
 }
