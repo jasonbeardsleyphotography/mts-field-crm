@@ -268,6 +268,10 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   const detailScopeLibRef = useRef(null);
   const detailAddonLibRef = useRef(null);
   const detailYtFileRef = useRef(null);
+  // Tracks whether a mousedown started directly on the detail-popup backdrop,
+  // so a drag that ends outside the card (e.g. selecting the client name and
+  // releasing past the card edge) doesn't close the popup.
+  const detailBackdropDownRef = useRef(false);
   // Pipeline undo — stores the card state snapshot before the last manual move
   const pipelineRef = useRef({});      // always-current mirror of pipeline (avoids stale closure)
   const [undoAction, setUndoAction] = useState(null); // { prevCard, label } | null
@@ -978,6 +982,30 @@ Property: ${card.addr || ""}`);
     return d === 0 ? "today" : d === 1 ? "1d" : `${d}d`;
   };
 
+  // Tiny "tick" sound for clipboard-copy feedback — synthesized via WebAudio
+  // so no audio asset is needed.
+  const playCopiedSound = () => {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new Ctx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 1100;
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.12);
+      osc.onended = () => ctx.close();
+    } catch {}
+  };
+
+  const copyClientName = (name) => {
+    if (!name) return;
+    navigator.clipboard?.writeText(name).then(playCopiedSound).catch(() => {});
+  };
+
   // Format a lastContact entry into "Called · 2h ago" style.
   // Returns null if no contact recorded.
   const formatContact = (lc) => {
@@ -1359,14 +1387,17 @@ Property: ${card.addr || ""}`);
           }
         }
 
-        return <div onClick={() => setDetailCard(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+        return <div
+          onMouseDown={e => { detailBackdropDownRef.current = e.target === e.currentTarget; }}
+          onClick={e => { if (detailBackdropDownRef.current && e.target === e.currentTarget) setDetailCard(null); }}
+          style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
           <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",width:"100%",maxWidth:880,height:"100%",maxHeight:"min(100vh, 900px)",display:"flex",flexDirection:"column",overflow:"hidden",borderRadius:14,boxShadow:"0 20px 60px rgba(0,0,0,.6)",border:"1px solid #1a2030"}}>
             <div style={{flex:1,overflowY:"auto"}}>
 
             {/* Header — paddingTop respects iPhone notch / Dynamic Island */}
             <div style={{padding:"16px 20px",paddingTop:"max(16px, env(safe-area-inset-top))",background:"#0a0b10",borderBottom:"1px solid #1a2030",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:1}}>
               <div style={{flex:1}}>
-                <div style={{fontSize:20,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.5}}>{card.hot && <IconFire size={16} color="#FFB300" style={{marginRight:6,flexShrink:0}}/>}{card.cn}</div>
+                <div onClick={() => copyClientName(card.cn)} title="Tap to copy name" style={{fontSize:20,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.5,cursor:"pointer",userSelect:"none"}}>{card.hot && <IconFire size={16} color="#FFB300" style={{marginRight:6,flexShrink:0}}/>}{card.cn}</div>
                 {card.addr && <div style={{fontSize:13,color:"#8a96a8",fontFamily:F,textTransform:"uppercase",letterSpacing:1,marginTop:2}}>{card.addr}</div>}
                 {(() => {
                   const lc = formatContact(lastContact[card.id]);
