@@ -34,7 +34,7 @@
      photo entry (the original stays uploaded; the new one starts fresh).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-import { loadField, updateField } from "./fieldStore";
+import { loadField, updateField, listFieldIds } from "./fieldStore";
 import { uploadPhotoToDrive, queueFieldDriveSync } from "./driveSync";
 import { downscaleDataUrl, OVERSIZE_DATAURL_LEN, photoKey } from "./imageUtils";
 import { logError, logWarn, logInfo } from "./debugLog";
@@ -193,11 +193,11 @@ async function _shrinkOversized(stopId, data) {
 
 // ── Promote (evict dataUrl after grace period) ──────────────────────────
 
-async function promoteStop(stopId) {
+export async function promoteStop(stopId) {
   let data;
   try { data = await loadField(stopId); }
-  catch { return; }
-  if (!data) return;
+  catch { return 0; }
+  if (!data) return 0;
 
   const sections = ["scopePhotos", "addonPhotos"];
   // Track which ts/url keys should have their dataUrl evicted.
@@ -237,6 +237,7 @@ async function promoteStop(stopId) {
     }).catch(() => {});
   }
   if (!stillHasFresh) unmarkStopForPromotion(stopId);
+  return toEvict.size;
 }
 
 // ── Process the entire queue ─────────────────────────────────────────────
@@ -270,6 +271,32 @@ export async function processPromotionQueue() {
   for (const stopId of promoteQ) {
     await promoteStop(stopId);
   }
+}
+
+// ── Global eviction backstop ─────────────────────────────────────────────
+// processPromotionQueue() above only revisits stops that were marked during
+// THIS session's upload. Photos synced on another device, or stops that fell
+// out of the queue early, never get re-checked — so their dataUrls can sit
+// around forever even though they're long since safe to drop. This sweeps
+// every stop in the store and applies the same age check, as a backstop.
+const SWEEP_LAST_KEY = "mts-photo-sweep-last";
+const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000; // once a day
+
+export async function sweepAllPhotos() {
+  const ids = await listFieldIds();
+  let stopsScanned = 0, photosEvicted = 0;
+  for (const id of ids) {
+    stopsScanned++;
+    photosEvicted += (await promoteStop(id)) || 0;
+  }
+  try { localStorage.setItem(SWEEP_LAST_KEY, String(Date.now())); } catch {}
+  return { stopsScanned, photosEvicted };
+}
+
+function maybeSweepAllPhotos() {
+  let last = 0;
+  try { last = parseInt(localStorage.getItem(SWEEP_LAST_KEY) || "0", 10) || 0; } catch {}
+  if (Date.now() - last >= SWEEP_INTERVAL_MS) sweepAllPhotos();
 }
 
 // ── Watcher ──────────────────────────────────────────────────────────────
@@ -309,4 +336,6 @@ export function startPhotoSyncWatcher(getToken) {
   if (tok && navigator.onLine) processPhotoQueue(tok);
   // Also run promotion sweep periodically (independent of token)
   processPromotionQueue();
+  // And the global backstop sweep, at most once a day
+  maybeSweepAllPhotos();
 }
