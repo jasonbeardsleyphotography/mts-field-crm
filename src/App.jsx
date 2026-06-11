@@ -1399,10 +1399,19 @@ export default function App() {
   const [ttsSpeaking, setTtsSpeaking] = useState(false);
   const [ttsError, setTtsError] = useState(null);
 
+  // W3C Audio Session API (Safari 17+). "transient-solo" makes the spoken
+  // notes behave like a nav prompt: other audio (Music, podcasts — including
+  // over CarPlay) pauses while we speak and resumes after. Silent no-op on
+  // browsers without the API.
+  const setAudioSession = (type) => {
+    try { if (navigator.audioSession) navigator.audioSession.type = type; } catch {}
+  };
+
   const resetTts = () => {
     setTtsSpeaking(false);
     if (ttsSafetyTimer.current) { clearInterval(ttsSafetyTimer.current); ttsSafetyTimer.current = null; }
     if (window.speechSynthesis?.speaking || window.speechSynthesis?.paused) window.speechSynthesis.cancel();
+    setAudioSession("auto");
   };
 
   const speakStop = (stop) => {
@@ -1412,17 +1421,27 @@ export default function App() {
     const text = stop.notes || "No notes available.";
     setTtsError(null);
 
-    // Clear any stale iOS synthesis queue before starting.
-    window.speechSynthesis.cancel();
+    // Cancel only when something is actually in the queue. An unconditional
+    // cancel() right before speak() trips a WebKit bug that silently drops
+    // the new utterance — that was the old "first tap does nothing" behavior.
+    const synth = window.speechSynthesis;
+    if (synth.speaking || synth.pending || synth.paused) synth.cancel();
 
     // iOS pauses speechSynthesis when the audio route changes (CarPlay plug/unplug,
     // Bluetooth handoff). This interval resumes it whenever that happens.
     const resumeInterval = setInterval(() => {
-      if (window.speechSynthesis.paused && window.speechSynthesis.speaking) {
-        window.speechSynthesis.resume();
+      if (synth.paused && synth.speaking) {
+        synth.resume();
       }
     }, 500);
     ttsSafetyTimer.current = resumeInterval;
+
+    const finish = () => {
+      clearInterval(resumeInterval);
+      ttsSafetyTimer.current = null;
+      setTtsSpeaking(false);
+      setAudioSession("auto");
+    };
 
     let attempts = 0;
     const attempt = () => {
@@ -1431,26 +1450,35 @@ export default function App() {
       u.rate = 0.88;
       u.pitch = 1;
 
+      // If WebKit silently drops the utterance (the cancel→speak race),
+      // no onstart/onerror ever fires. Detect that and retry instead of
+      // leaving the user to tap again.
+      let started = false;
+      const dropWatchdog = setTimeout(() => {
+        if (!started && !synth.speaking) {
+          if (attempts < 2) { attempt(); }
+          else { finish(); setTtsError("Audio didn't start — tap to try again"); }
+        }
+      }, 400);
+
       // Only flip the button to "active" when speech actually begins. On iOS,
       // setting ttsSpeaking=true before speak() causes a stuck-active state when
       // the system silently fails to start: the button shows active with no audio,
       // the next tap resets it, and the tap after that finally works. Waiting for
       // onstart means if iOS drops the utterance silently, the button stays tappable
       // and the next tap retries normally.
-      u.onstart = () => { setTtsSpeaking(true); };
+      u.onstart = () => { started = true; clearTimeout(dropWatchdog); setTtsSpeaking(true); };
 
       u.onend = () => {
-        clearInterval(resumeInterval);
-        ttsSafetyTimer.current = null;
-        setTtsSpeaking(false);
+        clearTimeout(dropWatchdog);
+        finish();
       };
 
       u.onerror = (ev) => {
+        clearTimeout(dropWatchdog);
         // "interrupted" = stopped by another utterance; "canceled" = user/cancel() call.
         if (ev.error === "interrupted" || ev.error === "canceled") {
-          clearInterval(resumeInterval);
-          ttsSafetyTimer.current = null;
-          setTtsSpeaking(false);
+          finish();
           return;
         }
         // Retry once on transient failures (CarPlay/Bluetooth handoff).
@@ -1458,9 +1486,7 @@ export default function App() {
           setTimeout(attempt, 350);
           return;
         }
-        clearInterval(resumeInterval);
-        ttsSafetyTimer.current = null;
-        setTtsSpeaking(false);
+        finish();
         setTtsError(
           (ev.error === "synthesis-failed" || ev.error === "audio-busy")
             ? "Audio unavailable — if CarPlay is active, try again after tapping the screen"
@@ -1468,13 +1494,16 @@ export default function App() {
         );
       };
 
-      window.speechSynthesis.speak(u);
+      synth.speak(u);
     };
 
-    // Small delay after cancel() so iOS finishes clearing audio state.
-    const voices = window.speechSynthesis.getVoices();
-    if (voices.length) { setTimeout(attempt, 50); }
-    else { window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.onvoiceschanged = null; setTimeout(attempt, 50); }; }
+    // Pause other audio (Music/CarPlay) for the duration, like a nav prompt.
+    setAudioSession("transient-solo");
+    // Speak synchronously inside the tap — iOS requires the session's first
+    // speak() to run under user activation, and the utterance uses the
+    // default voice, so there is nothing to wait for. (The old code deferred
+    // this behind a getVoices() gate that never resolved on first tap.)
+    attempt();
   };
 
   const handleReorderTap = (idx) => {
