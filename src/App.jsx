@@ -14,6 +14,7 @@ import UploadTracker from "./UploadTracker";
 import DebugPanel from "./DebugPanel";
 import NextStopCard from "./NextStopCard";
 import VideoUploads from "./VideoUploads";
+import StoragePanel from "./StoragePanel";
 import RecoveryScreen from "./RecoveryScreen";
 import Linkify from "./Linkify";
 import AddStopModal from "./AddStopModal";
@@ -23,7 +24,7 @@ import {
   IconClipboard, IconX, IconRotateCcw, IconRefresh, IconReorder, IconUndo,
   IconPlus, IconSearch, IconTrash, IconChevronDown, IconChevronRight,
   IconCloud, IconCloudOff, IconCheckCircle, IconEdit, IconPhone, IconMail, IconClock, IconCalendar,
-  IconNoSymbol
+  IconNoSymbol, IconDatabase
 } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1078,6 +1079,7 @@ export default function App() {
   const [rejectConfirm, setRejectConfirm] = useState(null);  // stop id awaiting reject confirm
   const [signOutConfirm, setSignOutConfirm] = useState(false);
   const [uploadsOpen, setUploadsOpen] = useState(false);
+  const [storageOpen, setStorageOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [nextStopCard, setNextStopCard] = useState(null); // { stop, stopNumber, totalStops }
@@ -1881,6 +1883,11 @@ export default function App() {
           style={{width:34,height:34,borderRadius:8,background:"rgba(99,102,241,.1)",border:"1px solid rgba(99,102,241,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
           <IconSearch size={15} color="#818cf8" />
         </button>
+        {/* Storage */}
+        <button onClick={()=>setStorageOpen(true)} title="Storage usage"
+          style={{width:34,height:34,borderRadius:8,background:"rgba(99,102,241,.1)",border:"1px solid rgba(99,102,241,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <IconDatabase size={15} color="#818cf8" />
+        </button>
         {/* Sign Out */}
         <button
           onClick={()=>{ if(signOutConfirm){ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
@@ -2103,6 +2110,7 @@ export default function App() {
 
       {/* ── VIDEO UPLOAD MANAGER ──────────────────────────────────── */}
       <VideoUploads open={uploadsOpen} onClose={() => setUploadsOpen(false)} stopMap={stopMap} />
+      <StoragePanel open={storageOpen} onClose={() => setStorageOpen(false)} />
 
       {/* ── DATA RECOVERY SCREEN ─────────────────────────────────── */}
       {recoveryOpen && (

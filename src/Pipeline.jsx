@@ -410,6 +410,26 @@ Property: ${card.addr || ""}`);
     setDetailMarkup(null);
   };
 
+  // Save edits to the current photo without closing markup, then switch index.
+  const detailSaveMarkupOnly = (newDataUrl, idx, section, cardId) => {
+    const key = section === "addon" ? "addonPhotos" : "scopePhotos";
+    const pk = _detailPhotoKeyAt(idx, key, cardId);
+    if (pk === null) return;
+    const applyMarkup = (p) => photoKey(p) === pk ? { ...p, dataUrl: newDataUrl, url: undefined } : p;
+    setEditFields(prev => {
+      const cur = prev[cardId] || {};
+      const cached = fieldCacheRef.current[cardId] || peekField(cardId);
+      const existing = [...(cur[key] || cached?.[key] || cached?.photos || [])];
+      return { ...prev, [cardId]: { ...cur, [key]: existing.map(applyMarkup) } };
+    });
+    updateField(cardId, (existing) => {
+      const arr = existing[key] || existing.photos || [];
+      return { [key]: arr.map(applyMarkup) };
+    }).catch(() => {});
+    markStopForPhotoSync(cardId);
+  };
+
+
   // ── DOWNLOAD PHOTOS ───────────────────────────────────────────────────
   const [downloadingPhotos, setDownloadingPhotos] = useState(false);
   // Tracks individual photo downloads in progress: Set of "scope_0", "addon_2", etc.
@@ -1321,9 +1341,20 @@ Property: ${card.addr || ""}`);
               );
             }
             return <PhotoMarkup
+              key={`${detailMarkup.section}-${detailMarkup.idx}`}
               photoDataUrl={detailMarkupSrc}
               onSave={dataUrl => detailSaveMarkup(dataUrl, detailMarkup.idx, detailMarkup.section, card.id)}
               onCancel={() => setDetailMarkup(null)}
+              hasPrev={detailMarkup.idx > 0}
+              hasNext={detailMarkup.idx < photos.length - 1}
+              onPrev={(dataUrl, hasEdits) => {
+                if (hasEdits) detailSaveMarkupOnly(dataUrl, detailMarkup.idx, detailMarkup.section, card.id);
+                setDetailMarkup(m => ({ ...m, idx: m.idx - 1 }));
+              }}
+              onNext={(dataUrl, hasEdits) => {
+                if (hasEdits) detailSaveMarkupOnly(dataUrl, detailMarkup.idx, detailMarkup.section, card.id);
+                setDetailMarkup(m => ({ ...m, idx: m.idx + 1 }));
+              }}
             />;
           }
         }
