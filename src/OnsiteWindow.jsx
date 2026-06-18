@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import PhotoMarkup from "./PhotoMarkup";
 import CameraView from "./CameraView";
+import VideoRecorder from "./VideoRecorder";
 import { loadFieldFromDrive, queueFieldDriveSync } from "./driveSync";
 import { loadField, peekField, primeField, mergeField, updateField, saveFieldSync, getFieldSlim, getDirtyFieldIds } from "./fieldStore";
 import { loadPipeline } from "./Pipeline";
@@ -40,7 +41,7 @@ import {
   isPaused as isVideoQueuePaused,
   setPaused as setVideoQueuePaused,
 } from "./videoQueue";
-import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconRotateCcw, IconSend, IconNoSymbol } from "./icons";
+import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
@@ -106,6 +107,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [markupSection, setMarkupSection] = useState("scope"); // which photo array to edit
   const [showCamera, setShowCamera] = useState(false);
   const [cameraSection, setCameraSection] = useState("scope");
+  const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recDuration, setRecDuration] = useState(0);
   const [playingIdx, setPlayingIdx] = useState(null);
@@ -124,10 +126,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [declineConfirm, setDeclineConfirm] = useState(false);
   const [rejectConfirm, setRejectConfirm] = useState(false);
   const [jobNotesOpen, setJobNotesOpen] = useState(false);
-  const [isRevision, setIsRevision] = useState(false);
-  // Prior visit notes — loaded once on mount, shown only when isRevision is true
-  const [priorVisit, setPriorVisit] = useState(null);
-  const [priorVisitOpen, setPriorVisitOpen] = useState(false);
 
   // ── PROPERTY MEMORY ──────────────────────────────────────────────────────
   // Synchronous read from pipeline localStorage — zero async cost.
@@ -518,20 +516,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       return () => { dead = true; };
     }
   }, [s.id, token]);
-
-  // ── PRIOR VISIT NOTES ────────────────────────────────────────────────
-  // Snapshot the field data that existed at the time OnsiteWindow mounts.
-  // Stored in a ref so it doesn't update mid-session as the user edits.
-  // Only shown when isRevision === true.
-  useEffect(() => {
-    loadField(s.id).then(data => {
-      if (!data || Object.keys(data).length === 0) return;
-      const scope = data.scopeNotes || data.myNotes || "";
-      const addon = data.addonNotes || "";
-      if (scope || addon) setPriorVisit({ scopeNotes: scope, addonNotes: addon });
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.id]);
 
   // ── PHOTO HANDLING ──────────────────────────────────────────────────
   // processPhoto delegates to the module-level _processPhoto so that photo
@@ -1079,18 +1063,23 @@ Property: ${s.addr || ""}`);
   // (State hooks for videoQueueItems / uploadMode / showQueuePanel live
   //  above the early returns, in the hook section, per Rules of Hooks.)
 
+  // Shared by both video sources (in-app recorder + library picker) so queued
+  // items are named consistently regardless of how they were captured.
+  const buildVideoTitle = () => {
+    const lastName = (s.cn || "").split(" ").pop();
+    const jobPart = s.jn ? ` #${s.jn}` : "";
+    const datePart = new Date().toLocaleDateString("en-US", {month:"2-digit",day:"2-digit",year:"numeric"});
+    // Sequence number = existing uploaded videos + already-queued videos + this one
+    const totalCount = videoUrls.length + videoQueueItems.length + 1;
+    const seqNum = String(totalCount).padStart(2, "0");
+    return `${lastName}${jobPart} ${datePart} - ${seqNum}`;
+  };
+
   const handleYtFile = async (e) => {
     const file = e.target.files?.[0];
     if (file) {
-      const lastName = (s.cn || "").split(" ").pop();
-      const jobPart = s.jn ? ` #${s.jn}` : "";
-      const datePart = new Date().toLocaleDateString("en-US", {month:"2-digit",day:"2-digit",year:"numeric"});
-      // Sequence number = existing uploaded videos + already-queued videos + this one
-      const totalCount = videoUrls.length + videoQueueItems.length + 1;
-      const seqNum = String(totalCount).padStart(2, "0");
-      const title = `${lastName}${jobPart} ${datePart} - ${seqNum}`;
       try {
-        await enqueueVideo({ stopId: s.id, file, title });
+        await enqueueVideo({ stopId: s.id, file, title: buildVideoTitle() });
       } catch (err) {
         console.warn("Failed to enqueue video:", err);
         alert("Failed to queue video: " + (err.message || err));
@@ -1098,6 +1087,23 @@ Property: ${s.addr || ""}`);
     }
     e.target.value = "";
   };
+
+  const handleRecordedVideo = async (file) => {
+    setShowVideoRecorder(false);
+    try {
+      await enqueueVideo({ stopId: s.id, file, title: buildVideoTitle() });
+    } catch (err) {
+      console.warn("Failed to enqueue recorded video:", err);
+      alert("Failed to queue video: " + (err.message || err));
+    }
+  };
+
+  if (showVideoRecorder) {
+    return <VideoRecorder
+      onRecorded={handleRecordedVideo}
+      onClose={() => setShowVideoRecorder(false)}
+    />;
+  }
 
   // Explicit final save then call onDone — guarantees current React state
   // (all visible photos/notes) is persisted to IDB before the component unmounts
@@ -1150,19 +1156,13 @@ Property: ${s.addr || ""}`);
       {/* ── HEADER ────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",paddingTop:"max(10px,env(safe-area-inset-top))",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
         <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:4,padding:"6px 12px",borderRadius:8,background:"transparent",border:"1px solid #252d47",color:"#90a8c0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}><IconArrowLeft size={13} color="#90a8c0"/>Route</button>
-        {/* Confidence indicator — local always green; cloud shows sync state */}
-        <div style={{display:"flex",gap:4,alignItems:"center",flexShrink:0}}>
-          <div title="Saved locally" style={{display:"flex",alignItems:"center",gap:2,padding:"2px 6px",borderRadius:5,background:"rgba(16,185,129,.08)",border:"1px solid rgba(16,185,129,.2)"}}>
-            <svg width={8} height={8} viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="#10B981"/></svg>
-            <span style={{fontSize:9,color:"#10B981",fontWeight:700,fontFamily:F}}>LOCAL</span>
-          </div>
-          <div title={cloudSynced ? "Synced to cloud" : "Pending cloud push"} style={{display:"flex",alignItems:"center",gap:2,padding:"2px 6px",borderRadius:5,background:cloudSynced?"rgba(16,185,129,.08)":"rgba(246,191,38,.08)",border:`1px solid ${cloudSynced?"rgba(16,185,129,.2)":"rgba(246,191,38,.2)"}`}}>
-            <svg width={8} height={8} viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill={cloudSynced?"#10B981":"#F6BF26"}/></svg>
-            <span style={{fontSize:9,color:cloudSynced?"#10B981":"#F6BF26",fontWeight:700,fontFamily:F}}>CLOUD</span>
-          </div>
+        {/* Confidence indicator — local always green; cloud shows sync state.
+            Stacked vertically as bare dots (no labels) to save header width. */}
+        <div style={{display:"flex",flexDirection:"column",gap:2,flexShrink:0}}>
+          <div title="Saved locally"><svg width={7} height={7} viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="#10B981"/></svg></div>
+          <div title={cloudSynced ? "Synced to cloud" : "Pending cloud push"}><svg width={7} height={7} viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill={cloudSynced?"#10B981":"#F6BF26"}/></svg></div>
         </div>
         <div style={{flex:1,minWidth:0}}/>
-        <button onClick={()=>setIsRevision(!isRevision)} title="Revision" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"6px 8px",borderRadius:8,background:isRevision?"rgba(255,107,157,.15)":"transparent",border:isRevision?"1px solid rgba(255,107,157,.3)":"1px solid #252d47",cursor:"pointer",flexShrink:0}}><IconRotateCcw size={15} color={isRevision?"#FF6B9D":"#3a4a60"}/></button>
         {/* Decline — moved from bottom bar so it can't be hit when reaching for DONE */}
         {!declineConfirm ? (
           <button onClick={()=>setDeclineConfirm(true)} title="Decline lead" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"6px 8px",borderRadius:8,background:"transparent",border:"1px solid #252d47",cursor:"pointer",flexShrink:0}}><IconX size={15} color="#a06060"/></button>
@@ -1253,33 +1253,6 @@ Property: ${s.addr || ""}`);
               {!jobNotesOpen && <span style={{flex:1,fontSize:12,color:"#8898a8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginLeft:4}}>{s.notes.length > 80 ? s.notes.slice(0,80) + "…" : s.notes}</span>}
             </button>
             {jobNotesOpen && <div style={{padding:"0 16px 12px",fontSize:13,color:"#8898a8",lineHeight:1.6}}><Linkify text={s.notes} linkColor="#7BB3FF"/></div>}
-          </div>
-        )}
-
-        {/* ── NOTES FROM LAST VISIT (revision mode only) ───────────────── */}
-        {isRevision && priorVisit && (priorVisit.scopeNotes || priorVisit.addonNotes) && (
-          <div style={{borderBottom:"1px solid #1a2030",background:"rgba(255,107,157,.03)"}}>
-            <button onClick={()=>setPriorVisitOpen(!priorVisitOpen)} style={{width:"100%",padding:"10px 16px",background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
-              <span style={{transform:priorVisitOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7,color:"#FF6B9D"}}>▶</span>
-              <span style={{fontSize:10,fontWeight:700,color:"#FF6B9D",letterSpacing:1,textTransform:"uppercase",fontFamily:F}}>Notes from last visit</span>
-              {!priorVisitOpen && <span style={{flex:1,fontSize:12,color:"#a07080",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginLeft:4}}>{(priorVisit.scopeNotes || priorVisit.addonNotes || "").slice(0,80)}{(priorVisit.scopeNotes || priorVisit.addonNotes || "").length > 80 ? "…" : ""}</span>}
-            </button>
-            {priorVisitOpen && (
-              <div style={{padding:"0 16px 12px",display:"flex",flexDirection:"column",gap:10}}>
-                {priorVisit.scopeNotes && (
-                  <div>
-                    <div style={{fontSize:9,fontWeight:700,color:"#FF6B9D",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>Scope</div>
-                    <div style={{fontSize:13,color:"#8898a8",lineHeight:1.6,padding:"8px 10px",borderRadius:8,background:"#0e1020",border:"1px solid #1a2035"}}>{priorVisit.scopeNotes}</div>
-                  </div>
-                )}
-                {priorVisit.addonNotes && (
-                  <div>
-                    <div style={{fontSize:9,fontWeight:700,color:"#FF8A65",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>Add-on</div>
-                    <div style={{fontSize:13,color:"#8898a8",lineHeight:1.6,padding:"8px 10px",borderRadius:8,background:"#0e1020",border:"1px solid #1a2035"}}>{priorVisit.addonNotes}</div>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         )}
 
@@ -1474,13 +1447,16 @@ Property: ${s.addr || ""}`);
             </>}
           </div>}
 
-          {/* Upload button — brighter red to stand out */}
+          {/* Record in-app — capped to ~720p/1.5Mbps so uploads stay fast over cellular */}
+          <button onClick={() => setShowVideoRecorder(true)} style={{width:"100%",padding:"11px 0",borderRadius:8,background:"rgba(255,59,48,.08)",border:"1px solid rgba(255,59,48,.3)",color:"#FF6B5E",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+            <IconVideo size={15} color="#FF6B5E"/><span>{(videoUrls.length + videoQueueItems.length) > 0 ? `Record another video (${videoUrls.length + videoQueueItems.length + 1})` : "Record Video"}</span>
+          </button>
           <input ref={ytFileRef} type="file" accept="video/*" onChange={handleYtFile} style={{display:"none"}} />
-          <button onClick={() => ytFileRef.current?.click()} style={{width:"100%",padding:"11px 0",borderRadius:8,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.3)",color:"#4a8ab0",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-            <IconVideo size={15} color="#4a8ab0"/><span>{(videoUrls.length + videoQueueItems.length) > 0 ? `Add another video (${videoUrls.length + videoQueueItems.length + 1})` : "Upload video to Drive"}</span>
+          <button onClick={() => ytFileRef.current?.click()} style={{width:"100%",padding:"9px 0",marginTop:6,borderRadius:8,background:"transparent",border:"1px solid #1a2540",color:"#5a7090",fontSize:11,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+            <IconVideo size={13} color="#5a7090"/><span>Choose from Library</span>
           </button>
           <div style={{marginTop:6,fontSize:9,lineHeight:1.4,color:"#5a6580",fontFamily:F,letterSpacing:0.2,textAlign:"center"}}>
-            Tip: record at <strong style={{color:"#8a93a8"}}>1080p</strong> (iPhone Settings → Camera → Record Video) — uploads ~4× faster than 4K.
+            Library imports upload faster at <strong style={{color:"#8a93a8"}}>1080p</strong> (iPhone Settings → Camera → Record Video) than 4K.
           </div>
         </div>
 
