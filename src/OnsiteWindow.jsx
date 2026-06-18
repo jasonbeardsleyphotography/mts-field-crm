@@ -40,7 +40,7 @@ import {
   isPaused as isVideoQueuePaused,
   setPaused as setVideoQueuePaused,
 } from "./videoQueue";
-import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconRotateCcw, IconSend, IconNoSymbol } from "./icons";
+import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
@@ -124,10 +124,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [declineConfirm, setDeclineConfirm] = useState(false);
   const [rejectConfirm, setRejectConfirm] = useState(false);
   const [jobNotesOpen, setJobNotesOpen] = useState(false);
-  const [isRevision, setIsRevision] = useState(false);
-  // Prior visit notes — loaded once on mount, shown only when isRevision is true
-  const [priorVisit, setPriorVisit] = useState(null);
-  const [priorVisitOpen, setPriorVisitOpen] = useState(false);
 
   // ── PROPERTY MEMORY ──────────────────────────────────────────────────────
   // Synchronous read from pipeline localStorage — zero async cost.
@@ -518,20 +514,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       return () => { dead = true; };
     }
   }, [s.id, token]);
-
-  // ── PRIOR VISIT NOTES ────────────────────────────────────────────────
-  // Snapshot the field data that existed at the time OnsiteWindow mounts.
-  // Stored in a ref so it doesn't update mid-session as the user edits.
-  // Only shown when isRevision === true.
-  useEffect(() => {
-    loadField(s.id).then(data => {
-      if (!data || Object.keys(data).length === 0) return;
-      const scope = data.scopeNotes || data.myNotes || "";
-      const addon = data.addonNotes || "";
-      if (scope || addon) setPriorVisit({ scopeNotes: scope, addonNotes: addon });
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.id]);
 
   // ── PHOTO HANDLING ──────────────────────────────────────────────────
   // processPhoto delegates to the module-level _processPhoto so that photo
@@ -1150,19 +1132,13 @@ Property: ${s.addr || ""}`);
       {/* ── HEADER ────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",paddingTop:"max(10px,env(safe-area-inset-top))",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
         <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:4,padding:"6px 12px",borderRadius:8,background:"transparent",border:"1px solid #252d47",color:"#90a8c0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}><IconArrowLeft size={13} color="#90a8c0"/>Route</button>
-        {/* Confidence indicator — local always green; cloud shows sync state */}
-        <div style={{display:"flex",gap:4,alignItems:"center",flexShrink:0}}>
-          <div title="Saved locally" style={{display:"flex",alignItems:"center",gap:2,padding:"2px 6px",borderRadius:5,background:"rgba(16,185,129,.08)",border:"1px solid rgba(16,185,129,.2)"}}>
-            <svg width={8} height={8} viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="#10B981"/></svg>
-            <span style={{fontSize:9,color:"#10B981",fontWeight:700,fontFamily:F}}>LOCAL</span>
-          </div>
-          <div title={cloudSynced ? "Synced to cloud" : "Pending cloud push"} style={{display:"flex",alignItems:"center",gap:2,padding:"2px 6px",borderRadius:5,background:cloudSynced?"rgba(16,185,129,.08)":"rgba(246,191,38,.08)",border:`1px solid ${cloudSynced?"rgba(16,185,129,.2)":"rgba(246,191,38,.2)"}`}}>
-            <svg width={8} height={8} viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill={cloudSynced?"#10B981":"#F6BF26"}/></svg>
-            <span style={{fontSize:9,color:cloudSynced?"#10B981":"#F6BF26",fontWeight:700,fontFamily:F}}>CLOUD</span>
-          </div>
+        {/* Confidence indicator — local always green; cloud shows sync state.
+            Stacked vertically as bare dots (no labels) to save header width. */}
+        <div style={{display:"flex",flexDirection:"column",gap:2,flexShrink:0}}>
+          <div title="Saved locally"><svg width={7} height={7} viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="#10B981"/></svg></div>
+          <div title={cloudSynced ? "Synced to cloud" : "Pending cloud push"}><svg width={7} height={7} viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill={cloudSynced?"#10B981":"#F6BF26"}/></svg></div>
         </div>
         <div style={{flex:1,minWidth:0}}/>
-        <button onClick={()=>setIsRevision(!isRevision)} title="Revision" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"6px 8px",borderRadius:8,background:isRevision?"rgba(255,107,157,.15)":"transparent",border:isRevision?"1px solid rgba(255,107,157,.3)":"1px solid #252d47",cursor:"pointer",flexShrink:0}}><IconRotateCcw size={15} color={isRevision?"#FF6B9D":"#3a4a60"}/></button>
         {/* Decline — moved from bottom bar so it can't be hit when reaching for DONE */}
         {!declineConfirm ? (
           <button onClick={()=>setDeclineConfirm(true)} title="Decline lead" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"6px 8px",borderRadius:8,background:"transparent",border:"1px solid #252d47",cursor:"pointer",flexShrink:0}}><IconX size={15} color="#a06060"/></button>
@@ -1253,33 +1229,6 @@ Property: ${s.addr || ""}`);
               {!jobNotesOpen && <span style={{flex:1,fontSize:12,color:"#8898a8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginLeft:4}}>{s.notes.length > 80 ? s.notes.slice(0,80) + "…" : s.notes}</span>}
             </button>
             {jobNotesOpen && <div style={{padding:"0 16px 12px",fontSize:13,color:"#8898a8",lineHeight:1.6}}><Linkify text={s.notes} linkColor="#7BB3FF"/></div>}
-          </div>
-        )}
-
-        {/* ── NOTES FROM LAST VISIT (revision mode only) ───────────────── */}
-        {isRevision && priorVisit && (priorVisit.scopeNotes || priorVisit.addonNotes) && (
-          <div style={{borderBottom:"1px solid #1a2030",background:"rgba(255,107,157,.03)"}}>
-            <button onClick={()=>setPriorVisitOpen(!priorVisitOpen)} style={{width:"100%",padding:"10px 16px",background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
-              <span style={{transform:priorVisitOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7,color:"#FF6B9D"}}>▶</span>
-              <span style={{fontSize:10,fontWeight:700,color:"#FF6B9D",letterSpacing:1,textTransform:"uppercase",fontFamily:F}}>Notes from last visit</span>
-              {!priorVisitOpen && <span style={{flex:1,fontSize:12,color:"#a07080",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginLeft:4}}>{(priorVisit.scopeNotes || priorVisit.addonNotes || "").slice(0,80)}{(priorVisit.scopeNotes || priorVisit.addonNotes || "").length > 80 ? "…" : ""}</span>}
-            </button>
-            {priorVisitOpen && (
-              <div style={{padding:"0 16px 12px",display:"flex",flexDirection:"column",gap:10}}>
-                {priorVisit.scopeNotes && (
-                  <div>
-                    <div style={{fontSize:9,fontWeight:700,color:"#FF6B9D",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>Scope</div>
-                    <div style={{fontSize:13,color:"#8898a8",lineHeight:1.6,padding:"8px 10px",borderRadius:8,background:"#0e1020",border:"1px solid #1a2035"}}>{priorVisit.scopeNotes}</div>
-                  </div>
-                )}
-                {priorVisit.addonNotes && (
-                  <div>
-                    <div style={{fontSize:9,fontWeight:700,color:"#FF8A65",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>Add-on</div>
-                    <div style={{fontSize:13,color:"#8898a8",lineHeight:1.6,padding:"8px 10px",borderRadius:8,background:"#0e1020",border:"1px solid #1a2035"}}>{priorVisit.addonNotes}</div>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         )}
 
