@@ -111,11 +111,11 @@ export default function StoragePanel({ open, onClose, token }) {
     setRepairing(true);
     setRepairMsg(null);
     try {
-      const { checked, fixed, failed } = await repairVideoSharing(token);
+      const { checked, fixed, failed, renamed } = await repairVideoSharing(token);
       setRepairMsg(
         checked === 0
           ? "No video links found to check."
-          : `Checked ${checked} video link${checked === 1 ? "" : "s"} — fixed ${fixed}, already OK ${checked - fixed - failed}` +
+          : `Checked ${checked} video link${checked === 1 ? "" : "s"} — fixed sharing on ${fixed}, fixed filenames on ${renamed}` +
             (failed ? `, ${failed} still failed (try again).` : ".")
       );
     } catch {

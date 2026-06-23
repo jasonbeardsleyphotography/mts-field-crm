@@ -37,6 +37,8 @@ import {
   makeDriveFilePublic,
   getVideosFolderId,
   buildShareUrl,
+  getDriveFileMeta,
+  renameDriveFile,
 } from "./driveUpload";
 import { queueFieldDriveSync } from "./driveSync";
 
@@ -178,20 +180,34 @@ export async function listForStop(stopId) {
   return all.filter(i => i.stopId === stopId);
 }
 
+// Drive identifies a file's type largely by its name's extension. The title
+// built in OnsiteWindow.jsx (e.g. "Mack #30428 06/23/2026 - 01") has none,
+// so without this the file lands in Drive as generic "binary" — no preview,
+// no recognizable extension on download either.
+function extFromFile(file) {
+  const m = (file.name || "").match(/\.([a-zA-Z0-9]+)$/);
+  if (m) return m[1].toLowerCase();
+  const t = file.type || "";
+  if (t.includes("webm")) return "webm";
+  if (t.includes("quicktime")) return "mov";
+  return "mp4";
+}
+
 export async function enqueueVideo({ stopId, file, title }) {
   if (!file || !file.size) {
     vlogError("enqueue.bad_file", { hasFile: !!file, size: file?.size });
     throw new Error("No file or empty file");
   }
   const id = `vq_${stopId}_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+  const safeTitle = /\.[a-zA-Z0-9]+$/.test(title || "") ? title : `${title}.${extFromFile(file)}`;
   const item = {
     id,
     stopId,
-    title,
+    title: safeTitle,
     file,
     fileSize: file.size,
     fileName: file.name || "video.mov",
-    fileType: file.type || "video/mp4",
+    fileType: (file.type || "video/mp4").split(";")[0],
     status: "queued",                  // queued | uploading | done | error
     progress: 0,
     bytesUploaded: 0,
@@ -203,7 +219,7 @@ export async function enqueueVideo({ stopId, file, title }) {
     updatedAt: Date.now(),
   };
   await idbPut(item);
-  vlogInfo("enqueue.ok", { id, stopId, title, fileSize: file.size, fileType: item.fileType }, id);
+  vlogInfo("enqueue.ok", { id, stopId, title: safeTitle, fileSize: file.size, fileType: item.fileType }, id);
   notify();
   _kick();
   return id;
@@ -582,12 +598,21 @@ export async function pendingCount() {
 // ── Repair ───────────────────────────────────────────────────────────────
 // Re-applies "anyone with the link" sharing to every already-uploaded video,
 // for links that went private because the OAuth token expired mid-upload
-// before finalize could set permissions (see _finalize above). Only touches
-// Drive sharing permissions — never modifies videoUrls or any file content,
-// so existing videos and links are untouched either way.
+// before finalize could set permissions (see _finalize above). Also fixes
+// files that uploaded with no recognizable extension — Drive then shows
+// them as generic "binary," refuses to generate a preview, and downloads
+// come back unopenable. Both repairs are metadata-only (sharing permission /
+// filename) — never touches videoUrls or any file's actual content, so
+// existing videos and links are untouched either way.
+function extFromMime(mime) {
+  if ((mime || "").includes("webm")) return "webm";
+  if ((mime || "").includes("quicktime")) return "mov";
+  return "mp4";
+}
+
 export async function repairVideoSharing(token) {
   const ids = await listFieldIds();
-  let checked = 0, fixed = 0, failed = 0;
+  let checked = 0, fixed = 0, failed = 0, renamed = 0;
   for (const stopId of ids) {
     let data;
     try { data = await loadField(stopId); } catch { continue; }
@@ -595,10 +620,17 @@ export async function repairVideoSharing(token) {
     for (const url of urls) {
       const m = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
       if (!m) continue;
+      const fileId = m[1];
       checked++;
-      const ok = await makeDriveFilePublic(token, m[1]);
+      const ok = await makeDriveFilePublic(token, fileId);
       if (ok) fixed++; else failed++;
+
+      const meta = await getDriveFileMeta(token, fileId);
+      if (meta && !/\.[a-zA-Z0-9]+$/.test(meta.name || "")) {
+        const renameOk = await renameDriveFile(token, fileId, `${meta.name}.${extFromMime(meta.mimeType)}`);
+        if (renameOk) renamed++;
+      }
     }
   }
-  return { checked, fixed, failed };
+  return { checked, fixed, failed, renamed };
 }
