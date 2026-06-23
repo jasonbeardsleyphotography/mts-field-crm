@@ -8,7 +8,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { useState, useEffect, useCallback } from "react";
-import { listAll as listAllQueue, retryItem, cancelItem } from "./videoQueue";
+import { listAll as listAllQueue, retryItem, cancelItem, repairVideoSharing } from "./videoQueue";
 import { listFieldIds, loadField } from "./fieldStore";
 import { sweepAllPhotos } from "./photoSync";
 import { IconArrowLeft, IconX } from "./icons";
@@ -51,7 +51,7 @@ async function localPhotoBytes() {
   return total;
 }
 
-export default function StoragePanel({ open, onClose }) {
+export default function StoragePanel({ open, onClose, token }) {
   const [estimate, setEstimate] = useState(null); // { usage, quota }
   const [videoItems, setVideoItems] = useState([]);
   const [photoBytes, setPhotoBytes] = useState(null);
@@ -59,6 +59,8 @@ export default function StoragePanel({ open, onClose }) {
   const [sweeping, setSweeping] = useState(false);
   const [freedMsg, setFreedMsg] = useState(null);
   const [restarting, setRestarting] = useState({});
+  const [repairing, setRepairing] = useState(false);
+  const [repairMsg, setRepairMsg] = useState(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -101,6 +103,25 @@ export default function StoragePanel({ open, onClose }) {
       );
     } finally {
       setSweeping(false);
+    }
+  };
+
+  const handleFixVideoLinks = async () => {
+    if (!token) return;
+    setRepairing(true);
+    setRepairMsg(null);
+    try {
+      const { checked, fixed, failed } = await repairVideoSharing(token);
+      setRepairMsg(
+        checked === 0
+          ? "No video links found to check."
+          : `Checked ${checked} video link${checked === 1 ? "" : "s"} — fixed ${fixed}, already OK ${checked - fixed - failed}` +
+            (failed ? `, ${failed} still failed (try again).` : ".")
+      );
+    } catch {
+      setRepairMsg("Couldn't check video links — try again.");
+    } finally {
+      setRepairing(false);
     }
   };
 
@@ -244,6 +265,20 @@ export default function StoragePanel({ open, onClose }) {
         borderTop: "1px solid #1a2030",
         background: "#0a0c14", flexShrink: 0,
       }}>
+        {repairMsg && (
+          <div style={{ fontSize: 11, color: "#3B82F6", fontFamily: B, marginBottom: 8, textAlign: "center" }}>{repairMsg}</div>
+        )}
+        <button
+          onClick={handleFixVideoLinks}
+          disabled={repairing || !token}
+          style={{
+            width: "100%", padding: "10px 0", borderRadius: 10, marginBottom: 8,
+            background: "rgba(59,130,246,.1)", border: "1px solid rgba(59,130,246,.3)",
+            color: "#3B82F6", fontSize: 12, fontWeight: 800,
+            cursor: repairing ? "default" : "pointer", opacity: repairing ? 0.6 : 1,
+            fontFamily: F, letterSpacing: 0.5,
+          }}
+        >{repairing ? "Checking video links…" : "Fix video playback links"}</button>
         {freedMsg && (
           <div style={{ fontSize: 11, color: "#10B981", fontFamily: B, marginBottom: 8, textAlign: "center" }}>{freedMsg}</div>
         )}

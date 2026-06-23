@@ -2139,7 +2139,7 @@ export default function App() {
 
       {/* ── VIDEO UPLOAD MANAGER ──────────────────────────────────── */}
       <VideoUploads open={uploadsOpen} onClose={() => setUploadsOpen(false)} stopMap={stopMap} />
-      <StoragePanel open={storageOpen} onClose={() => setStorageOpen(false)} />
+      <StoragePanel open={storageOpen} onClose={() => setStorageOpen(false)} token={token} />
 
       {/* ── DATA RECOVERY SCREEN ─────────────────────────────────── */}
       {recoveryOpen && (

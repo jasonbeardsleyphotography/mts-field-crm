@@ -27,7 +27,7 @@
    - Pause/resume single global toggle; diagnostic log to videoLog.js
    ═══════════════════════════════════════════════════════════════════════════ */
 
-import { loadField, saveField, primeField, updateField } from "./fieldStore";
+import { loadField, saveField, primeField, updateField, listFieldIds } from "./fieldStore";
 import { incUpload, decUpload } from "./uploadStatus";
 import { vlogInfo, vlogWarn, vlogError } from "./videoLog";
 import {
@@ -487,11 +487,20 @@ async function _finalize(id, fileId, token) {
   if (!item) return;
   vlogInfo("finalize.start", { fileId }, id);
 
-  // Make the file readable by anyone with the link, so client emails work
-  const publicOk = await makeDriveFilePublic(token, fileId);
+  // Make the file readable by anyone with the link, so client emails work.
+  // Re-fetch a fresh token each attempt — large uploads can outlast the
+  // ~55min access-token lifetime, and a stale token here used to fail
+  // silently, leaving the file uploaded but permanently private.
+  let publicOk = false;
+  for (let attempt = 0; attempt < 3 && !publicOk; attempt++) {
+    const freshToken = _getToken?.() || token;
+    publicOk = await makeDriveFilePublic(freshToken, fileId);
+    if (!publicOk && attempt < 2) await new Promise(r => setTimeout(r, 1500));
+  }
   if (!publicOk) {
     vlogWarn("finalize.permission_failed", { fileId }, id);
-    // Continue anyway — the file uploaded; user can manually share it
+    // Continue anyway — the file uploaded; the Storage panel's "Fix video
+    // playback links" repair can catch and fix this later.
   }
 
   const shareUrl = buildShareUrl(fileId);
@@ -568,4 +577,28 @@ export function startVideoQueueWatcher(getToken) {
 export async function pendingCount() {
   const all = await idbAll();
   return all.filter(i => i.status === "queued" || i.status === "uploading" || i.status === "error").length;
+}
+
+// ── Repair ───────────────────────────────────────────────────────────────
+// Re-applies "anyone with the link" sharing to every already-uploaded video,
+// for links that went private because the OAuth token expired mid-upload
+// before finalize could set permissions (see _finalize above). Only touches
+// Drive sharing permissions — never modifies videoUrls or any file content,
+// so existing videos and links are untouched either way.
+export async function repairVideoSharing(token) {
+  const ids = await listFieldIds();
+  let checked = 0, fixed = 0, failed = 0;
+  for (const stopId of ids) {
+    let data;
+    try { data = await loadField(stopId); } catch { continue; }
+    const urls = data?.videoUrls || (data?.videoUrl ? [data.videoUrl] : []);
+    for (const url of urls) {
+      const m = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+      if (!m) continue;
+      checked++;
+      const ok = await makeDriveFilePublic(token, m[1]);
+      if (ok) fixed++; else failed++;
+    }
+  }
+  return { checked, fixed, failed };
 }
