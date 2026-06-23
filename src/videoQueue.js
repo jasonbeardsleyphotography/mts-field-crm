@@ -40,6 +40,7 @@ import {
   getDriveFileMeta,
   renameDriveFile,
   sniffDriveFileFormat,
+  fixDriveFileContentType,
 } from "./driveUpload";
 import { queueFieldDriveSync } from "./driveSync";
 
@@ -620,7 +621,7 @@ const MIME_TO_EXT = { "video/webm": "webm", "video/mp4": "mp4", "video/quicktime
 // and links are untouched either way.
 export async function repairVideoSharing(token) {
   const ids = await listFieldIds();
-  let checked = 0, shared = 0, failed = 0, renamed = 0, verified = 0;
+  let checked = 0, shared = 0, failed = 0, renamed = 0, reuploaded = 0, verified = 0;
   const details = [];
   for (const stopId of ids) {
     let data;
@@ -651,19 +652,29 @@ export async function repairVideoSharing(token) {
         const baseName = (meta.name || "").replace(/\.[a-zA-Z0-9]+$/, "");
         const correctName = `${baseName}.${realExt}`;
         const needsRename = meta.name !== correctName;
-        const needsMimeFix = meta.mimeType !== correctMime;
-        if (needsRename || needsMimeFix) {
-          const renameOk = await renameDriveFile(token, fileId, correctName, correctMime);
-          if (renameOk) {
-            renamed++;
-            const after = await getDriveFileMeta(token, fileId);
-            detail.after = after ? { name: after.name, mimeType: after.mimeType } : null;
-            if (after?.name === correctName && after?.mimeType === correctMime) verified++;
-          }
+        // A plain metadata PATCH cannot change mimeType on a binary file —
+        // Drive silently ignores it (confirmed: before/after both stayed
+        // "application/octet-stream"). Fixing it for real requires
+        // re-uploading the file's own bytes with the right Content-Type.
+        const needsContentTypeFix = meta.mimeType !== correctMime;
+
+        if (needsRename) {
+          const renameOk = await renameDriveFile(token, fileId, correctName);
+          if (renameOk) renamed++;
+        }
+        if (needsContentTypeFix) {
+          const fixOk = await fixDriveFileContentType(token, fileId, correctMime);
+          detail.contentTypeFixed = fixOk;
+          if (fixOk) reuploaded++;
+        }
+        if (needsRename || needsContentTypeFix) {
+          const after = await getDriveFileMeta(token, fileId);
+          detail.after = after ? { name: after.name, mimeType: after.mimeType } : null;
+          if (after?.name === correctName && after?.mimeType === correctMime) verified++;
         }
       }
       details.push(detail);
     }
   }
-  return { checked, shared, fixed: shared, failed, renamed, verified, details };
+  return { checked, shared, fixed: shared, failed, renamed, reuploaded, verified, details };
 }
