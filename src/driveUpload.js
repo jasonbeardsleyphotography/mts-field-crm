@@ -53,6 +53,7 @@ export async function initDriveSession(token, title, size, mime, parentId) {
   const metadata = {
     name: title,
     parents: [parentId],
+    mimeType: cleanMime,
     // Description with a tag so we can find these programmatically later
     description: "Uploaded via MTS Field CRM",
   };
@@ -251,7 +252,7 @@ export async function makeDriveFilePublic(token, fileId) {
 export async function getDriveFileMeta(token, fileId) {
   try {
     const res = await fetch(
-      `${DRIVE_API}/files/${fileId}?fields=name,mimeType,hasThumbnail,videoMediaMetadata`,
+      `${DRIVE_API}/files/${fileId}?fields=name,mimeType,size,hasThumbnail,videoMediaMetadata`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     return res.ok ? await res.json() : null;
@@ -294,22 +295,90 @@ export async function sniffDriveFileFormat(token, fileId) {
 }
 
 /**
- * Rename a Drive file and optionally correct its stored mimeType.
- * Metadata-only — never touches file content.
+ * Rename a Drive file. Metadata-only — never touches file content.
+ *
+ * Note: `mimeType` is intentionally NOT settable here. Drive's API ignores
+ * a mimeType change sent via a plain metadata PATCH for non-Google-Apps
+ * files — confirmed empirically (before/after both stayed
+ * "application/octet-stream" despite the PATCH succeeding). The only way
+ * to actually change a binary file's mimeType is to re-upload its content
+ * with the correct Content-Type — see fixDriveFileContentType below.
  */
-export async function renameDriveFile(token, fileId, newName, newMimeType) {
+export async function renameDriveFile(token, fileId, newName) {
   try {
-    const body = { name: newName };
-    if (newMimeType) body.mimeType = newMimeType;
     const res = await fetch(`${DRIVE_API}/files/${fileId}`, {
       method: "PATCH",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ name: newName }),
     });
     return res.ok;
   } catch {
     return false;
   }
+}
+
+/**
+ * Initialize a resumable session to replace an EXISTING file's content,
+ * mirroring initDriveSession but PATCHing the existing fileId instead of
+ * creating a new one. This is the only way to correct a stale mimeType on
+ * a binary file already in Drive (see renameDriveFile's note above).
+ */
+async function initDriveUpdateSession(token, fileId, size, mime) {
+  const cleanMime = (mime || "video/mp4").split(";")[0];
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CHUNK_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch(`${UPLOAD_API}/files/${fileId}?uploadType=resumable`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json; charset=utf-8",
+        "X-Upload-Content-Type": cleanMime,
+        "X-Upload-Content-Length": String(size),
+      },
+      body: JSON.stringify({ mimeType: cleanMime }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    clearTimeout(timeoutId);
+    if (e?.name === "AbortError") return { ok: false, error: "Session init timeout" };
+    return { ok: false, error: `Network: ${e?.message || String(e)}` };
+  }
+  clearTimeout(timeoutId);
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    return { ok: false, status: res.status, error: txt.slice(0, 300) };
+  }
+  const loc = res.headers.get("Location");
+  if (!loc) return { ok: false, error: "No Location header in init response" };
+  return { ok: true, sessionUrl: loc };
+}
+
+/**
+ * Re-upload a Drive file's existing bytes back to the SAME file ID with
+ * the correct Content-Type, so Drive actually corrects its stored
+ * mimeType (a plain metadata PATCH can't do this — see renameDriveFile).
+ * Downloads the current content, then sends it right back via the
+ * resumable update session above. Same fileId, same shareable link, same
+ * bytes — only the declared content type changes, which is what lets
+ * Drive's preview/thumbnail pipeline recognize the file as video.
+ */
+export async function fixDriveFileContentType(token, fileId, mime, onProgress) {
+  let blob;
+  try {
+    const res = await fetch(`${DRIVE_API}/files/${fileId}?alt=media`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return false;
+    blob = await res.blob();
+  } catch {
+    return false;
+  }
+  const init = await initDriveUpdateSession(token, fileId, blob.size, mime);
+  if (!init.ok) return false;
+  const result = await uploadFromOffset(init.sessionUrl, blob, 0, blob.size, { onProgress });
+  return result.kind === "ok-final";
 }
 
 /**

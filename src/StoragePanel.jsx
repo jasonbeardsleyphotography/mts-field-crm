@@ -113,12 +113,12 @@ export default function StoragePanel({ open, onClose, token }) {
     setRepairMsg(null);
     setRepairDetails(null);
     try {
-      const { checked, shared, failed, renamed, verified, details } = await repairVideoSharing(token);
+      const { checked, shared, failed, renamed, reuploaded, verified, details } = await repairVideoSharing(token);
       setRepairDetails(details || null);
       setRepairMsg(
         checked === 0
           ? "No video links found to check."
-          : `Checked ${checked} video link${checked === 1 ? "" : "s"} — shared ${shared}, renamed ${renamed} (${verified} confirmed)` +
+          : `Checked ${checked} video link${checked === 1 ? "" : "s"} — shared ${shared}, renamed ${renamed}, fixed video type on ${reuploaded} (${verified} confirmed)` +
             (failed ? `, ${failed} still failed (try again).` : ".") +
             ` Tap "Copy details" if a video still won't play.`
       );
@@ -304,7 +304,7 @@ export default function StoragePanel({ open, onClose, token }) {
             cursor: repairing ? "default" : "pointer", opacity: repairing ? 0.6 : 1,
             fontFamily: F, letterSpacing: 0.5,
           }}
-        >{repairing ? "Checking video links…" : "Fix video playback links"}</button>
+        >{repairing ? "Checking video links… (Wi-Fi recommended)" : "Fix video playback links"}</button>
         {freedMsg && (
           <div style={{ fontSize: 11, color: "#10B981", fontFamily: B, marginBottom: 8, textAlign: "center" }}>{freedMsg}</div>
         )}
