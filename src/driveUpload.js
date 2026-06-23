@@ -47,6 +47,9 @@ const CHUNK_TIMEOUT_MS = 60_000;
  * @param {string} parentId - Drive folder ID
  */
 export async function initDriveSession(token, title, size, mime, parentId) {
+  // Strip any MediaRecorder codecs parameter (e.g. "video/webm;codecs=vp9,opus")
+  // — Drive's content-type handling only wants the bare type.
+  const cleanMime = (mime || "video/mp4").split(";")[0];
   const metadata = {
     name: title,
     parents: [parentId],
@@ -64,7 +67,7 @@ export async function initDriveSession(token, title, size, mime, parentId) {
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json; charset=utf-8",
-          "X-Upload-Content-Type": mime,
+          "X-Upload-Content-Type": cleanMime,
           "X-Upload-Content-Length": String(size),
         },
         body: JSON.stringify(metadata),
@@ -232,6 +235,37 @@ export async function makeDriveFilePublic(token, fileId) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ role: "reader", type: "anyone" }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Look up a file's current name/mimeType — used by the repair sweep to
+ * detect files that uploaded without a recognizable extension.
+ */
+export async function getDriveFileMeta(token, fileId) {
+  try {
+    const res = await fetch(`${DRIVE_API}/files/${fileId}?fields=name,mimeType`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Rename a Drive file. Metadata-only — never touches file content.
+ */
+export async function renameDriveFile(token, fileId, newName) {
+  try {
+    const res = await fetch(`${DRIVE_API}/files/${fileId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: newName }),
     });
     return res.ok;
   } catch {
