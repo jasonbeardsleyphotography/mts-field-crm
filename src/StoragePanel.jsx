@@ -61,6 +61,7 @@ export default function StoragePanel({ open, onClose, token }) {
   const [restarting, setRestarting] = useState({});
   const [repairing, setRepairing] = useState(false);
   const [repairMsg, setRepairMsg] = useState(null);
+  const [repairDetails, setRepairDetails] = useState(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -110,18 +111,32 @@ export default function StoragePanel({ open, onClose, token }) {
     if (!token) return;
     setRepairing(true);
     setRepairMsg(null);
+    setRepairDetails(null);
     try {
-      const { checked, fixed, failed, renamed } = await repairVideoSharing(token);
+      const { checked, shared, failed, renamed, verified, details } = await repairVideoSharing(token);
+      setRepairDetails(details || null);
       setRepairMsg(
         checked === 0
           ? "No video links found to check."
-          : `Checked ${checked} video link${checked === 1 ? "" : "s"} — fixed sharing on ${fixed}, fixed filenames on ${renamed}` +
-            (failed ? `, ${failed} still failed (try again).` : ".")
+          : `Checked ${checked} video link${checked === 1 ? "" : "s"} — shared ${shared}, renamed ${renamed} (${verified} confirmed)` +
+            (failed ? `, ${failed} still failed (try again).` : ".") +
+            ` Tap "Copy details" if a video still won't play.`
       );
     } catch {
       setRepairMsg("Couldn't check video links — try again.");
     } finally {
       setRepairing(false);
+    }
+  };
+
+  const handleCopyRepairDetails = async () => {
+    if (!repairDetails) return;
+    const text = JSON.stringify(repairDetails, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      setRepairMsg("Details copied — paste them back to diagnose.");
+    } catch {
+      setRepairMsg("Couldn't copy details.");
     }
   };
 
@@ -267,6 +282,17 @@ export default function StoragePanel({ open, onClose, token }) {
       }}>
         {repairMsg && (
           <div style={{ fontSize: 11, color: "#3B82F6", fontFamily: B, marginBottom: 8, textAlign: "center" }}>{repairMsg}</div>
+        )}
+        {repairDetails && repairDetails.length > 0 && (
+          <button
+            onClick={handleCopyRepairDetails}
+            style={{
+              width: "100%", padding: "6px 0", borderRadius: 8, marginBottom: 8,
+              background: "transparent", border: "1px solid rgba(59,130,246,.25)",
+              color: "#3B82F6", fontSize: 10, fontWeight: 700,
+              cursor: "pointer", fontFamily: F, letterSpacing: 0.5,
+            }}
+          >Copy details</button>
         )}
         <button
           onClick={handleFixVideoLinks}

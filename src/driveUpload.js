@@ -243,14 +243,17 @@ export async function makeDriveFilePublic(token, fileId) {
 }
 
 /**
- * Look up a file's current name/mimeType — used by the repair sweep to
- * detect files that uploaded without a recognizable extension.
+ * Look up a file's current name/mimeType and Drive's own processing
+ * signals — used by the repair sweep to detect files that uploaded without
+ * a recognizable extension/mimeType, and to tell whether Drive has actually
+ * transcoded the file as a video at all.
  */
 export async function getDriveFileMeta(token, fileId) {
   try {
-    const res = await fetch(`${DRIVE_API}/files/${fileId}?fields=name,mimeType`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await fetch(
+      `${DRIVE_API}/files/${fileId}?fields=name,mimeType,hasThumbnail,videoMediaMetadata`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
     return res.ok ? await res.json() : null;
   } catch {
     return null;
@@ -265,14 +268,23 @@ export async function getDriveFileMeta(token, fileId) {
  * reliable for already-uploaded files. WebM/Matroska starts with the EBML
  * magic bytes 1A 45 DF A3; ISO base media (mp4/mov) has "ftyp" at offset 4.
  * Returns "webm" | "mp4" | null (unrecognized).
+ *
+ * Reads via the response body stream (no Range header) — Range isn't
+ * CORS-safelisted, so adding it forces a preflight the Drive media endpoint
+ * doesn't satisfy, which silently fails the fetch from a browser. Reading
+ * one chunk off the stream and cancelling it avoids that without pulling
+ * the whole file.
  */
 export async function sniffDriveFileFormat(token, fileId) {
   try {
     const res = await fetch(`${DRIVE_API}/files/${fileId}?alt=media`, {
-      headers: { Authorization: `Bearer ${token}`, Range: "bytes=0-63" },
+      headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) return null;
-    const buf = new Uint8Array(await res.arrayBuffer());
+    if (!res.ok || !res.body) return null;
+    const reader = res.body.getReader();
+    const { value } = await reader.read();
+    reader.cancel().catch(() => {});
+    const buf = value || new Uint8Array();
     if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) return "webm";
     if (buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70) return "mp4";
     return null;
