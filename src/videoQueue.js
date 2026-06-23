@@ -39,6 +39,7 @@ import {
   buildShareUrl,
   getDriveFileMeta,
   renameDriveFile,
+  sniffDriveFileFormat,
 } from "./driveUpload";
 import { queueFieldDriveSync } from "./driveSync";
 
@@ -599,17 +600,16 @@ export async function pendingCount() {
 // Re-applies "anyone with the link" sharing to every already-uploaded video,
 // for links that went private because the OAuth token expired mid-upload
 // before finalize could set permissions (see _finalize above). Also fixes
-// files that uploaded with no recognizable extension — Drive then shows
-// them as generic "binary," refuses to generate a preview, and downloads
-// come back unopenable. Both repairs are metadata-only (sharing permission /
-// filename) — never touches videoUrls or any file's actual content, so
-// existing videos and links are untouched either way.
-function extFromMime(mime) {
-  if ((mime || "").includes("webm")) return "webm";
-  if ((mime || "").includes("quicktime")) return "mov";
-  return "mp4";
-}
-
+// filenames missing the right extension — Drive then shows them as generic
+// "binary," refuses to generate a preview, and downloads come back
+// unopenable. The correct extension is sniffed from the file's actual bytes
+// (see sniffDriveFileFormat) rather than trusted from Drive's stored
+// mimeType field, since old uploads sent a malformed Content-Type that
+// Drive sometimes mis-recorded (a WebM file stored with mimeType
+// "video/mp4") — trusting that field renamed files to the WRONG extension.
+// Both repairs are metadata-only (sharing permission / filename) — never
+// touches videoUrls or any file's actual content, so existing videos and
+// links are untouched either way.
 export async function repairVideoSharing(token) {
   const ids = await listFieldIds();
   let checked = 0, fixed = 0, failed = 0, renamed = 0;
@@ -626,9 +626,14 @@ export async function repairVideoSharing(token) {
       if (ok) fixed++; else failed++;
 
       const meta = await getDriveFileMeta(token, fileId);
-      if (meta && !/\.[a-zA-Z0-9]+$/.test(meta.name || "")) {
-        const renameOk = await renameDriveFile(token, fileId, `${meta.name}.${extFromMime(meta.mimeType)}`);
-        if (renameOk) renamed++;
+      const realExt = await sniffDriveFileFormat(token, fileId);
+      if (meta && realExt) {
+        const baseName = (meta.name || "").replace(/\.[a-zA-Z0-9]+$/, "");
+        const correctName = `${baseName}.${realExt}`;
+        if (meta.name !== correctName) {
+          const renameOk = await renameDriveFile(token, fileId, correctName);
+          if (renameOk) renamed++;
+        }
       }
     }
   }

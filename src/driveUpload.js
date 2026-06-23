@@ -258,6 +258,30 @@ export async function getDriveFileMeta(token, fileId) {
 }
 
 /**
+ * Sniff a file's real container format from its first bytes, rather than
+ * trusting Drive's stored mimeType — old uploads sent a malformed
+ * codecs-qualified Content-Type that Drive sometimes mis-recorded (e.g. a
+ * WebM file stored with mimeType "video/mp4"), so the metadata field isn't
+ * reliable for already-uploaded files. WebM/Matroska starts with the EBML
+ * magic bytes 1A 45 DF A3; ISO base media (mp4/mov) has "ftyp" at offset 4.
+ * Returns "webm" | "mp4" | null (unrecognized).
+ */
+export async function sniffDriveFileFormat(token, fileId) {
+  try {
+    const res = await fetch(`${DRIVE_API}/files/${fileId}?alt=media`, {
+      headers: { Authorization: `Bearer ${token}`, Range: "bytes=0-63" },
+    });
+    if (!res.ok) return null;
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) return "webm";
+    if (buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70) return "mp4";
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Rename a Drive file. Metadata-only — never touches file content.
  */
 export async function renameDriveFile(token, fileId, newName) {
