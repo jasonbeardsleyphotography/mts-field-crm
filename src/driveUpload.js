@@ -282,14 +282,17 @@ export async function sniffDriveFileFormat(token, fileId) {
 }
 
 /**
- * Rename a Drive file. Metadata-only — never touches file content.
+ * Rename a Drive file and optionally correct its stored mimeType.
+ * Metadata-only — never touches file content.
  */
-export async function renameDriveFile(token, fileId, newName) {
+export async function renameDriveFile(token, fileId, newName, newMimeType) {
   try {
+    const body = { name: newName };
+    if (newMimeType) body.mimeType = newMimeType;
     const res = await fetch(`${DRIVE_API}/files/${fileId}`, {
       method: "PATCH",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newName }),
+      body: JSON.stringify(body),
     });
     return res.ok;
   } catch {
