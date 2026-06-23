@@ -597,6 +597,7 @@ export async function pendingCount() {
 }
 
 const EXT_TO_MIME = { webm: "video/webm", mp4: "video/mp4" };
+const MIME_TO_EXT = { "video/webm": "webm", "video/mp4": "mp4", "video/quicktime": "mp4" };
 
 // ── Repair ───────────────────────────────────────────────────────────────
 // Re-applies "anyone with the link" sharing to every already-uploaded video,
@@ -608,14 +609,19 @@ const EXT_TO_MIME = { webm: "video/webm", mp4: "video/mp4" };
 // sniffed from the file's actual bytes (see sniffDriveFileFormat) rather
 // than trusted from Drive's stored mimeType field, since old uploads sent a
 // malformed Content-Type that Drive sometimes mis-recorded (a WebM file
-// stored with mimeType
-// "video/mp4") — trusting that field renamed files to the WRONG extension.
-// Both repairs are metadata-only (sharing permission / filename) — never
-// touches videoUrls or any file's actual content, so existing videos and
-// links are untouched either way.
+// stored with mimeType "video/mp4") — trusting that field renamed files to
+// the WRONG extension. If the byte sniff itself fails (e.g. a transient
+// network hiccup), fall back to a clean, recognized stored mimeType rather
+// than silently skipping the file. After renaming, the meta is re-fetched
+// so we can report whether the PATCH actually took effect — previous runs
+// had no way to tell a no-op PATCH from a real one.
+// All repairs are metadata-only (sharing permission / name / mimeType) —
+// never touches videoUrls or any file's actual content, so existing videos
+// and links are untouched either way.
 export async function repairVideoSharing(token) {
   const ids = await listFieldIds();
-  let checked = 0, fixed = 0, failed = 0, renamed = 0;
+  let checked = 0, shared = 0, failed = 0, renamed = 0, verified = 0;
+  const details = [];
   for (const stopId of ids) {
     let data;
     try { data = await loadField(stopId); } catch { continue; }
@@ -625,11 +631,21 @@ export async function repairVideoSharing(token) {
       if (!m) continue;
       const fileId = m[1];
       checked++;
-      const ok = await makeDriveFilePublic(token, fileId);
-      if (ok) fixed++; else failed++;
+      const detail = { fileId };
+
+      const shareOk = await makeDriveFilePublic(token, fileId);
+      detail.shared = shareOk;
+      if (shareOk) shared++; else failed++;
 
       const meta = await getDriveFileMeta(token, fileId);
-      const realExt = await sniffDriveFileFormat(token, fileId);
+      detail.before = meta ? { name: meta.name, mimeType: meta.mimeType } : null;
+      detail.hasThumbnail = meta?.hasThumbnail ?? null;
+      detail.hasVideoMeta = !!meta?.videoMediaMetadata;
+
+      const sniffed = await sniffDriveFileFormat(token, fileId);
+      const realExt = sniffed || MIME_TO_EXT[meta?.mimeType] || null;
+      detail.sniffed = sniffed;
+
       if (meta && realExt) {
         const correctMime = EXT_TO_MIME[realExt];
         const baseName = (meta.name || "").replace(/\.[a-zA-Z0-9]+$/, "");
@@ -638,10 +654,16 @@ export async function repairVideoSharing(token) {
         const needsMimeFix = meta.mimeType !== correctMime;
         if (needsRename || needsMimeFix) {
           const renameOk = await renameDriveFile(token, fileId, correctName, correctMime);
-          if (renameOk) renamed++;
+          if (renameOk) {
+            renamed++;
+            const after = await getDriveFileMeta(token, fileId);
+            detail.after = after ? { name: after.name, mimeType: after.mimeType } : null;
+            if (after?.name === correctName && after?.mimeType === correctMime) verified++;
+          }
         }
       }
+      details.push(detail);
     }
   }
-  return { checked, fixed, failed, renamed };
+  return { checked, shared, fixed: shared, failed, renamed, verified, details };
 }
