@@ -628,7 +628,7 @@ export async function repairVideoSharing(token) {
     try { data = await loadField(stopId); } catch { continue; }
     const urls = data?.videoUrls || (data?.videoUrl ? [data.videoUrl] : []);
     for (const url of urls) {
-      const m = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+      const m = url.match(/\/(?:file\/d|watch)\/([a-zA-Z0-9_-]+)/);
       if (!m) continue;
       const fileId = m[1];
       checked++;

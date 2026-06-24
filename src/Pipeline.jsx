@@ -47,6 +47,7 @@ import { isUploadPending, onUploadChange } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
 import { downscaleDataUrl, stripPhotoDataUrls, OVERSIZE_DATAURL_LEN, newPhotoId, photoKey } from "./imageUtils";
 import { listAll as listAllQueue, onQueueChange, enqueueVideo } from "./videoQueue";
+import { buildShareUrl, buildStreamUrl } from "./driveUpload";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Pipeline
@@ -1333,7 +1334,7 @@ Property: ${card.addr || ""}`);
         const addonPhotos = fd.addonPhotos || [];
         const videoUrls = fd.videoUrls || (fd.videoUrl ? [fd.videoUrl] : []);
         const getYtId      = url => url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
-        const getDriveId   = url => url?.match(/\/file\/d\/([a-zA-Z0-9_-]+)/)?.[1];
+        const getDriveId   = url => url?.match(/\/(?:file\/d|watch)\/([a-zA-Z0-9_-]+)/)?.[1];
 
         // Camera overlay — renders above everything else in the popup
         if (detailShowCamera) return <CameraView
@@ -1565,21 +1566,24 @@ Property: ${card.addr || ""}`);
                 {videoUrls.map((url, i) => {
                   const ytId    = getYtId(url);
                   const driveId = getDriveId(url);
+                  // Always rebuild the watch link fresh from the driveId rather than
+                  // trusting the stored URL — older cards saved a Drive /preview link
+                  // (broken "No preview available" iframe); this fixes those in place
+                  // without needing to touch stored card data.
+                  const shareLink = driveId ? buildShareUrl(driveId) : url;
                   return <div key={i} style={{marginBottom:8,borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",overflow:"hidden"}}>
                     {ytId ? (
                       <div style={{position:"relative",paddingBottom:"56.25%"}}>
                         <iframe src={`https://www.youtube.com/embed/${ytId}`} style={{position:"absolute",inset:0,width:"100%",height:"100%",border:"none"}} allowFullScreen />
                       </div>
                     ) : driveId ? (
-                      <div style={{position:"relative",paddingBottom:"56.25%"}}>
-                        <iframe src={url} style={{position:"absolute",inset:0,width:"100%",height:"100%",border:"none"}} allowFullScreen />
-                      </div>
+                      <video controls preload="metadata" src={buildStreamUrl(driveId)} style={{width:"100%",maxHeight:240,display:"block",background:"#000"}} />
                     ) : (
                       <a href={url} target="_blank" rel="noopener noreferrer" style={{display:"block",padding:"10px 12px",fontSize:13,color:"#6a8ab0"}}>{url}</a>
                     )}
                     <div style={{padding:"6px 8px",display:"flex",gap:6,alignItems:"center"}}>
-                      <div style={{fontSize:9,color:"#5a6890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{url}</div>
-                      <button onClick={()=>{const html=`<a href="${url}">Link to Video Review</a>`;if(navigator.clipboard?.write){navigator.clipboard.write([new ClipboardItem({"text/html":new Blob([html],{type:"text/html"}),"text/plain":new Blob([url],{type:"text/plain"})})]).catch(()=>navigator.clipboard?.writeText(url));}else{navigator.clipboard?.writeText(url);}}} style={{padding:"4px 8px",borderRadius:5,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#5a90b0",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Copy link</button>
+                      <div style={{fontSize:9,color:"#5a6890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{shareLink}</div>
+                      <button onClick={()=>{const html=`<a href="${shareLink}">Link to Video Review</a>`;if(navigator.clipboard?.write){navigator.clipboard.write([new ClipboardItem({"text/html":new Blob([html],{type:"text/html"}),"text/plain":new Blob([shareLink],{type:"text/plain"})})]).catch(()=>navigator.clipboard?.writeText(shareLink));}else{navigator.clipboard?.writeText(shareLink);}}} style={{padding:"4px 8px",borderRadius:5,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#5a90b0",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Copy link</button>
                       <button onClick={() => detailDeleteVideo(url, i, card, fd)} style={{padding:"4px 6px",borderRadius:5,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.15)",color:"#e06060",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}><IconX size={10} color="#e06060"/></button>
                     </div>
                   </div>;

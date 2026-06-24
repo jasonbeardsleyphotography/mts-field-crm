@@ -8,6 +8,7 @@ import { loadPipeline } from "./Pipeline";
 import { incUpload, decUpload } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
 import { downscaleDataUrl, newPhotoId, photoKey } from "./imageUtils";
+import { buildShareUrl, buildStreamUrl } from "./driveUpload";
 
 function _driveFileId(url) {
   const m = (url || "").match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
@@ -645,7 +646,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
 
   // URL type helpers — kept for backward compat with legacy YouTube links on older cards
   const getYtId = (url) => url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
-  const getDriveFileId = (url) => url?.match(/\/file\/d\/([a-zA-Z0-9_-]+)/)?.[1];
+  const getDriveFileId = (url) => url?.match(/\/(?:file\/d|watch)\/([a-zA-Z0-9_-]+)/)?.[1];
 
   // ── VIDEO DELETE ────────────────────────────────────────────────────
   // Handles both Drive (new) and YouTube (legacy) URLs.
@@ -1356,14 +1357,15 @@ Property: ${s.addr || ""}`);
             {videoUrls.map((url, idx) => {
               const ytId    = getYtId(url);
               const driveId = getDriveFileId(url);
+              // Rebuild the watch link fresh from driveId — fixes older cards that
+              // saved a Drive /preview link (the "No preview available" iframe).
+              const shareLink = driveId ? buildShareUrl(driveId) : url;
               return (
                 <div key={idx} style={{borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",overflow:"hidden"}}>
                   {ytId && <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" style={{width:"100%",height:90,objectFit:"cover"}} />}
-                  {driveId && <div style={{height:90,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"rgba(10,15,30,1)"}}>
-                    <IconVideo size={24} color="#4a6a90"/><span style={{fontSize:11,color:"#5a7a90",fontWeight:600}}>Drive video ready</span>
-                  </div>}
+                  {driveId && <video controls preload="metadata" src={buildStreamUrl(driveId)} style={{width:"100%",height:160,display:"block",background:"#000"}} />}
                   <div style={{padding:"6px 8px",display:"flex",alignItems:"center",gap:6}}>
-                    <div style={{fontSize:9,color:"#5a6890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{url}</div>
+                    <div style={{fontSize:9,color:"#5a6890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{shareLink}</div>
                     {typeof navigator !== "undefined" && navigator.share && (
                       <button onClick={async () => {
                         const name = (s.cn || "").split(" ")[0];
@@ -1371,19 +1373,19 @@ Property: ${s.addr || ""}`);
                           await navigator.share({
                             title: "Property Video Review",
                             text: name ? `${name}, here's your property video review from Monster Tree Service:` : "Your property video review from Monster Tree Service:",
-                            url,
+                            url: shareLink,
                           });
                         } catch { /* user dismissed the share sheet */ }
                       }} style={{padding:"4px 8px",borderRadius:5,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Share</button>
                     )}
                     <button onClick={() => {
-                      const html = `<a href="${url}">Link to Video Review</a>`;
+                      const html = `<a href="${shareLink}">Link to Video Review</a>`;
                       if (navigator.clipboard?.write) {
                         navigator.clipboard.write([new ClipboardItem({
                           "text/html": new Blob([html], {type:"text/html"}),
-                          "text/plain": new Blob([url], {type:"text/plain"}),
-                        })]).catch(()=>navigator.clipboard?.writeText(url));
-                      } else { navigator.clipboard?.writeText(url); }
+                          "text/plain": new Blob([shareLink], {type:"text/plain"}),
+                        })]).catch(()=>navigator.clipboard?.writeText(shareLink));
+                      } else { navigator.clipboard?.writeText(shareLink); }
                     }} style={{padding:"4px 8px",borderRadius:5,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#5a90b0",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Copy link</button>
                     <button onClick={() => deleteVideo(url, idx)} style={{padding:"4px 6px",borderRadius:5,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.15)",color:"#e06060",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}>
                       <IconX size={10} color="#e06060" />

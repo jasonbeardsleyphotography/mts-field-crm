@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
+import VideoWatch from './VideoWatch.jsx'
 import { vlogError } from './videoLog'
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -111,10 +112,17 @@ class AppErrorBoundary extends React.Component {
   }
 }
 
+// /watch/:fileId is a public link sent to clients — render just the player,
+// no Google auth, no app shell. Checked before App ever mounts so an
+// unauthenticated viewer never touches the sign-in flow.
+const watchMatch = window.location.pathname.match(/^\/watch\/([a-zA-Z0-9_-]+)\/?$/);
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <AppErrorBoundary>
-      <App />
+      {watchMatch
+        ? <VideoWatch fileId={watchMatch[1]} title={new URLSearchParams(window.location.search).get("t") || ""} />
+        : <App />}
     </AppErrorBoundary>
   </React.StrictMode>
 )
