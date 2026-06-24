@@ -393,18 +393,20 @@ export async function getVideosFolderId(token) {
 }
 
 /**
- * Build the canonical shareable URL we save to cards. The /preview URL
- * uses Drive's embed player — works in any browser, on any device, for
- * both videos and images. Universal compatibility.
+ * Build the canonical shareable URL we save to cards: our own /watch page,
+ * not a Drive link. Drive's /preview iframe frequently shows "No preview
+ * available" for webm/mp4 uploads, so clients need a page we control that
+ * streams the file through the video-stream edge function instead.
  */
 export function buildShareUrl(fileId) {
-  return `https://drive.google.com/file/d/${fileId}/preview`;
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  return `${origin}/watch/${fileId}`;
 }
 
 /**
- * Build a direct-stream URL useful for HTML5 <video src=...> elements.
- * Some clients prefer this over the embed player.
+ * Build the direct stream URL for in-app <video src=...> elements (the
+ * card detail preview). Same edge function the /watch page uses.
  */
-export function buildDirectUrl(fileId) {
-  return `https://drive.google.com/uc?id=${fileId}&export=view`;
+export function buildStreamUrl(fileId) {
+  return `/api/video-stream?id=${fileId}`;
 }

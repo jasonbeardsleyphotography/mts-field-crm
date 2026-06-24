@@ -2,6 +2,10 @@
   command = "npm install && npm run build"
   publish = "dist"
 
+[[edge_functions]]
+  path = "/api/video-stream"
+  function = "video-stream"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
