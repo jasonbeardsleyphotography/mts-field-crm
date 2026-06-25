@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import PhotoMarkup from "./PhotoMarkup";
 import CameraView from "./CameraView";
+import ParcelMapView from "./ParcelMapView";
 import VideoRecorder from "./VideoRecorder";
 import { loadFieldFromDrive, queueFieldDriveSync } from "./driveSync";
 import { loadField, peekField, primeField, mergeField, updateField, saveFieldSync, getFieldSlim, getDirtyFieldIds } from "./fieldStore";
@@ -42,7 +43,7 @@ import {
   isPaused as isVideoQueuePaused,
   setPaused as setVideoQueuePaused,
 } from "./videoQueue";
-import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol } from "./icons";
+import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
@@ -108,6 +109,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [markupSection, setMarkupSection] = useState("scope"); // which photo array to edit
   const [showCamera, setShowCamera] = useState(false);
   const [cameraSection, setCameraSection] = useState("scope");
+  const [showParcelMap, setShowParcelMap] = useState(false);
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recDuration, setRecDuration] = useState(0);
@@ -916,6 +918,30 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const F = "'Oswald',sans-serif";
   const B = "'DM Sans',system-ui,sans-serif";
 
+  // Parcel map — satellite + tax-parcel overlay, scoped to this stop
+  if (showParcelMap) {
+    return <ParcelMapView
+      stop={s}
+      onClose={() => setShowParcelMap(false)}
+      onSnapshot={async (rawDataUrl) => {
+        // Same downscale-then-store flow as camera photos (see showCamera
+        // below) so snapshot photos get every existing guarantee — no
+        // clobbering on concurrent writes, no Drive sync loss.
+        const dataUrl = await downscaleDataUrl(rawDataUrl);
+        const photo = { dataUrl, ts: Date.now(), id: newPhotoId() };
+        try {
+          await updateField(s.id, (existing) => ({
+            addonPhotos: [...(existing.addonPhotos || []), photo],
+          }));
+        } catch (e) { console.warn("Parcel snapshot IDB save failed:", e); }
+        setAddonPhotos(prev => [...prev, photo]);
+        markStopForPhotoSync(s.id);
+        if (token) queueFieldDriveSync(token, s.id);
+        setShowParcelMap(false);
+      }}
+    />;
+  }
+
   // Camera view — rapid capture mode
   if (showCamera) {
     return <CameraView
@@ -1205,6 +1231,9 @@ Property: ${s.addr || ""}`);
             {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4}}><IconPhone size={12} color="#a0b8d0"/>{s.phone}</a>}
             {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4}}><IconMail size={12} color="#a0b8d0"/>{s.email}</a>}
           </div>
+          <button onClick={() => setShowParcelMap(true)} style={{display:"flex",alignItems:"center",gap:5,marginTop:8,padding:"6px 11px",borderRadius:8,background:"rgba(255,214,0,.08)",border:"1px solid rgba(255,214,0,.25)",color:"#FFD600",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer"}}>
+            <IconMapPin size={13} color="#FFD600"/>Parcel Map
+          </button>
         </div>
 
         {/* ── PROPERTY MEMORY ────────────────────────────────────────── */}
