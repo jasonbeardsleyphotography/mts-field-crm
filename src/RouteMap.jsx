@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from "react";
+import { attachParcelOverlay, detachParcelOverlay } from "./parcelOverlay";
+import { IconMapPin } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Route Map
@@ -109,6 +111,8 @@ export default function RouteMap({ stops, selectedId }) {
   const userLoc = useRef(null); // latest GPS coords
   const [ready, setReady] = useState(false);
   const [coords, setCoords] = useState({});
+  const [parcelsOn, setParcelsOn] = useState(false);
+  const parcelHandle = useRef(null);
 
   useEffect(() => { loadMaps().then(() => setReady(true)).catch(() => {}); }, []);
 
@@ -123,6 +127,25 @@ export default function RouteMap({ stops, selectedId }) {
       fullscreenControl:false, keyboardShortcuts:false, clickableIcons:false,
     });
   }, [ready]);
+
+  // ── PARCEL BOUNDARY OVERLAY ─────────────────────────────────────────────
+  // No info panel here by design — this toggle is just "am I on the right
+  // property" while driving, not a lookup tool (that's ParcelMapView).
+  useEffect(() => {
+    if (!map.current) return;
+    if (parcelsOn) {
+      parcelHandle.current = attachParcelOverlay(map.current);
+    } else if (parcelHandle.current) {
+      detachParcelOverlay(parcelHandle.current);
+      parcelHandle.current = null;
+    }
+    return () => {
+      if (parcelHandle.current) {
+        detachParcelOverlay(parcelHandle.current);
+        parcelHandle.current = null;
+      }
+    };
+  }, [parcelsOn, ready]);
 
   // ── LIVE LOCATION DOT ───────────────────────────────────────────────────
   useEffect(() => {
@@ -368,6 +391,23 @@ export default function RouteMap({ stops, selectedId }) {
   return (
     <div style={{position:"relative",width:"100%",height:260,background:"#10131a"}}>
       <div ref={ref} style={{width:"100%",height:"100%"}}>{!ready && <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:"#5a6580",fontSize:12}}>Loading map...</div>}</div>
+      {ready && (
+        <button
+          onClick={() => setParcelsOn(v => !v)}
+          style={{
+            position:"absolute", top:8, right:8, zIndex:10,
+            display:"flex", alignItems:"center", gap:5,
+            padding:"6px 10px", borderRadius:8,
+            background: parcelsOn ? "rgba(255,214,0,.92)" : "rgba(16,19,26,.78)",
+            border:"1px solid rgba(255,255,255,.14)",
+            color: parcelsOn ? "#1a1a1a" : "#e0e8f0",
+            fontSize:11, fontWeight:700, letterSpacing:0.5,
+            cursor:"pointer",
+          }}
+        >
+          <IconMapPin size={13} color={parcelsOn ? "#1a1a1a" : "#e0e8f0"}/>Parcels
+        </button>
+      )}
     </div>
   );
 }
