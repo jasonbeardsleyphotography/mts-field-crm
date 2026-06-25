@@ -392,6 +392,14 @@ export async function getVideosFolderId(token) {
   return videosId;
 }
 
+// Dedicated domain for client-facing share links. Generic shared hosting
+// domains like *.netlify.app get false-positive "malicious" flags from
+// email security scanners (e.g. Microsoft Defender Safe Links) because
+// they're used by countless unrelated sites. A domain we own has its own
+// clean reputation. Same Netlify site serves both — this only changes
+// what hostname goes into the link clients receive.
+const SHARE_ORIGIN = "https://projectvideoreview.app";
+
 /**
  * Build the canonical shareable URL we save to cards: our own /watch page,
  * not a Drive link. Drive's /preview iframe frequently shows "No preview
@@ -399,8 +407,7 @@ export async function getVideosFolderId(token) {
  * streams the file through the video-stream edge function instead.
  */
 export function buildShareUrl(fileId) {
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
-  return `${origin}/watch/${fileId}`;
+  return `${SHARE_ORIGIN}/watch/${fileId}`;
 }
 
 /**
