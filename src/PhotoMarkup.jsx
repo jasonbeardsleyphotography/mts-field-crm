@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
-import { IconArrowUpRight, IconArrowLeft, IconArrowRight, IconEraser, IconUndo, IconX, IconTrash, IconDownload } from "./icons";
+import { IconArrowUpRight, IconArrowLeft, IconArrowRight, IconEraser, IconUndo, IconX, IconDownload, IconRotateCcw } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Photo Markup (Rebuild)
@@ -39,7 +39,7 @@ const COLORS = [
 ];
 
 const SIZES = [3, 6, 10];           // brush sizes in CSS pixels at scale=1
-const ARROWHEAD_SCALES = [3, 4.5];  // large / XL — user requested 2 sizes only
+const ARROWHEAD_SCALES = [1.8, 3, 4.5];  // small / large / XL
 const X_SCALES = [0.35, 0.55, 0.85, 1.70, 2.55]; // XS / S / M / L / XL — 2 new smaller sizes + all prior sizes reduced ~15%
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 5;
@@ -47,36 +47,6 @@ const INIT_SCALE = 1;               // fit-to-screen on open
 const MAX_BACKING = 4096;           // cap canvas backing dimension (memory)
 const DOUBLE_TAP_MS = 280;
 const DOUBLE_TAP_RADIUS = 30;
-
-// ── ARROW DETECTION ──────────────────────────────────────────────────────────
-// Straight-ish stroke with sufficient length snaps to a clean arrow (Apple-style).
-
-function analyzeStroke(points) {
-  if (points.length < 4) return null;
-  const a = points[0], b = points[points.length - 1];
-  const dx = b.x - a.x, dy = b.y - a.y;
-  const straight = Math.hypot(dx, dy);
-  if (straight < 40) return null;
-
-  let pathLen = 0;
-  for (let i = 1; i < points.length; i++) {
-    pathLen += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
-  }
-  const ratio = pathLen > 0 ? straight / pathLen : 0;
-
-  const angle = Math.atan2(dy, dx);
-  let maxDev = 0;
-  for (const p of points) {
-    const rx = p.x - a.x, ry = p.y - a.y;
-    const dev = Math.abs(rx * Math.sin(angle) - ry * Math.cos(angle));
-    if (dev > maxDev) maxDev = dev;
-  }
-
-  if (ratio > 0.72 && maxDev < straight * 0.1) {
-    return { start: a, end: b, angle };
-  }
-  return null;
-}
 
 function buildArrowStroke(info, color, size, headScale = 1) {
   const { start, end, angle } = info;
@@ -197,24 +167,32 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
   });
   // Active tool. Defaults to "x" so the editor opens ready to stamp X marks —
   // the most common annotation. Persisted across sessions.
-  // Values: "x" | "freehand" | "line" | "arrow" | "eraser"
+  // Values: "x" | "freehand" | "line" | "eraser"
+  // The "line" tool draws a straight line with an optional arrowhead at the end
+  // (controlled by `arrowEnd`, default on) — line and arrow are one tool now.
   const [tool, setTool] = useState(() => {
     try {
-      const t = localStorage.getItem("pm.tool");
-      return ["x", "freehand", "line", "arrow", "eraser"].includes(t) ? t : "x";
+      let t = localStorage.getItem("pm.tool");
+      if (t === "arrow") t = "line";  // old arrow tool folded into the line tool
+      return ["x", "freehand", "line", "eraser"].includes(t) ? t : "x";
     } catch { return "x"; }
   });
   useEffect(() => { try { localStorage.setItem("pm.tool", tool); } catch {} }, [tool]);
   // Derived booleans keep the rest of the component unchanged.
-  const arrowMode    = tool === "arrow";
   const eraserMode   = tool === "eraser";
   const xMode        = tool === "x";
   const lineMode     = tool === "line";
   const freehandMode = tool === "freehand";
+  // Whether the line tool caps its end with an arrowhead. Defaults on.
+  const [arrowEnd, setArrowEnd] = useState(() => {
+    try { const v = localStorage.getItem("pm.arrowEnd"); return v === null ? true : v === "1"; }
+    catch { return true; }
+  });
+  useEffect(() => { try { localStorage.setItem("pm.arrowEnd", arrowEnd ? "1" : "0"); } catch {} }, [arrowEnd]);
   const [arrowHeadScale, setArrowHeadScale] = useState(() => {
     try {
       const s = Number(localStorage.getItem("pm.arrowHeadScale")) || 3;
-      // Validate against the new 2-option set; reset old small/medium values to large
+      // Validate against the current option set; unknown values fall back to large
       return ARROWHEAD_SCALES.includes(s) ? s : 3;
     } catch { return 3; }
   });
@@ -261,6 +239,12 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
   const drawingRef  = useRef(false);         // true while a stroke is being drawn
   const lastTapRef  = useRef({ t: 0, x: 0, y: 0 });
 
+  // Current image source. Starts as the incoming photo, but the Rotate button
+  // replaces it with a freshly-rotated (annotations baked in) data URL.
+  const [srcUrl, setSrcUrl] = useState(photoDataUrl);
+  // If the parent swaps the photo (prev/next navigation), follow it.
+  useEffect(() => { setSrcUrl(photoDataUrl); }, [photoDataUrl]);
+
   // ── IMAGE LOAD ─────────────────────────────────────────────────────────────
   useEffect(() => {
     let dead = false;
@@ -279,9 +263,9 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
       });
       setImgLoaded(true);
     };
-    img.src = photoDataUrl;
+    img.src = srcUrl;
     return () => { dead = true; };
-  }, [photoDataUrl]);
+  }, [srcUrl]);
 
   // ── FIT-TO-CONTAINER (recomputed on resize / rotation) ─────────────────────
   useLayoutEffect(() => {
@@ -376,9 +360,16 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
         const xStroke = buildXStroke(cs.center, cs.color, cs.size, cssToImg, cs.xHeadScale || 1);
         drawX(ctx, xStroke, cs.size * cssToImg);
       } else if (cs.type === "line" && cs.points.length >= 2) {
-        // Straight-line preview: first point → current point.
+        // Straight-line preview: first point → current point. Caps with an
+        // arrowhead when arrowEnd is on, matching what will be committed.
         const a = cs.points[0], b = cs.points[cs.points.length - 1];
-        drawLine(ctx, { start: a, end: b, color: cs.color }, cs.size * cssToImg);
+        if (cs.arrowEnd) {
+          const angle = Math.atan2(b.y - a.y, b.x - a.x);
+          const arrow = buildArrowStroke({ start: a, end: b, angle }, cs.color, cs.size, cs.arrowHeadScale || 1);
+          drawArrow(ctx, arrow, cs.size * cssToImg);
+        } else {
+          drawLine(ctx, { start: a, end: b, color: cs.color }, cs.size * cssToImg);
+        }
       } else if (cs.points.length >= 2) {
         drawFreehand(ctx, cs, cs.size * cssToImg);
       }
@@ -528,6 +519,8 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
         points: [pImg],
         color,
         size: brushSize,
+        arrowEnd,
+        arrowHeadScale,
       };
       forceUpdate(n => n + 1); // flip strokes-count badge
       scheduleOverlay();
@@ -616,35 +609,27 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
       }
 
       // Line tool: commit a clean straight segment from first → last point,
-      // discarding the intermediate freehand jitter.
+      // discarding the intermediate freehand jitter. Caps with an arrowhead
+      // when arrowEnd is on (line + arrow are one tool).
       if (cs.type === "line") {
         const a = cs.points[0], b = cs.points[cs.points.length - 1];
         currentStrokeRef.current = null;
         scheduleOverlay();
-        setStrokes(prev => [...prev, { type: "line", start: a, end: b, color: cs.color, size: cs.size }]);
+        if (cs.arrowEnd) {
+          const angle = Math.atan2(b.y - a.y, b.x - a.x);
+          const arrow = buildArrowStroke({ start: a, end: b, angle }, cs.color, cs.size, cs.arrowHeadScale || 1);
+          setStrokes(prev => [...prev, arrow]);
+        } else {
+          setStrokes(prev => [...prev, { type: "line", start: a, end: b, color: cs.color, size: cs.size }]);
+        }
         return;
       }
 
-      const arrowInfo = arrowMode ? analyzeStroke(cs.points) : null;
-      if (arrowInfo) {
-        const arrow = buildArrowStroke(arrowInfo, cs.color, cs.size, arrowHeadScale);
-        arrowPreviewRef.current = arrow;
-        currentStrokeRef.current = null;
-        scheduleOverlay();
-        forceUpdate(n => n + 1);
-        // Brief preview flash, then commit to base layer
-        setTimeout(() => {
-          arrowPreviewRef.current = null;
-          scheduleOverlay();
-          setStrokes(prev => [...prev, arrow]);
-        }, 120);
-      } else {
-        // Commit freehand stroke to base layer. Clear overlay first so the
-        // stroke doesn't briefly double-render (base + overlay) on flush.
-        currentStrokeRef.current = null;
-        scheduleOverlay();
-        setStrokes(prev => [...prev, cs]);
-      }
+      // Commit freehand stroke to base layer. Clear overlay first so the
+      // stroke doesn't briefly double-render (base + overlay) on flush.
+      currentStrokeRef.current = null;
+      scheduleOverlay();
+      setStrokes(prev => [...prev, cs]);
     }
   };
 
@@ -682,7 +667,39 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
 
   // ── ACTIONS ────────────────────────────────────────────────────────────────
   const undo     = () => setStrokes(p => p.slice(0, -1));
-  const clearAll = () => setStrokes([]);
+
+  // Rotate the photo 90° clockwise. Bakes current annotations into the image
+  // first (so they rotate with it), then loads the rotated result as the new
+  // source with a cleared stroke list. View re-fits automatically.
+  const handleRotate = () => {
+    const img = imgRef.current;
+    if (!img) return;
+    const cssToImg = fit.w > 0 ? imgDims.w / fit.w : 1;
+
+    // Composite image + strokes at native resolution.
+    const flat = document.createElement("canvas");
+    flat.width = imgDims.w; flat.height = imgDims.h;
+    const fctx = flat.getContext("2d");
+    fctx.drawImage(img, 0, 0, imgDims.w, imgDims.h);
+    strokes.forEach(s => {
+      const lw = s.size * cssToImg;
+      if (s.type === "arrow")     drawArrow(fctx, s, lw);
+      else if (s.type === "x")    drawX(fctx, s, lw);
+      else if (s.type === "line") drawLine(fctx, s, lw);
+      else                        drawFreehand(fctx, s, lw);
+    });
+
+    // Rotate 90° clockwise into a dimension-swapped canvas.
+    const rc = document.createElement("canvas");
+    rc.width = imgDims.h; rc.height = imgDims.w;
+    const rctx = rc.getContext("2d");
+    rctx.translate(rc.width, 0);
+    rctx.rotate(Math.PI / 2);
+    rctx.drawImage(flat, 0, 0);
+
+    setStrokes([]);
+    setSrcUrl(rc.toDataURL("image/jpeg", 0.92));
+  };
 
   // Render image + all strokes to a new canvas and return a dataUrl.
   const getAnnotatedDataUrl = () => {
@@ -902,18 +919,15 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
         <button
           onClick={() => setTool("line")}
           style={fab(lineMode)}
-          title="Straight line"
+          title="Line / arrow"
         >
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-            <line x1="3" y1="17" x2="17" y2="3" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"/>
-          </svg>
-        </button>
-        <button
-          onClick={() => setTool("arrow")}
-          style={fab(arrowMode)}
-          title="Arrow (straight strokes snap to arrows)"
-        >
-          <IconArrowUpRight size={20} color="#fff" />
+          {arrowEnd
+            ? <IconArrowUpRight size={20} color="#fff" />
+            : (
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <line x1="3" y1="17" x2="17" y2="3" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"/>
+              </svg>
+            )}
         </button>
         <button
           onClick={() => setTool("eraser")}
@@ -921,6 +935,13 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
           title="Eraser"
         >
           <IconEraser size={20} color="#fff" />
+        </button>
+        <button
+          onClick={handleRotate}
+          style={fab()}
+          title="Rotate 90°"
+        >
+          <IconRotateCcw size={20} color="#fff" />
         </button>
         <button
           onClick={undo}
@@ -956,8 +977,8 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
         display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
         pointerEvents: "none", // outer wrapper lets touches pass through; pills opt in
       }}>
-        {/* Arrowhead size — only shown when arrow mode is active (2 sizes: large / XL) */}
-        {arrowMode && (
+        {/* Line tool: arrow-end toggle + (when on) arrowhead size (3 sizes) */}
+        {lineMode && (
           <div style={{
             display: "flex", gap: 4, padding: "6px 10px",
             background: "rgba(28,28,30,.72)",
@@ -969,15 +990,35 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
             pointerEvents: "auto",
             alignItems: "center",
           }}>
-            <span style={{ fontSize: 10, color: "rgba(255,255,255,.5)", fontWeight: 600, marginRight: 4, letterSpacing: 0.5 }}>HEAD</span>
-            {ARROWHEAD_SCALES.map((scale, i) => {
+            <button
+              onClick={() => setArrowEnd(v => !v)}
+              title={arrowEnd ? "Arrow end on — tap for plain line" : "Plain line — tap to add arrow end"}
+              style={{
+                width: 56, height: 34, borderRadius: 8,
+                background: arrowEnd ? "rgba(0,122,255,.35)" : "transparent",
+                border: arrowEnd ? "1px solid rgba(0,122,255,.7)" : "1px solid rgba(255,255,255,.2)",
+                cursor: "pointer", padding: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}
+            >
+              <svg width="42" height="18" viewBox="0 0 42 18" fill="none">
+                <line x1="3" y1="9" x2={arrowEnd ? 32 : 39} y2="9" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/>
+                {arrowEnd && (
+                  <polyline points="30,3 39,9 30,15" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                )}
+              </svg>
+            </button>
+            {arrowEnd && (
+              <div style={{ width: 1, height: 22, background: "rgba(255,255,255,.18)", margin: "0 2px" }} />
+            )}
+            {arrowEnd && ARROWHEAD_SCALES.map((scale, i) => {
               const active = arrowHeadScale === scale;
-              const headSize = i === 0 ? 10 : 15; // large / XL preview sizes
+              const headSize = [7, 11, 15][i]; // small / large / XL preview sizes
               return (
                 <button
                   key={scale}
                   onClick={() => setArrowHeadScale(scale)}
-                  title={["Large", "XL"][i] + " arrowhead"}
+                  title={["Small", "Large", "XL"][i] + " arrowhead"}
                   style={{
                     width: 42, height: 34, borderRadius: 8,
                     background: active ? "rgba(0,122,255,.35)" : "transparent",
@@ -1110,22 +1151,6 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
               </button>
             );
           })}
-          <div style={{ width: 1, height: 22, background: "rgba(255,255,255,.12)", margin: "0 4px" }} />
-          <button
-            onClick={clearAll}
-            disabled={!strokes.length}
-            style={{
-              width: 38, height: 38, borderRadius: 19,
-              background: "transparent", border: "none",
-              cursor: strokes.length ? "pointer" : "default",
-              opacity: strokes.length ? 1 : 0.35,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              padding: 0,
-            }}
-            title="Clear all"
-          >
-            <IconTrash size={18} color="#fff" />
-          </button>
         </div>
       </div>
 
