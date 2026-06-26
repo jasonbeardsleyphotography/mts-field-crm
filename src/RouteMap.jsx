@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { attachParcelOverlay, detachParcelOverlay } from "./parcelOverlay";
+import { attachParcelOverlay, detachParcelOverlay, PARCEL_MIN_ZOOM } from "./parcelOverlay";
 import { IconMapPin } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -112,6 +112,7 @@ export default function RouteMap({ stops, selectedId }) {
   const [ready, setReady] = useState(false);
   const [coords, setCoords] = useState({});
   const [parcelsOn, setParcelsOn] = useState(false);
+  const [mapZoom, setMapZoom] = useState(11);
   const parcelHandle = useRef(null);
 
   useEffect(() => { loadMaps().then(() => setReady(true)).catch(() => {}); }, []);
@@ -328,6 +329,7 @@ export default function RouteMap({ stops, selectedId }) {
     const listener = map.current.addListener("zoom_changed", () => {
       const zoom = map.current.getZoom();
       if (zoom == null) return;
+      setMapZoom(zoom);
       markers.current.forEach(({ marker, stopId }) => {
         const info = clusterInfo.current[stopId];
         if (!info) return;
@@ -407,6 +409,16 @@ export default function RouteMap({ stops, selectedId }) {
         >
           <IconMapPin size={13} color={parcelsOn ? "#1a1a1a" : "#e0e8f0"}/>Parcels
         </button>
+      )}
+      {ready && parcelsOn && mapZoom < PARCEL_MIN_ZOOM && (
+        <div style={{
+          position:"absolute", top:42, right:8, zIndex:10,
+          padding:"5px 9px", borderRadius:7,
+          background:"rgba(16,19,26,.85)", border:"1px solid rgba(255,255,255,.14)",
+          color:"#ffd600", fontSize:10.5, fontWeight:600,
+        }}>
+          Zoom in to see parcels
+        </div>
       )}
     </div>
   );

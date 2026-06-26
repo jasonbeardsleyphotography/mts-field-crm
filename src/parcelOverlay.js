@@ -68,16 +68,27 @@ async function queryOneSource(source, bounds) {
     const res = await fetch(`${source.url}/query?${params}`, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.warn(`[parcelOverlay] ${source.id} query failed: HTTP ${res.status}`, await res.text().catch(() => ""));
+      return [];
+    }
     const geojson = await res.json();
-    const features = Array.isArray(geojson?.features) ? geojson.features : [];
+    if (!Array.isArray(geojson?.features)) {
+      // Esri error responses are JSON with an .error.message even on a 200
+      // status, so this is the other place a broken query hides silently.
+      console.warn(`[parcelOverlay] ${source.id} returned no features array`, geojson?.error?.message || geojson);
+      return [];
+    }
+    const features = geojson.features;
     // Tag each feature with its source id so parcelFeatureToInfo can apply
     // any source-specific field-name quirks defensively.
     features.forEach(f => { f.properties = { ...f.properties, __sourceId: source.id }; });
     return features;
-  } catch {
+  } catch (e) {
     // Network failure, timeout, CORS, or a county the source doesn't cover
-    // — all treated as "no parcels here," never surfaced as an error.
+    // all land here — still treated as "no parcels here" for the user, but
+    // logged so a genuinely broken query is diagnosable instead of invisible.
+    console.warn(`[parcelOverlay] ${source.id} query threw:`, e?.message || e);
     return [];
   }
 }
@@ -97,7 +108,7 @@ export async function fetchParcelsForBounds(bounds) {
 //  - a click listener on map.data invoking onParcelClick(feature)
 //  - stroke-only styling so satellite imagery stays legible underneath
 export function attachParcelOverlay(map, { onParcelClick } = {}) {
-  if (!map || !window.google?.maps) return null;
+  if (!map || !map.data || !window.google?.maps) return null;
 
   map.data.setStyle({
     strokeColor: "#FFD600",
