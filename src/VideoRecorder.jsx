@@ -20,6 +20,10 @@ const VIDEO_BITRATE = 1_500_000; // ~1.5Mbps — ~11MB/min at 720p, "good enough
 const AUDIO_BITRATE  = 64_000;
 const MAX_DURATION_S = 15 * 60;  // safety net — auto-finalize so a forgotten recorder can't run forever
 
+const PRESET_LENSES     = [0.5, 1, 2];
+const PRESET_TOLERANCE  = 0.05;
+const ZOOM_PILL_HIDE_MS = 1500;
+
 const haptic = (ms = 10) => { try { navigator.vibrate?.(ms); } catch {} };
 
 function pickMimeType() {
@@ -42,6 +46,7 @@ const fmtDur = (s) => `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
 export default function VideoRecorder({ onRecorded, onClose }) {
   const videoRef    = useRef(null);
   const streamRef   = useRef(null);
+  const trackRef    = useRef(null);
   const recorderRef = useRef(null);
   const chunksRef   = useRef([]);
   const timerRef    = useRef(null);
@@ -53,6 +58,17 @@ export default function VideoRecorder({ onRecorded, onClose }) {
   // "idle" | "recording" | "paused" | "finishing"
   const [state, setState] = useState("idle");
   const [duration, setDuration] = useState(0);
+
+  // Zoom — same hardware-constraint approach as CameraView.jsx; the track
+  // recorded by MediaRecorder is the same track this zoom is applied to, so
+  // it's baked into the saved video automatically.
+  const [zoom, setZoom]             = useState(1);
+  const [zoomCaps, setZoomCaps]     = useState({ min: 1, max: 1, step: 0.1, supported: false });
+  const [zoomPillOn, setZoomPillOn] = useState(false);
+  const zoomPillHideRef             = useRef(null);
+
+  const pointersRef = useRef(new Map());
+  const pinchRef    = useRef(null);
 
   const [ctrlEdge, setCtrlEdge] = useState(portraitBottomEdge);
   useEffect(() => {
@@ -78,6 +94,20 @@ export default function VideoRecorder({ onRecorded, onClose }) {
         });
         if (dead) { stream.getTracks().forEach(t => t.stop()); return; }
         streamRef.current = stream;
+        const track = stream.getVideoTracks()[0];
+        trackRef.current = track;
+
+        const caps = track?.getCapabilities?.() || {};
+        if (caps.zoom) {
+          const min  = caps.zoom.min  ?? 1;
+          const max  = caps.zoom.max  ?? 1;
+          const step = caps.zoom.step ?? 0.1;
+          setZoomCaps({ min, max, step, supported: max > min });
+          const target = min <= 0.5 ? 0.5 : Math.max(1, min);
+          setZoom(target);
+          try { await track.applyConstraints({ advanced: [{ zoom: target }] }); } catch {}
+        }
+
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           try { await videoRef.current.play(); } catch {}
@@ -111,6 +141,46 @@ export default function VideoRecorder({ onRecorded, onClose }) {
     }, 1000);
   };
   const stopTimer = () => { if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } };
+
+  // ── ZOOM ───────────────────────────────────────────────────────────────────
+  const applyZoom = useCallback(async (val) => {
+    if (!zoomCaps.supported) return;
+    const clamped = Math.max(zoomCaps.min, Math.min(zoomCaps.max, val));
+    setZoom(clamped);
+    if (trackRef.current) {
+      try { await trackRef.current.applyConstraints({ advanced: [{ zoom: clamped }] }); } catch {}
+    }
+    setZoomPillOn(true);
+    if (zoomPillHideRef.current) clearTimeout(zoomPillHideRef.current);
+    zoomPillHideRef.current = setTimeout(() => setZoomPillOn(false), ZOOM_PILL_HIDE_MS);
+  }, [zoomCaps]);
+
+  // ── PINCH-TO-ZOOM POINTER HANDLERS ──────────────────────────────────────────
+  const onPointerDown = (e) => {
+    if (e.target.closest?.("[data-vr-ctl]")) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY });
+    if (pointersRef.current.size === 2) {
+      const [p1, p2] = [...pointersRef.current.values()];
+      const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      pinchRef.current = { startDist: dist, startZoom: zoom };
+    }
+  };
+  const onPointerMove = (e) => {
+    if (!pointersRef.current.has(e.pointerId)) return;
+    const p = pointersRef.current.get(e.pointerId);
+    p.x = e.clientX; p.y = e.clientY;
+    if (pointersRef.current.size === 2 && pinchRef.current) {
+      const [a, b] = [...pointersRef.current.values()];
+      const dist = Math.hypot(b.x - a.x, b.y - a.y);
+      applyZoom(pinchRef.current.startZoom * (dist / pinchRef.current.startDist));
+    }
+  };
+  const onPointerEnd = (e) => {
+    pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+  };
 
   // ── FINALIZE — assemble chunks, hand the file back to the caller ─────────
   const finalize = useCallback(() => {
@@ -201,6 +271,10 @@ export default function VideoRecorder({ onRecorded, onClose }) {
   const paused = state === "paused";
   const sideways = ctrlEdge !== "bottom";
 
+  const presets = zoomCaps.supported
+    ? PRESET_LENSES.filter(p => p >= zoomCaps.min - PRESET_TOLERANCE && p <= zoomCaps.max + PRESET_TOLERANCE)
+    : [1];
+
   const stripStyle = sideways
     ? {
         position: "absolute", top: 0, bottom: 0, [ctrlEdge]: 0,
@@ -223,11 +297,17 @@ export default function VideoRecorder({ onRecorded, onClose }) {
       };
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, background: "#000", zIndex: 300, overflow: "hidden",
-      touchAction: "none", userSelect: "none", WebkitUserSelect: "none",
-      WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent",
-    }}>
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "#000", zIndex: 300, overflow: "hidden",
+        touchAction: "none", userSelect: "none", WebkitUserSelect: "none",
+        WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent",
+      }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerEnd}
+      onPointerCancel={onPointerEnd}
+    >
       <video ref={videoRef} playsInline muted autoPlay
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
 
@@ -252,6 +332,27 @@ export default function VideoRecorder({ onRecorded, onClose }) {
         </div>
       )}
 
+      {/* ── ZOOM PILL (center, auto-fades) ───────────────────────────────── */}
+      {zoomCaps.supported && (
+        <div data-vr-ctl style={{
+          position: "absolute",
+          top: "max(72px, calc(env(safe-area-inset-top) + 60px))",
+          left: "50%", transform: "translateX(-50%)",
+          padding: "4px 12px", borderRadius: 999,
+          background: "rgba(28,28,30,.72)",
+          WebkitBackdropFilter: "blur(20px) saturate(180%)",
+          backdropFilter:       "blur(20px) saturate(180%)",
+          border: "1px solid rgba(255,255,255,.12)",
+          color: "#FFCC00", fontSize: 13, fontWeight: 700,
+          opacity: zoomPillOn ? 1 : 0,
+          transition: "opacity .3s",
+          pointerEvents: "none",
+          whiteSpace: "nowrap",
+        }}>
+          {zoom.toFixed(1)}×
+        </div>
+      )}
+
       {/* ── ERROR ──────────────────────────────────────────────────────────── */}
       {error && (
         <div style={{
@@ -264,7 +365,39 @@ export default function VideoRecorder({ onRecorded, onClose }) {
       )}
 
       {/* ── CONTROL STRIP ──────────────────────────────────────────────────── */}
-      <div style={stripStyle}>
+      <div data-vr-ctl style={stripStyle}>
+        {/* Lens preset pills */}
+        {presets.length > 1 && (
+          <div style={sideways
+            ? { display: "flex", flexDirection: "column", justifyContent: "center", gap: 8, marginRight: ctrlEdge === "right" ? 20 : 0, marginLeft: ctrlEdge === "left" ? 20 : 0 }
+            : { display: "flex", justifyContent: "center", gap: 8, marginBottom: 20 }
+          }>
+            {presets.map(p => {
+              const active = Math.abs(zoom - p) < PRESET_TOLERANCE + 0.02;
+              return (
+                <button
+                  key={p}
+                  onClick={() => { applyZoom(p); haptic(6); }}
+                  style={{
+                    minWidth: active ? 52 : 40, height: active ? 40 : 32,
+                    borderRadius: 999, padding: "0 12px",
+                    background: "rgba(28,28,30,.72)",
+                    WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                    backdropFilter:       "blur(20px) saturate(180%)",
+                    border: "1px solid rgba(255,255,255,.14)",
+                    color: active ? "#FFCC00" : "#fff",
+                    fontSize: active ? 14 : 12, fontWeight: 700,
+                    cursor: "pointer",
+                    transition: "all .18s",
+                    boxShadow: "0 2px 10px rgba(0,0,0,.35)",
+                  }}
+                >
+                  {p < 1 ? p.toFixed(1) : p}×
+                </button>
+              );
+            })}
+          </div>
+        )}
         <div style={{
           display: "flex", flexDirection: sideways ? "column" : "row",
           alignItems: "center", justifyContent: "center", gap: 50,

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { IconX } from "./icons";
+import { scoreSharpness } from "./sharpness";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Camera View
@@ -32,6 +33,29 @@ const PRESET_TOLERANCE    = 0.05;
 const TAP_MOVE_THRESHOLD  = 12;   // px — above this, treat as drag not tap
 const ZOOM_PILL_HIDE_MS   = 1500;
 const FOCUS_INDICATOR_MS  = 800;
+const BURST_FRAME_COUNT   = 3;    // frames grabbed per shutter press; sharpest wins
+
+// Grabs `count` frames from `video` a rAF tick apart, drawing each at full
+// resolution and scoring it for sharpness. Never throws — a bad frame is
+// skipped, not fatal — so the caller always gets whatever frames succeeded
+// (possibly fewer than `count`, possibly zero).
+async function grabBurst(video, vw, vh, count, mountedRef) {
+  const frames = [];
+  for (let i = 0; i < count; i++) {
+    await new Promise((r) => requestAnimationFrame(r));
+    if (!mountedRef.current) break;
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = vw;
+      canvas.height = vh;
+      canvas.getContext("2d").drawImage(video, 0, 0, vw, vh);
+      let score = -Infinity;
+      try { score = scoreSharpness(canvas); } catch {}
+      frames.push({ bitmap: canvas, score });
+    } catch {}
+  }
+  return frames;
+}
 
 const haptic = (ms = 10) => { try { navigator.vibrate?.(ms); } catch {} };
 
@@ -49,10 +73,12 @@ function portraitBottomEdge() {
 }
 
 export default function CameraView({ onPhoto, onClose }) {
-  const videoRef     = useRef(null);
-  const streamRef    = useRef(null);
-  const trackRef     = useRef(null);
-  const containerRef = useRef(null);
+  const videoRef           = useRef(null);
+  const streamRef          = useRef(null);
+  const trackRef           = useRef(null);
+  const containerRef       = useRef(null);
+  const mountedRef         = useRef(true);
+  const captureInFlightRef = useRef(false);
 
   // Stream readiness
   const [ready, setReady] = useState(false);
@@ -164,6 +190,7 @@ export default function CameraView({ onPhoto, onClose }) {
 
     return () => {
       dead = true;
+      mountedRef.current = false;
       if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
       if (zoomPillHideRef.current) clearTimeout(zoomPillHideRef.current);
     };
@@ -223,23 +250,37 @@ export default function CameraView({ onPhoto, onClose }) {
   };
 
   // ── CAPTURE ────────────────────────────────────────────────────────────────
-  const capture = useCallback(() => {
+  // No real focus-lock/focus-detection API exists on iOS Safari's web
+  // platform, so instead of gating capture on "in focus", grab a quick burst
+  // of frames and keep whichever scores sharpest.
+  const capture = useCallback(async () => {
     const video = videoRef.current;
     if (!video || !ready) return;
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw || !vh) return;
 
-    const canvas = document.createElement("canvas");
-    canvas.width  = vw;
-    canvas.height = vh;
-    canvas.getContext("2d").drawImage(video, 0, 0, vw, vh);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+    if (captureInFlightRef.current) return; // reject overlapping presses, don't queue
+    captureInFlightRef.current = true;
 
-    onPhoto(dataUrl);
+    // Immediate felt-response — fires on tap regardless of how long scoring takes.
     setCount(c => c + 1);
     setFlash(true);
     haptic(14);
     setTimeout(() => setFlash(false), 90);
+
+    try {
+      const frames = await grabBurst(video, vw, vh, BURST_FRAME_COUNT, mountedRef);
+      const best = frames.length
+        ? frames.reduce((a, b) => (b.score > a.score ? b : a))
+        : null;
+      if (best && mountedRef.current) {
+        onPhoto(best.bitmap.toDataURL("image/jpeg", 0.9));
+      }
+    } catch (e) {
+      console.warn("Burst capture failed:", e);
+    } finally {
+      captureInFlightRef.current = false;
+    }
   }, [ready, onPhoto]);
 
   // ── VOLUME-UP → SHUTTER ────────────────────────────────────────────────────

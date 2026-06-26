@@ -39,8 +39,15 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
         zoomControl: false, mapTypeControl: false, streetViewControl: false,
         fullscreenControl: false, keyboardShortcuts: false, clickableIcons: false,
       });
-      parcelHandle.current = attachParcelOverlay(map.current, {
-        onParcelClick: (feature) => setInfo(parcelFeatureToInfo(feature)),
+      // Wait for the map's first idle event before attaching — right after
+      // construction, map.getBounds() can still return null, which would
+      // make the overlay's first refresh() silently no-op.
+      const onceIdle = map.current.addListener("idle", () => {
+        onceIdle.remove();
+        if (dead) return;
+        parcelHandle.current = attachParcelOverlay(map.current, {
+          onParcelClick: (feature) => setInfo(parcelFeatureToInfo(feature)),
+        });
       });
     })();
     return () => {
