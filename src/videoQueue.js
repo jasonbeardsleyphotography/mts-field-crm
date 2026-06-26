@@ -43,6 +43,7 @@ import {
   fixDriveFileContentType,
 } from "./driveUpload";
 import { queueFieldDriveSync } from "./driveSync";
+import { createWakeLockHandle } from "./wakeLock";
 
 // ── Tunables ─────────────────────────────────────────────────────────────
 
@@ -117,18 +118,9 @@ export function setPaused(p) {
 // Supported on iOS 16.4+ and modern Android Chrome. Silently no-ops on older
 // browsers — the chunk-size reduction covers those cases instead.
 
-let _wakeLock = null;
-async function _acquireWakeLock() {
-  if (!("wakeLock" in navigator) || _wakeLock) return;
-  try {
-    _wakeLock = await navigator.wakeLock.request("screen");
-    _wakeLock.addEventListener("release", () => { _wakeLock = null; });
-  } catch {}
-}
-function _releaseWakeLock() {
-  try { _wakeLock?.release(); } catch {}
-  _wakeLock = null;
-}
+const _wakeLockHandle = createWakeLockHandle();
+const _acquireWakeLock = () => _wakeLockHandle.acquire();
+const _releaseWakeLock = () => _wakeLockHandle.release();
 
 // iOS suspends network requests when the app is backgrounded mid-chunk,
 // which surfaces as a "Chunk timeout" — not a real network failure. Waiting
@@ -293,7 +285,13 @@ async function _processNext() {
     while (true) {
       if (_isPaused) break;
       const all = await idbAll();
-      const next = all.find(i => i.status === "queued" || i.status === "uploading");
+      // An item already mid-upload always wins — abandoning it would waste
+      // bytes Drive has already received. Otherwise prefer the smallest
+      // queued item, so a short visible window is more likely to see at
+      // least one item finish instead of the largest file monopolizing it.
+      const next =
+        all.find(i => i.status === "uploading") ||
+        all.filter(i => i.status === "queued").sort((a, b) => a.fileSize - b.fileSize)[0];
       if (!next) break;
       const ok = await _processItem(next.id);
       if (!ok) break;
@@ -560,7 +558,7 @@ export function startVideoQueueWatcher(getToken) {
     if (document.visibilityState === "visible") {
       // In-memory unstick: _processingStartMs freezes while iOS suspends JS,
       // so it can undercount elapsed time. Unstick if it looks long enough.
-      if (_processing && _processingStartMs && Date.now() - _processingStartMs > 90_000) {
+      if (_processing && _processingStartMs && Date.now() - _processingStartMs > 45_000) {
         vlogWarn("worker.foreground_unstick", { heldForMs: Date.now() - _processingStartMs });
         _processing = false;
       }
@@ -575,7 +573,7 @@ export function startVideoQueueWatcher(getToken) {
       // so _kick() restarts within seconds instead of waiting 2 minutes.
       idbAll().then(all => {
         const stale = all.filter(
-          i => i.status === "uploading" && Date.now() - (i.statusSetAt || 0) > 90_000
+          i => i.status === "uploading" && Date.now() - (i.statusSetAt || 0) > 45_000
         );
         if (!stale.length) return;
         vlogWarn("worker.idb_wall_unstick", { count: stale.length });

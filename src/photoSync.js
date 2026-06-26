@@ -38,6 +38,12 @@ import { loadField, updateField, listFieldIds } from "./fieldStore";
 import { uploadPhotoToDrive, queueFieldDriveSync } from "./driveSync";
 import { downscaleDataUrl, OVERSIZE_DATAURL_LEN, photoKey } from "./imageUtils";
 import { logError, logWarn, logInfo } from "./debugLog";
+import { createWakeLockHandle } from "./wakeLock";
+
+// Keeps the screen on during an active photo upload, same as video uploads —
+// otherwise a glance-length upload can lose to the screen auto-locking and
+// iOS suspending the tab before it finishes.
+const _wakeLockHandle = createWakeLockHandle();
 
 const QUEUE_KEY = "mts-photo-queue";
 const PROMOTED_QUEUE_KEY = "mts-photo-promote-queue"; // stops that may have evictable photos
@@ -252,12 +258,14 @@ export async function processPhotoQueue(token) {
   const queue = getQueue();
   if (queue.size > 0) {
     _processing = true;
+    await _wakeLockHandle.acquire();
     try {
       for (const stopId of queue) {
         await syncStop(stopId, token);
       }
     } finally {
       _processing = false;
+      _wakeLockHandle.release();
     }
   }
 

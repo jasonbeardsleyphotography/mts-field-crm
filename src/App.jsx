@@ -8,7 +8,7 @@ import { saveAppState, loadAppState, loadFieldFromDrive, listFieldFiles, onSyncS
 import { loadField, listFieldIds, updateField, getDirtyFieldIds } from "./fieldStore";
 import { startPhotoSyncWatcher } from "./photoSync";
 import { photoKey } from "./imageUtils";
-import { startVideoQueueWatcher, pendingCount as videoPendingCount } from "./videoQueue";
+import { startVideoQueueWatcher, pendingCount as videoPendingCount, onQueueChange as onVideoQueueChange } from "./videoQueue";
 import { pruneLog as pruneVideoLog } from "./videoLog";
 import UploadTracker from "./UploadTracker";
 import DebugPanel from "./DebugPanel";
@@ -1151,10 +1151,16 @@ export default function App() {
     const onSynced = () => { setHealthBanner(null); checkHealth(); };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("mts-field-synced", onSynced);
+    // videoQueue's own pub/sub fires on every item status change (finished,
+    // errored, progressed) — wiring it here makes the pending count tick
+    // down live while the user is glancing at the screen, instead of only
+    // updating on the next visibility flip or field-sync event.
+    const offVideoQueue = onVideoQueueChange(() => { if (document.visibilityState === "visible") checkHealth(); });
     const t = setTimeout(checkHealth, 6000);
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("mts-field-synced", onSynced);
+      offVideoQueue();
       clearTimeout(t);
     };
   }, [token, checkHealth]);
