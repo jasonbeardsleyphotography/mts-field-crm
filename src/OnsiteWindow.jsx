@@ -576,7 +576,12 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     const photos = markupSection === "addon" ? addonPhotos : scopePhotos;
     const target = photos[markupIdx];
     const key = target ? photoKey(target) : null;
-    const update = (p, i) => i === markupIdx ? { ...p, dataUrl, url: undefined } : p;
+    // Stash the pre-edit image the FIRST time a photo is marked up, so the
+    // editor can offer "Revert to original" later (e.g. to undo accidental
+    // pocket marks). Only set once — never overwrite with an annotated frame.
+    const update = (p, i) => i === markupIdx
+      ? { ...p, originalDataUrl: p.originalDataUrl || p.dataUrl, dataUrl, url: undefined }
+      : p;
     if (markupSection === "addon") setAddonPhotos(prev => prev.map(update));
     else setScopePhotos(prev => prev.map(update));
     // Write through to IDB by stable key match (not index — IDB ordering
@@ -585,7 +590,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       const arrKey = markupSection === "addon" ? "addonPhotos" : "scopePhotos";
       updateField(s.id, (existing) => ({
         [arrKey]: (existing[arrKey] || existing.photos || []).map(p =>
-          photoKey(p) === key ? { ...p, dataUrl, url: undefined } : p
+          photoKey(p) === key ? { ...p, originalDataUrl: p.originalDataUrl || p.dataUrl, dataUrl, url: undefined } : p
         ),
       })).catch(() => {});
     }
@@ -1003,14 +1008,16 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       const saveMarkupOnly = (dataUrl) => {
         const target = photos[markupIdx];
         const key = target ? photoKey(target) : null;
-        const update = (p, i) => i === markupIdx ? { ...p, dataUrl, url: undefined } : p;
+        const update = (p, i) => i === markupIdx
+          ? { ...p, originalDataUrl: p.originalDataUrl || p.dataUrl, dataUrl, url: undefined }
+          : p;
         if (markupSection === "addon") setAddonPhotos(prev => prev.map(update));
         else setScopePhotos(prev => prev.map(update));
         if (key !== null) {
           const arrKey = markupSection === "addon" ? "addonPhotos" : "scopePhotos";
           updateField(s.id, (existing) => ({
             [arrKey]: (existing[arrKey] || existing.photos || []).map(p =>
-              photoKey(p) === key ? { ...p, dataUrl, url: undefined } : p
+              photoKey(p) === key ? { ...p, originalDataUrl: p.originalDataUrl || p.dataUrl, dataUrl, url: undefined } : p
             ),
           })).catch(() => {});
         }
@@ -1020,6 +1027,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         <PhotoMarkup
           key={markupIdx}
           photoDataUrl={markupSrc}
+          originalDataUrl={photos[markupIdx]?.originalDataUrl || null}
           onSave={handleMarkupSave}
           onCancel={() => setMarkupIdx(null)}
           hasPrev={markupIdx > 0}

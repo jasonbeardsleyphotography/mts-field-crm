@@ -152,7 +152,7 @@ function distToSegment(px, py, x1, y1, x2, y2) {
 
 // ═════════════════════════════════════════════════════════════════════════════
 
-export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = false, hasNext = false, onPrev, onNext }) {
+export default function PhotoMarkup({ photoDataUrl, originalDataUrl = null, onSave, onCancel, hasPrev = false, hasNext = false, onPrev, onNext }) {
   const baseCanvasRef    = useRef(null);  // image + committed strokes (static)
   const overlayCanvasRef = useRef(null);  // current stroke / arrow preview (dynamic)
   const imgRef           = useRef(null);
@@ -701,6 +701,17 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
     setSrcUrl(rc.toDataURL("image/jpeg", 0.92));
   };
 
+  // Revert to the un-edited original (if one was stashed). Loads the clean
+  // photo back into the editor with all marks cleared; the user then hits Done
+  // to save it. Confirms first so an accidental tap can't wipe real edits.
+  const canRevert = !!originalDataUrl && srcUrl !== originalDataUrl;
+  const handleRevert = () => {
+    if (!originalDataUrl) return;
+    if (!window.confirm("Revert to the original photo? This removes all markup on this photo.")) return;
+    setStrokes([]);
+    setSrcUrl(originalDataUrl);
+  };
+
   // Render image + all strokes to a new canvas and return a dataUrl.
   const getAnnotatedDataUrl = () => {
     const img = imgRef.current;
@@ -843,15 +854,27 @@ export default function PhotoMarkup({ photoDataUrl, onSave, onCancel, hasPrev = 
         }}>Loading…</div>
       )}
 
-      {/* ── TOP-LEFT: Cancel ───────────────────────────────────────────── */}
+      {/* ── TOP-LEFT: Cancel + Revert-to-original ──────────────────────── */}
       <div data-pm-ctl style={{
         position: "absolute",
         top: "max(12px, env(safe-area-inset-top))",
         left: "max(12px, env(safe-area-inset-left))",
+        display: "flex", gap: 8, alignItems: "center",
       }}>
         <button onClick={onCancel} style={fab()} title="Cancel">
           <IconX size={22} color="#fff" />
         </button>
+        {canRevert && (
+          <button
+            onClick={handleRevert}
+            onPointerDown={e => e.stopPropagation()}
+            style={{ ...fab(), width: "auto", padding: "0 14px", gap: 6, fontSize: 13, fontWeight: 600 }}
+            title="Revert to the original, un-edited photo"
+          >
+            <IconRotateCcw size={16} color="#fff" />
+            Original
+          </button>
+        )}
       </div>
 
       {/* ── PREV / NEXT photo navigation ───────────────────────────────── */}

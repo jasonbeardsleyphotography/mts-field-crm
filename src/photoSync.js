@@ -233,7 +233,9 @@ export async function promoteStop(stopId) {
         if (!Array.isArray(photos)) continue;
         updates[key] = photos.map(p => {
           if (toEvict.has(photoKey(p))) {
-            const { dataUrl, ...rest } = p;
+            // Drop the working copy AND the stashed pre-edit original together
+            // — both are local-only space savers and share the same lifecycle.
+            const { dataUrl, originalDataUrl, ...rest } = p;
             return rest;
           }
           return p;
