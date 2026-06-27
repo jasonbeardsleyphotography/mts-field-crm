@@ -22,6 +22,7 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
   const [info, setInfo] = useState(null); // parcel info shown in bottom sheet
   const [snapping, setSnapping] = useState(false);
   const [snapError, setSnapError] = useState(null);
+  const [parcelStatus, setParcelStatus] = useState(null); // overlay fetch state
 
   useEffect(() => { loadMaps().then(() => setReady(true)).catch(() => {}); }, []);
 
@@ -47,6 +48,7 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
         if (dead) return;
         parcelHandle.current = attachParcelOverlay(map.current, {
           onParcelClick: (feature) => setInfo(parcelFeatureToInfo(feature)),
+          onStatus: (s) => setParcelStatus(s),
         });
       });
     })();
@@ -102,6 +104,26 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
           <IconX size={18} color="#fff" />
         </button>
       </div>
+
+      {/* ── PARCEL STATUS PILL ──────────────────────────────────────────── */}
+      {ready && parcelStatus && parcelStatus.state !== "ok" && (
+        <div style={{
+          position: "absolute",
+          top: "max(56px, calc(env(safe-area-inset-top) + 44px))",
+          left: "50%", transform: "translateX(-50%)",
+          padding: "7px 14px", borderRadius: 999, maxWidth: "86%",
+          background: parcelStatus.state === "error" ? "rgba(239,68,68,.92)" : "rgba(28,28,30,.82)",
+          border: "1px solid rgba(255,255,255,.14)",
+          color: "#fff", fontSize: 12, fontWeight: 600, fontFamily: F,
+          textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          boxShadow: "0 2px 10px rgba(0,0,0,.4)",
+        }}>
+          {parcelStatus.state === "zoom"    && "Zoom in to load parcel lines"}
+          {parcelStatus.state === "loading" && "Loading parcel lines…"}
+          {parcelStatus.state === "empty"   && "No parcel data for this area"}
+          {parcelStatus.state === "error"   && `Couldn't load parcels${parcelStatus.errors?.[0] ? ` — ${parcelStatus.errors[0]}` : ""}`}
+        </div>
+      )}
 
       {/* ── SNAPSHOT BUTTON ─────────────────────────────────────────────── */}
       <div style={{

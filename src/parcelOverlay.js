@@ -44,61 +44,93 @@ export const PARCEL_OUT_FIELDS = [
 
 const IDLE_DEBOUNCE_MS = 400;
 const FETCH_TIMEOUT_MS = 9000;
+const RESULT_RECORD_CAP = 4000;
 
-function boundsToEnvelope(bounds) {
+// Comma-delimited envelope: the most broadly-compatible geometry form for an
+// ArcGIS bbox query (xmin,ymin,xmax,ymax). Avoids any JSON-encoding edge cases.
+function boundsToEnvelopeString(bounds) {
   const ne = bounds.getNorthEast(), sw = bounds.getSouthWest();
-  return {
-    xmin: sw.lng(), ymin: sw.lat(), xmax: ne.lng(), ymax: ne.lat(),
-    spatialReference: { wkid: 4326 },
-  };
+  return `${sw.lng()},${sw.lat()},${ne.lng()},${ne.lat()}`;
 }
 
+// AbortSignal.timeout() only exists on iOS Safari 16+. On older devices it's
+// undefined and calling it throws BEFORE the fetch starts — which would make
+// every parcel query silently fail. Fall back to a manual AbortController.
+function timeoutSignal(ms) {
+  try {
+    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+      return AbortSignal.timeout(ms);
+    }
+  } catch {}
+  try {
+    const c = new AbortController();
+    setTimeout(() => { try { c.abort(); } catch {} }, ms);
+    return c.signal;
+  } catch { return undefined; }
+}
+
+// Returns { features, ok, error }:
+//   ok=true  → the server responded successfully (features may still be empty
+//              if there are genuinely no parcels in the viewport)
+//   ok=false → HTTP error, Esri error payload, CORS, timeout, or network fail
 async function queryOneSource(source, bounds) {
+  // Request ALL fields (outFields=*) rather than a hand-listed set: if even one
+  // named field is missing from a layer's schema, ArcGIS rejects the entire
+  // query and returns zero geometry — which reads as "the overlay is broken."
   const params = new URLSearchParams({
     f: "geojson",
-    geometry: JSON.stringify(boundsToEnvelope(bounds)),
+    where: "1=1",
+    geometry: boundsToEnvelopeString(bounds),
     geometryType: "esriGeometryEnvelope",
     inSR: "4326",
     outSR: "4326",
     spatialRel: "esriSpatialRelIntersects",
-    outFields: PARCEL_OUT_FIELDS.join(","),
+    outFields: "*",
     returnGeometry: "true",
+    resultRecordCount: String(RESULT_RECORD_CAP),
   });
   try {
     const res = await fetch(`${source.url}/query?${params}`, {
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: timeoutSignal(FETCH_TIMEOUT_MS),
     });
     if (!res.ok) {
       console.warn(`[parcelOverlay] ${source.id} query failed: HTTP ${res.status}`, await res.text().catch(() => ""));
-      return [];
+      return { features: [], ok: false, error: `HTTP ${res.status}` };
     }
     const geojson = await res.json();
     if (!Array.isArray(geojson?.features)) {
       // Esri error responses are JSON with an .error.message even on a 200
       // status, so this is the other place a broken query hides silently.
-      console.warn(`[parcelOverlay] ${source.id} returned no features array`, geojson?.error?.message || geojson);
-      return [];
+      const msg = geojson?.error?.message || "no features array";
+      console.warn(`[parcelOverlay] ${source.id} returned no features:`, msg, geojson?.error || geojson);
+      return { features: [], ok: false, error: msg };
     }
     const features = geojson.features;
     // Tag each feature with its source id so parcelFeatureToInfo can apply
     // any source-specific field-name quirks defensively.
     features.forEach(f => { f.properties = { ...f.properties, __sourceId: source.id }; });
-    return features;
+    return { features, ok: true, error: null };
   } catch (e) {
     // Network failure, timeout, CORS, or a county the source doesn't cover
     // all land here — still treated as "no parcels here" for the user, but
     // logged so a genuinely broken query is diagnosable instead of invisible.
     console.warn(`[parcelOverlay] ${source.id} query threw:`, e?.message || e);
-    return [];
+    return { features: [], ok: false, error: e?.message || String(e) };
   }
 }
 
 // Fan the query out to every configured source for the current viewport and
 // merge results. No county-detection/routing: a source outside its coverage
 // area (or genuinely unreachable) just contributes zero features.
+// Returns { type, features, anyOk, errors } so callers can distinguish a
+// genuinely-empty viewport (anyOk=true, no features) from a broken fetch
+// (anyOk=false → every source errored).
 export async function fetchParcelsForBounds(bounds) {
   const results = await Promise.all(PARCEL_SOURCES.map(s => queryOneSource(s, bounds)));
-  return { type: "FeatureCollection", features: results.flat() };
+  const features = results.flatMap(r => r.features);
+  const anyOk = results.some(r => r.ok);
+  const errors = results.filter(r => !r.ok && r.error).map(r => r.error);
+  return { type: "FeatureCollection", features, anyOk, errors };
 }
 
 // Attach a parcel overlay to an existing google.maps.Map. Returns a handle
@@ -107,8 +139,12 @@ export async function fetchParcelsForBounds(bounds) {
 //    and zoom >= PARCEL_MIN_ZOOM, else clears the layer
 //  - a click listener on map.data invoking onParcelClick(feature)
 //  - stroke-only styling so satellite imagery stays legible underneath
-export function attachParcelOverlay(map, { onParcelClick } = {}) {
+export function attachParcelOverlay(map, { onParcelClick, onStatus } = {}) {
   if (!map || !map.data || !window.google?.maps) return null;
+
+  // onStatus(state) lets the UI surface what's happening instead of a silent
+  // blank: "zoom" | "loading" | "ok" | "empty" | "error".
+  const status = (state, extra) => { try { onStatus?.({ state, ...extra }); } catch {} };
 
   map.data.setStyle({
     strokeColor: "#FFD600",
@@ -125,15 +161,26 @@ export function attachParcelOverlay(map, { onParcelClick } = {}) {
     const zoom = map.getZoom();
     if (zoom == null || zoom < PARCEL_MIN_ZOOM) {
       map.data.forEach(f => map.data.remove(f));
+      status("zoom");
       return;
     }
     const bounds = map.getBounds();
     if (!bounds) return;
     const myFetch = ++activeFetch;
+    status("loading");
     fetchParcelsForBounds(bounds).then(geojson => {
       if (myFetch !== activeFetch) return; // a newer fetch superseded this one
       map.data.forEach(f => map.data.remove(f));
-      if (geojson.features.length) map.data.addGeoJson(geojson);
+      if (geojson.features.length) {
+        map.data.addGeoJson(geojson);
+        status("ok", { count: geojson.features.length });
+      } else if (geojson.anyOk) {
+        // A source responded fine, there just aren't parcels in this viewport.
+        status("empty");
+      } else {
+        // Every source errored/timed out/was blocked — a real failure.
+        status("error", { errors: geojson.errors });
+      }
     });
   };
 
