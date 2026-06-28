@@ -1,4 +1,4 @@
-const CACHE = "mts-field-v4";
+const CACHE = "mts-field-v5";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
