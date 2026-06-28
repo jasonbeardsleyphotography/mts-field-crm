@@ -93,8 +93,15 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
         background: "linear-gradient(to bottom, rgba(0,0,0,.7) 0%, transparent 100%)",
         display: "flex", alignItems: "center", justifyContent: "space-between",
       }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: F, textTransform: "uppercase", letterSpacing: 1, textShadow: "0 1px 4px rgba(0,0,0,.6)" }}>
-          {stop?.addr || "Parcel Map"}
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: F, textTransform: "uppercase", letterSpacing: 1, textShadow: "0 1px 4px rgba(0,0,0,.6)" }}>
+            {stop?.addr || "Parcel Map"}
+          </div>
+          {/* Temporary visible build stamp — confirms whether the live site is
+              actually serving the latest deploy. Remove once verified. */}
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#FFD600", fontFamily: F, letterSpacing: 1, marginTop: 2, textShadow: "0 1px 4px rgba(0,0,0,.8)" }}>
+            BUILD 0628-A
+          </div>
         </div>
         <button onClick={onClose} aria-label="Close parcel map" style={{
           width: 36, height: 36, borderRadius: 18,
