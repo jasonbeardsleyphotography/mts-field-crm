@@ -100,7 +100,7 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
           {/* Temporary visible build stamp — confirms whether the live site is
               actually serving the latest deploy. Remove once verified. */}
           <div style={{ fontSize: 10, fontWeight: 700, color: "#FFD600", fontFamily: F, letterSpacing: 1, marginTop: 2, textShadow: "0 1px 4px rgba(0,0,0,.8)" }}>
-            BUILD 0628-B
+            BUILD 0628-C
           </div>
         </div>
         <button onClick={onClose} aria-label="Close parcel map" style={{
@@ -142,6 +142,13 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
                 s.ok ? `${s.id}: ${s.count}` : `${s.id}: ✗ ${s.error || "failed"}`
               ).join("   ·   ")}
               {parcelStatus.zoom != null ? `   ·   z${Math.round(parcelStatus.zoom)}` : ""}
+            </div>
+          )}
+          {/* Diagnostic: raw geometry sample (type + first coordinate) so we
+              can confirm whether coordinates are lng/lat or a projected SR. */}
+          {parcelStatus.sample && (
+            <div style={{ fontSize: 9, fontWeight: 500, opacity: 0.8, marginTop: 2, whiteSpace: "normal" }}>
+              {parcelStatus.sample}{parcelStatus.addErr ? ` · addErr: ${parcelStatus.addErr}` : ""}
             </div>
           )}
         </div>

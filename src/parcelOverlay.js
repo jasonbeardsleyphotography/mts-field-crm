@@ -203,8 +203,19 @@ export function attachParcelOverlay(map, { onParcelClick, onStatus } = {}) {
       if (myFetch !== activeFetch) return; // a newer fetch superseded this one
       map.data.forEach(f => map.data.remove(f));
       if (geojson.features.length) {
-        map.data.addGeoJson(geojson);
-        status("ok", { count: geojson.features.length, sources: geojson.sources, zoom });
+        let added = 0, addErr = null;
+        try { map.data.addGeoJson(geojson); added = geojson.features.length; }
+        catch (e) { addErr = e?.message || String(e); }
+        // Diagnostic: the first feature's geometry type + first coordinate.
+        // Lets us see if coords are lng/lat (~-77, 43 here) or a projected SR
+        // (huge numbers) that would render off-screen.
+        const g0 = geojson.features[0]?.geometry;
+        let c0 = g0?.coordinates;
+        while (Array.isArray(c0) && Array.isArray(c0[0])) c0 = c0[0];
+        const sample = g0
+          ? `${g0.type} [${Array.isArray(c0) ? c0.map(n => Math.round(n * 100) / 100).join(", ") : "?"}]`
+          : "no-geom";
+        status("ok", { count: geojson.features.length, sources: geojson.sources, zoom, sample, addErr });
       } else if (geojson.anyOk) {
         // A source responded fine, there just aren't parcels in this viewport.
         // Pass the per-source breakdown so the UI can reveal whether the
