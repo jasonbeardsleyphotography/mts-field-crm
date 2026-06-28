@@ -69,6 +69,32 @@ function timeoutSignal(ms) {
   } catch { return undefined; }
 }
 
+// Convert one Esri JSON feature into a GeoJSON Feature. We request f=json (not
+// f=geojson) because ArcGIS reliably honors outSR=4326 for Esri JSON, whereas
+// its GeoJSON output sometimes ignores the requested projection and returns
+// native-SR coordinates — which google.maps.Data.addGeoJson then places far
+// off-screen (the shape "loads" but never appears). Building GeoJSON ourselves
+// from reprojected rings guarantees lng/lat coordinates that render in place.
+function esriToGeoJsonFeature(f, sourceId) {
+  const g = f?.geometry;
+  if (!g) return null;
+  let geometry = null;
+  if (Array.isArray(g.rings) && g.rings.length) {
+    // Esri rings → GeoJSON Polygon ring array (outer ring first, holes after).
+    // Parcels are overwhelmingly single-outer-ring; winding is render-tolerant.
+    geometry = { type: "Polygon", coordinates: g.rings };
+  } else if (Array.isArray(g.paths) && g.paths.length) {
+    geometry = g.paths.length === 1
+      ? { type: "LineString", coordinates: g.paths[0] }
+      : { type: "MultiLineString", coordinates: g.paths };
+  } else if (typeof g.x === "number" && typeof g.y === "number") {
+    geometry = { type: "Point", coordinates: [g.x, g.y] };
+  } else {
+    return null;
+  }
+  return { type: "Feature", geometry, properties: { ...(f.attributes || {}), __sourceId: sourceId } };
+}
+
 // Returns { features, ok, error }:
 //   ok=true  → the server responded successfully (features may still be empty
 //              if there are genuinely no parcels in the viewport)
@@ -78,7 +104,7 @@ async function queryOneSource(source, bounds) {
   // named field is missing from a layer's schema, ArcGIS rejects the entire
   // query and returns zero geometry — which reads as "the overlay is broken."
   const params = new URLSearchParams({
-    f: "geojson",
+    f: "json",
     where: "1=1",
     geometry: boundsToEnvelopeString(bounds),
     geometryType: "esriGeometryEnvelope",
@@ -97,18 +123,20 @@ async function queryOneSource(source, bounds) {
       console.warn(`[parcelOverlay] ${source.id} query failed: HTTP ${res.status}`, await res.text().catch(() => ""));
       return { id: source.id, features: [], ok: false, error: `HTTP ${res.status}` };
     }
-    const geojson = await res.json();
-    if (!Array.isArray(geojson?.features)) {
-      // Esri error responses are JSON with an .error.message even on a 200
-      // status, so this is the other place a broken query hides silently.
-      const msg = geojson?.error?.message || "no features array";
-      console.warn(`[parcelOverlay] ${source.id} returned no features:`, msg, geojson?.error || geojson);
+    const data = await res.json();
+    // Esri JSON error responses are JSON with an .error.message even on HTTP 200.
+    if (data?.error) {
+      const msg = data.error.message || "query error";
+      console.warn(`[parcelOverlay] ${source.id} returned error:`, msg, data.error);
       return { id: source.id, features: [], ok: false, error: msg };
     }
-    const features = geojson.features;
-    // Tag each feature with its source id so parcelFeatureToInfo can apply
-    // any source-specific field-name quirks defensively.
-    features.forEach(f => { f.properties = { ...f.properties, __sourceId: source.id }; });
+    if (!Array.isArray(data?.features)) {
+      console.warn(`[parcelOverlay] ${source.id} returned no features array`, data);
+      return { id: source.id, features: [], ok: false, error: "no features array" };
+    }
+    // Convert Esri JSON features → GeoJSON Features with guaranteed lng/lat
+    // coordinates. __sourceId is tagged in esriToGeoJsonFeature.
+    const features = data.features.map(f => esriToGeoJsonFeature(f, source.id)).filter(Boolean);
     return { id: source.id, features, ok: true, error: null };
   } catch (e) {
     // Network failure, timeout, CORS, or a county the source doesn't cover
