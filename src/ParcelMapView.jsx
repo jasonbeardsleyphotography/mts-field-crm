@@ -111,17 +111,28 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
           position: "absolute",
           top: "max(56px, calc(env(safe-area-inset-top) + 44px))",
           left: "50%", transform: "translateX(-50%)",
-          padding: "7px 14px", borderRadius: 999, maxWidth: "86%",
-          background: parcelStatus.state === "error" ? "rgba(239,68,68,.92)" : "rgba(28,28,30,.82)",
+          padding: "7px 14px", borderRadius: 14, maxWidth: "90%",
+          background: parcelStatus.state === "error" ? "rgba(239,68,68,.92)" : "rgba(28,28,30,.86)",
           border: "1px solid rgba(255,255,255,.14)",
           color: "#fff", fontSize: 12, fontWeight: 600, fontFamily: F,
-          textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          textAlign: "center", lineHeight: 1.4,
           boxShadow: "0 2px 10px rgba(0,0,0,.4)",
         }}>
-          {parcelStatus.state === "zoom"    && "Zoom in to load parcel lines"}
-          {parcelStatus.state === "loading" && "Loading parcel lines…"}
-          {parcelStatus.state === "empty"   && "No parcel data for this area"}
-          {parcelStatus.state === "error"   && `Couldn't load parcels${parcelStatus.errors?.[0] ? ` — ${parcelStatus.errors[0]}` : ""}`}
+          <div>
+            {parcelStatus.state === "zoom"    && "Zoom in to load parcel lines"}
+            {parcelStatus.state === "loading" && "Loading parcel lines…"}
+            {parcelStatus.state === "empty"   && "No parcel data for this area"}
+            {parcelStatus.state === "error"   && "Couldn't load parcels"}
+          </div>
+          {/* Per-source breakdown — reveals which source returned what, so a
+              covering source's error isn't hidden by another's empty result. */}
+          {Array.isArray(parcelStatus.sources) && parcelStatus.sources.length > 0 && (
+            <div style={{ fontSize: 10, fontWeight: 500, opacity: 0.85, marginTop: 3, whiteSpace: "normal" }}>
+              {parcelStatus.sources.map(s =>
+                s.ok ? `${s.id}: ${s.count}` : `${s.id}: ✗ ${s.error || "failed"}`
+              ).join("   ·   ")}
+            </div>
+          )}
         </div>
       )}
 

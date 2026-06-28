@@ -95,7 +95,7 @@ async function queryOneSource(source, bounds) {
     });
     if (!res.ok) {
       console.warn(`[parcelOverlay] ${source.id} query failed: HTTP ${res.status}`, await res.text().catch(() => ""));
-      return { features: [], ok: false, error: `HTTP ${res.status}` };
+      return { id: source.id, features: [], ok: false, error: `HTTP ${res.status}` };
     }
     const geojson = await res.json();
     if (!Array.isArray(geojson?.features)) {
@@ -103,19 +103,19 @@ async function queryOneSource(source, bounds) {
       // status, so this is the other place a broken query hides silently.
       const msg = geojson?.error?.message || "no features array";
       console.warn(`[parcelOverlay] ${source.id} returned no features:`, msg, geojson?.error || geojson);
-      return { features: [], ok: false, error: msg };
+      return { id: source.id, features: [], ok: false, error: msg };
     }
     const features = geojson.features;
     // Tag each feature with its source id so parcelFeatureToInfo can apply
     // any source-specific field-name quirks defensively.
     features.forEach(f => { f.properties = { ...f.properties, __sourceId: source.id }; });
-    return { features, ok: true, error: null };
+    return { id: source.id, features, ok: true, error: null };
   } catch (e) {
     // Network failure, timeout, CORS, or a county the source doesn't cover
     // all land here — still treated as "no parcels here" for the user, but
     // logged so a genuinely broken query is diagnosable instead of invisible.
     console.warn(`[parcelOverlay] ${source.id} query threw:`, e?.message || e);
-    return { features: [], ok: false, error: e?.message || String(e) };
+    return { id: source.id, features: [], ok: false, error: e?.message || String(e) };
   }
 }
 
@@ -130,7 +130,10 @@ export async function fetchParcelsForBounds(bounds) {
   const features = results.flatMap(r => r.features);
   const anyOk = results.some(r => r.ok);
   const errors = results.filter(r => !r.ok && r.error).map(r => r.error);
-  return { type: "FeatureCollection", features, anyOk, errors };
+  // Per-source breakdown so the UI can show exactly which source returned what
+  // (e.g. NYS errored while Monroe returned a clean empty result).
+  const sources = results.map(r => ({ id: r.id, ok: r.ok, count: r.features.length, error: r.error }));
+  return { type: "FeatureCollection", features, anyOk, errors, sources };
 }
 
 // Attach a parcel overlay to an existing google.maps.Map. Returns a handle
@@ -173,13 +176,15 @@ export function attachParcelOverlay(map, { onParcelClick, onStatus } = {}) {
       map.data.forEach(f => map.data.remove(f));
       if (geojson.features.length) {
         map.data.addGeoJson(geojson);
-        status("ok", { count: geojson.features.length });
+        status("ok", { count: geojson.features.length, sources: geojson.sources });
       } else if (geojson.anyOk) {
         // A source responded fine, there just aren't parcels in this viewport.
-        status("empty");
+        // Pass the per-source breakdown so the UI can reveal whether the
+        // COVERING source actually errored (masked by another's empty-OK).
+        status("empty", { sources: geojson.sources, errors: geojson.errors });
       } else {
         // Every source errored/timed out/was blocked — a real failure.
-        status("error", { errors: geojson.errors });
+        status("error", { errors: geojson.errors, sources: geojson.sources });
       }
     });
   };
