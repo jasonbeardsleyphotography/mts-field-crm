@@ -113,23 +113,26 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
       </div>
 
       {/* ── PARCEL STATUS PILL ──────────────────────────────────────────── */}
-      {ready && parcelStatus && parcelStatus.state !== "ok" && (
+      {ready && parcelStatus && (
         <div style={{
           position: "absolute",
           top: "max(56px, calc(env(safe-area-inset-top) + 44px))",
           left: "50%", transform: "translateX(-50%)",
           padding: "7px 14px", borderRadius: 14, maxWidth: "90%",
-          background: parcelStatus.state === "error" ? "rgba(239,68,68,.92)" : "rgba(28,28,30,.86)",
+          background: parcelStatus.state === "error" ? "rgba(239,68,68,.92)"
+            : parcelStatus.state === "ok" ? "rgba(20,120,60,.86)"
+            : "rgba(28,28,30,.86)",
           border: "1px solid rgba(255,255,255,.14)",
           color: "#fff", fontSize: 12, fontWeight: 600, fontFamily: F,
           textAlign: "center", lineHeight: 1.4,
           boxShadow: "0 2px 10px rgba(0,0,0,.4)",
         }}>
           <div>
-            {parcelStatus.state === "zoom"    && "Zoom in to load parcel lines"}
+            {parcelStatus.state === "zoom"    && `Zoom in to load parcels (z${Math.round(parcelStatus.zoom ?? 0)}, need ${parcelStatus.min ?? 15})`}
             {parcelStatus.state === "loading" && "Loading parcel lines…"}
             {parcelStatus.state === "empty"   && "No parcel data for this area"}
             {parcelStatus.state === "error"   && "Couldn't load parcels"}
+            {parcelStatus.state === "ok"      && `Parcels loaded: ${parcelStatus.count}`}
           </div>
           {/* Per-source breakdown — reveals which source returned what, so a
               covering source's error isn't hidden by another's empty result. */}
@@ -138,6 +141,7 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
               {parcelStatus.sources.map(s =>
                 s.ok ? `${s.id}: ${s.count}` : `${s.id}: ✗ ${s.error || "failed"}`
               ).join("   ·   ")}
+              {parcelStatus.zoom != null ? `   ·   z${Math.round(parcelStatus.zoom)}` : ""}
             </div>
           )}
         </div>

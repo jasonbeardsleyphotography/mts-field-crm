@@ -164,27 +164,27 @@ export function attachParcelOverlay(map, { onParcelClick, onStatus } = {}) {
     const zoom = map.getZoom();
     if (zoom == null || zoom < PARCEL_MIN_ZOOM) {
       map.data.forEach(f => map.data.remove(f));
-      status("zoom");
+      status("zoom", { zoom, min: PARCEL_MIN_ZOOM });
       return;
     }
     const bounds = map.getBounds();
     if (!bounds) return;
     const myFetch = ++activeFetch;
-    status("loading");
+    status("loading", { zoom });
     fetchParcelsForBounds(bounds).then(geojson => {
       if (myFetch !== activeFetch) return; // a newer fetch superseded this one
       map.data.forEach(f => map.data.remove(f));
       if (geojson.features.length) {
         map.data.addGeoJson(geojson);
-        status("ok", { count: geojson.features.length, sources: geojson.sources });
+        status("ok", { count: geojson.features.length, sources: geojson.sources, zoom });
       } else if (geojson.anyOk) {
         // A source responded fine, there just aren't parcels in this viewport.
         // Pass the per-source breakdown so the UI can reveal whether the
         // COVERING source actually errored (masked by another's empty-OK).
-        status("empty", { sources: geojson.sources, errors: geojson.errors });
+        status("empty", { sources: geojson.sources, errors: geojson.errors, zoom });
       } else {
         // Every source errored/timed out/was blocked — a real failure.
-        status("error", { errors: geojson.errors, sources: geojson.sources });
+        status("error", { errors: geojson.errors, sources: geojson.sources, zoom });
       }
     });
   };
