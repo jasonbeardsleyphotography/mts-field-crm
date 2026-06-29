@@ -46,11 +46,24 @@ const IDLE_DEBOUNCE_MS = 400;
 const FETCH_TIMEOUT_MS = 9000;
 const RESULT_RECORD_CAP = 4000;
 
-// Comma-delimited envelope: the most broadly-compatible geometry form for an
-// ArcGIS bbox query (xmin,ymin,xmax,ymax). Avoids any JSON-encoding edge cases.
+// Comma-delimited envelope (xmin,ymin,xmax,ymax) — used for the human-readable
+// diagnostic display of what box we're querying.
 function boundsToEnvelopeString(bounds) {
   const ne = bounds.getNorthEast(), sw = bounds.getSouthWest();
-  return `${sw.lng()},${sw.lat()},${ne.lng()},${ne.lat()}`;
+  return `${sw.lng().toFixed(3)},${sw.lat().toFixed(3)},${ne.lng().toFixed(3)},${ne.lat().toFixed(3)}`;
+}
+
+// JSON envelope WITH an explicit spatialReference. This is the unambiguous form
+// for an ArcGIS bbox query: the bare comma syntax relies on inSR being honored,
+// and some servers silently ignore it and treat the numbers as their native SR
+// — which returns parcels from the wrong place (or none). Embedding wkid:4326
+// in the geometry itself removes that ambiguity.
+function boundsToEnvelopeJson(bounds) {
+  const ne = bounds.getNorthEast(), sw = bounds.getSouthWest();
+  return JSON.stringify({
+    xmin: sw.lng(), ymin: sw.lat(), xmax: ne.lng(), ymax: ne.lat(),
+    spatialReference: { wkid: 4326 },
+  });
 }
 
 // AbortSignal.timeout() only exists on iOS Safari 16+. On older devices it's
@@ -106,7 +119,7 @@ async function queryOneSource(source, bounds) {
   const params = new URLSearchParams({
     f: "json",
     where: "1=1",
-    geometry: boundsToEnvelopeString(bounds),
+    geometry: boundsToEnvelopeJson(bounds),
     geometryType: "esriGeometryEnvelope",
     inSR: "4326",
     outSR: "4326",
@@ -198,6 +211,9 @@ export function attachParcelOverlay(map, { onParcelClick, onStatus } = {}) {
     const bounds = map.getBounds();
     if (!bounds) return;
     const myFetch = ++activeFetch;
+    const bbox = boundsToEnvelopeString(bounds);
+    const ctr = map.getCenter();
+    const center = ctr ? `${ctr.lng().toFixed(3)},${ctr.lat().toFixed(3)}` : "?";
     status("loading", { zoom });
     fetchParcelsForBounds(bounds).then(geojson => {
       if (myFetch !== activeFetch) return; // a newer fetch superseded this one
@@ -215,7 +231,7 @@ export function attachParcelOverlay(map, { onParcelClick, onStatus } = {}) {
         const sample = g0
           ? `${g0.type} [${Array.isArray(c0) ? c0.map(n => Math.round(n * 100) / 100).join(", ") : "?"}]`
           : "no-geom";
-        status("ok", { count: geojson.features.length, sources: geojson.sources, zoom, sample, addErr });
+        status("ok", { count: geojson.features.length, sources: geojson.sources, zoom, sample, addErr, bbox, center });
       } else if (geojson.anyOk) {
         // A source responded fine, there just aren't parcels in this viewport.
         // Pass the per-source breakdown so the UI can reveal whether the
