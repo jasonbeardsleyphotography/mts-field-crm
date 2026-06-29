@@ -100,7 +100,7 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
           {/* Temporary visible build stamp — confirms whether the live site is
               actually serving the latest deploy. Remove once verified. */}
           <div style={{ fontSize: 10, fontWeight: 700, color: "#FFD600", fontFamily: F, letterSpacing: 1, marginTop: 2, textShadow: "0 1px 4px rgba(0,0,0,.8)" }}>
-            BUILD 0628-D
+            BUILD 0628-E
           </div>
         </div>
         <button onClick={onClose} aria-label="Close parcel map" style={{

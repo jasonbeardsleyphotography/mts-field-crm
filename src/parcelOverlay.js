@@ -23,7 +23,11 @@ export const PARCEL_SOURCES = [
   {
     id: "nys",
     name: "NYS Tax Parcels Public",
-    url: "https://gisservices.its.ny.gov/arcgis/rest/services/NYS_Tax_Parcels_Public/FeatureServer/0",
+    // Layer 1 is the actual per-parcel polygons. Layer 0 is
+    // NYS_Tax_Parcels_Public_Footprint — county-coverage outlines, NOT parcels;
+    // querying it returned one big regional shape that intersected anywhere,
+    // which is why no individual lot lines ever drew.
+    url: "https://gisservices.its.ny.gov/arcgis/rest/services/NYS_Tax_Parcels_Public/FeatureServer/1",
   },
   {
     id: "monroe",
