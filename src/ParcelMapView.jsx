@@ -93,15 +93,8 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
         background: "linear-gradient(to bottom, rgba(0,0,0,.7) 0%, transparent 100%)",
         display: "flex", alignItems: "center", justifyContent: "space-between",
       }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: F, textTransform: "uppercase", letterSpacing: 1, textShadow: "0 1px 4px rgba(0,0,0,.6)" }}>
-            {stop?.addr || "Parcel Map"}
-          </div>
-          {/* Temporary visible build stamp — confirms whether the live site is
-              actually serving the latest deploy. Remove once verified. */}
-          <div style={{ fontSize: 10, fontWeight: 700, color: "#FFD600", fontFamily: F, letterSpacing: 1, marginTop: 2, textShadow: "0 1px 4px rgba(0,0,0,.8)" }}>
-            BUILD 0628-E
-          </div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", fontFamily: F, textTransform: "uppercase", letterSpacing: 1, textShadow: "0 1px 4px rgba(0,0,0,.6)" }}>
+          {stop?.addr || "Parcel Map"}
         </div>
         <button onClick={onClose} aria-label="Close parcel map" style={{
           width: 36, height: 36, borderRadius: 18,
@@ -113,49 +106,23 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
       </div>
 
       {/* ── PARCEL STATUS PILL ──────────────────────────────────────────── */}
-      {ready && parcelStatus && (
+      {/* Only shown when there's something the user should know — zoom in,
+          no data here, or a load failure. Stays out of the way on success. */}
+      {ready && parcelStatus && (parcelStatus.state === "zoom" || parcelStatus.state === "empty" || parcelStatus.state === "error") && (
         <div style={{
           position: "absolute",
           top: "max(56px, calc(env(safe-area-inset-top) + 44px))",
           left: "50%", transform: "translateX(-50%)",
           padding: "7px 14px", borderRadius: 14, maxWidth: "90%",
-          background: parcelStatus.state === "error" ? "rgba(239,68,68,.92)"
-            : parcelStatus.state === "ok" ? "rgba(20,120,60,.86)"
-            : "rgba(28,28,30,.86)",
+          background: parcelStatus.state === "error" ? "rgba(239,68,68,.92)" : "rgba(28,28,30,.86)",
           border: "1px solid rgba(255,255,255,.14)",
           color: "#fff", fontSize: 12, fontWeight: 600, fontFamily: F,
-          textAlign: "center", lineHeight: 1.4,
+          textAlign: "center", whiteSpace: "nowrap",
           boxShadow: "0 2px 10px rgba(0,0,0,.4)",
         }}>
-          <div>
-            {parcelStatus.state === "zoom"    && `Zoom in to load parcels (z${Math.round(parcelStatus.zoom ?? 0)}, need ${parcelStatus.min ?? 15})`}
-            {parcelStatus.state === "loading" && "Loading parcel lines…"}
-            {parcelStatus.state === "empty"   && "No parcel data for this area"}
-            {parcelStatus.state === "error"   && "Couldn't load parcels"}
-            {parcelStatus.state === "ok"      && `Parcels loaded: ${parcelStatus.count}`}
-          </div>
-          {/* Per-source breakdown — reveals which source returned what, so a
-              covering source's error isn't hidden by another's empty result. */}
-          {Array.isArray(parcelStatus.sources) && parcelStatus.sources.length > 0 && (
-            <div style={{ fontSize: 10, fontWeight: 500, opacity: 0.85, marginTop: 3, whiteSpace: "normal" }}>
-              {parcelStatus.sources.map(s =>
-                s.ok ? `${s.id}: ${s.count}` : `${s.id}: ✗ ${s.error || "failed"}`
-              ).join("   ·   ")}
-              {parcelStatus.zoom != null ? `   ·   z${Math.round(parcelStatus.zoom)}` : ""}
-            </div>
-          )}
-          {/* Diagnostic: raw geometry sample (type + first coordinate) so we
-              can confirm whether coordinates are lng/lat or a projected SR. */}
-          {parcelStatus.sample && (
-            <div style={{ fontSize: 9, fontWeight: 500, opacity: 0.8, marginTop: 2, whiteSpace: "normal" }}>
-              {parcelStatus.sample}{parcelStatus.addErr ? ` · addErr: ${parcelStatus.addErr}` : ""}
-            </div>
-          )}
-          {parcelStatus.bbox && (
-            <div style={{ fontSize: 9, fontWeight: 500, opacity: 0.8, marginTop: 1, whiteSpace: "normal" }}>
-              ctr {parcelStatus.center} · box {parcelStatus.bbox}
-            </div>
-          )}
+          {parcelStatus.state === "zoom"  && "Zoom in to see parcels"}
+          {parcelStatus.state === "empty" && "No parcel data for this area"}
+          {parcelStatus.state === "error" && "Couldn't load parcels"}
         </div>
       )}
 

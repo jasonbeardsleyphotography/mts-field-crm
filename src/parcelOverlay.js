@@ -50,13 +50,6 @@ const IDLE_DEBOUNCE_MS = 400;
 const FETCH_TIMEOUT_MS = 9000;
 const RESULT_RECORD_CAP = 4000;
 
-// Comma-delimited envelope (xmin,ymin,xmax,ymax) — used for the human-readable
-// diagnostic display of what box we're querying.
-function boundsToEnvelopeString(bounds) {
-  const ne = bounds.getNorthEast(), sw = bounds.getSouthWest();
-  return `${sw.lng().toFixed(3)},${sw.lat().toFixed(3)},${ne.lng().toFixed(3)},${ne.lat().toFixed(3)}`;
-}
-
 // JSON envelope WITH an explicit spatialReference. This is the unambiguous form
 // for an ArcGIS bbox query: the bare comma syntax relies on inSR being honored,
 // and some servers silently ignore it and treat the numbers as their native SR
@@ -209,41 +202,26 @@ export function attachParcelOverlay(map, { onParcelClick, onStatus } = {}) {
     const zoom = map.getZoom();
     if (zoom == null || zoom < PARCEL_MIN_ZOOM) {
       map.data.forEach(f => map.data.remove(f));
-      status("zoom", { zoom, min: PARCEL_MIN_ZOOM });
+      status("zoom");
       return;
     }
     const bounds = map.getBounds();
     if (!bounds) return;
     const myFetch = ++activeFetch;
-    const bbox = boundsToEnvelopeString(bounds);
-    const ctr = map.getCenter();
-    const center = ctr ? `${ctr.lng().toFixed(3)},${ctr.lat().toFixed(3)}` : "?";
-    status("loading", { zoom });
+    status("loading");
     fetchParcelsForBounds(bounds).then(geojson => {
       if (myFetch !== activeFetch) return; // a newer fetch superseded this one
       map.data.forEach(f => map.data.remove(f));
       if (geojson.features.length) {
-        let added = 0, addErr = null;
-        try { map.data.addGeoJson(geojson); added = geojson.features.length; }
-        catch (e) { addErr = e?.message || String(e); }
-        // Diagnostic: the first feature's geometry type + first coordinate.
-        // Lets us see if coords are lng/lat (~-77, 43 here) or a projected SR
-        // (huge numbers) that would render off-screen.
-        const g0 = geojson.features[0]?.geometry;
-        let c0 = g0?.coordinates;
-        while (Array.isArray(c0) && Array.isArray(c0[0])) c0 = c0[0];
-        const sample = g0
-          ? `${g0.type} [${Array.isArray(c0) ? c0.map(n => Math.round(n * 100) / 100).join(", ") : "?"}]`
-          : "no-geom";
-        status("ok", { count: geojson.features.length, sources: geojson.sources, zoom, sample, addErr, bbox, center });
+        try { map.data.addGeoJson(geojson); } catch {}
+        status("ok", { count: geojson.features.length });
       } else if (geojson.anyOk) {
-        // A source responded fine, there just aren't parcels in this viewport.
-        // Pass the per-source breakdown so the UI can reveal whether the
-        // COVERING source actually errored (masked by another's empty-OK).
-        status("empty", { sources: geojson.sources, errors: geojson.errors, zoom });
+        // A source responded fine, there just aren't parcels in this viewport
+        // (e.g. a county with no free data source, like Monroe).
+        status("empty");
       } else {
         // Every source errored/timed out/was blocked — a real failure.
-        status("error", { errors: geojson.errors, sources: geojson.sources, zoom });
+        status("error", { errors: geojson.errors });
       }
     });
   };
