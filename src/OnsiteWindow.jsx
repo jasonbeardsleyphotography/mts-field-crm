@@ -1191,11 +1191,14 @@ Property: ${s.addr || ""}`);
       {/* ── HEADER ────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",paddingTop:"max(10px,env(safe-area-inset-top))",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
         <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:4,padding:"6px 12px",borderRadius:8,background:"transparent",border:"1px solid #252d47",color:"#90a8c0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}><IconArrowLeft size={13} color="#90a8c0"/>Route</button>
-        {/* Confidence indicator — local always green; cloud shows sync state.
-            Stacked vertically as bare dots (no labels) to save header width. */}
-        <div style={{display:"flex",flexDirection:"column",gap:2,flexShrink:0}}>
-          <div title="Saved locally"><svg width={7} height={7} viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="#10B981"/></svg></div>
-          <div title={cloudSynced ? "Synced to cloud" : "Pending cloud push"}><svg width={7} height={7} viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill={cloudSynced?"#10B981":"#F6BF26"}/></svg></div>
+        {/* Cloud-save status. Green cloud = this stop is safely synced to the
+            cloud; amber cloud + "SAVING" = saved on this device, still pushing up. */}
+        <div title={cloudSynced ? "Saved to cloud" : "Saved on this device — still syncing to cloud"}
+          style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+          <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={cloudSynced?"#10B981":"#F6BF26"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17.5 19a4.5 4.5 0 0 0 .5-9 6 6 0 0 0-11.5-1.5A4 4 0 0 0 6 19h11.5z"/>
+          </svg>
+          {!cloudSynced && <span style={{fontSize:9,fontWeight:800,color:"#F6BF26",fontFamily:F,letterSpacing:0.5}}>SAVING</span>}
         </div>
         <div style={{flex:1,minWidth:0}}/>
         {/* Decline — moved from bottom bar so it can't be hit when reaching for DONE */}
@@ -1226,18 +1229,27 @@ Property: ${s.addr || ""}`);
 
         {swipeX < -30 && <div style={{position:"fixed",top:"50%",right:12,transform:"translateY(-50%)",padding:"10px 14px",borderRadius:10,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:12,fontWeight:800,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",opacity:Math.min(Math.abs(swipeX)/120,1),zIndex:102}}>→ PIPELINE</div>}
 
-        {/* Address + contact */}
+        {/* Address + contact — name/address on the left, contact details
+            (phone, email, job #) right-justified across from them. */}
         <div style={{padding:"10px 16px",background:"#0d0f18",borderBottom:"1px solid #1a2030"}}>
-          <div style={{fontSize:16,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.2,marginBottom:3}}>{s.cn}</div>
-          <div style={{fontSize:12,color:"#96a2b4",fontFamily:F,textTransform:"uppercase",letterSpacing:1}}>{s.addr}</div>
-          <div style={{fontSize:11,color:"#4a5a70",marginTop:2}}>
-            {s.window && <span style={{marginRight:8}}>{s.window}</span>}
-            {s.jn && <span>#{s.jn}</span>}
-            {s.constraint && <span style={{marginLeft:8,color:"#FF80AB"}}>{s.constraint}</span>}
-          </div>
-          <div style={{display:"flex",gap:12,marginTop:6,flexWrap:"wrap"}}>
-            {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4}}><IconPhone size={12} color="#a0b8d0"/>{s.phone}</a>}
-            {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4}}><IconMail size={12} color="#a0b8d0"/>{s.email}</a>}
+          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
+            {/* Left: name + address */}
+            <div style={{minWidth:0,flex:1}}>
+              <div style={{fontSize:16,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.2,marginBottom:3}}>{s.cn}</div>
+              <div style={{fontSize:12,color:"#96a2b4",fontFamily:F,textTransform:"uppercase",letterSpacing:1}}>{s.addr}</div>
+              {(s.window || s.constraint) && (
+                <div style={{fontSize:11,color:"#4a5a70",marginTop:2}}>
+                  {s.window && <span style={{marginRight:8}}>{s.window}</span>}
+                  {s.constraint && <span style={{color:"#FF80AB"}}>{s.constraint}</span>}
+                </div>
+              )}
+            </div>
+            {/* Right: contact details, justified right */}
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0,textAlign:"right",maxWidth:"55%"}}>
+              {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>{s.phone}<IconPhone size={12} color="#a0b8d0"/></a>}
+              {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,maxWidth:"100%",minWidth:0}}><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.email}</span><IconMail size={12} color="#a0b8d0"/></a>}
+              {s.jn && <span style={{fontSize:11,color:"#4a5a70"}}>#{s.jn}</span>}
+            </div>
           </div>
           <button onClick={() => setShowParcelMap(true)} style={{display:"flex",alignItems:"center",gap:5,marginTop:8,padding:"6px 11px",borderRadius:8,background:"rgba(255,214,0,.08)",border:"1px solid rgba(255,214,0,.25)",color:"#FFD600",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer"}}>
             <IconMapPin size={13} color="#FFD600"/>Parcel Map
@@ -1296,13 +1308,6 @@ Property: ${s.addr || ""}`);
 
         {/* ── SCOPE ────────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-            <div style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F}}>SCOPE</div>
-            <button onClick={() => toggleSpeech("scope")} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 10px",borderRadius:7,background:speechField==="scope"?"rgba(255,59,48,.15)":"rgba(59,130,246,.08)",border:`1px solid ${speechField==="scope"?"rgba(255,59,48,.35)":"rgba(59,130,246,.2)"}`,color:speechField==="scope"?"#FF3B30":"#4a80c0",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
-              <IconMic size={12} color={speechField==="scope"?"#FF3B30":"#4a80c0"}/>
-              {speechField==="scope" ? <>■ Stop{<span style={{animation:"pulse 1s infinite",display:"inline-block",width:5,height:5,borderRadius:3,background:"#FF3B30",marginLeft:3}}/>}</> : "Dictate"}
-            </button>
-          </div>
           <textarea value={scopeNotes} onChange={e => setScopeNotes(e.target.value)} placeholder="Scope of work..." rows={6}
             style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:`1px solid ${speechField==="scope"?"rgba(59,130,246,.5)":"#1a2540"}`,color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none",transition:"border-color .15s"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
 
@@ -1342,13 +1347,7 @@ Property: ${s.addr || ""}`);
 
         {/* ── ADD-ON ──────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-            <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F}}>ADD-ON</div>
-            <button onClick={() => toggleSpeech("addon")} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 10px",borderRadius:7,background:speechField==="addon"?"rgba(255,59,48,.15)":"rgba(255,138,101,.08)",border:`1px solid ${speechField==="addon"?"rgba(255,59,48,.35)":"rgba(255,138,101,.2)"}`,color:speechField==="addon"?"#FF3B30":"#c07040",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
-              <IconMic size={12} color={speechField==="addon"?"#FF3B30":"#c07040"}/>
-              {speechField==="addon" ? <>■ Stop{<span style={{animation:"pulse 1s infinite",display:"inline-block",width:5,height:5,borderRadius:3,background:"#FF3B30",marginLeft:3}}/>}</> : "Dictate"}
-            </button>
-          </div>
+          <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>ADD-ON</div>
           <textarea value={addonNotes} onChange={e => setAddonNotes(e.target.value)} placeholder="Additional recommendations..." rows={3}
             style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:`1px solid ${speechField==="addon"?"rgba(255,138,101,.5)":"#1a2540"}`,color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none",transition:"border-color .15s"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
 

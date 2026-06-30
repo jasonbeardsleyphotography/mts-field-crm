@@ -23,6 +23,7 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
   const [snapping, setSnapping] = useState(false);
   const [snapError, setSnapError] = useState(null);
   const [parcelStatus, setParcelStatus] = useState(null); // overlay fetch state
+  const [imagery, setImagery] = useState("google"); // "google" (hybrid) | "esri" (aerial)
 
   // Live "blue dot" current-location marker + accuracy circle + geolocation watch.
   const locMarker = useRef(null);
@@ -76,6 +77,16 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
     );
   }, [updateLocation]);
 
+  // Flip the base imagery between Google (hybrid, with labels) and Esri aerial.
+  const toggleImagery = useCallback(() => {
+    if (!map.current) return;
+    setImagery(prev => {
+      const next = prev === "google" ? "esri" : "google";
+      map.current.setMapTypeId(next === "esri" ? "esri" : "hybrid");
+      return next;
+    });
+  }, []);
+
   // Create map, centered on the stop's geocoded address, with overlay attached.
   useEffect(() => {
     if (!ready || !ref.current || map.current) return;
@@ -90,6 +101,15 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
         zoomControl: false, mapTypeControl: false, streetViewControl: false,
         fullscreenControl: false, keyboardShortcuts: false, clickableIcons: false,
       });
+      // Register Esri World Imagery as an alternate base (free, no key, often a
+      // different/newer capture than Google's). Toggled via the imagery button.
+      const esri = new window.google.maps.ImageMapType({
+        name: "Aerial",
+        maxZoom: 21,
+        tileSize: new window.google.maps.Size(256, 256),
+        getTileUrl: (c, z) => `https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${c.y}/${c.x}`,
+      });
+      map.current.mapTypes.set("esri", esri);
       // Wait for the map's first idle event before attaching — right after
       // construction, map.getBounds() can still return null, which would
       // make the overlay's first refresh() silently no-op.
@@ -187,6 +207,28 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
           {parcelStatus.state === "error" && "Couldn't load parcels"}
         </div>
       )}
+
+      {/* ── IMAGERY TOGGLE ──────────────────────────────────────────────── */}
+      <button
+        onClick={toggleImagery}
+        aria-label="Switch satellite imagery source"
+        style={{
+          position: "absolute",
+          right: "max(14px, env(safe-area-inset-right))",
+          bottom: "max(148px, calc(env(safe-area-inset-bottom) + 132px))",
+          display: "flex", alignItems: "center", gap: 5,
+          padding: "8px 11px", borderRadius: 999,
+          background: "rgba(28,28,30,.85)", border: "1px solid rgba(255,255,255,.16)",
+          color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: F, letterSpacing: 0.5,
+          cursor: "pointer", boxShadow: "0 4px 16px rgba(0,0,0,.4)",
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="12 2 22 8.5 12 15 2 8.5 12 2" />
+          <polyline points="2 15.5 12 22 22 15.5" />
+        </svg>
+        {imagery === "google" ? "Google" : "Aerial"}
+      </button>
 
       {/* ── MY LOCATION BUTTON ──────────────────────────────────────────── */}
       <button
