@@ -79,14 +79,17 @@ export function loadMaps() {
   return mapsPromise;
 }
 
-// ── PIXEL-CONSTANT MARKER OFFSET ─────────────────────────────────────────────
-// Two stops geocoded to nearly the same point need to stay visually distinct
-// at ANY zoom level. A fixed lat/lng offset shrinks to a few pixels when
-// zoomed out and the markers merge back into one blob. Instead we compute the
-// offset in real-world meters that corresponds to a constant on-screen pixel
-// distance at the map's current zoom (Web Mercator projection), so clustered
-// markers always sit ~CLUSTER_PX apart on screen no matter how far zoomed out.
-const CLUSTER_PX = 15;
+// ── PIXEL-CONSTANT MARKER DECLUTTER ──────────────────────────────────────────
+// Overlap is a SCREEN-PIXEL phenomenon, not a real-world-distance one: two
+// stops a mile apart still sit on top of each other when zoomed out to the
+// whole route. So we cluster by pixel distance at the current zoom (recomputed
+// live on zoom) and fan each cluster into a ring whose radius grows with the
+// member count, guaranteeing the pins never touch.
+const MARKER_PX        = 22;  // approx pin diameter
+const CLUSTER_THRESH_PX = 26; // pins whose centers are within this get grouped
+const SEP_PX           = 30;  // center-to-center spacing of fanned pins
+const MIN_RING_PX      = 17;  // smallest fan radius (for pairs)
+
 function metersPerPixel(lat, zoom) {
   return 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
 }
@@ -96,13 +99,73 @@ function offsetLatLng(base, angle, meters) {
     lng: base.lng + (meters * Math.sin(angle)) / (111320 * Math.cos(base.lat * Math.PI / 180)),
   };
 }
+function metersBetween(a, b) {
+  const latM = (a.lat - b.lat) * 111320;
+  const lngM = (a.lng - b.lng) * 111320 * Math.cos(((a.lat + b.lat) / 2) * Math.PI / 180);
+  return Math.hypot(latM, lngM);
+}
+
+// Group stops whose pins would overlap on screen at `zoom`, then spread each
+// group around its centroid in a ring sized to keep ~SEP_PX between pins.
+// Returns { posById, clusteredIds }. Singletons keep their true position.
+function computeClusterLayout(ids, coords, zoom) {
+  const posById = {};
+  const clusteredIds = new Set();
+  const withPos = ids.filter(id => coords[id]);
+
+  // Build overlap adjacency (centers within CLUSTER_THRESH_PX screen pixels).
+  const adj = {};
+  withPos.forEach(id => { adj[id] = []; });
+  for (let i = 0; i < withPos.length; i++) {
+    for (let j = i + 1; j < withPos.length; j++) {
+      const a = coords[withPos[i]], b = coords[withPos[j]];
+      const mpp = metersPerPixel((a.lat + b.lat) / 2, zoom);
+      if (metersBetween(a, b) / mpp < CLUSTER_THRESH_PX) {
+        adj[withPos[i]].push(withPos[j]);
+        adj[withPos[j]].push(withPos[i]);
+      }
+    }
+  }
+
+  // Connected components = clusters.
+  const seen = new Set();
+  for (const start of withPos) {
+    if (seen.has(start)) continue;
+    const comp = [];
+    const stack = [start];
+    seen.add(start);
+    while (stack.length) {
+      const id = stack.pop();
+      comp.push(id);
+      for (const nb of adj[id]) if (!seen.has(nb)) { seen.add(nb); stack.push(nb); }
+    }
+    if (comp.length === 1) {
+      posById[comp[0]] = coords[comp[0]];
+      continue;
+    }
+    const centroid = {
+      lat: comp.reduce((s, id) => s + coords[id].lat, 0) / comp.length,
+      lng: comp.reduce((s, id) => s + coords[id].lng, 0) / comp.length,
+    };
+    const count = comp.length;
+    const radiusPx = Math.max(MIN_RING_PX, (SEP_PX * count) / (2 * Math.PI));
+    const mpp = metersPerPixel(centroid.lat, zoom);
+    // Stable angle order (sort by id) so pins don't jump around between renders.
+    [...comp].sort().forEach((id, k) => {
+      const angle = (k / count) * 2 * Math.PI - Math.PI / 2; // first pin at top
+      posById[id] = offsetLatLng(centroid, angle, radiusPx * mpp);
+      clusteredIds.add(id);
+    });
+  }
+  return { posById, clusteredIds };
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 export default function RouteMap({ stops, selectedId }) {
   const ref = useRef(null);
   const map = useRef(null);
   const markers = useRef([]); // [{marker, stopId}]
-  const clusterInfo = useRef({}); // stopId -> { base:{lat,lng}, angle } for clustered stops only
+  const layoutInputs = useRef({ ids: [], coords: {} }); // for re-layout on zoom
   const route = useRef(null);
   const nextRoute = useRef(null); // directions to next stop
   const prevSet = useRef("");
@@ -215,46 +278,20 @@ export default function RouteMap({ stops, selectedId }) {
     if (route.current) { route.current.setMap(null); route.current = null; }
     if (!Object.keys(coords).length) return;
 
-    // Detect stops that geocoded to nearly the same point — they need a
-    // visual offset to stay distinguishable. The angle assignment is
-    // zoom-independent; the actual offset DISTANCE is computed per-render
-    // (and live on zoom change, see the zoom_changed listener below) so the
-    // on-screen pixel separation stays constant at any zoom level.
-    clusterInfo.current = {};
-    const NEAR = 0.0004;
-    const stopsWithPos = stops.filter(s => coords[s.id]);
-    const clusterVisited = new Set();
-    for (let i = 0; i < stopsWithPos.length; i++) {
-      if (clusterVisited.has(stopsWithPos[i].id)) continue;
-      const base = coords[stopsWithPos[i].id];
-      const group = [stopsWithPos[i].id];
-      for (let j = i + 1; j < stopsWithPos.length; j++) {
-        if (clusterVisited.has(stopsWithPos[j].id)) continue;
-        const p = coords[stopsWithPos[j].id];
-        if (Math.abs(base.lat - p.lat) < NEAR && Math.abs(base.lng - p.lng) < NEAR) {
-          group.push(stopsWithPos[j].id);
-        }
-      }
-      if (group.length > 1) {
-        group.forEach((id, ci) => {
-          clusterVisited.add(id);
-          clusterInfo.current[id] = { base, angle: (ci / group.length) * 2 * Math.PI };
-        });
-      }
-    }
+    // Spread stops whose pins overlap on screen at the current zoom. Clustering
+    // is by pixel distance (recomputed live on zoom — see the zoom_changed
+    // listener below) so pins separate as you zoom in and re-merge sensibly out.
     const zoom = map.current.getZoom() ?? 11;
-    const markerPos = (id) => {
-      const info = clusterInfo.current[id];
-      if (!info) return coords[id];
-      return offsetLatLng(info.base, info.angle, CLUSTER_PX * metersPerPixel(info.base.lat, zoom));
-    };
+    const idsWithPos = stops.filter(s => coords[s.id]).map(s => s.id);
+    const { posById } = computeClusterLayout(idsWithPos, coords, zoom);
+    layoutInputs.current = { ids: idsWithPos, coords };
 
     const positions = [];
     const bounds = new window.google.maps.LatLngBounds();
     let n = 0;
     stops.forEach(s => {
       if (!coords[s.id]) return;
-      const pos = markerPos(s.id); if (!pos) return; n++;
+      const pos = posById[s.id]; if (!pos) return; n++;
       const isAM = (s.window||"").startsWith("AM");
       const pinColor = isAM ? AM_COLOR : PM_COLOR;
       const hasConstraint = !!s.constraint;
@@ -320,20 +357,22 @@ export default function RouteMap({ stops, selectedId }) {
     }
   }, [coords, stops, selectedId]);
 
-  // ── LIVE-REPOSITION CLUSTERED MARKERS ON ZOOM ──────────────────────────
-  // Keeps clustered markers ~CLUSTER_PX pixels apart on screen at any zoom
-  // level, instead of the fixed real-world offset shrinking to nothing when
-  // zoomed out. Only touches markers that are actually clustered — cheap.
+  // ── RE-CLUSTER MARKERS ON ZOOM ─────────────────────────────────────────
+  // Which pins overlap depends on zoom, so we recompute the whole layout each
+  // time it changes: pins that were fanned out merge/separate naturally, and
+  // separation stays constant on screen at any zoom level.
   useEffect(() => {
     if (!map.current) return;
     const listener = map.current.addListener("zoom_changed", () => {
       const zoom = map.current.getZoom();
       if (zoom == null) return;
       setMapZoom(zoom);
+      const { ids, coords: c } = layoutInputs.current;
+      if (!ids.length) return;
+      const { posById } = computeClusterLayout(ids, c, zoom);
       markers.current.forEach(({ marker, stopId }) => {
-        const info = clusterInfo.current[stopId];
-        if (!info) return;
-        marker.setPosition(offsetLatLng(info.base, info.angle, CLUSTER_PX * metersPerPixel(info.base.lat, zoom)));
+        const p = posById[stopId];
+        if (p) marker.setPosition(p);
       });
     });
     return () => listener.remove();
