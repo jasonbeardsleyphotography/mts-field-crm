@@ -216,14 +216,13 @@ export function attachParcelOverlay(map, { onParcelClick, onStatus } = {}) {
       map.data.forEach(f => map.data.remove(f));
       if (geojson.features.length) {
         try { map.data.addGeoJson(geojson); } catch {}
-        status("ok", { count: geojson.features.length, sources: geojson.sources });
+        status("ok", { count: geojson.features.length });
       } else if (geojson.anyOk) {
-        // A source responded fine, there just aren't parcels in this viewport
-        // (e.g. a county with no free data source, like Monroe).
-        status("empty", { sources: geojson.sources });
+        // A source responded fine, there just aren't parcels in this viewport.
+        status("empty");
       } else {
         // Every source errored/timed out/was blocked — a real failure.
-        status("error", { errors: geojson.errors, sources: geojson.sources });
+        status("error", { errors: geojson.errors });
       }
     });
   };
