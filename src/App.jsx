@@ -328,9 +328,12 @@ export default function App() {
   // people:createContact for that number again. This prevents the duplicate
   // "CLIENT Mark Reigelsperger / CLIENT Mark Reigelsperger" issue when the
   // People API's searchContacts index hasn't warmed up after sign-in.
-  const phoneContactCache = useRef(lsGet("mts-phone-contact-cache", {}));
+  // -v2: the previous cache could be poisoned by Other-Contacts false matches
+  // (clients that never got a real, caller-ID-capable contact). Bumping the key
+  // forces a one-time re-evaluation with the fixed dedup so those get created.
+  const phoneContactCache = useRef(lsGet("mts-phone-contact-cache-v2", {}));
   const persistPhoneCache = useCallback(() => {
-    try { lsSet("mts-phone-contact-cache", phoneContactCache.current); } catch {}
+    try { lsSet("mts-phone-contact-cache-v2", phoneContactCache.current); } catch {}
   }, []);
 
   const autoPushContact = useCallback(async (card) => {
@@ -355,30 +358,27 @@ export default function App() {
     };
 
     try {
-      // Dedupe across BOTH primary contacts and "Other Contacts" (auto-saved
-      // from Gmail etc). The People API splits these into two endpoints —
-      // missing the "Other Contacts" search was a major source of duplicates.
+      // Dedupe ONLY against primary "My Contacts" — those are what sync to the
+      // phone and supply caller ID. We deliberately do NOT skip creation when a
+      // number is found only in Google's auto-collected "Other Contacts": those
+      // never sync to the iPhone, so treating them as "already exists" left
+      // clients calling in as a bare number with no name. If only an Other
+      // Contact exists we still create a real contact (effectively promoting it).
       if (phoneDigits) {
         const auth = { headers: { Authorization: `Bearer ${token}` } };
-        // Primary contacts search
-        const [primaryRes, otherRes] = await Promise.allSettled([
-          fetch(`https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(card.phone)}&readMask=names,phoneNumbers&pageSize=10`, auth),
-          fetch(`https://people.googleapis.com/v1/otherContacts:search?query=${encodeURIComponent(card.phone)}&readMask=names,phoneNumbers&pageSize=10`, auth),
-        ]);
         const matchesPhone = (person) =>
           (person?.phoneNumbers || []).some(p => p.value?.replace(/\D/g, "") === phoneDigits);
         let existing = null;
-        if (primaryRes.status === "fulfilled" && primaryRes.value.ok) {
-          const sd = await primaryRes.value.json();
-          existing = sd.results?.find(r => matchesPhone(r.person))?.person;
-        }
-        if (!existing && otherRes.status === "fulfilled" && otherRes.value.ok) {
-          const od = await otherRes.value.json();
-          existing = od.results?.find(r => matchesPhone(r.person))?.person;
-        }
-        // Fallback: also do a name-based search in case searchContacts hasn't
-        // indexed the number yet (the well-known warmup issue). Only run if
-        // the phone search came up empty.
+        // Primary contacts search by phone.
+        try {
+          const sr = await fetch(`https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(card.phone)}&readMask=names,phoneNumbers&pageSize=10`, auth);
+          if (sr.ok) {
+            const sd = await sr.json();
+            existing = sd.results?.find(r => matchesPhone(r.person))?.person;
+          }
+        } catch {}
+        // Fallback: name-based search in case searchContacts hasn't indexed the
+        // number yet (the well-known warmup race right after sign-in).
         if (!existing && card.cn) {
           try {
             const ns = await fetch(`https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(card.cn)}&readMask=names,phoneNumbers&pageSize=10`, auth);
@@ -389,7 +389,7 @@ export default function App() {
           } catch {}
         }
         if (existing?.resourceName) {
-          // Already in contacts — record in cache so we never re-create.
+          // Already a real (synced) contact — record in cache so we don't re-create.
           phoneContactCache.current[phoneDigits] = existing.resourceName;
           persistPhoneCache();
           return true;
@@ -419,8 +419,8 @@ export default function App() {
 
   // Track which stops have already been auto-pushed so we don't re-push on
   // every calendar reload. Stored by event id to survive app restarts.
-  const [contactsPushed, setContactsPushed] = useState(() => lsGet("mts-contacts-pushed", {}));
-  useEffect(() => { lsSet("mts-contacts-pushed", contactsPushed); }, [contactsPushed]);
+  const [contactsPushed, setContactsPushed] = useState(() => lsGet("mts-contacts-pushed-v2", {}));
+  useEffect(() => { lsSet("mts-contacts-pushed-v2", contactsPushed); }, [contactsPushed]);
 
   // (Auto-contact-push effect is defined below, after allParsed is declared.)
 
@@ -992,17 +992,19 @@ export default function App() {
     [pipelineSnapshot, allEventsAcrossDays]
   );
 
-  // Auto-push new contacts to Google Contacts silently. Runs when allParsed
-  // changes — finds stops with phone/email that haven't been pushed yet and
-  // pushes them one at a time at 400ms intervals. Each stop is pushed at
-  // most once, ever (tracked in contactsPushed).
+  // Auto-push new contacts to Google Contacts silently. Scans EVERY loaded day
+  // (not just the one being viewed) so a client you call on a day you haven't
+  // opened still gets a caller-ID contact. Pushes one at a time at 400ms
+  // intervals; each stop is pushed at most once, ever (tracked in contactsPushed).
   useEffect(() => {
-    if (!token || !allParsed.length) return;
-    const unpushed = allParsed.filter(s =>
-      s.isTask &&
-      !contactsPushed[s.id] &&
-      (s.phone || s.email)
-    );
+    if (!token || !allEventsAcrossDays.length) return;
+    const seen = new Set();
+    const unpushed = allEventsAcrossDays.filter(s => {
+      if (!s.isTask || contactsPushed[s.id] || !(s.phone || s.email)) return false;
+      if (seen.has(s.id)) return false; // same event can appear across day buckets
+      seen.add(s.id);
+      return true;
+    });
     if (unpushed.length === 0) return;
     let dead = false;
     (async () => {
@@ -1020,7 +1022,7 @@ export default function App() {
     })();
     return () => { dead = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allParsed, token]);
+  }, [allEventsAcrossDays, token]);
 
   useEffect(() => {
     if (!dayKey || !allParsed.length) return;
