@@ -225,6 +225,34 @@ export async function cancelItem(id) {
   notify();
 }
 
+// Retrieve a queued video's raw file so the UI can let the user save it to
+// their device — even if it never uploads. The blob lives in IDB from the
+// moment of recording, so this works regardless of upload status. Returns a
+// File (named for a clean Save) or null if the blob is missing.
+export async function getVideoFile(id) {
+  const item = await idbGet(id);
+  if (!item || !item.file) return null;
+  return fileFromQueueItem(item);
+}
+
+// Build a nicely-named File from a queue item's stored blob. Sanitizes the
+// title (it contains "/" from dates, illegal in filenames) and ensures a
+// video extension so iOS/Drive recognize it.
+export function fileFromQueueItem(item) {
+  if (!item || !item.file) return null;
+  const type = item.fileType || item.file.type || "video/mp4";
+  let name = (item.title || item.fileName || "video").replace(/[\/\\:*?"<>|]+/g, "-");
+  if (!/\.[a-z0-9]+$/i.test(name)) {
+    name += type.includes("webm") ? ".webm" : type.includes("quicktime") ? ".mov" : ".mp4";
+  }
+  try {
+    if (item.file instanceof File && item.file.name === name) return item.file;
+    return new File([item.file], name, { type });
+  } catch {
+    return item.file; // Blob fallback (still saveable)
+  }
+}
+
 export async function retryItem(id) {
   // Force-release a stuck lock before retrying — iOS can suspend JS mid-upload
   // leaving _processing true with no active worker.

@@ -42,7 +42,35 @@ import {
   retryItem as retryVideoQueueItem,
   isPaused as isVideoQueuePaused,
   setPaused as setVideoQueuePaused,
+  getVideoFile,
+  fileFromQueueItem,
 } from "./videoQueue";
+
+// Save a queued/failed video out of the app onto the device. On iOS this opens
+// the share sheet (Save Video → Photos, or Save to Files); elsewhere it falls
+// back to a direct download. Works even if the upload never succeeds, so a
+// recorded video is never trapped in the app. Prefers the in-hand blob so the
+// share call stays inside the tap gesture (iOS requirement).
+async function saveVideoToDevice(item) {
+  try {
+    let file = item?.file ? fileFromQueueItem(item) : null;
+    if (!file) file = await getVideoFile(item.id);
+    if (!file) { alert("This video's file couldn't be found in storage."); return; }
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file] }).catch(e => {
+        if (e && e.name !== "AbortError") console.warn("share failed", e);
+      });
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const a = document.createElement("a");
+    a.href = url; a.download = file.name || "video.mp4";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  } catch (e) {
+    alert("Couldn't save the video: " + (e?.message || e));
+  }
+}
 import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
@@ -1469,15 +1497,21 @@ Property: ${s.addr || ""}`);
                       <div style={{flex:1,fontSize:9,color:"#5a6580",fontFamily:F,letterSpacing:0.3}}>
                         {sizeMB}MB
                       </div>
+                      {/* Save the raw video to the phone (Photos/Files) — always
+                          available so a failed upload can never strand the video. */}
+                      <button onClick={() => saveVideoToDevice(it)} title="Save this video to your phone" style={{padding:"3px 8px",borderRadius:5,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:3}}>
+                        <IconDownload size={11} color="#10B981"/>Save
+                      </button>
                       {(it.status === "error" || it.status === "uploading") && (
                         <button onClick={() => retryVideoQueueItem(it.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
                           {it.status === "uploading" ? "Restart" : "Retry"}
                         </button>
                       )}
-                      <button onClick={() => { if(window.confirm("Cancel and remove this video from the queue?")) cancelVideoQueueItem(it.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#a06060",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,display:"flex",alignItems:"center"}}>
+                      <button onClick={() => { if(window.confirm("Remove this video from the queue? Save it to your phone first if you still need it — this can't be undone.")) cancelVideoQueueItem(it.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#a06060",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,display:"flex",alignItems:"center"}}>
                         <IconX size={10} color="#a06060"/>
                       </button>
                     </div>
+                    {it.status === "error" && <div style={{fontSize:9,color:"#9fb0c0",marginTop:3,fontFamily:F,lineHeight:1.5}}>Upload failed, but the video is still saved on this phone. Tap <b style={{color:"#10B981"}}>Save</b> to keep a copy in Photos/Files.</div>}
                     {it.error && <div style={{fontSize:9,color:"#FF8888",marginTop:3,fontFamily:F}}>{it.error}</div>}
                   </div>
                 );
