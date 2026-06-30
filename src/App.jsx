@@ -3,6 +3,7 @@ import { parseEvent, stageColor } from "./parseEvent";
 import RouteMap, { AM_COLOR, PM_COLOR } from "./RouteMap";
 import SwipeCard from "./SwipeCard";
 import OnsiteWindow from "./OnsiteWindow";
+import UniversalSearch from "./UniversalSearch";
 import Pipeline, { savePipeline, loadPipeline, pushCalendarColor } from "./Pipeline";
 import { saveAppState, loadAppState, loadFieldFromDrive, listFieldFiles, onSyncStatus, onAuthError, queueFieldDriveSync } from "./driveSync";
 import { loadField, listFieldIds, updateField, getDirtyFieldIds } from "./fieldStore";
@@ -433,6 +434,10 @@ export default function App() {
   const [pipelineBulkEmailTick, setPipelineBulkEmailTick] = useState(0);
   const [routeSearch, setRouteSearch] = useState("");
   const [routeSearchOpen, setRouteSearchOpen] = useState(false);
+  // Universal search overlay (spans pipeline + route + calendar).
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [deepEvents, setDeepEvents] = useState([]);
+  const [deepLoading, setDeepLoading] = useState(false);
 
   // Fix iOS keyboard dismiss causing content to hide behind notch
   useEffect(() => {
@@ -954,8 +959,34 @@ export default function App() {
   // assignment happens here exactly once — the lower declaration was removed.
   const [addStopOpen, setAddStopOpen] = useState(false);
   const [pipelineSnapshot, setPipelineSnapshot] = useState(() => loadPipeline());
-  // Refresh pipelineSnapshot when modal opens so we see latest pipeline state
-  useEffect(() => { if (addStopOpen) setPipelineSnapshot(loadPipeline()); }, [addStopOpen]);
+  // Refresh pipelineSnapshot when the Add-Stop modal or universal search opens
+  // so we search/suggest against the latest pipeline state.
+  useEffect(() => { if (addStopOpen || searchOpen) setPipelineSnapshot(loadPipeline()); }, [addStopOpen, searchOpen]);
+
+  // Deep search: pull a wide calendar range (≈8 months back, 3 ahead) on demand
+  // so the universal search can reach scheduled appointments beyond the loaded
+  // week. Parsed the same way as the route so results open identically.
+  const runDeepSearch = useCallback(async () => {
+    if (!token || deepLoading) return;
+    setDeepLoading(true);
+    try {
+      const start = new Date(); start.setMonth(start.getMonth() - 8);
+      const end = new Date(); end.setMonth(end.getMonth() + 3);
+      const raw = await authedFetchEvents(token, start, end);
+      const parsed = (raw || []).map(ev => {
+        const p = parseEvent(ev);
+        if (!p || p.isAdmin) return null;
+        const t = ev.start?.dateTime || ev.start?.date;
+        p._startMs = t ? new Date(t).getTime() : 0;
+        return p;
+      }).filter(Boolean);
+      setDeepEvents(parsed);
+    } catch (e) {
+      console.warn("[deepSearch] failed:", e?.message || e);
+    } finally {
+      setDeepLoading(false);
+    }
+  }, [token, deepLoading, authedFetchEvents]);
   const clientIndex = useMemo(
     () => buildClientIndex(pipelineSnapshot, allEventsAcrossDays),
     [pipelineSnapshot, allEventsAcrossDays]
@@ -1675,15 +1706,15 @@ export default function App() {
         </button>}
         <div style={{flex:1}} onClick={handleDebugTap}/>
         {view === "route" && <div style={{display:"flex",alignItems:"center",gap:6}}>
-          <button onClick={()=>setRouteSearchOpen(!routeSearchOpen)} style={{padding:"5px 7px",borderRadius:8,background:routeSearchOpen?"rgba(59,130,246,.12)":"transparent",border:`1px solid ${routeSearchOpen?"rgba(59,130,246,.35)":"#2a3560"}`,color:routeSearchOpen?"#3B82F6":"#3a4a60",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-            <IconSearch size={14} color={routeSearchOpen?"#3B82F6":"#3a4a60"} />
+          <button onClick={()=>setSearchOpen(true)} title="Search everything" style={{padding:"5px 7px",borderRadius:8,background:"transparent",border:"1px solid #2a3560",color:"#3a4a60",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <IconSearch size={14} color="#3a4a60" />
           </button>
           <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"5px 10px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0b10",color:"#f0f4fa",fontSize:11,fontWeight:600,cursor:"pointer",outline:"none",appearance:"auto",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
             {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
           </select>
         </div>}
-        {view === "pipeline" && <button onClick={()=>{setPipelineSearchOpen(o=>!o);if(pipelineSearchOpen){setPipelineSearch("");}}} style={{padding:"5px 7px",borderRadius:8,background:pipelineSearchOpen?"rgba(59,130,246,.12)":"transparent",border:`1px solid ${pipelineSearchOpen?"rgba(59,130,246,.35)":"#2a3560"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <IconSearch size={14} color={pipelineSearchOpen?"#3B82F6":"#3a4a60"} />
+        {view === "pipeline" && <button onClick={()=>setSearchOpen(true)} title="Search everything" style={{padding:"5px 7px",borderRadius:8,background:"transparent",border:"1px solid #2a3560",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <IconSearch size={14} color="#3a4a60" />
         </button>}
         {view === "pipeline" && pipelineSelectMode && pipelineSelectedCount > 0 && (
           <button onClick={()=>setPipelineBulkEmailTick(t=>t+1)} style={{padding:"5px 10px",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.3)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
@@ -2142,6 +2173,20 @@ export default function App() {
           }}
         />
       )}
+
+      {/* ── UNIVERSAL SEARCH ──────────────────────────────────────── */}
+      <UniversalSearch
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        routeStops={stops}
+        pipeline={pipelineSnapshot}
+        weekEvents={allEventsAcrossDays}
+        deepEvents={deepEvents}
+        deepLoading={deepLoading}
+        onDeepSearch={runDeepSearch}
+        onOpenStop={(stop) => { setSearchOpen(false); openOnsite(stop); }}
+        onOpenCard={(card) => { setSearchOpen(false); setView("pipeline"); setPipelineSearch(card.cn || card.jn || ""); setPipelineSearchOpen(true); }}
+      />
 
       {/* ── VIDEO UPLOAD MANAGER ──────────────────────────────────── */}
       <VideoUploads open={uploadsOpen} onClose={() => setUploadsOpen(false)} stopMap={stopMap} />
