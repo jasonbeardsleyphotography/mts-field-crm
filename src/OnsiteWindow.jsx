@@ -1265,11 +1265,8 @@ Property: ${s.addr || ""}`);
             <div style={{minWidth:0,flex:1}}>
               <div style={{fontSize:16,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.2,marginBottom:3}}>{s.cn}</div>
               <div style={{fontSize:12,color:"#96a2b4",fontFamily:F,textTransform:"uppercase",letterSpacing:1}}>{s.addr}</div>
-              {(s.window || s.constraint) && (
-                <div style={{fontSize:11,color:"#4a5a70",marginTop:2}}>
-                  {s.window && <span style={{marginRight:8}}>{s.window}</span>}
-                  {s.constraint && <span style={{color:"#FF80AB"}}>{s.constraint}</span>}
-                </div>
+              {s.constraint && (
+                <div style={{fontSize:11,color:"#FF80AB",marginTop:2}}>{s.constraint}</div>
               )}
             </div>
             {/* Right: contact details, justified right */}
@@ -1283,43 +1280,6 @@ Property: ${s.addr || ""}`);
             <IconMapPin size={13} color="#FFD600"/>Parcel Map
           </button>
         </div>
-
-        {/* ── PROPERTY MEMORY ────────────────────────────────────────── */}
-        {propertyHistory.length > 0 && (
-          <div style={{borderBottom:"1px solid #1a2030",background:"rgba(139,92,246,.03)"}}>
-            <button onClick={()=>setHistoryOpen(!historyOpen)} style={{width:"100%",padding:"9px 16px",background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
-              <span style={{transform:historyOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7,color:"#8B5CF6"}}>▶</span>
-              <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="#8B5CF6" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              <span style={{fontSize:10,fontWeight:700,color:"#8B5CF6",letterSpacing:1,textTransform:"uppercase",fontFamily:F}}>Property History</span>
-              <span style={{fontSize:9,color:"#6B46C1",padding:"1px 6px",borderRadius:999,background:"rgba(139,92,246,.12)",border:"1px solid rgba(139,92,246,.2)",fontWeight:700}}>{propertyHistory.length}</span>
-              {!historyOpen && <span style={{flex:1,fontSize:11,color:"#7060a0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginLeft:4}}>{propertyHistory[0].cn} · {propertyHistory[0].stage?.replace(/_/g," ")}</span>}
-            </button>
-            {historyOpen && (
-              <div style={{padding:"0 16px 12px",display:"flex",flexDirection:"column",gap:6}}>
-                {propertyHistory.map(c => {
-                  const stageColors = { sold:"#10B981", declined:"#ef4444", estimate_needed:"#3B82F6", weak:"#FF8A65", waiting:"#F6BF26" };
-                  const col = stageColors[c.stage] || "#7a8aaa";
-                  const ageMs = Date.now() - (c.stageChangedAt || c.addedAt || 0);
-                  const ageDays = Math.round(ageMs / 86400000);
-                  const ageStr = ageDays < 30 ? `${ageDays}d ago` : ageDays < 365 ? `${Math.round(ageDays/30)}mo ago` : `${Math.round(ageDays/365)}yr ago`;
-                  return (
-                    <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,background:"#0d0f1a",border:"1px solid #1a2035"}}>
-                      <div style={{width:7,height:7,borderRadius:99,background:col,flexShrink:0}}/>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:12,fontWeight:700,color:"#c8d0e8",fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{c.cn}</div>
-                        <div style={{fontSize:10,color:"#5a6a8a",marginTop:1}}>{c.addr}</div>
-                      </div>
-                      <div style={{textAlign:"right",flexShrink:0}}>
-                        <div style={{fontSize:10,color:col,fontWeight:700,textTransform:"uppercase",fontFamily:F}}>{c.stage?.replace(/_/g," ")}</div>
-                        <div style={{fontSize:9,color:"#4a5a70"}}>{ageStr}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* ── JOB NOTES (collapsible, always shows preview) ─────────── */}
         {s.notes && (
