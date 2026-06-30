@@ -246,6 +246,10 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       audioClips,
       aiScopeSummary: aiScopeResult,
       aiAddonEmail: aiAddonResult,
+      // Persist client name + job # so the background photo uploader (which
+      // only has the stop id) can name files after the client, like videos do.
+      cn: s.cn,
+      jn: s.jn,
     };
     // Full snapshot (text + photos) for the in-memory mirror, the
     // pagehide flush, and the Drive sync. State is authoritative for
@@ -268,6 +272,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           audioClips: latest.audioClips,
           aiScopeSummary: latest.aiScopeSummary,
           aiAddonEmail: latest.aiAddonEmail,
+          cn: s.cn,
+          jn: s.jn,
         };
         // mergeField is queued — photos in IDB are preserved by the
         // shallow-merge in fieldStore (existing photos stay because

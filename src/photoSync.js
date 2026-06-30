@@ -90,6 +90,29 @@ function unmarkStopForPromotion(stopId) {
   saveQueue(q, PROMOTED_QUEUE_KEY);
 }
 
+// ── Photo filename ──────────────────────────────────────────────────────
+// Name uploaded photos after the client (mirrors the video naming) so files in
+// Drive read like "Deborah Wood #30432 06-30-2026 Scope 01.jpg" instead of an
+// opaque stop id. Returns null when the field record has no client name yet so
+// the caller can fall back to the legacy id-based name.
+function sanitizePhotoName(s) {
+  return (s || "").replace(/[\/\\:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim();
+}
+function buildPhotoFilename(data, key, p, index, ext) {
+  const name = sanitizePhotoName(data?.cn);
+  if (!name) return null;
+  const jobPart = data?.jn ? ` #${data.jn}` : "";
+  let datePart = "";
+  try {
+    datePart = " " + new Date(p?.ts || Date.now())
+      .toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
+      .replace(/\//g, "-");
+  } catch {}
+  const section = key === "addonPhotos" ? " Addon" : " Scope";
+  const seq = " " + String((index ?? 0) + 1).padStart(2, "0");
+  return `${name}${jobPart}${datePart}${section}${seq}.${ext}`;
+}
+
 // ── Upload one stop's pending photos ────────────────────────────────────
 
 async function syncStop(stopId, token) {
@@ -117,12 +140,12 @@ async function syncStop(stopId, token) {
     if (!Array.isArray(photos)) continue;
     uploadsBySection[key] = new Map();
 
-    await Promise.all(photos.map(async (p) => {
+    await Promise.all(photos.map(async (p, i) => {
       if (p.url) return;           // Already uploaded
       if (!p.dataUrl) return;      // Nothing to upload
       try {
         const ext = p.dataUrl.startsWith("data:image/png") ? "png" : "jpg";
-        const filename = `${stopId}_${key}_${p.ts || Date.now()}.${ext}`;
+        const filename = buildPhotoFilename(data, key, p, i, ext) || `${stopId}_${key}_${p.ts || Date.now()}.${ext}`;
         const url = await uploadPhotoToDrive(token, p.dataUrl, filename);
         if (url) {
           anyNewlySynced = true;
