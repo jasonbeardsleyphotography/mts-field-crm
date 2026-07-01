@@ -50,6 +50,29 @@ async function tx(mode) {
   return db.transaction(STORE, mode).objectStore(STORE);
 }
 
+// Delete the entire field database + its localStorage slim mirrors. Used when a
+// DIFFERENT Google account signs in on this device, so one account's field data
+// (photos, notes, videos) can't bleed into another's. Resolves even if the DB
+// was already gone or the delete is blocked.
+export async function deleteFieldDB() {
+  try { (await dbPromise)?.close?.(); } catch {}
+  dbPromise = null;
+  await new Promise((resolve) => {
+    try {
+      const req = indexedDB.deleteDatabase(DB_NAME);
+      req.onsuccess = req.onerror = req.onblocked = () => resolve();
+    } catch { resolve(); }
+  });
+  try {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(LS_PREFIX)) keys.push(k);
+    }
+    keys.forEach(k => { try { localStorage.removeItem(k); } catch {} });
+  } catch {}
+}
+
 // ── LOAD: IDB first, fall back to localStorage (with migration) ─────────────
 export async function loadField(id) {
   if (!id) return {};

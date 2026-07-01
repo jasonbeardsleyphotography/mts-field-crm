@@ -6,10 +6,10 @@ import OnsiteWindow from "./OnsiteWindow";
 import UniversalSearch from "./UniversalSearch";
 import Pipeline, { savePipeline, loadPipeline, pushCalendarColor } from "./Pipeline";
 import { saveAppState, loadAppState, loadFieldFromDrive, listFieldFiles, onSyncStatus, onAuthError, queueFieldDriveSync } from "./driveSync";
-import { loadField, listFieldIds, updateField, getDirtyFieldIds } from "./fieldStore";
+import { loadField, listFieldIds, updateField, getDirtyFieldIds, deleteFieldDB } from "./fieldStore";
 import { startPhotoSyncWatcher } from "./photoSync";
 import { photoKey } from "./imageUtils";
-import { startVideoQueueWatcher, pendingCount as videoPendingCount, onQueueChange as onVideoQueueChange } from "./videoQueue";
+import { startVideoQueueWatcher, pendingCount as videoPendingCount, onQueueChange as onVideoQueueChange, deleteVideoQueueDB } from "./videoQueue";
 import { pruneLog as pruneVideoLog } from "./videoLog";
 import UploadTracker from "./UploadTracker";
 import DebugPanel from "./DebugPanel";
@@ -64,6 +64,41 @@ function lsGet(key, fallback) {
 function lsSet(key, val) {
   try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) {}
 }
+
+// Resolve the signed-in Google account's identity (email) via the People API.
+// Uses the already-granted `contacts` scope, so no extra consent prompt.
+async function fetchGoogleAccountId(token) {
+  try {
+    const r = await fetch(
+      "https://people.googleapis.com/v1/people/me?personFields=emailAddresses",
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!r.ok) return null;
+    const d = await r.json();
+    const emails = d.emailAddresses || [];
+    const primary = emails.find(e => e.metadata?.primary) || emails[0];
+    return primary?.value ? primary.value.toLowerCase() : (d.resourceName || null);
+  } catch { return null; }
+}
+
+// Wipe all app data on this device (keeping only the current auth token), then
+// reload. Called when a DIFFERENT Google account signs in so one account's
+// pipeline/photos/videos/caches never bleed into another's. Each account's data
+// is safe in its own Drive and re-syncs on next load.
+async function clearLocalDataForAccountSwitch(newAccountId) {
+  try {
+    const remove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("mts-") && k !== "mts-token") remove.push(k);
+    }
+    remove.forEach(k => { try { localStorage.removeItem(k); } catch {} });
+    localStorage.setItem("mts-account", newAccountId);
+  } catch {}
+  try { await deleteFieldDB(); } catch {}
+  try { await deleteVideoQueueDB(); } catch {}
+  try { location.reload(); } catch {}
+}
 // Persist locally-created route stops (id starts with "local-") across reloads.
 // Format: { [id]: { event: <raw event obj>, dk: <dayKey string> } }
 function localStopsGet() { return lsGet("mts-local-stops", {}); }
@@ -91,6 +126,14 @@ export default function App() {
     // Only skip the boot check when there's a usable fresh token.
     return !!(saved?.token && saved.expiry > Date.now());
   });
+  // Mid-session token trouble (silent reauth failed but we still have local
+  // data): instead of bouncing to the full sign-in screen, we keep the app
+  // usable and surface a single "Reconnect Google" affordance.
+  const [needsReconnect, setNeedsReconnect] = useState(false);
+  // Guards so auth triggers can't stack into a popup storm.
+  const _interactiveInFlight = useRef(false); // an interactive popup is open
+  const _lastVisReauth = useRef(0);           // last visibility-driven silent reauth
+  const _authBusy = useRef(false);            // any auth flow active (defer SW reload)
   const saveToken = (t, expiresIn) => {
     setToken(t);
     if (t) {
@@ -200,7 +243,11 @@ export default function App() {
       // explicitly signed out — respect that and don't auto-reauth.
       if (!saved && authBootChecked) return;
       const needsRefresh = !saved || saved.expiry - Date.now() < 20 * 60 * 1000;
-      if (needsRefresh) silentReauth();
+      // Rate-limit: rapid focus flips on a Chromebook must not stack reauths.
+      if (needsRefresh && Date.now() - _lastVisReauth.current > 60_000) {
+        _lastVisReauth.current = Date.now();
+        silentReauth();
+      }
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
@@ -212,6 +259,29 @@ export default function App() {
   useEffect(() => {
     onAuthError(() => { silentReauth(); });
   }, [silentReauth]);
+
+  // ── ACCOUNT IDENTITY / CLEAR-ON-SWITCH ────────────────────────────────────
+  // Once per load, resolve which Google account this token belongs to. If it's
+  // a DIFFERENT account than last time on this device, wipe local data + reload
+  // so nothing bleeds across accounts (own-device usage means this effectively
+  // never fires; it's a safety net). First sign-in just records the account.
+  // If identity can't be resolved (offline), we do nothing and retry next load.
+  const _acctChecked = useRef(false);
+  useEffect(() => {
+    if (!token || _acctChecked.current) return;
+    _acctChecked.current = true;
+    (async () => {
+      const acct = await fetchGoogleAccountId(token);
+      if (!acct) { _acctChecked.current = false; return; } // couldn't resolve — retry
+      let prev = null;
+      try { prev = localStorage.getItem("mts-account"); } catch {}
+      if (prev && prev !== acct) {
+        await clearLocalDataForAccountSwitch(acct); // wipes + reloads
+        return;
+      }
+      try { localStorage.setItem("mts-account", acct); } catch {}
+    })();
+  }, [token]);
 
   // ── OFFLINE PHOTO QUEUE ───────────────────────────────────────────────────
   // Start the watcher once we have a valid token. The watcher installs
@@ -476,7 +546,21 @@ export default function App() {
       if (!window.google?.accounts?.oauth2) { setTimeout(tryInit, 200); return; }
       _tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID, scope: SCOPES,
-        callback: r => { if (r.access_token) { saveToken(r.access_token, r.expires_in); setError(null); } else setError("Sign-in failed"); },
+        callback: r => {
+          _interactiveInFlight.current = false; _authBusy.current = false;
+          if (r.access_token) { saveToken(r.access_token, r.expires_in); setError(null); setNeedsReconnect(false); }
+          else setError("Sign-in failed — try again.");
+        },
+        // Without this, a blocked/dismissed popup produced NO feedback and the
+        // user just kept tapping — a big part of the Chromebook loop.
+        error_callback: (err) => {
+          _interactiveInFlight.current = false; _authBusy.current = false;
+          const t = err?.type || "";
+          setError(
+            t.includes("popup") ? "Sign-in popup was blocked or closed. Allow pop-ups for this site and try again."
+            : "Couldn't complete sign-in. Check your connection / cookies and try again."
+          );
+        },
       });
     };
     tryInit();
@@ -490,6 +574,14 @@ export default function App() {
       setError("Still loading sign-in — try again in a moment");
       return;
     }
+    // Singleton: never open a second popup while one is already open — stacked
+    // popups are exactly what made the loop feel unrecoverable.
+    if (_interactiveInFlight.current) return;
+    _interactiveInFlight.current = true;
+    _authBusy.current = true;
+    // Safety: if GIS never fires callback nor error_callback (rare), release the
+    // guards after 60s so sign-in isn't permanently blocked.
+    setTimeout(() => { _interactiveInFlight.current = false; _authBusy.current = false; }, 60_000);
     _tokenClientRef.current.requestAccessToken();
   }, []);
 
@@ -509,8 +601,11 @@ export default function App() {
           // Reauth said OK but token isn't readable — extremely rare race.
           // Don't clear the token; let the caller retry.
         } else {
-          // Silent reauth genuinely couldn't get a token — user must sign in.
-          saveToken(null);
+          // Silent reauth failed — but don't nuke the token and bounce to the
+          // full sign-in screen (that's what made the Chromebook loop). Keep
+          // the app usable on local data and surface a single "Reconnect
+          // Google" affordance for one interactive re-auth.
+          setNeedsReconnect(true);
         }
       }
       throw e;
@@ -1594,7 +1689,14 @@ export default function App() {
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       if (refreshing) return;
       refreshing = true;
-      window.location.reload();
+      // Don't reload in the middle of an auth flow (interactive popup or
+      // reconnect) — a reload there restarts cold-start reauth and can feed the
+      // popup loop. Defer until auth is idle.
+      const doReload = () => {
+        if (_authBusy.current) { setTimeout(doReload, 1500); return; }
+        window.location.reload();
+      };
+      doReload();
     });
     navigator.serviceWorker.register("/sw.js").then(reg => {
       // Check for updates on load + every 30 min.
@@ -1644,6 +1746,15 @@ export default function App() {
   // ═════════════════════════════════════════════════════════════════════════
   return (
     <div style={{height:"100dvh",width:"100%",background:"#0a0b10",display:"flex",flexDirection:"column",fontFamily:"'DM Sans',system-ui,sans-serif",color:"#f0f4fa",overflow:"hidden",paddingTop:"env(safe-area-inset-top)",boxSizing:"border-box"}}>
+      {/* Reconnect bar — shown when a silent token refresh failed but we still
+          have local data. Keeps the app usable and offers ONE interactive
+          re-auth instead of bouncing to the sign-in screen in a loop. */}
+      {needsReconnect && (
+        <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:"rgba(246,191,38,.12)",borderBottom:"1px solid rgba(246,191,38,.3)"}}>
+          <span style={{flex:1,fontSize:12,color:"#F6BF26",fontWeight:600}}>Google session expired — reconnect to sync.</span>
+          <button onClick={initAuth} style={{padding:"6px 14px",borderRadius:8,background:"rgba(246,191,38,.2)",border:"1px solid rgba(246,191,38,.5)",color:"#F6BF26",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>Reconnect Google</button>
+        </div>
+      )}
       <style>{`
 .scr::-webkit-scrollbar{width:0}
 .mts-pl-col{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.07) transparent}
@@ -1958,7 +2069,7 @@ export default function App() {
         </button>
         {/* Sign Out */}
         <button
-          onClick={()=>{ if(signOutConfirm){ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
+          onClick={()=>{ if(signOutConfirm){ setToken(null); setNeedsReconnect(false); _acctChecked.current=false; try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
           title={signOutConfirm ? "Tap again to confirm" : "Sign out"}
           style={{width:34,height:34,borderRadius:8,background:signOutConfirm?"rgba(255,85,85,.15)":"transparent",border:`1px solid ${signOutConfirm?"rgba(255,85,85,.4)":"#1a2035"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all .15s"}}>
           <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={signOutConfirm?"#FF5555":"#3a4a60"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -1976,7 +2087,7 @@ export default function App() {
           <IconSearch size={14} color="#818cf8" />
         </button>
         <button
-          onClick={()=>{ if(signOutConfirm){ setToken(null); try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
+          onClick={()=>{ if(signOutConfirm){ setToken(null); setNeedsReconnect(false); _acctChecked.current=false; try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
           title={signOutConfirm ? "Tap again to confirm" : "Sign out"}
           style={{width:32,height:32,borderRadius:8,background:signOutConfirm?"rgba(255,85,85,.15)":"transparent",border:`1px solid ${signOutConfirm?"rgba(255,85,85,.4)":"#1a2035"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s"}}>
           <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={signOutConfirm?"#FF5555":"#3a4a60"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>

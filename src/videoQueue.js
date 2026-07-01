@@ -94,6 +94,20 @@ async function _idbOp(mode, op) {
   });
 }
 
+// Delete the entire video-queue database (including any stored file blobs).
+// Used when a DIFFERENT Google account signs in on this device so pending
+// videos can't carry over between accounts. Resolves even if already gone.
+export async function deleteVideoQueueDB() {
+  try { (await _dbPromise)?.close?.(); } catch {}
+  _dbPromise = null;
+  await new Promise((resolve) => {
+    try {
+      const req = indexedDB.deleteDatabase(DB_NAME);
+      req.onsuccess = req.onerror = req.onblocked = () => resolve();
+    } catch { resolve(); }
+  });
+}
+
 const idbPut    = (item) => _idbOp("readwrite", (s) => s.put(item));
 const idbGet    = (id)   => _idbOp("readonly",  (s, ret) => { s.get(id).onsuccess = (e) => ret(e.target.result); });
 const idbDelete = (id)   => _idbOp("readwrite", (s) => s.delete(id));
