@@ -905,7 +905,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // unmounting. These hooks just keep the on-screen queue panel in sync.
   const [videoQueueItems, setVideoQueueItems] = useState([]);
   const [queuePaused, setQueuePausedState] = useState(isVideoQueuePaused());
-  const [showQueuePanel, setShowQueuePanel] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -915,6 +914,37 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     });
     return () => { alive = false; off(); };
   }, [s.id]);
+
+  // Local preview for still-pending/failed videos: the raw file blob is
+  // already in hand (from the live queue subscription above), so build an
+  // object URL per item instead of waiting on the Drive upload to finish.
+  // Cached by item id; revoked as soon as an id drops out of the queue
+  // (uploaded, canceled, or removed) so blob URLs don't leak.
+  const videoObjectUrlsRef = useRef(new Map());
+  const [videoObjectUrls, setVideoObjectUrls] = useState(new Map());
+  useEffect(() => {
+    const cache = videoObjectUrlsRef.current;
+    const liveIds = new Set(videoQueueItems.map(it => it.id));
+    let changed = false;
+    for (const it of videoQueueItems) {
+      if (!cache.has(it.id) && it.file) {
+        try { cache.set(it.id, URL.createObjectURL(it.file)); changed = true; } catch {}
+      }
+    }
+    for (const id of [...cache.keys()]) {
+      if (!liveIds.has(id)) {
+        try { URL.revokeObjectURL(cache.get(id)); } catch {}
+        cache.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) setVideoObjectUrls(new Map(cache));
+  }, [videoQueueItems]);
+  // Revoke everything left when the stop screen unmounts.
+  useEffect(() => () => {
+    videoObjectUrlsRef.current.forEach(url => { try { URL.revokeObjectURL(url); } catch {} });
+    videoObjectUrlsRef.current.clear();
+  }, []);
 
   // When the queue produces a YouTube URL, fieldStore is updated and a
   // "mts-field-synced" event is dispatched. Re-pull videoUrls from IDB.
@@ -1129,8 +1159,8 @@ Property: ${s.addr || ""}`);
   // the file is safely written to IDB and will upload on the next opportunity,
   // even if the app is closed and reopened. Drive URLs are saved to the card
   // as google.com/file/d/{id}/preview links, which work in any browser.
-  // (State hooks for videoQueueItems / uploadMode / showQueuePanel live
-  //  above the early returns, in the hook section, per Rules of Hooks.)
+  // (State hooks for videoQueueItems / uploadMode live above the early
+  //  returns, in the hook section, per Rules of Hooks.)
 
   // Shared by both video sources (in-app recorder + library picker) so queued
   // items are named consistently regardless of how they were captured.
@@ -1380,69 +1410,24 @@ Property: ${s.addr || ""}`);
 
         {/* ── VIDEO ─────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
-          <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:5}}>VIDEO{videoQueueItems.length > 0 && <span style={{fontSize:9,color:"#F6BF26",fontWeight:700,padding:"1px 8px",borderRadius:10,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.2)",marginLeft:6,animation:"pulse 1s infinite"}}>↑ {videoQueueItems.length} pending</span>}</div>
-
-          {/* Uploaded videos list */}
-          {videoUrls.length > 0 && <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
-            {videoUrls.map((url, idx) => {
-              const ytId    = getYtId(url);
-              const driveId = getDriveFileId(url);
-              // Rebuild the watch link fresh from driveId — fixes older cards that
-              // saved a Drive /preview link (the "No preview available" iframe).
-              const shareLink = driveId ? buildShareUrl(driveId) : url;
-              return (
-                <div key={idx} style={{borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",overflow:"hidden"}}>
-                  {ytId && <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" style={{width:"100%",height:90,objectFit:"cover"}} />}
-                  {driveId && <video controls preload="metadata" src={buildStreamUrl(driveId)} style={{width:"100%",height:160,display:"block",background:"#000"}} />}
-                  <div style={{padding:"6px 8px",display:"flex",alignItems:"center",gap:6}}>
-                    <div style={{fontSize:9,color:"#5a6890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{shareLink}</div>
-                    {typeof navigator !== "undefined" && navigator.share && (
-                      <button onClick={async () => {
-                        const name = (s.cn || "").split(" ")[0];
-                        try {
-                          await navigator.share({
-                            title: "Property Video Review",
-                            text: name ? `${name}, here's your property video review from Monster Tree Service:` : "Your property video review from Monster Tree Service:",
-                            url: shareLink,
-                          });
-                        } catch { /* user dismissed the share sheet */ }
-                      }} style={{padding:"4px 8px",borderRadius:5,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Share</button>
-                    )}
-                    <button onClick={() => {
-                      const html = `<a href="${shareLink}">Link to Video Review</a>`;
-                      if (navigator.clipboard?.write) {
-                        navigator.clipboard.write([new ClipboardItem({
-                          "text/html": new Blob([html], {type:"text/html"}),
-                          "text/plain": new Blob([shareLink], {type:"text/plain"}),
-                        })]).catch(()=>navigator.clipboard?.writeText(shareLink));
-                      } else { navigator.clipboard?.writeText(shareLink); }
-                    }} style={{padding:"4px 8px",borderRadius:5,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#5a90b0",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Copy link</button>
-                    <button onClick={() => deleteVideo(url, idx)} style={{padding:"4px 6px",borderRadius:5,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.15)",color:"#e06060",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}>
-                      <IconX size={10} color="#e06060" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>}
-
-          {/* ── QUEUED / IN-PROGRESS UPLOADS ──────────────────────────── */}
-          {videoQueueItems.length > 0 && <div style={{marginBottom:8,borderRadius:8,background:"rgba(246,191,38,.04)",border:"1px solid rgba(246,191,38,.15)",overflow:"hidden"}}>
-            <div style={{padding:"6px 10px",display:"flex",alignItems:"center",gap:6,background:"rgba(246,191,38,.06)",borderBottom:"1px solid rgba(246,191,38,.1)"}}>
-              <span style={{fontSize:9,color:"#F6BF26",fontWeight:800,fontFamily:F,letterSpacing:0.6,textTransform:"uppercase",flex:1}}>
-                {videoQueueItems.length} pending {queuePaused ? "• PAUSED" : ""}
-              </span>
-              <button onClick={() => setShowQueuePanel(v=>!v)} style={{padding:"2px 8px",borderRadius:5,background:"transparent",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5}}>
-                {showQueuePanel ? "HIDE" : "SHOW"}
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
+            <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,flex:1}}>VIDEO</div>
+            {/* Global upload pause/resume — applies to every stop's queue, not
+                just this one — kept reachable but compact, no longer nested
+                behind a SHOW/HIDE toggle. */}
+            {videoQueueItems.length > 0 && (
+              <button onClick={() => { setVideoQueuePaused(!queuePaused); setQueuePausedState(!queuePaused); }} title={queuePaused ? "Resume uploads" : "Pause uploads"} style={{padding:"3px 9px",borderRadius:999,background:queuePaused?"rgba(246,191,38,.15)":"rgba(16,185,129,.1)",border:`1px solid ${queuePaused?"rgba(246,191,38,.4)":"rgba(16,185,129,.3)"}`,color:queuePaused?"#F6BF26":"#10B981",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.4,textTransform:"uppercase",whiteSpace:"nowrap"}}>
+                {queuePaused ? "▶ Resume" : "⏸ Pause"}
               </button>
-            </div>
-            {showQueuePanel && <>
-              {/* Pause/resume toggle */}
-              <div style={{padding:"8px 10px",display:"flex",alignItems:"center",gap:6,borderBottom:"1px solid rgba(246,191,38,.1)"}}>
-                <button onClick={() => { setVideoQueuePaused(!queuePaused); setQueuePausedState(!queuePaused); }} style={{padding:"4px 10px",borderRadius:5,background:queuePaused?"rgba(246,191,38,.15)":"rgba(16,185,129,.1)",border:`1px solid ${queuePaused?"rgba(246,191,38,.4)":"rgba(16,185,129,.3)"}`,color:queuePaused?"#F6BF26":"#10B981",fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
-                  {queuePaused ? "▶ RESUME UPLOADS" : "⏸ PAUSE UPLOADS"}
-                </button>
-              </div>
+            )}
+          </div>
+
+          {/* One merged, always-visible list: still-local (pending/uploading/
+              error) videos first — since those need attention — then videos
+              already safely uploaded to Drive. No collapsed/hidden section:
+              a failed upload is never something you have to go dig for. */}
+          {(videoQueueItems.length > 0 || videoUrls.length > 0) && (
+            <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
               {videoQueueItems.map(it => {
                 const sizeMB = (it.fileSize / (1024*1024)).toFixed(1);
                 const statusColor = it.status === "error" ? "#FF5555" : it.status === "uploading" ? "#10B981" : "#7a7050";
@@ -1450,40 +1435,84 @@ Property: ${s.addr || ""}`);
                   it.status === "queued" ? "Waiting…" :
                   it.status === "uploading" ? `Uploading ${it.progress||0}%` :
                   it.status === "error" ? "Failed" : it.status;
+                const previewUrl = videoObjectUrls.get(it.id);
                 return (
-                  <div key={it.id} style={{padding:"8px 10px",borderTop:"1px solid rgba(246,191,38,.06)"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
-                      <div style={{flex:1,minWidth:0,fontSize:11,color:"#c0c8d0",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</div>
-                      <span style={{fontSize:9,color:statusColor,fontWeight:800,fontFamily:F,letterSpacing:0.4,textTransform:"uppercase",flexShrink:0}}>{statusLabel}</span>
-                    </div>
-                    <div style={{height:3,background:"rgba(255,255,255,.05)",borderRadius:2,overflow:"hidden",marginBottom:4}}>
-                      <div style={{height:"100%",width:`${it.progress||0}%`,background:statusColor,transition:"width .3s"}}/>
-                    </div>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}>
-                      <div style={{flex:1,fontSize:9,color:"#5a6580",fontFamily:F,letterSpacing:0.3}}>
-                        {sizeMB}MB
+                  <div key={it.id} style={{borderRadius:8,background:"#0e1120",border:"1px solid rgba(246,191,38,.25)",overflow:"hidden"}}>
+                    {previewUrl && <video controls preload="metadata" src={previewUrl} style={{width:"100%",height:160,display:"block",background:"#000"}} />}
+                    <div style={{padding:"8px 10px"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                        <div style={{flex:1,minWidth:0,fontSize:11,color:"#c0c8d0",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</div>
+                        <span style={{fontSize:9,color:statusColor,fontWeight:800,fontFamily:F,letterSpacing:0.4,textTransform:"uppercase",flexShrink:0}}>{statusLabel}</span>
                       </div>
-                      {/* Save the raw video to the phone (Photos/Files) — always
-                          available so a failed upload can never strand the video. */}
-                      <button onClick={() => saveVideoToDevice(it)} title="Save this video to your phone" style={{padding:"3px 8px",borderRadius:5,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:3}}>
-                        <IconDownload size={11} color="#10B981"/>Save
-                      </button>
-                      {(it.status === "error" || it.status === "uploading") && (
-                        <button onClick={() => retryVideoQueueItem(it.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
-                          {it.status === "uploading" ? "Restart" : "Retry"}
+                      <div style={{height:3,background:"rgba(255,255,255,.05)",borderRadius:2,overflow:"hidden",marginBottom:4}}>
+                        <div style={{height:"100%",width:`${it.progress||0}%`,background:statusColor,transition:"width .3s"}}/>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <div style={{flex:1,fontSize:9,color:"#5a6580",fontFamily:F,letterSpacing:0.3}}>
+                          {sizeMB}MB
+                        </div>
+                        {/* Save the raw video to the phone (Photos/Files) — always
+                            available so a failed upload can never strand the video. */}
+                        <button onClick={() => saveVideoToDevice(it)} title="Save this video to your phone" style={{padding:"3px 8px",borderRadius:5,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:3}}>
+                          <IconDownload size={11} color="#10B981"/>Save
                         </button>
-                      )}
-                      <button onClick={() => { if(window.confirm("Remove this video from the queue? Save it to your phone first if you still need it — this can't be undone.")) cancelVideoQueueItem(it.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#a06060",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,display:"flex",alignItems:"center"}}>
-                        <IconX size={10} color="#a06060"/>
-                      </button>
+                        {(it.status === "error" || it.status === "uploading") && (
+                          <button onClick={() => retryVideoQueueItem(it.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
+                            {it.status === "uploading" ? "Restart" : "Retry"}
+                          </button>
+                        )}
+                        <button onClick={() => { if(window.confirm("Remove this video from the queue? Save it to your phone first if you still need it — this can't be undone.")) cancelVideoQueueItem(it.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#a06060",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,display:"flex",alignItems:"center"}}>
+                          <IconX size={10} color="#a06060"/>
+                        </button>
+                      </div>
+                      {it.status === "error" && <div style={{fontSize:9,color:"#9fb0c0",marginTop:3,fontFamily:F,lineHeight:1.5}}>Upload failed, but the video is still saved on this phone. Tap <b style={{color:"#10B981"}}>Save</b> to keep a copy in Photos/Files.</div>}
+                      {it.error && <div style={{fontSize:9,color:"#FF8888",marginTop:3,fontFamily:F}}>{it.error}</div>}
                     </div>
-                    {it.status === "error" && <div style={{fontSize:9,color:"#9fb0c0",marginTop:3,fontFamily:F,lineHeight:1.5}}>Upload failed, but the video is still saved on this phone. Tap <b style={{color:"#10B981"}}>Save</b> to keep a copy in Photos/Files.</div>}
-                    {it.error && <div style={{fontSize:9,color:"#FF8888",marginTop:3,fontFamily:F}}>{it.error}</div>}
                   </div>
                 );
               })}
-            </>}
-          </div>}
+              {videoUrls.map((url, idx) => {
+                const ytId    = getYtId(url);
+                const driveId = getDriveFileId(url);
+                // Rebuild the watch link fresh from driveId — fixes older cards that
+                // saved a Drive /preview link (the "No preview available" iframe).
+                const shareLink = driveId ? buildShareUrl(driveId) : url;
+                return (
+                  <div key={idx} style={{borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",overflow:"hidden"}}>
+                    {ytId && <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" style={{width:"100%",height:90,objectFit:"cover"}} />}
+                    {driveId && <video controls preload="metadata" src={buildStreamUrl(driveId)} style={{width:"100%",height:160,display:"block",background:"#000"}} />}
+                    <div style={{padding:"6px 8px",display:"flex",alignItems:"center",gap:6}}>
+                      <div style={{fontSize:9,color:"#5a6890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{shareLink}</div>
+                      {typeof navigator !== "undefined" && navigator.share && (
+                        <button onClick={async () => {
+                          const name = (s.cn || "").split(" ")[0];
+                          try {
+                            await navigator.share({
+                              title: "Property Video Review",
+                              text: name ? `${name}, here's your property video review from Monster Tree Service:` : "Your property video review from Monster Tree Service:",
+                              url: shareLink,
+                            });
+                          } catch { /* user dismissed the share sheet */ }
+                        }} style={{padding:"4px 8px",borderRadius:5,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Share</button>
+                      )}
+                      <button onClick={() => {
+                        const html = `<a href="${shareLink}">Link to Video Review</a>`;
+                        if (navigator.clipboard?.write) {
+                          navigator.clipboard.write([new ClipboardItem({
+                            "text/html": new Blob([html], {type:"text/html"}),
+                            "text/plain": new Blob([shareLink], {type:"text/plain"}),
+                          })]).catch(()=>navigator.clipboard?.writeText(shareLink));
+                        } else { navigator.clipboard?.writeText(shareLink); }
+                      }} style={{padding:"4px 8px",borderRadius:5,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#5a90b0",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Copy link</button>
+                      <button onClick={() => deleteVideo(url, idx)} style={{padding:"4px 6px",borderRadius:5,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.15)",color:"#e06060",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}>
+                        <IconX size={10} color="#e06060" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Record in-app — capped to ~720p/1.5Mbps so uploads stay fast over cellular */}
           <button onClick={() => setShowVideoRecorder(true)} style={{width:"100%",padding:"11px 0",borderRadius:8,background:"rgba(255,59,48,.08)",border:"1px solid rgba(255,59,48,.3)",color:"#FF6B5E",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
