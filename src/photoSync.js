@@ -92,13 +92,13 @@ function unmarkStopForPromotion(stopId) {
 
 // ── Photo filename ──────────────────────────────────────────────────────
 // Name uploaded photos after the client (mirrors the video naming) so files in
-// Drive read like "Deborah Wood #30432 06-30-2026 Scope 01.jpg" instead of an
+// Drive read like "Deborah Wood #30432 06-30-2026 01.jpg" instead of an
 // opaque stop id. Returns null when the field record has no client name yet so
 // the caller can fall back to the legacy id-based name.
 function sanitizePhotoName(s) {
   return (s || "").replace(/[\/\\:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim();
 }
-function buildPhotoFilename(data, key, p, index, ext) {
+function buildPhotoFilename(data, p, seq, ext) {
   const name = sanitizePhotoName(data?.cn);
   if (!name) return null;
   const jobPart = data?.jn ? ` #${data.jn}` : "";
@@ -108,9 +108,8 @@ function buildPhotoFilename(data, key, p, index, ext) {
       .toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
       .replace(/\//g, "-");
   } catch {}
-  const section = key === "addonPhotos" ? " Addon" : " Scope";
-  const seq = " " + String((index ?? 0) + 1).padStart(2, "0");
-  return `${name}${jobPart}${datePart}${section}${seq}.${ext}`;
+  const seqPart = " " + String((seq ?? 0) + 1).padStart(2, "0");
+  return `${name}${jobPart}${datePart}${seqPart}.${ext}`;
 }
 
 // ── Upload one stop's pending photos ────────────────────────────────────
@@ -129,6 +128,14 @@ async function syncStop(stopId, token) {
   } catch {}
 
   const sections = ["scopePhotos", "addonPhotos"];
+  // Global sequence across BOTH sections (scope then addon), keyed by each
+  // photo's stable key, so "Name #Job Date 01/02/03…" numbers a stop's photos
+  // in one continuous run instead of colliding (scope #1 and addon #1).
+  const seqByKey = new Map();
+  [...(Array.isArray(data.scopePhotos) ? data.scopePhotos : []),
+   ...(Array.isArray(data.addonPhotos) ? data.addonPhotos : [])]
+    .forEach((p, i) => seqByKey.set(photoKey(p), i));
+
   // Track uploads per-section, indexed by stable key (ts || filename), so
   // we can write back through updateField without losing concurrent
   // photo adds/removes/edits.
@@ -145,7 +152,8 @@ async function syncStop(stopId, token) {
       if (!p.dataUrl) return;      // Nothing to upload
       try {
         const ext = p.dataUrl.startsWith("data:image/png") ? "png" : "jpg";
-        const filename = buildPhotoFilename(data, key, p, i, ext) || `${stopId}_${key}_${p.ts || Date.now()}.${ext}`;
+        const seq = seqByKey.get(photoKey(p)) ?? i;
+        const filename = buildPhotoFilename(data, p, seq, ext) || `${stopId}_${key}_${p.ts || Date.now()}.${ext}`;
         const url = await uploadPhotoToDrive(token, p.dataUrl, filename);
         if (url) {
           anyNewlySynced = true;
