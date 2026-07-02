@@ -54,6 +54,12 @@ export function getSyncStatus() { return syncStatus; }
  *  App.jsx wires this to silentReauth() so token is refreshed automatically. */
 export function onAuthError(fn) { authErrorCallback = fn; }
 
+/** Fire the already-registered auth-error callback without overwriting it.
+ *  Lets other modules (e.g. videoQueue.js) trigger the app's one silent-reauth
+ *  hook on a 401/403 of their own, instead of each needing their own
+ *  registration slot (onAuthError only ever holds one callback). */
+export function triggerAuthError() { if (authErrorCallback) authErrorCallback(); }
+
 async function driveReq(token, url, opts = {}) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);

@@ -42,7 +42,7 @@ import {
   sniffDriveFileFormat,
   fixDriveFileContentType,
 } from "./driveUpload";
-import { queueFieldDriveSync } from "./driveSync";
+import { queueFieldDriveSync, triggerAuthError } from "./driveSync";
 import { createWakeLockHandle } from "./wakeLock";
 
 // ── Tunables ─────────────────────────────────────────────────────────────
@@ -391,7 +391,23 @@ async function _processItem(id) {
     let session = item.sessionUrl;
     if (!session) {
       vlogInfo("drive.init.start", { fileSize: item.fileSize }, id);
-      const init = await initDriveSession(token, item.title, item.fileSize, item.fileType, folderId);
+      let init = await initDriveSession(token, item.title, item.fileSize, item.fileType, folderId);
+      if (!init.ok && (init.status === 401 || init.status === 403)) {
+        // The access token expired while this item sat in the queue. Without
+        // this, that produced a permanent "Could not start Drive upload"
+        // error that Retry/Force Restart could never fix on their own — the
+        // real problem (a stale token) was one silent reauth away, but
+        // nothing ever asked for one. Trigger the app's existing silent-reauth
+        // hook (same one Calendar/Drive 401s already use) and retry ONCE with
+        // whatever token comes back before giving up.
+        vlogWarn("drive.init.auth_retry", { status: init.status }, id);
+        try { triggerAuthError(); } catch {}
+        await new Promise(r => setTimeout(r, 2000));
+        const freshToken = _getToken?.();
+        if (freshToken) {
+          init = await initDriveSession(freshToken, item.title, item.fileSize, item.fileType, folderId);
+        }
+      }
       if (!init.ok) {
         vlogError("drive.init.fail", { error: init.error, status: init.status }, id);
         await _setItem(id, { status: "error", error: `Could not start Drive upload: ${init.error}` });
@@ -515,9 +531,18 @@ async function _processItem(id) {
       }
       vlogWarn("upload.fail", { ms, attempt: attempts, error: result.error, resumeFrom: bytesUploaded }, id);
       if (attempts >= RETRY_LIMIT) {
+        // The session is still technically alive (Drive never returned a clean
+        // 404/410 to trigger the fresh-session paths above) but isn't making
+        // progress after repeated retries — e.g. wedged into a bad state after
+        // an earlier aborted request. Clear it so the NEXT retry (manual or
+        // automatic) starts a genuinely new Drive session instead of hammering
+        // the same broken one forever, which previously made Retry/Force
+        // Restart permanently ineffective on this class of failure.
         await _setItem(id, {
           status: "error",
           error: `Upload stalled after ${attempts} retries: ${result.error}`,
+          sessionUrl: null,
+          bytesUploaded: 0,
         });
         return true;
       }
@@ -585,6 +610,26 @@ async function _finalize(id, fileId, token) {
 
 // ── Watcher ──────────────────────────────────────────────────────────────
 
+// Wall-clock IDB unstick: an item can be left at status:"uploading" with a
+// dead worker (crashed mid-request, iOS froze the tab mid-flight, etc.) and
+// nothing else ever resets it. Previously this scan only ran inside the
+// visibilitychange handler, so an app that stayed foregrounded the whole time
+// (never backgrounded+refocused) had no automatic recovery path — the item
+// just sat there until the user happened to background/foreground the tab.
+// Runs here AND on the periodic tick below so it self-heals either way.
+function _wallClockUnstick() {
+  idbAll().then(all => {
+    const stale = all.filter(
+      i => i.status === "uploading" && Date.now() - (i.statusSetAt || 0) > 45_000
+    );
+    if (!stale.length) return;
+    vlogWarn("worker.idb_wall_unstick", { count: stale.length });
+    Promise.all(stale.map(i => idbPut({ ...i, status: "queued", statusSetAt: Date.now() })))
+      .then(() => { _processing = false; notify(); _kick(); })
+      .catch(() => {});
+  }).catch(() => {});
+}
+
 export function startVideoQueueWatcher(getToken) {
   _getToken = getToken;
   if (_watcherInstalled) {
@@ -607,28 +652,16 @@ export function startVideoQueueWatcher(getToken) {
       vlogInfo("event.visible", null);
       if (_processing) _acquireWakeLock();
       _kick();
-
-      // Wall-clock IDB unstick: _processingStartMs is an in-memory clock that
-      // iOS freezes when the app is backgrounded (e.g. during a phone call).
-      // Compare statusSetAt written to IDB (real wall time) to catch uploads
-      // that have been stalled across a context switch. Resets them to "queued"
-      // so _kick() restarts within seconds instead of waiting 2 minutes.
-      idbAll().then(all => {
-        const stale = all.filter(
-          i => i.status === "uploading" && Date.now() - (i.statusSetAt || 0) > 45_000
-        );
-        if (!stale.length) return;
-        vlogWarn("worker.idb_wall_unstick", { count: stale.length });
-        Promise.all(stale.map(i => idbPut({ ...i, status: "queued", statusSetAt: Date.now() })))
-          .then(() => { _processing = false; notify(); _kick(); })
-          .catch(() => {});
-      }).catch(() => {});
+      _wallClockUnstick();
     } else {
       _releaseWakeLock();
     }
   });
 
-  setInterval(() => { _kick(); }, 30 * 1000);
+  // Also run the wall-clock unstick scan on the periodic tick, not just on
+  // visibilitychange, so an item stuck at "uploading" recovers even if the
+  // app is never backgrounded/foregrounded again.
+  setInterval(() => { _kick(); _wallClockUnstick(); }, 30 * 1000);
   _kick();
 }
 
