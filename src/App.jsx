@@ -2060,7 +2060,7 @@ export default function App() {
         {/* Data Recovery */}
         <button onClick={()=>setRecoveryOpen(true)} title="Find old job photos"
           style={{width:34,height:34,borderRadius:8,background:"rgba(99,102,241,.1)",border:"1px solid rgba(99,102,241,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <IconSearch size={15} color="#818cf8" />
+          <IconClock size={15} color="#818cf8" />
         </button>
         {/* Storage */}
         <button onClick={()=>setStorageOpen(true)} title="Storage usage"
@@ -2084,7 +2084,7 @@ export default function App() {
         {/* Data Recovery */}
         <button onClick={()=>setRecoveryOpen(true)} title="Find old job photos"
           style={{width:32,height:32,borderRadius:8,background:"rgba(99,102,241,.1)",border:"1px solid rgba(99,102,241,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <IconSearch size={14} color="#818cf8" />
+          <IconClock size={14} color="#818cf8" />
         </button>
         <button
           onClick={()=>{ if(signOutConfirm){ setToken(null); setNeedsReconnect(false); _acctChecked.current=false; try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
