@@ -132,7 +132,7 @@ const STALL_TIMEOUT_MS = 45_000;
  *   { kind: "error", error, timedOut? }
  */
 export function uploadFromOffset(sessionUrl, blob, startByte, totalSize, opts = {}) {
-  const { stallMs = STALL_TIMEOUT_MS, onProgress } = opts;
+  const { stallMs = STALL_TIMEOUT_MS, onProgress, onAbortHandle } = opts;
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     let settled = false;
@@ -157,6 +157,12 @@ export function uploadFromOffset(sessionUrl, blob, startByte, totalSize, opts = 
       return done({ kind: "error", error: `Open failed: ${e?.message || e}` });
     }
     xhr.setRequestHeader("Content-Range", `bytes ${startByte}-${totalSize - 1}/${totalSize}`);
+
+    // Hand the caller a way to kill this request from the outside. Without
+    // this, "Force Restart" could only start a NEW upload alongside the stuck
+    // one — the zombie XHR kept streaming to the same Drive session, and two
+    // concurrent PUTs to one resumable session wedge it server-side.
+    if (onAbortHandle) onAbortHandle(() => { try { xhr.abort(); } catch {} });
 
     xhr.upload.onprogress = (e) => {
       armStallWatchdog();

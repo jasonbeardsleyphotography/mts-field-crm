@@ -47,7 +47,9 @@ export default function UploadTracker({ stopMap = {}, bottomOffset = 0, inline =
   useEffect(() => {
     let alive = true;
     listAllQueue().then(all => { if (alive) setItems(all); });
-    const off = onQueueChange((all) => { if (alive) setItems(all); });
+    // Also re-read pause state on queue changes — Retry/Force Restart clear
+    // a stuck pause inside videoQueue.js and this pill must reflect that.
+    const off = onQueueChange((all) => { if (alive) { setItems(all); setPausedState(isPaused()); } });
     return () => { alive = false; off(); };
   }, []);
 

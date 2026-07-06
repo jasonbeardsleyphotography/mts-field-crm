@@ -268,12 +268,18 @@ export function fileFromQueueItem(item) {
 }
 
 export async function retryItem(id) {
-  // Force-release a stuck lock before retrying — iOS can suspend JS mid-upload
-  // leaving _processing true with no active worker.
-  if (_processing && _processingStartMs && Date.now() - _processingStartMs > 30_000) {
-    vlogWarn("worker.retry_unstick", { heldForMs: Date.now() - _processingStartMs });
-    _processing = false;
-  }
+  // A manual retry means "the current state is wrong — start over cleanly".
+  // Unconditionally invalidate any worker (live or zombie) and abort its
+  // in-flight request. The old 30-second-held-lock heuristic left a stuck
+  // XHR streaming while a second worker started on the same item — two
+  // writers, two PUTs to one Drive session, wedged forever. If a HEALTHY
+  // upload of another item gets aborted by this, nothing is lost: Drive
+  // keeps received bytes and the new worker resumes it from the server
+  // offset ("uploading" items are picked first).
+  _invalidateWorker("retry_item");
+  // Retry is explicit intent to upload — a forgotten persisted "Pause All"
+  // must not silently swallow it (paused _kick() is a no-op).
+  if (_isPaused) setPaused(false);
   const item = await idbGet(id);
   if (!item) return;
   // Preserve sessionUrl + bytesUploaded so we RESUME from where we stopped
@@ -293,21 +299,58 @@ export async function retryItem(id) {
 
 // ── Worker ───────────────────────────────────────────────────────────────
 
-let _processing = false;
+let _processing = false;   // false | run-sequence number of the worker holding the lock
 let _processingStartMs = 0;
 let _getToken = null;
 let _watcherInstalled = false;
 
-export function forceUnstick() {
-  vlogWarn("worker.force_unstick", { wasProcessing: _processing });
+// Epoch/abort machinery. The old design's fatal flaw: every "unstick" path
+// (Force Restart, watchdogs, foreground unstick) just flipped _processing to
+// false and kicked a NEW worker — but the OLD worker was still alive, its XHR
+// still streaming. Result: two workers writing the same IDB item and two
+// concurrent PUTs to the same Drive resumable session, which wedges the
+// session server-side. That's why Force Restart often made things worse
+// instead of better. Now:
+//   - _epoch invalidates zombie workers: they check it after every await and
+//     exit without touching state if a newer epoch exists.
+//   - _abortInFlight() actually kills the in-flight XHR so the zombie exits
+//     within milliseconds instead of streaming until its stall timeout.
+//   - _processing holds the owning worker's run number, so a zombie's
+//     `finally` can't clobber the lock a newer worker holds.
+let _epoch = 0;
+let _runSeq = 0;
+let _abortCurrentUpload = null; // set while an XHR is in flight
+
+function _abortInFlight() {
+  const abort = _abortCurrentUpload;
+  _abortCurrentUpload = null;
+  if (abort) { try { abort(); } catch {} }
+}
+
+// Invalidate any live/zombie worker and kill its network request. Every
+// unstick path funnels through here so recovery is deterministic: exactly
+// one worker survives.
+function _invalidateWorker(why) {
+  vlogWarn("worker.invalidate", { why, wasProcessing: !!_processing });
+  _epoch++;
+  _abortInFlight();
   _processing = false;
+  _processingStartMs = 0;
+}
+
+export function forceUnstick() {
+  _invalidateWorker("force_unstick");
+  // An explicit unstick is an explicit "make uploads run". If the global
+  // pause toggle was left on (persisted in localStorage across sessions!),
+  // _kick() was a permanent no-op and NOTHING — Retry, Force Restart, the
+  // 30s interval — could ever start an upload. Clear it.
+  if (_isPaused) setPaused(false);
   _kick();
 }
 
 export function _kick() {
   if (_processing && _processingStartMs && Date.now() - _processingStartMs > WORKER_LOCK_WATCHDOG_MS) {
-    vlogWarn("worker.watchdog_release", { heldForMs: Date.now() - _processingStartMs });
-    _processing = false;
+    _invalidateWorker("watchdog_release");
   }
   if (_processing) return;
   if (_isPaused) return;
@@ -320,12 +363,14 @@ export function _kick() {
 
 async function _processNext() {
   if (_processing || _isPaused) return;
-  _processing = true;
+  const myRun = ++_runSeq;
+  const myEpoch = _epoch;
+  _processing = myRun;
   _processingStartMs = Date.now();
   await _acquireWakeLock();
   try {
     while (true) {
-      if (_isPaused) break;
+      if (_isPaused || myEpoch !== _epoch) break;
       const all = await idbAll();
       // An item already mid-upload always wins — abandoning it would waste
       // bytes Drive has already received. Otherwise prefer the smallest
@@ -335,13 +380,18 @@ async function _processNext() {
         all.find(i => i.status === "uploading") ||
         all.filter(i => i.status === "queued").sort((a, b) => a.fileSize - b.fileSize)[0];
       if (!next) break;
-      const ok = await _processItem(next.id);
+      const ok = await _processItem(next.id, myEpoch);
       if (!ok) break;
     }
   } finally {
-    _processing = false;
-    _processingStartMs = 0;
-    _releaseWakeLock();
+    // Only release the lock if we still own it — a zombie worker finishing
+    // late must not clear the lock (or drop the wake lock) out from under
+    // the worker that replaced it.
+    if (_processing === myRun) {
+      _processing = false;
+      _processingStartMs = 0;
+      _releaseWakeLock();
+    }
   }
 }
 
@@ -354,13 +404,30 @@ async function _setItem(id, patch) {
   return next;
 }
 
-async function _processItem(id) {
+async function _processItem(id, myEpoch = _epoch) {
+  // A zombie worker (superseded by Force Restart / a watchdog) must never
+  // touch item state — the replacement worker owns it now.
+  const stale = () => myEpoch !== _epoch;
   const item = await idbGet(id);
-  if (!item) return false;
-  const token = _getToken?.();
+  if (!item || stale()) return false;
+  let token = _getToken?.();
   if (!token) {
+    // The stored token is missing or past expiry. Previously this silently
+    // returned false — the item sat at "WAITING" forever with no error and
+    // no reauth attempt, and Retry/Force Restart died the same silent death.
+    // Now: ask the app for a silent reauth, give it a moment, and re-check.
+    // If still no token, leave the item QUEUED (so the 30s tick keeps
+    // retrying automatically once sign-in recovers) but write a visible
+    // message so the user can see WHY nothing is moving.
     vlogWarn("process.no_token", null, id);
-    return false;
+    try { triggerAuthError(); } catch {}
+    await new Promise(r => setTimeout(r, 3000));
+    token = _getToken?.();
+    if (stale()) return false;
+    if (!token) {
+      await _setItem(id, { error: "Waiting for Google sign-in to refresh — uploads will resume automatically" });
+      return false;
+    }
   }
 
   if (!item.file || !item.file.size) {
@@ -372,7 +439,7 @@ async function _processItem(id) {
   vlogInfo("process.start", { fileSize: item.fileSize, status: item.status, bytesUploaded: item.bytesUploaded }, id);
   incUpload(item.stopId);
   try {
-    await _setItem(id, { status: "uploading", statusSetAt: Date.now() });
+    await _setItem(id, { status: "uploading", statusSetAt: Date.now(), error: null });
 
     // Resolve target folder (cached)
     let folderId = item.folderId;
@@ -422,7 +489,7 @@ async function _processItem(id) {
       if (offset === null) {
         vlogWarn("drive.resume.session_expired", null, id);
         await _setItem(id, { sessionUrl: null, bytesUploaded: 0 });
-        return await _processItem(id);
+        return await _processItem(id, myEpoch);
       }
       if (offset === "complete") {
         // Server has the bytes but we lost the file ID. Mark error so the
@@ -451,6 +518,7 @@ async function _processItem(id) {
     // value is display-only — resume always re-queries the true server offset.
     let lastProgressWrite = 0;
     const onUploadProgress = (absBytes) => {
+      if (stale()) return; // zombie worker — the replacement owns progress now
       const now = Date.now();
       if (now - lastProgressWrite < 1500) return;
       lastProgressWrite = now;
@@ -459,6 +527,7 @@ async function _processItem(id) {
     };
 
     while (bytesUploaded < item.fileSize) {
+      if (stale()) { vlogInfo("upload.superseded", null, id); return false; }
       if (_isPaused) {
         vlogInfo("upload.paused", null, id);
         return false;
@@ -477,10 +546,19 @@ async function _processItem(id) {
       const t0 = Date.now();
       vlogInfo("upload.start", { fromOffset: bytesUploaded, remainingKB: Math.round((item.fileSize - bytesUploaded) / KB), attempt: attempts + 1 }, id);
 
+      // Register the in-flight request so Force Restart / watchdogs can
+      // actually terminate it instead of leaving it streaming as a zombie.
+      let myAbort = null;
       const result = await uploadFromOffset(session, item.file.slice(bytesUploaded), bytesUploaded, item.fileSize, {
         onProgress: onUploadProgress,
+        onAbortHandle: (fn) => { myAbort = fn; _abortCurrentUpload = fn; },
       });
+      if (_abortCurrentUpload === myAbort) _abortCurrentUpload = null;
       const ms = Math.max(1, Date.now() - t0);
+      // If we were superseded while the request was in flight (it was likely
+      // aborted out from under us), exit WITHOUT touching state — the new
+      // worker re-queries the server offset and continues cleanly.
+      if (stale()) { vlogInfo("upload.superseded_midflight", { ms }, id); return false; }
 
       if (result.kind === "ok-final") {
         vlogInfo("upload.final_ok", { ms, fileId: result.fileId }, id);
@@ -499,7 +577,7 @@ async function _processItem(id) {
       if (result.kind === "session-expired") {
         vlogWarn("upload.session_expired", { ms }, id);
         await _setItem(id, { sessionUrl: null, bytesUploaded: 0 });
-        return await _processItem(id);
+        return await _processItem(id, myEpoch);
       }
 
       // Error path — if we went to background mid-request, the stall was
@@ -516,7 +594,7 @@ async function _processItem(id) {
       if (offset === null) {
         vlogWarn("upload.session_dead_after_error", { error: result.error }, id);
         await _setItem(id, { sessionUrl: null, bytesUploaded: 0 });
-        return await _processItem(id);
+        return await _processItem(id, myEpoch);
       }
       if (offset === "complete") {
         await _setItem(id, { status: "error", error: "Upload completed but file ID was lost. Check Drive videos folder." });
@@ -619,13 +697,19 @@ async function _finalize(id, fileId, token) {
 // Runs here AND on the periodic tick below so it self-heals either way.
 function _wallClockUnstick() {
   idbAll().then(all => {
+    // Staleness must key off updatedAt, NOT statusSetAt: statusSetAt is
+    // written once when the upload starts and never again, so a healthy
+    // multi-minute upload looked "stale" 45s in and got requeued — which
+    // aborted nothing, spawned a duplicate worker, and double-PUT the same
+    // Drive session into a wedged state. updatedAt is refreshed every ~1.5s
+    // by progress writes while bytes are actually moving, so 45s of silence
+    // genuinely means dead.
     const stale = all.filter(
-      i => i.status === "uploading" && Date.now() - (i.statusSetAt || 0) > 45_000
+      i => i.status === "uploading" && Date.now() - (i.updatedAt || 0) > 45_000
     );
     if (!stale.length) return;
-    vlogWarn("worker.idb_wall_unstick", { count: stale.length });
     Promise.all(stale.map(i => idbPut({ ...i, status: "queued", statusSetAt: Date.now() })))
-      .then(() => { _processing = false; notify(); _kick(); })
+      .then(() => { _invalidateWorker("idb_wall_unstick"); notify(); _kick(); })
       .catch(() => {});
   }).catch(() => {});
 }
@@ -646,8 +730,7 @@ export function startVideoQueueWatcher(getToken) {
       // In-memory unstick: _processingStartMs freezes while iOS suspends JS,
       // so it can undercount elapsed time. Unstick if it looks long enough.
       if (_processing && _processingStartMs && Date.now() - _processingStartMs > 45_000) {
-        vlogWarn("worker.foreground_unstick", { heldForMs: Date.now() - _processingStartMs });
-        _processing = false;
+        _invalidateWorker("foreground_unstick");
       }
       vlogInfo("event.visible", null);
       if (_processing) _acquireWakeLock();

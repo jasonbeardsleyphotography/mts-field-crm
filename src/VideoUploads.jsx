@@ -62,7 +62,10 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
   useEffect(() => {
     let alive = true;
     listAllQueue().then(all => { if (alive) setItems(all); });
-    const off = onQueueChange(all => { if (alive) setItems(all); });
+    // Re-read pause state on every queue change — Retry/Force Restart clear
+    // a stuck pause inside videoQueue.js, and this button must not keep
+    // showing "Resume" (i.e. claiming paused) after that happens.
+    const off = onQueueChange(all => { if (alive) { setItems(all); setPausedState(isPaused()); } });
     return () => { alive = false; off(); };
   }, []);
 
@@ -139,6 +142,23 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
           >{paused ? "▶ Resume" : "⏸ Pause All"}</button>
         )}
       </div>
+
+      {/* Paused banner — pause persists across app restarts (localStorage),
+          so a forgotten pause silently stops ALL uploads. Make it loud. */}
+      {paused && items.length > 0 && (
+        <div style={{
+          padding: "10px 16px", flexShrink: 0,
+          background: "rgba(255,85,85,.08)",
+          borderBottom: "1px solid rgba(255,85,85,.25)",
+          display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <span style={{ fontSize: 16, flexShrink: 0 }}>⏸</span>
+          <div style={{ fontSize: 12, color: "#FF8888", lineHeight: 1.5, fontFamily: B }}>
+            <strong style={{ fontFamily: F, letterSpacing: 0.5 }}>Uploads are paused.</strong>{" "}
+            Nothing will upload until you tap Resume above.
+          </div>
+        </div>
+      )}
 
       {/* Warning banner — only while actively uploading */}
       {activeCount > 0 && (
