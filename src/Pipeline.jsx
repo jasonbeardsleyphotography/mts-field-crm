@@ -46,7 +46,8 @@ import { loadField, peekField, primeField, updateField } from "./fieldStore";
 import { isUploadPending, onUploadChange } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
 import { downscaleDataUrl, stripPhotoDataUrls, OVERSIZE_DATAURL_LEN, newPhotoId, photoKey } from "./imageUtils";
-import { listAll as listAllQueue, onQueueChange, enqueueVideo } from "./videoQueue";
+import { listAll as listAllQueue, onQueueChange, enqueueVideo, retryItem as retryQueueVideo, cancelItem as cancelQueueVideo, deleteItem as deleteQueueVideo } from "./videoQueue";
+import { saveVideoToDevice } from "./videoSave";
 import { buildShareUrl, buildStreamUrl } from "./driveUpload";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -197,6 +198,72 @@ function _mergePhotoArrays(local = [], cloud = []) {
 }
 
 const F = "'Oswald',sans-serif";
+
+// A video still living in the upload queue (waiting / uploading / failed /
+// kept-local), rendered on the card's detail popup so the video is ALWAYS
+// visible and saveable from the client card at every stage — not just after
+// it reaches Drive. Mirrors the row OnsiteWindow shows.
+function QueuedVideoRow({ item }) {
+  const [previewUrl, setPreviewUrl] = useState(null);
+  useEffect(() => {
+    if (!item?.file) return;
+    let url = null;
+    try { url = URL.createObjectURL(item.file); setPreviewUrl(url); } catch {}
+    return () => { if (url) { try { URL.revokeObjectURL(url); } catch {} } };
+  }, [item?.id]);
+
+  const statusColor =
+    item.status === "error" ? "#FF5555" :
+    item.status === "uploading" ? "#10B981" :
+    item.status === "local" ? "#8898a8" : "#7a7050";
+  const statusLabel =
+    item.status === "queued" ? "Waiting to upload…" :
+    item.status === "uploading" ? `Uploading ${item.progress || 0}%` :
+    item.status === "error" ? "Upload failed" :
+    item.status === "local" ? "On this phone only" : item.status;
+  const sizeMB = (item.fileSize / (1024 * 1024)).toFixed(1);
+
+  return (
+    <div style={{marginBottom:8,borderRadius:8,background:"#0e1120",border:"1px solid rgba(246,191,38,.25)",overflow:"hidden"}}>
+      {previewUrl && <video controls preload="metadata" src={previewUrl} style={{width:"100%",maxHeight:240,display:"block",background:"#000"}} />}
+      <div style={{padding:"8px 10px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+          <div style={{flex:1,minWidth:0,fontSize:11,color:"#c0c8d0",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>
+          <span style={{fontSize:9,color:statusColor,fontWeight:800,fontFamily:F,letterSpacing:0.4,textTransform:"uppercase",flexShrink:0}}>{statusLabel}</span>
+        </div>
+        {(item.status === "uploading" || item.status === "queued") && (
+          <div style={{height:3,background:"rgba(255,255,255,.05)",borderRadius:2,overflow:"hidden",marginBottom:4}}>
+            <div style={{height:"100%",width:`${item.progress || 0}%`,background:statusColor,transition:"width .3s"}}/>
+          </div>
+        )}
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <div style={{flex:1,fontSize:9,color:"#5a6580",fontFamily:F,letterSpacing:0.3}}>{sizeMB}MB</div>
+          <button onClick={() => saveVideoToDevice(item)} title="Save this video to your phone" style={{padding:"3px 8px",borderRadius:5,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Save</button>
+          {(item.status === "error" || item.status === "uploading" || item.status === "local") && (
+            <button onClick={() => retryQueueVideo(item.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
+              {item.status === "uploading" ? "Restart" : item.status === "local" ? "Upload" : "Retry"}
+            </button>
+          )}
+          {item.status === "local" ? (
+            <button onClick={() => { if (window.confirm("Permanently delete this video from the phone? This can't be undone — save it to Photos/Files first if you still need it.")) deleteQueueVideo(item.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#a06060",fontSize:9,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center"}}>
+              <IconX size={10} color="#a06060"/>
+            </button>
+          ) : (
+            <button onClick={() => { if (window.confirm("Stop uploading this video? It stays on this card so you can save it to your phone or upload it later.")) cancelQueueVideo(item.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#a06060",fontSize:9,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center"}}>
+              <IconX size={10} color="#a06060"/>
+            </button>
+          )}
+        </div>
+        {(item.status === "error" || item.status === "local") && (
+          <div style={{fontSize:9,color:"#9fb0c0",marginTop:3,fontFamily:F,lineHeight:1.5}}>
+            {item.status === "error" ? "The video is still saved on this phone." : "This video is kept on this phone."} Tap <b style={{color:"#10B981"}}>Save</b> to keep a copy in Photos/Files.
+          </div>
+        )}
+        {item.error && <div style={{fontSize:9,color:"#FF8888",marginTop:3,fontFamily:F}}>{item.error}</div>}
+      </div>
+    </div>
+  );
+}
 
 // Downscale any oversized (legacy 4K) photo dataUrls in a stop's field, one at
 // a time to keep peak memory low, and persist the result through fieldStore's
@@ -1561,8 +1628,12 @@ Property: ${card.addr || ""}`);
               <div style={{marginBottom:16}}>
                 <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
                   VIDEO
-                  {((queueByStop[card.id] || []).length > 0 || externalYtActive) && <span style={{fontSize:9,color:"#F6BF26",fontWeight:700,padding:"1px 8px",borderRadius:10,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.2)",animation:"pulse 1s infinite"}}>↑ Uploading…</span>}
+                  {((queueByStop[card.id] || []).some(i => i.status === "uploading" || i.status === "queued") || externalYtActive) && <span style={{fontSize:9,color:"#F6BF26",fontWeight:700,padding:"1px 8px",borderRadius:10,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.2)",animation:"pulse 1s infinite"}}>↑ Uploading…</span>}
                 </div>
+                {/* Videos still on this phone (queued / uploading / failed /
+                    kept-local) — always visible and saveable from the card,
+                    at every stage, not only once they reach Drive. */}
+                {(queueByStop[card.id] || []).map(it => <QueuedVideoRow key={it.id} item={it} />)}
                 {videoUrls.map((url, i) => {
                   const ytId    = getYtId(url);
                   const driveId = getDriveId(url);

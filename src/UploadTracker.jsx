@@ -47,10 +47,12 @@ export default function UploadTracker({ stopMap = {}, bottomOffset = 0, inline =
 
   useEffect(() => {
     let alive = true;
-    listAllQueue().then(all => { if (alive) setItems(all); });
+    // "local" (kept-on-card) videos aren't uploads — don't track them here.
+    const keep = (all) => all.filter(i => i.status !== "local");
+    listAllQueue().then(all => { if (alive) setItems(keep(all)); });
     // Also re-read pause state on queue changes — Retry/Force Restart clear
     // a stuck pause inside videoQueue.js and this pill must reflect that.
-    const off = onQueueChange((all) => { if (alive) { setItems(all); setPausedState(isPaused()); } });
+    const off = onQueueChange((all) => { if (alive) { setItems(keep(all)); setPausedState(isPaused()); } });
     return () => { alive = false; off(); };
   }, []);
 

@@ -239,7 +239,10 @@ export async function enqueueVideo({ stopId, file, title }) {
 // X-ing a stuck upload silently destroyed the only copy of the video.
 export async function cancelItem(id) {
   vlogInfo("cancel_keep_local", null, id);
-  if (_currentItemId === id) _invalidateWorker("cancel_inflight");
+  // Unconditionally invalidate — the _currentItemId match had timing gaps
+  // (cleared between loop iterations) that let a live worker keep going and
+  // overwrite the "local" status we're about to write.
+  _invalidateWorker("cancel_item");
   const item = await idbGet(id);
   if (!item) return;
   await idbPut({
@@ -260,7 +263,7 @@ export async function cancelItem(id) {
 // path — every UI entry point confirms first.
 export async function deleteItem(id) {
   vlogInfo("delete_permanent", null, id);
-  if (_currentItemId === id) _invalidateWorker("delete_inflight");
+  _invalidateWorker("delete_item");
   await idbDelete(id);
   notify();
   _kick();
@@ -426,6 +429,17 @@ async function _processNext() {
 async function _setItem(id, patch) {
   const cur = await idbGet(id);
   if (!cur) return null;
+  // Never resurrect a video the user stopped (status "local"). Worker writes
+  // race with cancelItem: a read-modify-write that started BEFORE the cancel
+  // landed would put stale status "uploading" back, making the item
+  // impossible to remove from the queue — every X-tap appeared to do nothing
+  // because the worker immediately overwrote it. Only retryItem (which
+  // writes via idbPut directly, an explicit user action) can take an item
+  // out of "local".
+  if (cur.status === "local") {
+    vlogInfo("setitem.blocked_local", { attempted: patch.status || "(no status)" }, id);
+    return null;
+  }
   const next = { ...cur, ...patch, updatedAt: Date.now() };
   await idbPut(next);
   notify();
@@ -481,6 +495,24 @@ async function _processItem(id, myEpoch = _epoch, restarts = 0) {
   if (!item.file || !item.file.size) {
     vlogError("process.missing_file", { hasFile: !!item.file }, id);
     await _setItem(id, { status: "error", error: "Video file lost (try re-uploading)" });
+    return true;
+  }
+
+  // Actually READ a slice of the blob before starting. On iOS, a blob stored
+  // in IndexedDB can have its backing data evicted while its metadata (size,
+  // type) survives — item.file.size looks fine, but every read returns
+  // nothing, so the XHR "uploads" 0 bytes and errors in an endless cycle
+  // that never moves past 0%. Detect that case up front and say so honestly
+  // instead of burning retries forever.
+  try {
+    const head = await item.file.slice(0, 64 * KB).arrayBuffer();
+    if (!head || head.byteLength === 0) throw new Error("empty read");
+  } catch (e) {
+    vlogError("process.file_unreadable", { msg: e?.message || String(e) }, id);
+    await _setItem(id, {
+      status: "error",
+      error: "This video's data was purged from phone storage by iOS and can no longer be read. It will need to be re-recorded.",
+    });
     return true;
   }
 
@@ -596,6 +628,7 @@ async function _processItem(id, myEpoch = _epoch, restarts = 0) {
       }
       const probe = await idbGet(id);
       if (!probe) { vlogInfo("upload.canceled_externally", null, id); return false; }
+      if (probe.status === "local") { vlogInfo("upload.stopped_kept_local", null, id); return false; }
 
       // Don't start a request while backgrounded — iOS suspends it mid-flight
       // and it stalls out, burning a retry for no real reason.

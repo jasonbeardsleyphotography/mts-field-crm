@@ -83,6 +83,10 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
 
   if (!open) return null;
 
+  // "local" items are no longer part of the upload queue — they live on the
+  // client's card (with preview/Save/Upload). X-ing an upload should visibly
+  // remove it from this screen, so don't list them here.
+  const visibleItems = items.filter(i => i.status !== "local");
   const activeCount  = items.filter(i => i.status === "uploading").length;
   const errorCount   = items.filter(i => i.status === "error").length;
   const waitingCount = items.filter(i => i.status === "queued").length;
@@ -125,18 +129,18 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
           <div style={{ fontSize: 16, fontWeight: 900, color: "#e0e8f0", fontFamily: F, letterSpacing: 1.5, textTransform: "uppercase" }}>
             Video Uploads
           </div>
-          {items.length > 0 && (
+          {visibleItems.length > 0 && (
             <div style={{ fontSize: 11, color: "#5a6580", fontFamily: F, letterSpacing: 0.5, marginTop: 1 }}>
               {[
                 activeCount > 0 && `${activeCount} uploading`,
                 waitingCount > 0 && `${waitingCount} waiting`,
                 errorCount > 0 && `${errorCount} failed`,
-                localCount > 0 && `${localCount} on phone only`,
+                localCount > 0 && `${localCount} kept on client cards`,
               ].filter(Boolean).join(" · ") || "All done"}
             </div>
           )}
         </div>
-        {items.length > 0 && (
+        {visibleItems.length > 0 && (
           <button
             onClick={handlePauseToggle}
             style={{
@@ -152,7 +156,7 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
 
       {/* Paused banner — pause persists across app restarts (localStorage),
           so a forgotten pause silently stops ALL uploads. Make it loud. */}
-      {paused && items.length > 0 && (
+      {paused && visibleItems.length > 0 && (
         <div style={{
           padding: "10px 16px", flexShrink: 0,
           background: "rgba(255,85,85,.08)",
@@ -185,7 +189,7 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
 
       {/* Item list */}
       <div style={{ flex: 1, overflowY: "auto" }}>
-        {items.length === 0 && (
+        {visibleItems.length === 0 && (
           <div style={{
             padding: 40, textAlign: "center",
             color: "#4a5a70", fontSize: 13, fontFamily: F,
@@ -195,7 +199,7 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
           </div>
         )}
 
-        {items.map(item => {
+        {visibleItems.map(item => {
           const isStuck = item.status === "uploading" && Date.now() - (item.updatedAt || 0) > 60_000;
           const pct = item.progress || 0;
           const barColor = item.status === "error" ? "#FF5555" : isStuck ? "#F6BF26" : "#10B981";
