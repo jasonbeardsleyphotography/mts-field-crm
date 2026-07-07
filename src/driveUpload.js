@@ -198,7 +198,18 @@ export function uploadFromOffset(sessionUrl, blob, startByte, totalSize, opts = 
 
 /**
  * Query a resumable session for current byte offset.
- * Returns: number (next byte to upload) | "complete" | null (session dead)
+ * Returns: number (next byte to upload) | "complete" | "dead" | "network"
+ *
+ * "dead" vs "network" matters enormously and used to be conflated (both
+ * returned null): a fetch that failed because the phone briefly had no
+ * connectivity (call came in, iOS suspended the app, cell handoff) was
+ * reported identically to Drive explicitly saying 404/410 session-gone.
+ * The queue treated both as "session dead" — threw away every byte already
+ * uploaded, reset to 0, and started a brand-new session. On a field phone
+ * where interruptions are constant, that meant uploads endlessly restarting
+ * from scratch and never finishing. Only an explicit 404/410 means dead;
+ * every failure to get an answer is "network" (unknown — retry later,
+ * KEEPING the session and its bytes).
  */
 export async function queryUploadOffset(sessionUrl, totalSize) {
   const controller = new AbortController();
@@ -213,7 +224,7 @@ export async function queryUploadOffset(sessionUrl, totalSize) {
     });
   } catch (e) {
     clearTimeout(timeoutId);
-    return null;
+    return "network";
   }
   clearTimeout(timeoutId);
 
@@ -224,8 +235,9 @@ export async function queryUploadOffset(sessionUrl, totalSize) {
     const m = range.match(/bytes=0-(\d+)/);
     return m ? parseInt(m[1], 10) + 1 : 0;
   }
-  if (res.status === 404 || res.status === 410) return null;
-  return null;
+  if (res.status === 404 || res.status === 410) return "dead";
+  // Unexpected status (5xx etc.) — treat as transient, not as session loss.
+  return "network";
 }
 
 /**

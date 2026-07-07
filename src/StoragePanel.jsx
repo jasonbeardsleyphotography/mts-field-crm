@@ -8,7 +8,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { useState, useEffect, useCallback } from "react";
-import { listAll as listAllQueue, retryItem, cancelItem, repairVideoSharing } from "./videoQueue";
+import { listAll as listAllQueue, retryItem, deleteItem, repairVideoSharing } from "./videoQueue";
 import { listFieldIds, loadField } from "./fieldStore";
 import { sweepAllPhotos } from "./photoSync";
 import { IconArrowLeft, IconX } from "./icons";
@@ -255,7 +255,7 @@ export default function StoragePanel({ open, onClose, token }) {
                   <button
                     onClick={() => {
                       if (window.confirm("Discard this video? It will be permanently deleted from this device — it never reached Drive.")) {
-                        cancelItem(item.id).then(refresh);
+                        deleteItem(item.id).then(refresh);
                       }
                     }}
                     style={{

@@ -9,11 +9,13 @@ import {
   listAll as listAllQueue,
   onQueueChange,
   cancelItem,
+  deleteItem,
   retryItem,
   isPaused,
   setPaused,
   forceUnstick,
 } from "./videoQueue";
+import { saveVideoToDevice } from "./videoSave";
 import { IconArrowLeft, IconX } from "./icons";
 
 const F = "'Oswald',sans-serif";
@@ -42,6 +44,9 @@ function StatusPill({ item }) {
   }
   if (item.status === "queued") return (
     <span style={{ fontSize: 10, fontWeight: 700, color: "#6a7a90", fontFamily: F, letterSpacing: 0.5 }}>WAITING</span>
+  );
+  if (item.status === "local") return (
+    <span style={{ fontSize: 10, fontWeight: 700, color: "#8898a8", fontFamily: F, letterSpacing: 0.5 }}>ON PHONE</span>
   );
   if (item.status === "error") return (
     <span style={{
@@ -81,6 +86,7 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
   const activeCount  = items.filter(i => i.status === "uploading").length;
   const errorCount   = items.filter(i => i.status === "error").length;
   const waitingCount = items.filter(i => i.status === "queued").length;
+  const localCount   = items.filter(i => i.status === "local").length;
 
   const nameFor = (item) => {
     const stop = stopMap[item.stopId];
@@ -125,6 +131,7 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
                 activeCount > 0 && `${activeCount} uploading`,
                 waitingCount > 0 && `${waitingCount} waiting`,
                 errorCount > 0 && `${errorCount} failed`,
+                localCount > 0 && `${localCount} on phone only`,
               ].filter(Boolean).join(" · ") || "All done"}
             </div>
           )}
@@ -256,7 +263,17 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
 
               {/* Action buttons */}
               <div style={{ display: "flex", gap: 8 }}>
-                {(item.status === "error" || isStuck) && (
+                <button
+                  onClick={() => saveVideoToDevice(item)}
+                  title="Save this video to your phone"
+                  style={{
+                    padding: "8px 12px", borderRadius: 8, flexShrink: 0,
+                    background: "rgba(16,185,129,.1)", border: "1px solid rgba(16,185,129,.3)",
+                    color: "#10B981", fontSize: 11, fontWeight: 800,
+                    cursor: "pointer", fontFamily: F, letterSpacing: 0.5,
+                  }}
+                >Save</button>
+                {(item.status === "error" || item.status === "local" || isStuck) && (
                   <button
                     onClick={() => {
                       // Immediate feedback so the tap reads as registered —
@@ -280,11 +297,15 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
                       opacity: restarting[item.id] ? 0.6 : 1,
                       fontFamily: F, letterSpacing: 0.5,
                     }}
-                  >{restarting[item.id] ? "Restarting…" : "Force Restart"}</button>
+                  >{restarting[item.id] ? "Restarting…" : item.status === "local" ? "Upload" : "Force Restart"}</button>
                 )}
                 <button
                   onClick={() => {
-                    if (window.confirm("Cancel this upload? The video stays in your camera roll.")) {
+                    if (item.status === "local") {
+                      if (window.confirm("Permanently delete this video from the phone? Save it first if you still need it.")) {
+                        deleteItem(item.id);
+                      }
+                    } else if (window.confirm("Stop uploading this video? It stays on the client's card so you can save or upload it later.")) {
                       cancelItem(item.id);
                     }
                   }}

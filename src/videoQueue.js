@@ -233,10 +233,37 @@ export async function enqueueVideo({ stopId, file, title }) {
   return id;
 }
 
+// "Cancel" = stop trying to upload, but KEEP the video. The blob stays in
+// IDB with status "local" so the client card can always play it, save it to
+// the phone, or upload it later. Previously this deleted the item outright —
+// X-ing a stuck upload silently destroyed the only copy of the video.
 export async function cancelItem(id) {
-  vlogInfo("cancel", null, id);
+  vlogInfo("cancel_keep_local", null, id);
+  if (_currentItemId === id) _invalidateWorker("cancel_inflight");
+  const item = await idbGet(id);
+  if (!item) return;
+  await idbPut({
+    ...item,
+    status: "local",
+    error: null,
+    sessionUrl: null,
+    bytesUploaded: 0,
+    progress: 0,
+    retries: 0,
+    updatedAt: Date.now(),
+  });
+  notify();
+  _kick(); // free the worker for the next queued item right away
+}
+
+// Permanently delete a video from this device. The only truly destructive
+// path — every UI entry point confirms first.
+export async function deleteItem(id) {
+  vlogInfo("delete_permanent", null, id);
+  if (_currentItemId === id) _invalidateWorker("delete_inflight");
   await idbDelete(id);
   notify();
+  _kick();
 }
 
 // Retrieve a queued video's raw file so the UI can let the user save it to
@@ -320,6 +347,7 @@ let _watcherInstalled = false;
 let _epoch = 0;
 let _runSeq = 0;
 let _abortCurrentUpload = null; // set while an XHR is in flight
+let _currentItemId = null;      // item the live worker is processing right now
 
 function _abortInFlight() {
   const abort = _abortCurrentUpload;
@@ -404,12 +432,32 @@ async function _setItem(id, patch) {
   return next;
 }
 
-async function _processItem(id, myEpoch = _epoch) {
+// restarts counts fresh-session restarts within ONE processing pass. Before
+// this cap existed, "session dead" (which a transient network failure could
+// masquerade as) recursed with a reset retry counter — an infinite loop that
+// kept the item at "uploading 0%" forever, never erroring, never finishing,
+// and immune to Retry because the worker never actually stopped.
+const SESSION_RESTART_LIMIT = 3;
+
+async function _processItem(id, myEpoch = _epoch, restarts = 0) {
   // A zombie worker (superseded by Force Restart / a watchdog) must never
   // touch item state — the replacement worker owns it now.
   const stale = () => myEpoch !== _epoch;
   const item = await idbGet(id);
   if (!item || stale()) return false;
+  _currentItemId = id;
+
+  if (restarts >= SESSION_RESTART_LIMIT) {
+    vlogError("process.restart_limit", { restarts }, id);
+    await _setItem(id, {
+      status: "error",
+      error: "Drive kept dropping the upload session — tap Retry to start fresh",
+      sessionUrl: null,
+      bytesUploaded: 0,
+      progress: 0,
+    });
+    return true;
+  }
   let token = _getToken?.();
   if (!token) {
     // The stored token is missing or past expiry. Previously this silently
@@ -486,10 +534,22 @@ async function _processItem(id, myEpoch = _epoch) {
     } else {
       vlogInfo("drive.resume.query", { lastKnown: item.bytesUploaded }, id);
       const offset = await queryUploadOffset(session, item.fileSize);
-      if (offset === null) {
+      if (stale()) return false;
+      if (offset === "network") {
+        // Couldn't reach Drive to ask — that says NOTHING about the session.
+        // Keep the session and its uploaded bytes; leave the item queued and
+        // let the 30s tick retry when connectivity returns. Previously this
+        // was treated as session-death: bytes thrown away, restart from 0,
+        // in a loop that never converged on a phone with constant
+        // call/text/map interruptions.
+        vlogWarn("drive.resume.network_fail", { lastKnown: item.bytesUploaded }, id);
+        await _setItem(id, { status: "queued", error: "Connection dropped — will resume automatically" });
+        return false;
+      }
+      if (offset === "dead") {
         vlogWarn("drive.resume.session_expired", null, id);
-        await _setItem(id, { sessionUrl: null, bytesUploaded: 0 });
-        return await _processItem(id, myEpoch);
+        await _setItem(id, { sessionUrl: null, bytesUploaded: 0, progress: 0 });
+        return await _processItem(id, myEpoch, restarts + 1);
       }
       if (offset === "complete") {
         // Server has the bytes but we lost the file ID. Mark error so the
@@ -502,7 +562,9 @@ async function _processItem(id, myEpoch = _epoch) {
         return true;
       }
       vlogInfo("drive.resume.offset", { offset }, id);
-      await _setItem(id, { bytesUploaded: offset });
+      // Keep the display bar honest — it previously kept showing the old
+      // percentage after a reset (e.g. "WAITING" with an 85% bar).
+      await _setItem(id, { bytesUploaded: offset, progress: Math.min(99, Math.floor((offset / item.fileSize) * 100)) });
     }
 
     // Phase 2: stream the remainder of the file in one PUT. On any failure,
@@ -576,8 +638,8 @@ async function _processItem(id, myEpoch = _epoch) {
       }
       if (result.kind === "session-expired") {
         vlogWarn("upload.session_expired", { ms }, id);
-        await _setItem(id, { sessionUrl: null, bytesUploaded: 0 });
-        return await _processItem(id, myEpoch);
+        await _setItem(id, { sessionUrl: null, bytesUploaded: 0, progress: 0 });
+        return await _processItem(id, myEpoch, restarts + 1);
       }
 
       // Error path — if we went to background mid-request, the stall was
@@ -591,16 +653,29 @@ async function _processItem(id, myEpoch = _epoch) {
       // Ask Drive how much it actually received — usually most of what was
       // in flight landed, so the "retry" just continues from further along.
       const offset = await queryUploadOffset(session, item.fileSize);
-      if (offset === null) {
+      if (stale()) return false;
+      if (offset === "dead") {
         vlogWarn("upload.session_dead_after_error", { error: result.error }, id);
-        await _setItem(id, { sessionUrl: null, bytesUploaded: 0 });
-        return await _processItem(id, myEpoch);
+        await _setItem(id, { sessionUrl: null, bytesUploaded: 0, progress: 0 });
+        return await _processItem(id, myEpoch, restarts + 1);
       }
       if (offset === "complete") {
         await _setItem(id, { status: "error", error: "Upload completed but file ID was lost. Check Drive videos folder." });
         return true;
       }
-      if (offset > bytesUploaded) {
+      if (offset === "network") {
+        // Can't even reach Drive — the upload error was a connectivity blip,
+        // not a session problem. The session and its bytes stay intact.
+        if (navigator.onLine === false) {
+          // Genuinely offline: don't burn retries toward a FAILED state the
+          // user has to notice and tap. Park as queued; the "online" event
+          // and the 30s tick resume it automatically.
+          vlogInfo("upload.offline_park", null, id);
+          await _setItem(id, { status: "queued", error: "Offline — will resume automatically" });
+          return false;
+        }
+        attempts++;
+      } else if (offset > bytesUploaded) {
         // Bytes landed despite the error — that's progress, not a failure.
         bytesUploaded = offset;
         attempts = 0;
@@ -621,6 +696,7 @@ async function _processItem(id, myEpoch = _epoch) {
           error: `Upload stalled after ${attempts} retries: ${result.error}`,
           sessionUrl: null,
           bytesUploaded: 0,
+          progress: 0,
         });
         return true;
       }
@@ -640,6 +716,9 @@ async function _processItem(id, myEpoch = _epoch) {
     return true;
   } finally {
     decUpload(item.stopId);
+    // Only clear if we still own the slot — a zombie must not blank the id
+    // the replacement worker is actively processing.
+    if (!stale() && _currentItemId === id) _currentItemId = null;
   }
 }
 

@@ -33,6 +33,7 @@ function describeStatus(item) {
     case "queued":    return { label: "Waiting…", color: "#7a7050" };
     case "uploading": return { label: `Uploading ${item.progress||0}%`, color: "#10B981" };
     case "error":     return { label: "Failed", color: "#FF5555" };
+    case "local":     return { label: "On phone only", color: "#8898a8" };
     default:          return { label: item.status, color: "#7a7050" };
   }
 }
@@ -254,7 +255,7 @@ export default function UploadTracker({ stopMap = {}, bottomOffset = 0, inline =
                   {item.status === "error" && (
                     <button onClick={() => retryItem(item.id)} style={btnStyle("rgba(246,191,38,.1)", "rgba(246,191,38,.3)", "#F6BF26")}>RETRY</button>
                   )}
-                  <button onClick={() => { if (window.confirm("Cancel this upload? The video stays in your camera roll.")) cancelItem(item.id); }} style={btnStyle("transparent", "#252d47", "#a06060", true)}>
+                  <button onClick={() => { if (window.confirm("Stop uploading this video? It stays on the client's card so you can save or upload it later.")) cancelItem(item.id); }} style={btnStyle("transparent", "#252d47", "#a06060", true)}>
                     <IconX size={11} color="#a06060" />
                   </button>
                 </div>
