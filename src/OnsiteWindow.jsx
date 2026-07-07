@@ -120,9 +120,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // (formerly: ytUploadCount — now tracked entirely via videoQueueItems)
   const mountedRef = useRef(true);
   const stopIdRef = useRef(s.id);
-  const [speechField, setSpeechField] = useState(null); // "scope" | "addon" | null
-  const recognitionRef = useRef(null);
-  const keepListeningRef = useRef(false); // controls iOS auto-restart
 
   const [aiScopeResult, setAiScopeResult] = useState(fd.aiScopeSummary || "");
   const [aiAddonResult, setAiAddonResult] = useState(fd.aiAddonEmail || "");
@@ -132,27 +129,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [rejectConfirm, setRejectConfirm] = useState(false);
   const [jobNotesOpen, setJobNotesOpen] = useState(false);
 
-  // ── PROPERTY MEMORY ──────────────────────────────────────────────────────
-  // Synchronous read from pipeline localStorage — zero async cost.
-  // Matches by address prefix OR client last name. Shows up to 3 prior visits.
-  const propertyHistory = (() => {
-    try {
-      const pl = loadPipeline();
-      const lastName = (s.cn || "").split(/\s+/).pop().toLowerCase();
-      const addrKey  = (s.addr || "").split(",")[0].toLowerCase().trim();
-      return Object.values(pl)
-        .filter(c => {
-          if (c.id === s.id) return false;
-          const cLast = (c.cn || "").split(/\s+/).pop().toLowerCase();
-          const cAddr = (c.addr || "").split(",")[0].toLowerCase().trim();
-          return (addrKey.length > 4 && cAddr.includes(addrKey)) ||
-                 (lastName.length > 2  && cLast === lastName);
-        })
-        .sort((a, b) => (b.stageChangedAt || b.addedAt || 0) - (a.stageChangedAt || a.addedAt || 0))
-        .slice(0, 3);
-    } catch { return []; }
-  })();
-  const [historyOpen, setHistoryOpen] = useState(false);
 
   // ── CONFIDENCE INDICATOR ────────────────────────────────────────────────
   const [cloudSynced, setCloudSynced] = useState(() => !getDirtyFieldIds().includes(s.id));
@@ -698,101 +674,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     }
   };
 
-  // ── SPEECH-TO-TEXT ──────────────────────────────────────────────────
-  // iOS Safari does NOT support r.continuous = true — it silently stops
-  // after the first phrase and fires onend. We work around this by auto-
-  // restarting recognition (with a fresh instance) whenever onend fires
-  // while keepListeningRef is still true. Desktop Chrome supports true
-  // continuous, but the restart approach works there too.
-  const toggleSpeech = (field) => {
-    if (speechField === field) {
-      keepListeningRef.current = false;
-      recognitionRef.current?.stop();
-      setSpeechField(null);
-      return;
-    }
-    keepListeningRef.current = false;
-    recognitionRef.current?.abort();
-
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      alert("Speech recognition isn't supported in this browser.\n\niPhone: use Safari.\nAndroid: use Chrome.\nDesktop: use Chrome or Edge.");
-      return;
-    }
-
-    const base = (field === "scope" ? scopeNotes : addonNotes);
-    const prefix = base && !base.endsWith(" ") ? base + " " : base;
-    let accumulated = ""; // persists across restart cycles
-
-    const startListening = () => {
-      const r = new SR();
-      r.continuous = false;      // iOS ignores true; restart-on-end handles continuous feel
-      r.interimResults = true;
-      r.lang = "en-US";
-
-      r.onresult = (e) => {
-        let finals = "";
-        let interim = "";
-        for (let i = 0; i < e.results.length; i++) {
-          if (e.results[i].isFinal) {
-            finals += e.results[i][0].transcript + " ";
-            accumulated += e.results[i][0].transcript + " ";
-          } else {
-            interim += e.results[i][0].transcript;
-          }
-        }
-        if (field === "scope") setScopeNotes(prefix + accumulated + interim);
-        else setAddonNotes(prefix + accumulated + interim);
-      };
-
-      r.onerror = (evt) => {
-        if (evt.error === "not-allowed") {
-          keepListeningRef.current = false;
-          alert("Microphone access denied.\n\niPhone: Settings → Safari → Microphone → Allow.\nDesktop: tap the lock icon in the address bar.");
-          setSpeechField(null);
-        } else if (evt.error === "audio-capture") {
-          keepListeningRef.current = false;
-          alert("No microphone detected. Check your device settings.");
-          setSpeechField(null);
-        }
-        // 'no-speech', 'network', 'aborted': let onend handle restart
-      };
-
-      r.onend = () => {
-        if (keepListeningRef.current) {
-          // Auto-restart: gives iOS continuous-feel without needing r.continuous
-          setTimeout(() => {
-            if (keepListeningRef.current) {
-              try { startListening(); }
-              catch {
-                keepListeningRef.current = false;
-                if (field === "scope") setScopeNotes(prefix + accumulated);
-                else setAddonNotes(prefix + accumulated);
-                setSpeechField(null);
-              }
-            }
-          }, 80); // small gap prevents iOS "already started" error
-        } else {
-          // User tapped stop — commit final text
-          if (field === "scope") setScopeNotes(prefix + accumulated);
-          else setAddonNotes(prefix + accumulated);
-          setSpeechField(null);
-        }
-      };
-
-      recognitionRef.current = r;
-      try { r.start(); }
-      catch {
-        keepListeningRef.current = false;
-        setSpeechField(null);
-      }
-    };
-
-    keepListeningRef.current = true;
-    setSpeechField(field);
-    startListening();
-  };
-
   // ── YOUTUBE: track mount status for safe state updates after async ops ──
   // IMPORTANT: this hook MUST stay above the early returns (showCamera / markupIdx)
   // so React sees the same hook order on every render.
@@ -1307,7 +1188,7 @@ Property: ${s.addr || ""}`);
         {/* ── SCOPE ────────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
           <textarea value={scopeNotes} onChange={e => setScopeNotes(e.target.value)} placeholder="Scope of work..." rows={6}
-            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:`1px solid ${speechField==="scope"?"rgba(59,130,246,.5)":"#1a2540"}`,color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none",transition:"border-color .15s"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
+            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none",transition:"border-color .15s"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
 
           {/* Scope photos */}
           {scopePhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
@@ -1338,45 +1219,6 @@ Property: ${s.addr || ""}`);
               <IconCamera size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Camera</span>
             </button>
             <button onClick={()=>scopeLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
-              <IconImage size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
-            </button>
-          </div>
-        </div>
-
-        {/* ── ADD-ON ──────────────────────────────────────────────────── */}
-        <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
-          <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>ADD-ON</div>
-          <textarea value={addonNotes} onChange={e => setAddonNotes(e.target.value)} placeholder="Additional recommendations..." rows={3}
-            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:`1px solid ${speechField==="addon"?"rgba(255,138,101,.5)":"#1a2540"}`,color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none",transition:"border-color .15s"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
-
-          {/* Add-on photos */}
-          {addonPhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
-            {addonPhotos.map((p, i) => (
-              <div key={photoKey(p)||i} style={{display:"flex",flexDirection:"column",gap:3}}>
-                <div style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
-                  <img src={p.url || p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("addon");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
-                  <button onClick={e=>{e.stopPropagation();removeAddonPhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} color="#ff6666"/></button>
-                  <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
-                    <div onClick={()=>{setMarkupIdx(i);setMarkupSection("addon");}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
-                    <button onClick={e=>{e.stopPropagation();downloadPhoto(p,`addon_${i+1}.jpg`,`addon_${i}`);}} disabled={dlSet.has(`addon_${i}`)} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`addon_${i}`)?0.5:1}}><IconDownload size={13} color="#ccc"/></button>
-                  </div>
-                </div>
-                <PhotoZoneTag zone={p.zone} onChange={zone => {
-                  updateField(s.id, ex => {
-                    const arr = ex.addonPhotos || [];
-                    return { addonPhotos: arr.map((ph,j) => j===i ? {...ph,zone} : ph) };
-                  }).catch(()=>{});
-                  setAddonPhotos(prev => prev.map((ph,j) => j===i ? {...ph,zone} : ph));
-                }} />
-              </div>
-            ))}
-          </div>}
-          <input ref={addonLibRef} type="file" accept="image/*" multiple onChange={handleAddonPhotos} style={{display:"none"}} />
-          <div style={{display:"flex",gap:6,marginTop:8}}>
-            <button onClick={()=>{setCameraSection("addon");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
-              <IconCamera size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Camera</span>
-            </button>
-            <button onClick={()=>addonLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
               <IconImage size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
             </button>
           </div>
@@ -1506,6 +1348,45 @@ Property: ${s.addr || ""}`);
           </button>
           <div style={{marginTop:6,fontSize:9,lineHeight:1.4,color:"#5a6580",fontFamily:F,letterSpacing:0.2,textAlign:"center"}}>
             Library imports upload faster at <strong style={{color:"#8a93a8"}}>1080p</strong> (iPhone Settings → Camera → Record Video) than 4K.
+          </div>
+        </div>
+
+        {/* ── ADD-ON ──────────────────────────────────────────────────── */}
+        <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>ADD-ON</div>
+          <textarea value={addonNotes} onChange={e => setAddonNotes(e.target.value)} placeholder="Additional recommendations..." rows={3}
+            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none",transition:"border-color .15s"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
+
+          {/* Add-on photos */}
+          {addonPhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
+            {addonPhotos.map((p, i) => (
+              <div key={photoKey(p)||i} style={{display:"flex",flexDirection:"column",gap:3}}>
+                <div style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
+                  <img src={p.url || p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("addon");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
+                  <button onClick={e=>{e.stopPropagation();removeAddonPhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} color="#ff6666"/></button>
+                  <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
+                    <div onClick={()=>{setMarkupIdx(i);setMarkupSection("addon");}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
+                    <button onClick={e=>{e.stopPropagation();downloadPhoto(p,`addon_${i+1}.jpg`,`addon_${i}`);}} disabled={dlSet.has(`addon_${i}`)} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`addon_${i}`)?0.5:1}}><IconDownload size={13} color="#ccc"/></button>
+                  </div>
+                </div>
+                <PhotoZoneTag zone={p.zone} onChange={zone => {
+                  updateField(s.id, ex => {
+                    const arr = ex.addonPhotos || [];
+                    return { addonPhotos: arr.map((ph,j) => j===i ? {...ph,zone} : ph) };
+                  }).catch(()=>{});
+                  setAddonPhotos(prev => prev.map((ph,j) => j===i ? {...ph,zone} : ph));
+                }} />
+              </div>
+            ))}
+          </div>}
+          <input ref={addonLibRef} type="file" accept="image/*" multiple onChange={handleAddonPhotos} style={{display:"none"}} />
+          <div style={{display:"flex",gap:6,marginTop:8}}>
+            <button onClick={()=>{setCameraSection("addon");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
+              <IconCamera size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Camera</span>
+            </button>
+            <button onClick={()=>addonLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
+              <IconImage size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
+            </button>
           </div>
         </div>
 

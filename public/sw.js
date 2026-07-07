@@ -1,4 +1,10 @@
-const CACHE = "mts-field-v5";
+// v6: cache-name bump forces the activate handler to delete the ENTIRE v5
+// cache. A pre-June-30 bundle was still being served from it on flaky-signal
+// launches (old shell -> old hashed assets, all cache hits), resurrecting
+// long-removed UI (Property History, Dictate) on some launches while other
+// launches ran current code. Old-version assets are never evicted by
+// stale-while-revalidate alone, so a version bump is the only reliable purge.
+const CACHE = "mts-field-v6";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
