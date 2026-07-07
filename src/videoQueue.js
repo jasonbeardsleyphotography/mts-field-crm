@@ -502,19 +502,41 @@ async function _processItem(id, myEpoch = _epoch, restarts = 0) {
   // in IndexedDB can have its backing data evicted while its metadata (size,
   // type) survives — item.file.size looks fine, but every read returns
   // nothing, so the XHR "uploads" 0 bytes and errors in an endless cycle
-  // that never moves past 0%. Detect that case up front and say so honestly
-  // instead of burning retries forever.
-  try {
-    const head = await item.file.slice(0, 64 * KB).arrayBuffer();
-    if (!head || head.byteLength === 0) throw new Error("empty read");
-  } catch (e) {
-    vlogError("process.file_unreadable", { msg: e?.message || String(e) }, id);
-    await _setItem(id, {
-      status: "error",
-      error: "This video's data was purged from phone storage by iOS and can no longer be read. It will need to be re-recorded.",
-    });
-    return true;
+  // that never moves past 0%.
+  //
+  // CRITICAL: a single failed read is NOT proof of data loss. iOS also
+  // invalidates blob handles TRANSIENTLY around backgrounding — a video
+  // recorded minutes ago (and already partially uploaded!) can fail this
+  // read for a few seconds right after returning from another app, then
+  // read fine again. Declaring it "purged" on the first failure destroyed a
+  // perfectly good upload in the field. So: retry within this pass, park as
+  // queued on transient failure (auto-retried by the 30s tick), and only
+  // call it permanently lost after many consecutive failed passes.
+  let headOk = false;
+  for (let i = 0; i < 3 && !headOk; i++) {
+    try {
+      const head = await item.file.slice(0, 64 * KB).arrayBuffer();
+      headOk = !!head && head.byteLength > 0;
+    } catch {}
+    if (!headOk) await new Promise(r => setTimeout(r, 1500));
+    if (stale()) return false;
   }
+  if (!headOk) {
+    const fails = (item.probeFails || 0) + 1;
+    vlogWarn("process.file_read_failed", { consecutivePasses: fails }, id);
+    if (fails >= 5) {
+      // ~5 passes over several minutes, never once readable — genuinely gone.
+      vlogError("process.file_unreadable", null, id);
+      await _setItem(id, {
+        status: "error",
+        error: "This video's data can no longer be read from phone storage. Tap Force Restart to try again, or re-record if it keeps failing.",
+      });
+      return true;
+    }
+    await _setItem(id, { probeFails: fails, status: "queued", error: "Phone storage is briefly unavailable — will retry automatically" });
+    return false;
+  }
+  if (item.probeFails) await _setItem(id, { probeFails: 0, error: null });
 
   vlogInfo("process.start", { fileSize: item.fileSize, status: item.status, bytesUploaded: item.bytesUploaded }, id);
   incUpload(item.stopId);
