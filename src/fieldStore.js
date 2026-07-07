@@ -38,16 +38,32 @@ function openDB() {
         db.createObjectStore(STORE);
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      // iOS closes IDB connections when the PWA is backgrounded (worst right
+      // after big writes). A dead cached connection makes every transaction
+      // throw forever — drop the cache on close so the next call reopens.
+      db.onclose = () => { dbPromise = null; };
+      db.onversionchange = () => { try { db.close(); } catch {} dbPromise = null; };
+      resolve(db);
+    };
     req.onerror   = () => reject(req.error);
     req.onblocked = () => reject(new Error("IndexedDB blocked"));
   });
+  dbPromise.catch(() => { dbPromise = null; });
   return dbPromise;
 }
 
 async function tx(mode) {
   const db = await openDB();
-  return db.transaction(STORE, mode).objectStore(STORE);
+  try {
+    return db.transaction(STORE, mode).objectStore(STORE);
+  } catch (e) {
+    // Closed connection throws synchronously — reopen once and retry.
+    dbPromise = null;
+    const fresh = await openDB();
+    return fresh.transaction(STORE, mode).objectStore(STORE);
+  }
 }
 
 // Delete the entire field database + its localStorage slim mirrors. Used when a

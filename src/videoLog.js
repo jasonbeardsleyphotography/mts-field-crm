@@ -49,23 +49,41 @@ function openDB() {
         store.createIndex("itemId", "itemId", { unique: false });
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      // iOS closes IDB connections when the PWA is backgrounded — drop the
+      // cache so the next write reopens instead of failing forever.
+      db.onclose = () => { _dbPromise = null; };
+      db.onversionchange = () => { try { db.close(); } catch {} _dbPromise = null; };
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
   });
   _dbPromise.catch(() => { _dbPromise = null; });
   return _dbPromise;
 }
 
+function _writeOnce(entry) {
+  return openDB().then(db => new Promise((resolve, reject) => {
+    let t;
+    try { t = db.transaction(STORE, "readwrite"); }
+    catch (e) { reject(e); return; } // dead connection throws synchronously
+    t.objectStore(STORE).add(entry);
+    t.oncomplete = () => resolve();
+    t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error);
+  }));
+}
+
 async function _writeEntry(entry) {
   try {
-    const db = await openDB();
-    await new Promise((resolve, reject) => {
-      const t = db.transaction(STORE, "readwrite");
-      const store = t.objectStore(STORE);
-      store.add(entry);
-      t.oncomplete = () => resolve();
-      t.onerror = () => reject(t.error);
-    });
+    try {
+      await _writeOnce(entry);
+    } catch (e) {
+      // Reopen once and retry — recovers from iOS closing the connection.
+      _dbPromise = null;
+      await _writeOnce(entry);
+    }
   } catch (e) {
     // If we can't write to the log, don't break the caller. Last-resort
     // fallback to console (will be visible in dev tools at least).

@@ -62,6 +62,17 @@ const DB_NAME = "mts-video-queue";
 const DB_VER = 3;
 const STORE = "queue";
 
+// THE iOS PWA KILLER, and the root cause of "uploads never restart after I
+// switch apps": iOS closes a page's IndexedDB connections when the app is
+// backgrounded — most reliably right after a large write (like a freshly
+// recorded video blob) creates memory pressure. A cached connection then
+// makes db.transaction() throw InvalidStateError on EVERY call, forever.
+// The worker dies, the 30s recovery tick dies the same way each time, and
+// Retry/Force Restart die on their first read — all silently. Nothing can
+// recover until a full app relaunch. So: listen for the connection's close
+// event to drop the cache eagerly, and wrap every operation with one
+// reopen-and-retry so even a close we never got an event for self-heals on
+// the next call.
 let _dbPromise = null;
 function openDB() {
   if (_dbPromise) return _dbPromise;
@@ -74,24 +85,47 @@ function openDB() {
         db.createObjectStore(STORE, { keyPath: "id" });
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onclose = () => { _dbPromise = null; };
+      db.onversionchange = () => { try { db.close(); } catch {} _dbPromise = null; };
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
   });
   _dbPromise.catch(() => { _dbPromise = null; });
   return _dbPromise;
 }
 
-async function _idbOp(mode, op) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const t = db.transaction(STORE, mode);
+function _idbOpOnce(mode, op) {
+  return openDB().then(db => new Promise((resolve, reject) => {
+    let t;
+    try {
+      t = db.transaction(STORE, mode);
+    } catch (e) {
+      reject(e); // closed connection throws synchronously
+      return;
+    }
     const store = t.objectStore(STORE);
     let result;
     op(store, (r) => { result = r; });
     t.oncomplete = () => resolve(result);
     t.onerror = () => reject(t.error);
     t.onabort = () => reject(t.error);
-  });
+  }));
+}
+
+async function _idbOp(mode, op) {
+  try {
+    return await _idbOpOnce(mode, op);
+  } catch (e) {
+    // Any failure gets exactly one retry on a FRESH connection. This turns
+    // "iOS closed the DB while we were backgrounded" from a permanent,
+    // silent, app-wide death into a one-call hiccup.
+    vlogWarn?.("idb.reopen_retry", { msg: e?.message || String(e) });
+    _dbPromise = null;
+    return await _idbOpOnce(mode, op);
+  }
 }
 
 // Delete the entire video-queue database (including any stored file blobs).
@@ -870,6 +904,10 @@ export function startVideoQueueWatcher(getToken) {
       if (_processing) _acquireWakeLock();
       _kick();
       _wallClockUnstick();
+      // iOS can report "visible" while storage/network are still thawing —
+      // the immediate kick may fire into a half-frozen environment and die.
+      // Follow up shortly after so recovery never rides on that first shot.
+      setTimeout(() => { _kick(); _wallClockUnstick(); }, 4000);
     } else {
       _releaseWakeLock();
     }
