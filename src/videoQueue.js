@@ -332,6 +332,22 @@ export function fileFromQueueItem(item) {
 }
 
 export async function retryItem(id) {
+  const item = await idbGet(id);
+  if (!item) return;
+  // GUARD: if the worker is actively on this item RIGHT NOW (progress and
+  // status writes refresh updatedAt every ~1.5s while healthy), a re-tap of
+  // Upload/Retry must NOT invalidate the worker — that aborted the very
+  // upload the previous tap had just started. Rapid taps then perpetually
+  // killed their own work: the item bounced between "Waiting" and 0% and
+  // never got anywhere ("I tap the upload button and it does not work").
+  // A genuinely stuck item has a stale updatedAt and takes the full path.
+  const freshMs = Date.now() - (item.updatedAt || 0);
+  if ((item.status === "uploading" || item.status === "queued") && freshMs < 10_000) {
+    vlogInfo("retry.noop_already_active", { status: item.status, freshMs }, id);
+    if (_isPaused) setPaused(false);
+    _kick(); // make sure a worker is running; nothing else to change
+    return;
+  }
   // A manual retry means "the current state is wrong — start over cleanly".
   // Unconditionally invalidate any worker (live or zombie) and abort its
   // in-flight request. The old 30-second-held-lock heuristic left a stuck
@@ -344,8 +360,6 @@ export async function retryItem(id) {
   // Retry is explicit intent to upload — a forgotten persisted "Pause All"
   // must not silently swallow it (paused _kick() is a no-op).
   if (_isPaused) setPaused(false);
-  const item = await idbGet(id);
-  if (!item) return;
   // Preserve sessionUrl + bytesUploaded so we RESUME from where we stopped
   // instead of re-uploading the whole file (a near-complete 400MB upload
   // should never restart from 0). _processItem queries the true server offset
@@ -354,11 +368,16 @@ export async function retryItem(id) {
   item.status = "queued";
   item.retries = 0;
   item.error = null;
+  item.probeFails = 0; // a manual retry gets a clean slate on storage-read strikes
   item.updatedAt = Date.now();
   await idbPut(item);
-  vlogInfo("retry.requested", { resumeFrom: item.bytesUploaded || 0, hasSession: !!item.sessionUrl }, id);
+  vlogInfo("retry.requested", { resumeFrom: item.bytesUploaded || 0, hasSession: !!item.sessionUrl, fromStatus: item.status }, id);
   notify();
   _kick();
+  // Backstop: if a dying worker happened to hold the lock at the moment we
+  // kicked, the 30s tick would eventually cover it — but the user is
+  // watching the screen right now. One delayed kick closes that gap.
+  setTimeout(() => { try { _kick(); } catch {} }, 2500);
 }
 
 // ── Worker ───────────────────────────────────────────────────────────────
