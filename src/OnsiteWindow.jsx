@@ -1434,11 +1434,9 @@ Property: ${s.addr || ""}`);
                         <button onClick={() => saveVideoToDevice(it)} title="Save this video to your phone" style={{padding:"3px 8px",borderRadius:5,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:3}}>
                           <IconDownload size={11} color="#10B981"/>Save
                         </button>
-                        {(it.status === "error" || it.status === "uploading" || it.status === "local") && (
-                          <button onClick={() => retryVideoQueueItem(it.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
-                            {it.status === "uploading" ? "Restart" : it.status === "local" ? "Upload" : "Retry"}
-                          </button>
-                        )}
+                        <button onClick={() => retryVideoQueueItem(it.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
+                          {it.status === "uploading" ? "Restart" : it.status === "local" ? "Upload" : "Retry"}
+                        </button>
                         {it.status === "local" ? (
                           <button onClick={() => { if(window.confirm("Permanently delete this video from the phone? This can't be undone — save it to Photos/Files first if you still need it.")) deleteVideoQueueItem(it.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#a06060",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,display:"flex",alignItems:"center"}}>
                             <IconX size={10} color="#a06060"/>

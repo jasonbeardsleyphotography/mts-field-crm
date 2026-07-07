@@ -25,7 +25,7 @@ import {
   IconClipboard, IconX, IconRotateCcw, IconRefresh, IconReorder, IconUndo,
   IconPlus, IconSearch, IconTrash, IconChevronDown, IconChevronRight,
   IconCloud, IconCloudOff, IconCheckCircle, IconEdit, IconPhone, IconMail, IconClock, IconCalendar,
-  IconNoSymbol, IconDatabase
+  IconNoSymbol, IconDatabase, IconVideo
 } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2057,6 +2057,12 @@ export default function App() {
             <span style={{fontSize:11,fontWeight:700,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",color:reorderMode?"#c8a0e8":"#5a6890"}}>{reorderMode?"DONE":"REORDER"}</span>
           </button>
         </div>
+        {/* Video Uploads — always reachable, even when the tracker strip is
+            hidden (e.g. the queue read failed or every item is kept-local). */}
+        <button onClick={()=>setUploadsOpen(true)} title="Video uploads"
+          style={{width:34,height:34,borderRadius:8,background:"rgba(255,107,94,.1)",border:"1px solid rgba(255,107,94,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <IconVideo size={15} color="#FF6B5E" />
+        </button>
         {/* Data Recovery */}
         <button onClick={()=>setRecoveryOpen(true)} title="Find old job photos"
           style={{width:34,height:34,borderRadius:8,background:"rgba(99,102,241,.1)",border:"1px solid rgba(99,102,241,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -2081,6 +2087,11 @@ export default function App() {
         </button>
       </div>}
       {view === "pipeline" && <div style={{borderTop:"1px solid #0e1520",padding:"4px 10px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",justifyContent:"flex-end",gap:6,background:"#080a10",flexShrink:0}}>
+        {/* Video Uploads — always reachable */}
+        <button onClick={()=>setUploadsOpen(true)} title="Video uploads"
+          style={{width:32,height:32,borderRadius:8,background:"rgba(255,107,94,.1)",border:"1px solid rgba(255,107,94,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <IconVideo size={14} color="#FF6B5E" />
+        </button>
         {/* Data Recovery */}
         <button onClick={()=>setRecoveryOpen(true)} title="Find old job photos"
           style={{width:32,height:32,borderRadius:8,background:"rgba(99,102,241,.1)",border:"1px solid rgba(99,102,241,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>

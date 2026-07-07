@@ -239,11 +239,9 @@ function QueuedVideoRow({ item }) {
         <div style={{display:"flex",alignItems:"center",gap:6}}>
           <div style={{flex:1,fontSize:9,color:"#5a6580",fontFamily:F,letterSpacing:0.3}}>{sizeMB}MB</div>
           <button onClick={() => saveVideoToDevice(item)} title="Save this video to your phone" style={{padding:"3px 8px",borderRadius:5,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Save</button>
-          {(item.status === "error" || item.status === "uploading" || item.status === "local") && (
-            <button onClick={() => retryQueueVideo(item.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
-              {item.status === "uploading" ? "Restart" : item.status === "local" ? "Upload" : "Retry"}
-            </button>
-          )}
+          <button onClick={() => retryQueueVideo(item.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
+            {item.status === "uploading" ? "Restart" : item.status === "local" ? "Upload" : "Retry"}
+          </button>
           {item.status === "local" ? (
             <button onClick={() => { if (window.confirm("Permanently delete this video from the phone? This can't be undone — save it to Photos/Files first if you still need it.")) deleteQueueVideo(item.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#a06060",fontSize:9,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center"}}>
               <IconX size={10} color="#a06060"/>

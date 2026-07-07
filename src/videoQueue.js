@@ -559,15 +559,23 @@ async function _processItem(id, myEpoch = _epoch, restarts = 0) {
     const fails = (item.probeFails || 0) + 1;
     vlogWarn("process.file_read_failed", { consecutivePasses: fails }, id);
     if (fails >= 5) {
-      // ~5 passes over several minutes, never once readable — genuinely gone.
+      // Never once readable across many passes. In practice this is a wedged
+      // WebKit storage session, which a full reload clears — say that, don't
+      // tell the user to re-record a video that's probably fine.
       vlogError("process.file_unreadable", null, id);
       await _setItem(id, {
         status: "error",
-        error: "This video's data can no longer be read from phone storage. Tap Force Restart to try again, or re-record if it keeps failing.",
+        error: "Phone storage is stuck — close this app completely and reopen it, then tap Force Restart. The video is still saved.",
       });
       return true;
     }
-    await _setItem(id, { probeFails: fails, status: "queued", error: "Phone storage is briefly unavailable — will retry automatically" });
+    await _setItem(id, {
+      probeFails: fails,
+      status: "queued",
+      error: fails >= 2
+        ? "Phone storage got stuck — reload the app (button above) to fix it. The video is safe."
+        : "Phone storage is briefly unavailable — will retry automatically",
+    });
     return false;
   }
   if (item.probeFails) await _setItem(id, { probeFails: 0, error: null });

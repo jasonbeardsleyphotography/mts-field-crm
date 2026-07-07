@@ -16,6 +16,7 @@ import {
   forceUnstick,
 } from "./videoQueue";
 import { saveVideoToDevice } from "./videoSave";
+import { readLog } from "./videoLog";
 import { IconArrowLeft, IconX } from "./icons";
 
 const F = "'Oswald',sans-serif";
@@ -63,6 +64,20 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
   const [paused, setPausedState] = useState(isPaused());
   const [, tick] = useState(0);
   const [restarting, setRestarting] = useState({});
+  const [showDiag, setShowDiag] = useState(false);
+  const [logEntries, setLogEntries] = useState([]);
+
+  // Diagnostics live right here on the uploads screen — previously they
+  // were buried in the mini tracker's expanded panel, which the user could
+  // not find (and which disappears entirely when the queue looks empty).
+  useEffect(() => {
+    if (!showDiag || !open) return;
+    let alive = true;
+    const refresh = () => { readLog({ limit: 100 }).then(e => { if (alive) setLogEntries(e); }).catch(() => {}); };
+    refresh();
+    const t = setInterval(refresh, 2000);
+    return () => { alive = false; clearInterval(t); };
+  }, [showDiag, open]);
 
   useEffect(() => {
     let alive = true;
@@ -140,6 +155,17 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
             </div>
           )}
         </div>
+        <button
+          onClick={() => setShowDiag(v => !v)}
+          title="Show what the uploader has been doing"
+          style={{
+            padding: "7px 10px", borderRadius: 8, cursor: "pointer",
+            fontFamily: F, fontWeight: 800, fontSize: 11, letterSpacing: 0.5,
+            background: showDiag ? "rgba(100,180,246,.15)" : "transparent",
+            border: `1px solid ${showDiag ? "rgba(100,180,246,.4)" : "#252d47"}`,
+            color: showDiag ? "#64B5F6" : "#5a6580",
+          }}
+        >🔍 Log</button>
         {visibleItems.length > 0 && (
           <button
             onClick={handlePauseToggle}
@@ -168,6 +194,48 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
             <strong style={{ fontFamily: F, letterSpacing: 0.5 }}>Uploads are paused.</strong>{" "}
             Nothing will upload until you tap Resume above.
           </div>
+        </div>
+      )}
+
+      {/* Storage-stuck banner: repeated blob-read failures mean iOS wedged
+          this page's storage access — only a full app reload clears it.
+          Give the user that button right here instead of a dead end. */}
+      {items.some(i => (i.probeFails || 0) >= 2) && (
+        <div style={{
+          padding: "10px 16px", flexShrink: 0,
+          background: "rgba(255,140,0,.08)",
+          borderBottom: "1px solid rgba(255,140,0,.25)",
+          display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <div style={{ flex: 1, fontSize: 12, color: "#FFB366", lineHeight: 1.5, fontFamily: B }}>
+            <strong style={{ fontFamily: F, letterSpacing: 0.5 }}>Phone storage got stuck.</strong>{" "}
+            Reloading the app fixes this — your videos and upload progress are safe.
+          </div>
+          <button
+            onClick={() => { try { window.location.reload(); } catch {} }}
+            style={{
+              padding: "8px 14px", borderRadius: 8, flexShrink: 0,
+              background: "rgba(255,140,0,.15)", border: "1px solid rgba(255,140,0,.4)",
+              color: "#FF8C00", fontSize: 11, fontWeight: 800,
+              cursor: "pointer", fontFamily: F, letterSpacing: 0.5,
+            }}
+          >⟳ Reload App</button>
+        </div>
+      )}
+
+      {/* Diagnostic log — visible, timestamped record of every step the
+          uploader took. First stop when something looks stuck. */}
+      {showDiag && (
+        <div style={{ flexShrink: 0, maxHeight: "40vh", overflowY: "auto", padding: "8px 16px", background: "#060810", borderBottom: "1px solid #1a2030" }}>
+          {logEntries.length === 0 && <div style={{ fontSize: 11, color: "#4a5a70", fontStyle: "italic" }}>No log entries yet.</div>}
+          {logEntries.map(e => (
+            <div key={e.id} style={{ fontSize: 10, color: e.level === "error" ? "#FF8888" : e.level === "warn" ? "#F6BF26" : "#8898a8", fontFamily: "ui-monospace,Menlo,monospace", lineHeight: 1.45, marginBottom: 2, wordBreak: "break-word" }}>
+              <span style={{ color: "#4a5a70" }}>{new Date(e.ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</span>
+              {" "}<span style={{ fontWeight: 700 }}>{e.event}</span>
+              {e.itemId && <span style={{ color: "#4a5a70" }}> [{String(e.itemId).slice(-8)}]</span>}
+              {e.data && <span style={{ color: "#5a6580" }}> {JSON.stringify(e.data)}</span>}
+            </div>
+          ))}
         </div>
       )}
 
@@ -277,7 +345,10 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
                     cursor: "pointer", fontFamily: F, letterSpacing: 0.5,
                   }}
                 >Save</button>
-                {(item.status === "error" || item.status === "local" || isStuck) && (
+                {/* ALWAYS present — a queued item showing a red note with no
+                    button, or an uploading item with nothing to tap, read as
+                    dead ends in the field. Any state can be force-restarted. */}
+                {(
                   <button
                     onClick={() => {
                       // Immediate feedback so the tap reads as registered —
