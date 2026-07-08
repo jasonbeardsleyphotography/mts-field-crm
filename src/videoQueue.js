@@ -52,6 +52,12 @@ const RETRY_LIMIT = 6;                // consecutive failures with NO byte progr
 const WORKER_LOCK_WATCHDOG_MS = 2 * 60 * 1000; // 2 min — iOS suspends JS mid-upload
 const RETRY_BACKOFF_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 const PAUSE_KEY = "mts-video-uploads-paused";
+// Below this size we read the upload body fully into RAM before handing it to
+// XHR (the iOS blob-stall fix — see _readSliceToBuffer). Above it we stream the
+// blob directly to avoid holding a huge buffer in memory. Field videos are far
+// under this; the cap only guards a hypothetical very large file.
+const MATERIALIZE_CAP_BYTES = 200 * 1024 * 1024;
+const SLICE_READ_TIMEOUT_MS = 25_000; // reading 200MB from IDB should take << this; longer means wedged
 
 // ── IndexedDB ────────────────────────────────────────────────────────────
 
@@ -479,6 +485,27 @@ async function _processNext() {
   }
 }
 
+// Read a blob slice fully into memory, but never hang forever. THE iOS UPLOAD
+// STALL: WebKit can hang indefinitely materializing an IndexedDB-backed Blob
+// when it's handed straight to xhr.send() — the PUT then transmits ZERO bytes
+// until the 45s stall watchdog aborts it, on an endless loop. (The diagnostic
+// log showed exactly this: every attempt failed at ~45000ms with bytesUploaded
+// stuck at 0 and the byte counter never moving.) Reading the bytes ourselves,
+// with a timeout, both sidesteps that stall — XHR then sends from a plain RAM
+// buffer, which never hangs — and turns a genuinely unreadable blob into a
+// fast, catchable failure instead of a 45-second dead wait.
+function _readSliceToBuffer(file, startByte, timeoutMs) {
+  const slice = file.slice(startByte);
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const finish = (fn, arg) => { if (done) return; done = true; clearTimeout(timer); fn(arg); };
+    const timer = setTimeout(() => finish(reject, new Error(`slice read timeout (${Math.round(timeoutMs/1000)}s)`)), timeoutMs);
+    slice.arrayBuffer()
+      .then(buf => (buf && buf.byteLength > 0) ? finish(resolve, buf) : finish(reject, new Error("empty slice read")))
+      .catch(e => finish(reject, e));
+  });
+}
+
 async function _setItem(id, patch) {
   const cur = await idbGet(id);
   if (!cur) return null;
@@ -721,13 +748,53 @@ async function _processItem(id, myEpoch = _epoch, restarts = 0) {
         continue;
       }
 
+      // Materialize the exact bytes we're about to PUT into a RAM buffer FIRST,
+      // then send THAT — never the IDB-backed blob directly. This is the fix
+      // for the zero-progress / 45s-abort loop the diagnostic log revealed:
+      // iOS stalls streaming an IDB blob through XHR, but a RAM buffer sends
+      // fine. Huge files (unrealistic for field video) stream the blob to avoid
+      // holding a giant buffer.
+      const remainingBytes = item.fileSize - bytesUploaded;
+      let sendBody;
+      if (remainingBytes <= MATERIALIZE_CAP_BYTES) {
+        try {
+          sendBody = await _readSliceToBuffer(item.file, bytesUploaded, SLICE_READ_TIMEOUT_MS);
+        } catch (e) {
+          if (stale()) return false;
+          const fails = (item.sliceFails || 0) + 1;
+          vlogWarn("upload.slice_read_failed", { msg: e?.message || String(e), remainingKB: Math.round(remainingBytes / KB), consecutive: fails }, id);
+          if (fails >= 5) {
+            await _setItem(id, {
+              status: "error",
+              error: "Phone storage is stuck — close this app completely and reopen it, then tap Force Restart. The video is still saved.",
+              sliceFails: fails,
+            });
+            return true;
+          }
+          await _setItem(id, {
+            status: "queued",
+            sliceFails: fails,
+            error: fails >= 2
+              ? "Phone storage got stuck — reload the app (button above) to fix it. The video is safe."
+              : "Reading the video from storage — will retry automatically",
+          });
+          // brief backoff so we don't spin on a momentarily-busy store
+          await new Promise(r => setTimeout(r, 1500));
+          return false;
+        }
+        if (stale()) return false;
+        if (item.sliceFails) { await _setItem(id, { sliceFails: 0 }); item.sliceFails = 0; }
+      } else {
+        sendBody = item.file.slice(bytesUploaded);
+      }
+
       const t0 = Date.now();
-      vlogInfo("upload.start", { fromOffset: bytesUploaded, remainingKB: Math.round((item.fileSize - bytesUploaded) / KB), attempt: attempts + 1 }, id);
+      vlogInfo("upload.start", { fromOffset: bytesUploaded, remainingKB: Math.round(remainingBytes / KB), attempt: attempts + 1, buffered: sendBody instanceof ArrayBuffer }, id);
 
       // Register the in-flight request so Force Restart / watchdogs can
       // actually terminate it instead of leaving it streaming as a zombie.
       let myAbort = null;
-      const result = await uploadFromOffset(session, item.file.slice(bytesUploaded), bytesUploaded, item.fileSize, {
+      const result = await uploadFromOffset(session, sendBody, bytesUploaded, item.fileSize, {
         onProgress: onUploadProgress,
         onAbortHandle: (fn) => { myAbort = fn; _abortCurrentUpload = fn; },
       });
