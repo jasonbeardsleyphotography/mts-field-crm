@@ -105,33 +105,45 @@ function openDB() {
 
 function _idbOpOnce(mode, op) {
   return openDB().then(db => new Promise((resolve, reject) => {
+    // iOS throws/aborts IDB ops as bare `null` under storage pressure. NEVER
+    // reject with a raw null — downstream `e.message` access on null then
+    // throws "null is not an object", which crashed the whole worker. Always
+    // reject with a real Error.
+    const fail = (e) => reject(e instanceof Error ? e : new Error(e ? String(e) : "IndexedDB error"));
     let t;
     try {
       t = db.transaction(STORE, mode);
     } catch (e) {
-      reject(e); // closed connection throws synchronously
+      fail(e); // closed connection throws synchronously
       return;
     }
     const store = t.objectStore(STORE);
     let result;
-    op(store, (r) => { result = r; });
+    try { op(store, (r) => { result = r; }); }
+    catch (e) { fail(e); return; }
     t.oncomplete = () => resolve(result);
-    t.onerror = () => reject(t.error);
-    t.onabort = () => reject(t.error);
+    t.onerror = () => fail(t.error);
+    t.onabort = () => fail(t.error);
   }));
 }
 
 async function _idbOp(mode, op) {
-  try {
-    return await _idbOpOnce(mode, op);
-  } catch (e) {
-    // Any failure gets exactly one retry on a FRESH connection. This turns
-    // "iOS closed the DB while we were backgrounded" from a permanent,
-    // silent, app-wide death into a one-call hiccup.
-    vlogWarn?.("idb.reopen_retry", { msg: e?.message || String(e) });
-    _dbPromise = null;
-    return await _idbOpOnce(mode, op);
+  // iOS closes/wedges the DB when backgrounded (worst under memory pressure
+  // right after a large video write). Retry several times on FRESH connections
+  // with a short backoff — turns a permanent, silent, app-wide death into a
+  // recoverable hiccup. Always throws a real Error (never null) on final give-up.
+  let lastErr;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      return await _idbOpOnce(mode, op);
+    } catch (e) {
+      lastErr = e;
+      vlogWarn?.("idb.reopen_retry", { msg: e?.message || String(e), attempt });
+      _dbPromise = null;
+      if (attempt < 3) await new Promise(r => setTimeout(r, 250 * (attempt + 1)));
+    }
   }
+  throw (lastErr instanceof Error ? lastErr : new Error("IndexedDB unavailable"));
 }
 
 // Delete the entire video-queue database (including any stored file blobs).
@@ -375,6 +387,7 @@ export async function retryItem(id) {
   item.retries = 0;
   item.error = null;
   item.probeFails = 0; // a manual retry gets a clean slate on storage-read strikes
+  item.sliceFails = 0;
   item.updatedAt = Date.now();
   await idbPut(item);
   vlogInfo("retry.requested", { resumeFrom: item.bytesUploaded || 0, hasSession: !!item.sessionUrl, fromStatus: item.status }, id);
@@ -578,53 +591,12 @@ async function _processItem(id, myEpoch = _epoch, restarts = 0) {
     return true;
   }
 
-  // Actually READ a slice of the blob before starting. On iOS, a blob stored
-  // in IndexedDB can have its backing data evicted while its metadata (size,
-  // type) survives — item.file.size looks fine, but every read returns
-  // nothing, so the XHR "uploads" 0 bytes and errors in an endless cycle
-  // that never moves past 0%.
-  //
-  // CRITICAL: a single failed read is NOT proof of data loss. iOS also
-  // invalidates blob handles TRANSIENTLY around backgrounding — a video
-  // recorded minutes ago (and already partially uploaded!) can fail this
-  // read for a few seconds right after returning from another app, then
-  // read fine again. Declaring it "purged" on the first failure destroyed a
-  // perfectly good upload in the field. So: retry within this pass, park as
-  // queued on transient failure (auto-retried by the 30s tick), and only
-  // call it permanently lost after many consecutive failed passes.
-  let headOk = false;
-  for (let i = 0; i < 3 && !headOk; i++) {
-    try {
-      const head = await item.file.slice(0, 64 * KB).arrayBuffer();
-      headOk = !!head && head.byteLength > 0;
-    } catch {}
-    if (!headOk) await new Promise(r => setTimeout(r, 1500));
-    if (stale()) return false;
-  }
-  if (!headOk) {
-    const fails = (item.probeFails || 0) + 1;
-    vlogWarn("process.file_read_failed", { consecutivePasses: fails }, id);
-    if (fails >= 5) {
-      // Never once readable across many passes. In practice this is a wedged
-      // WebKit storage session, which a full reload clears — say that, don't
-      // tell the user to re-record a video that's probably fine.
-      vlogError("process.file_unreadable", null, id);
-      await _setItem(id, {
-        status: "error",
-        error: "Phone storage is stuck — close this app completely and reopen it, then tap Force Restart. The video is still saved.",
-      });
-      return true;
-    }
-    await _setItem(id, {
-      probeFails: fails,
-      status: "queued",
-      error: fails >= 2
-        ? "Phone storage got stuck — reload the app (button above) to fix it. The video is safe."
-        : "Phone storage is briefly unavailable — will retry automatically",
-    });
-    return false;
-  }
-  if (item.probeFails) await _setItem(id, { probeFails: 0, error: null });
+  // NOTE: the blob's readability is NOT probed here anymore. The old shallow
+  // 64KB pre-check read item.file — a handle fetched above that iOS may have
+  // already invalidated ("object can not be found here"), producing false
+  // "storage stuck" failures before we even tried. Readability is now proven
+  // where it matters: right before each PUT we re-fetch a FRESH blob handle
+  // and read the actual bytes we're about to send (see the send loop below).
 
   vlogInfo("process.start", { fileSize: item.fileSize, status: item.status, bytesUploaded: item.bytesUploaded }, id);
   incUpload(item.stopId);
@@ -638,9 +610,12 @@ async function _processItem(id, myEpoch = _epoch, restarts = 0) {
         folderId = await getVideosFolderId(token);
         await _setItem(id, { folderId });
       } catch (e) {
-        vlogError("drive.folder_failed", { msg: e?.message }, id);
-        await _setItem(id, { status: "error", error: "Could not access Drive videos folder" });
-        return true;
+        // Usually a transient network/storage blip (or a wedged IDB the folder
+        // cache touches). Requeue for automatic retry instead of dead-ending on
+        // a terminal error the user has to notice and manually restart.
+        vlogWarn("drive.folder_failed", { msg: e?.message || String(e) }, id);
+        await _setItem(id, { status: "queued", error: "Couldn't reach Drive folder — will retry automatically" }).catch(() => {});
+        return false;
       }
     }
 
@@ -758,12 +733,25 @@ async function _processItem(id, myEpoch = _epoch, restarts = 0) {
       let sendBody;
       if (remainingBytes <= MATERIALIZE_CAP_BYTES) {
         try {
-          sendBody = await _readSliceToBuffer(item.file, bytesUploaded, SLICE_READ_TIMEOUT_MS);
+          // Re-fetch the blob from a LIVE connection immediately before reading
+          // it. THE "object can not be found here" BUG: a Blob read from IDB
+          // (e.g. item.file, fetched at the top of this function) becomes
+          // permanently invalid once iOS closes the connection that produced
+          // it — reading its bytes then throws "The object can not be found
+          // here" forever, even though the data is fine. Getting a fresh handle
+          // bound to the current connection, then reading it right away,
+          // sidesteps that. (This is what actually killed the two Bechhoefer
+          // videos in the log — not lost data.)
+          const freshHandle = await idbGet(id);
+          if (stale()) return false;
+          if (!freshHandle || !freshHandle.file) { vlogInfo("upload.gone_before_read", null, id); return false; }
+          if (freshHandle.status === "local") { vlogInfo("upload.stopped_kept_local", null, id); return false; }
+          sendBody = await _readSliceToBuffer(freshHandle.file, bytesUploaded, SLICE_READ_TIMEOUT_MS);
         } catch (e) {
           if (stale()) return false;
           const fails = (item.sliceFails || 0) + 1;
           vlogWarn("upload.slice_read_failed", { msg: e?.message || String(e), remainingKB: Math.round(remainingBytes / KB), consecutive: fails }, id);
-          if (fails >= 5) {
+          if (fails >= 8) {
             await _setItem(id, {
               status: "error",
               error: "Phone storage is stuck — close this app completely and reopen it, then tap Force Restart. The video is still saved.",
@@ -774,7 +762,7 @@ async function _processItem(id, myEpoch = _epoch, restarts = 0) {
           await _setItem(id, {
             status: "queued",
             sliceFails: fails,
-            error: fails >= 2
+            error: fails >= 3
               ? "Phone storage got stuck — reload the app (button above) to fix it. The video is safe."
               : "Reading the video from storage — will retry automatically",
           });
@@ -785,7 +773,10 @@ async function _processItem(id, myEpoch = _epoch, restarts = 0) {
         if (stale()) return false;
         if (item.sliceFails) { await _setItem(id, { sliceFails: 0 }); item.sliceFails = 0; }
       } else {
-        sendBody = item.file.slice(bytesUploaded);
+        const freshHandle = await idbGet(id);
+        if (stale()) return false;
+        if (!freshHandle || !freshHandle.file) return false;
+        sendBody = freshHandle.file.slice(bytesUploaded);
       }
 
       const t0 = Date.now();
@@ -894,8 +885,20 @@ async function _processItem(id, myEpoch = _epoch, restarts = 0) {
     await _setItem(id, { status: "error", error: "Upload completed bytes but never received final acknowledgment" });
     return true;
   } catch (e) {
-    vlogError("process.exception", { msg: e?.message || String(e), stack: (e?.stack || "").slice(0, 500) }, id);
-    await _setItem(id, { status: "error", error: e.message || String(e) }).catch(() => {});
+    // e can be null (iOS throws bare null from IDB). Accessing e.message on
+    // null previously threw AGAIN here — "null is not an object" — which
+    // escaped this handler and killed the worker (worker.uncaught in the log),
+    // leaving the item stuck with no error shown. Everything here is
+    // null-safe now, and a storage-shaped failure requeues (auto-retries)
+    // rather than dead-ending, since it's usually a transient wedge.
+    const emsg = e?.message || (e == null ? "Storage hiccup" : String(e));
+    vlogError("process.exception", { msg: emsg, stack: (e?.stack || "").slice(0, 500) }, id);
+    const storageish = /object can not be found|IndexedDB|transaction|storage/i.test(emsg);
+    if (storageish) {
+      await _setItem(id, { status: "queued", error: "Storage was briefly unavailable — will retry automatically" }).catch(() => {});
+    } else {
+      await _setItem(id, { status: "error", error: emsg }).catch(() => {});
+    }
     return true;
   } finally {
     decUpload(item.stopId);
