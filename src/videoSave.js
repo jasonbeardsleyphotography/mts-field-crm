@@ -5,11 +5,15 @@
    the in-hand blob so the share call stays inside the tap gesture (iOS
    requirement). Shared by OnsiteWindow, VideoUploads, and StoragePanel. */
 
-import { getVideoFile, fileFromQueueItem } from "./videoQueue";
+import { getVideoFile, fileFromQueueItem, peekLiveVideoFile } from "./videoQueue";
 
 export async function saveVideoToDevice(item) {
   try {
-    let file = item?.file ? fileFromQueueItem(item) : null;
+    // Prefer the in-memory copy: it's readable even when iOS has evicted the
+    // IDB bytes, and it's synchronous so navigator.share stays inside the tap
+    // gesture. Fall back to the IDB blob, then to the async lookup.
+    let file = (item?.id && peekLiveVideoFile(item.id)) || null;
+    if (!file) file = item?.file ? fileFromQueueItem(item) : null;
     if (!file) file = await getVideoFile(item.id);
     if (!file) { alert("This video's file couldn't be found in storage."); return; }
     if (navigator.canShare && navigator.canShare({ files: [file] })) {

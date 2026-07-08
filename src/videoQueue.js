@@ -165,6 +165,36 @@ const idbGet    = (id)   => _idbOp("readonly",  (s, ret) => { s.get(id).onsucces
 const idbDelete = (id)   => _idbOp("readwrite", (s) => s.delete(id));
 const idbAll    = ()     => _idbOp("readonly",  (s, ret) => { s.getAll().onsuccess = (e) => ret(e.target.result || []); });
 
+// ── In-memory blob cache — the heart of "upload immediately" ───────────────
+// iOS evicts video BYTES stored in IndexedDB under storage pressure ("The
+// object can not be found here"), even though the record survives. The cure:
+// keep the freshly-recorded blob in a plain JS Map, in memory, where iOS
+// cannot evict it, and upload FROM THAT. The IDB copy is only a fallback for
+// after an app relaunch (when this map is empty). So the common case — record
+// a video and it uploads right then — never depends on fragile storage.
+//
+// These blobs are memory-backed (MediaRecorder / file-input output), released
+// on success/delete. A soft cap bounds worst-case memory if many videos pile
+// up unsent; the oldest overflow falls back to the (fragile) IDB bytes.
+const _liveBlobs = new Map(); // id -> Blob (insertion-ordered)
+const LIVE_BLOB_MAX = 12;
+
+function _stashLiveBlob(id, blob) {
+  if (!blob) return;
+  _liveBlobs.set(id, blob);
+  while (_liveBlobs.size > LIVE_BLOB_MAX) {
+    const oldest = _liveBlobs.keys().next().value;
+    if (oldest === id) break;
+    _liveBlobs.delete(oldest);
+    vlogWarn?.("liveblob.overflow_evict", { id: oldest });
+  }
+}
+function _dropLiveBlob(id) { _liveBlobs.delete(id); }
+
+/** Best readable source for an item's bytes: the in-memory blob if we still
+ *  have it (never evicted), otherwise the IDB-stored blob (may be evicted). */
+function _blobSource(id, item) { return _liveBlobs.get(id) || item?.file || null; }
+
 // ── Pause state ──────────────────────────────────────────────────────────
 
 let _isPaused = false;
@@ -278,8 +308,14 @@ export async function enqueueVideo({ stopId, file, title }) {
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
+  // Keep the freshly-recorded blob in memory FIRST (before the IDB write, so
+  // it's available even if the write is slow or storage is under pressure).
+  // This is what the upload reads from — see _blobSource — so recording→upload
+  // never round-trips through evictable storage. Stash it as a nicely-named
+  // File so the Save/Share button can reuse it directly.
+  _stashLiveBlob(id, fileFromQueueItem({ file, title: safeTitle, fileName: item.fileName, fileType: item.fileType }) || file);
   await idbPut(item);
-  vlogInfo("enqueue.ok", { id, stopId, title: safeTitle, fileSize: file.size, fileType: item.fileType }, id);
+  vlogInfo("enqueue.ok", { id, stopId, title: safeTitle, fileSize: file.size, fileType: item.fileType, live: true }, id);
   notify();
   _kick();
   return id;
@@ -316,6 +352,7 @@ export async function cancelItem(id) {
 export async function deleteItem(id) {
   vlogInfo("delete_permanent", null, id);
   _invalidateWorker("delete_item");
+  _dropLiveBlob(id);
   await idbDelete(id);
   notify();
   _kick();
@@ -325,8 +362,19 @@ export async function deleteItem(id) {
 // their device — even if it never uploads. The blob lives in IDB from the
 // moment of recording, so this works regardless of upload status. Returns a
 // File (named for a clean Save) or null if the blob is missing.
+// Synchronous access to the in-memory copy, so the Save/Share button can call
+// navigator.share INSIDE the tap gesture (an iOS requirement) and still works
+// when iOS has evicted the IDB bytes. Returns a named File or null.
+export function peekLiveVideoFile(id) {
+  return _liveBlobs.get(id) || null;
+}
+
 export async function getVideoFile(id) {
-  const item = await idbGet(id);
+  const item = await idbGet(id).catch(() => null);
+  // Prefer the in-memory blob — Save must still work when iOS has evicted the
+  // IDB-stored bytes (the whole point of keeping the live copy).
+  const live = _liveBlobs.get(id);
+  if (live) return fileFromQueueItem({ ...(item || {}), file: live });
   if (!item || !item.file) return null;
   return fileFromQueueItem(item);
 }
@@ -481,7 +529,15 @@ async function _processNext() {
       // least one item finish instead of the largest file monopolizing it.
       const next =
         all.find(i => i.status === "uploading") ||
-        all.filter(i => i.status === "queued").sort((a, b) => a.fileSize - b.fileSize)[0];
+        all.filter(i => i.status === "queued").sort((a, b) => {
+          // Upload items whose bytes are still in memory FIRST — they're the
+          // ones we can send reliably right now (before any eviction matters).
+          // Within each group, smallest first (a short visible window is more
+          // likely to finish at least one).
+          const aLive = _liveBlobs.has(a.id) ? 0 : 1;
+          const bLive = _liveBlobs.has(b.id) ? 0 : 1;
+          return aLive - bLive || a.fileSize - b.fileSize;
+        })[0];
       if (!next) break;
       const ok = await _processItem(next.id, myEpoch);
       if (!ok) break;
@@ -731,30 +787,29 @@ async function _processItem(id, myEpoch = _epoch, restarts = 0) {
       // holding a giant buffer.
       const remainingBytes = item.fileSize - bytesUploaded;
       let sendBody;
+      // Prefer the in-memory blob (never evicted). Only if it's gone (app was
+      // relaunched) do we fall back to the IDB bytes (`probe.file`), which iOS
+      // may have evicted. `probe` was just fetched above.
+      const live = _liveBlobs.get(id);
+      const sourceBlob = live || probe.file;
+      if (!sourceBlob) { vlogInfo("upload.no_source_blob", null, id); return false; }
+
       if (remainingBytes <= MATERIALIZE_CAP_BYTES) {
         try {
-          // Re-fetch the blob from a LIVE connection immediately before reading
-          // it. THE "object can not be found here" BUG: a Blob read from IDB
-          // (e.g. item.file, fetched at the top of this function) becomes
-          // permanently invalid once iOS closes the connection that produced
-          // it — reading its bytes then throws "The object can not be found
-          // here" forever, even though the data is fine. Getting a fresh handle
-          // bound to the current connection, then reading it right away,
-          // sidesteps that. (This is what actually killed the two Bechhoefer
-          // videos in the log — not lost data.)
-          const freshHandle = await idbGet(id);
-          if (stale()) return false;
-          if (!freshHandle || !freshHandle.file) { vlogInfo("upload.gone_before_read", null, id); return false; }
-          if (freshHandle.status === "local") { vlogInfo("upload.stopped_kept_local", null, id); return false; }
-          sendBody = await _readSliceToBuffer(freshHandle.file, bytesUploaded, SLICE_READ_TIMEOUT_MS);
+          sendBody = await _readSliceToBuffer(sourceBlob, bytesUploaded, SLICE_READ_TIMEOUT_MS);
         } catch (e) {
           if (stale()) return false;
           const fails = (item.sliceFails || 0) + 1;
-          vlogWarn("upload.slice_read_failed", { msg: e?.message || String(e), remainingKB: Math.round(remainingBytes / KB), consecutive: fails }, id);
+          // If we were reading the IN-MEMORY blob and it STILL failed, the data
+          // really is unrecoverable (rare). If we were reading the IDB fallback,
+          // it's the eviction case — a reload/re-record is the path.
+          vlogWarn("upload.slice_read_failed", { msg: e?.message || String(e), remainingKB: Math.round(remainingBytes / KB), consecutive: fails, fromMemory: !!live }, id);
           if (fails >= 8) {
             await _setItem(id, {
               status: "error",
-              error: "Phone storage is stuck — close this app completely and reopen it, then tap Force Restart. The video is still saved.",
+              error: live
+                ? "This video's data could not be read and appears damaged — it may need to be re-recorded."
+                : "Phone storage is stuck — close this app completely and reopen it, then tap Force Restart. The video is still saved.",
               sliceFails: fails,
             });
             return true;
@@ -773,14 +828,11 @@ async function _processItem(id, myEpoch = _epoch, restarts = 0) {
         if (stale()) return false;
         if (item.sliceFails) { await _setItem(id, { sliceFails: 0 }); item.sliceFails = 0; }
       } else {
-        const freshHandle = await idbGet(id);
-        if (stale()) return false;
-        if (!freshHandle || !freshHandle.file) return false;
-        sendBody = freshHandle.file.slice(bytesUploaded);
+        sendBody = sourceBlob.slice(bytesUploaded);
       }
 
       const t0 = Date.now();
-      vlogInfo("upload.start", { fromOffset: bytesUploaded, remainingKB: Math.round(remainingBytes / KB), attempt: attempts + 1, buffered: sendBody instanceof ArrayBuffer }, id);
+      vlogInfo("upload.start", { fromOffset: bytesUploaded, remainingKB: Math.round(remainingBytes / KB), attempt: attempts + 1, buffered: sendBody instanceof ArrayBuffer, fromMemory: !!live }, id);
 
       // Register the in-flight request so Force Restart / watchdogs can
       // actually terminate it instead of leaving it streaming as a zombie.
@@ -947,6 +999,7 @@ async function _finalize(id, fileId, token) {
     vlogWarn("finalize.field_write_failed", { msg: e?.message }, id);
   }
   await idbDelete(id);
+  _dropLiveBlob(id); // uploaded — release the in-memory copy
   vlogInfo("finalize.ok", { fileId, shareUrl }, id);
   notify();
 }
@@ -987,6 +1040,19 @@ export function startVideoQueueWatcher(getToken) {
   }
   _watcherInstalled = true;
   vlogInfo("watcher.install", null);
+
+  // Ask the browser to make our storage PERSISTENT so iOS stops evicting our
+  // video bytes under storage pressure (the "object can not be found here"
+  // failures). Best-effort: iOS may decline, but when granted it materially
+  // reduces eviction. Harmless where unsupported.
+  try {
+    if (navigator.storage?.persist) {
+      navigator.storage.persisted().then(already => {
+        if (already) { vlogInfo("storage.persist", { already: true }); return; }
+        navigator.storage.persist().then(granted => vlogInfo("storage.persist", { granted })).catch(() => {});
+      }).catch(() => {});
+    }
+  } catch {}
 
   window.addEventListener("online", () => { vlogInfo("event.online", null); _kick(); });
   window.addEventListener("focus",  () => { vlogInfo("event.focus", null);  _kick(); });
