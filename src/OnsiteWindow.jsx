@@ -43,6 +43,7 @@ import {
   isPaused as isVideoQueuePaused,
   setPaused as setVideoQueuePaused,
   deleteItem as deleteVideoQueueItem,
+  markSavedToDevice,
 } from "./videoQueue";
 import { saveVideoToDevice } from "./videoSave";
 import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin } from "./icons";
@@ -113,6 +114,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [cameraSection, setCameraSection] = useState("scope");
   const [showParcelMap, setShowParcelMap] = useState(false);
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
+  const [saveSafetyPrompt, setSaveSafetyPrompt] = useState(null); // { id, file } just-recorded video awaiting a durable save
   const [recording, setRecording] = useState(false);
   const [recDuration, setRecDuration] = useState(0);
   const [playingIdx, setPlayingIdx] = useState(null);
@@ -1033,7 +1035,9 @@ Property: ${s.addr || ""}`);
     const file = e.target.files?.[0];
     if (file) {
       try {
-        await enqueueVideo({ stopId: s.id, file, title: buildVideoTitle() });
+        // Library imports are already safe — the original still lives in the
+        // phone's Photos library — so mark them backed-up and skip the prompt.
+        await enqueueVideo({ stopId: s.id, file, title: buildVideoTitle(), alreadyInLibrary: true });
       } catch (err) {
         console.warn("Failed to enqueue video:", err);
         alert("Failed to queue video: " + (err.message || err));
@@ -1045,11 +1049,25 @@ Property: ${s.addr || ""}`);
   const handleRecordedVideo = async (file) => {
     setShowVideoRecorder(false);
     try {
-      await enqueueVideo({ stopId: s.id, file, title: buildVideoTitle() });
+      const id = await enqueueVideo({ stopId: s.id, file, title: buildVideoTitle() });
+      // The only copy of a fresh recording lives in app storage/memory, both of
+      // which iOS can wipe. Immediately push the user to drop a durable copy in
+      // their Photos library so the video can never be lost — regardless of
+      // whether the upload ever succeeds.
+      if (id) setSaveSafetyPrompt({ id, file });
     } catch (err) {
       console.warn("Failed to enqueue recorded video:", err);
       alert("Failed to queue video: " + (err.message || err));
     }
+  };
+
+  const handleSafetySave = async () => {
+    const p = saveSafetyPrompt;
+    if (!p) return;
+    const ok = await saveVideoToDevice({ id: p.id, file: p.file });
+    if (ok) { try { await markSavedToDevice(p.id); } catch {} setSaveSafetyPrompt(null); }
+    // If not ok (user dismissed the share sheet), keep the prompt up so they
+    // can try again — the whole point is not to let it slip by unsaved.
   };
 
   if (showVideoRecorder) {
@@ -1106,6 +1124,32 @@ Property: ${s.addr || ""}`);
   // ── RENDER ────────────────────────────────────────────────────────────
   return (
     <div style={{position:"fixed",inset:0,zIndex:100,background:"#0a0b10",display:"flex",flexDirection:"column",fontFamily:B,color:"#f0f4fa",overflow:"hidden"}}>
+
+      {/* ── SAVE-TO-PHONE SAFETY PROMPT ────────────────────────────────────
+          Fires right after every in-app recording. A fresh recording lives
+          only in app storage/memory, both of which iOS can wipe — so we push
+          the user to drop an un-losable copy in their Photos library before
+          anything else. The upload still runs in the background regardless. */}
+      {saveSafetyPrompt && (
+        <div style={{position:"fixed",inset:0,zIndex:400,background:"rgba(0,0,0,.82)",backdropFilter:"blur(3px)",WebkitBackdropFilter:"blur(3px)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+          <div style={{width:"100%",maxWidth:400,background:"#0e1220",border:"1px solid #253049",borderRadius:16,padding:"22px 20px",boxShadow:"0 20px 60px rgba(0,0,0,.6)"}}>
+            <div style={{fontSize:34,textAlign:"center",marginBottom:8}}>🎬</div>
+            <div style={{fontSize:17,fontWeight:900,color:"#e6ecf5",fontFamily:F,letterSpacing:0.5,textAlign:"center",textTransform:"uppercase",marginBottom:8}}>Save this video to your phone</div>
+            <div style={{fontSize:13,color:"#9fb0c4",lineHeight:1.55,textAlign:"center",marginBottom:18}}>
+              This keeps a permanent copy in your <b style={{color:"#cdd8e6"}}>Photos</b> so it can never be lost — even if the upload fails. It uploads in the background either way.
+            </div>
+            <button onClick={handleSafetySave} style={{width:"100%",padding:"14px 0",borderRadius:11,background:"#10B981",border:"none",color:"#04140d",fontSize:14,fontWeight:900,fontFamily:F,letterSpacing:0.8,textTransform:"uppercase",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:10}}>
+              <IconDownload size={17} color="#04140d"/> Save to Phone
+            </button>
+            <button onClick={() => setSaveSafetyPrompt(null)} style={{width:"100%",padding:"9px 0",borderRadius:9,background:"transparent",border:"none",color:"#6a7688",fontSize:12,fontWeight:700,fontFamily:F,letterSpacing:0.4,cursor:"pointer"}}>
+              Skip — rely on the upload only
+            </button>
+            <div style={{fontSize:10.5,color:"#c98a3a",textAlign:"center",marginTop:8,lineHeight:1.45}}>
+              ⚠ If you skip and the upload fails, this video could be lost.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── HEADER ────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",paddingTop:"max(10px,env(safe-area-inset-top))",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
@@ -1264,16 +1308,27 @@ Property: ${s.addr || ""}`);
                         <div style={{flex:1,minWidth:0,fontSize:11,color:"#c0c8d0",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</div>
                         <span style={{fontSize:9,color:statusColor,fontWeight:800,fontFamily:F,letterSpacing:0.4,textTransform:"uppercase",flexShrink:0}}>{statusLabel}</span>
                       </div>
+                      {/* At-risk banner: still only in evictable app storage AND no
+                          durable phone copy. Loud until the user saves it or it
+                          uploads — so a video can't silently slip away. */}
+                      {!it.savedToDevice && (
+                        <div style={{display:"flex",alignItems:"center",gap:6,margin:"2px 0 6px",padding:"5px 8px",borderRadius:6,background:"rgba(201,138,58,.12)",border:"1px solid rgba(201,138,58,.35)"}}>
+                          <span style={{fontSize:12}}>⚠</span>
+                          <span style={{flex:1,fontSize:9.5,color:"#e0a860",fontWeight:700,fontFamily:F,letterSpacing:0.3,lineHeight:1.35}}>Not backed up — save to your phone so it can't be lost</span>
+                          <button onClick={async () => { const ok = await saveVideoToDevice(it); if (ok) { try { await markSavedToDevice(it.id); } catch {} } }} style={{padding:"3px 9px",borderRadius:5,background:"#c98a3a",border:"none",color:"#1a1206",fontSize:9,fontWeight:900,cursor:"pointer",fontFamily:F,letterSpacing:0.4,textTransform:"uppercase",whiteSpace:"nowrap"}}>Save now</button>
+                        </div>
+                      )}
                       <div style={{height:3,background:"rgba(255,255,255,.05)",borderRadius:2,overflow:"hidden",marginBottom:4}}>
                         <div style={{height:"100%",width:`${it.progress||0}%`,background:statusColor,transition:"width .3s"}}/>
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
-                        <div style={{flex:1,fontSize:9,color:"#5a6580",fontFamily:F,letterSpacing:0.3}}>
-                          {sizeMB}MB
+                        <div style={{flex:1,fontSize:9,color:"#5a6580",fontFamily:F,letterSpacing:0.3,display:"flex",alignItems:"center",gap:4}}>
+                          <span>{sizeMB}MB</span>
+                          {it.savedToDevice && <span style={{color:"#10B981",fontWeight:800}} title="A copy is saved on your phone">✓ on phone</span>}
                         </div>
                         {/* Save the raw video to the phone (Photos/Files) — always
                             available so a failed upload can never strand the video. */}
-                        <button onClick={() => saveVideoToDevice(it)} title="Save this video to your phone" style={{padding:"3px 8px",borderRadius:5,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:3}}>
+                        <button onClick={async () => { const ok = await saveVideoToDevice(it); if (ok) { try { await markSavedToDevice(it.id); } catch {} } }} title="Save this video to your phone" style={{padding:"3px 8px",borderRadius:5,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:3}}>
                           <IconDownload size={11} color="#10B981"/>Save
                         </button>
                         <button onClick={() => retryVideoQueueItem(it.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>

@@ -283,7 +283,7 @@ function extFromFile(file) {
   return "mp4";
 }
 
-export async function enqueueVideo({ stopId, file, title }) {
+export async function enqueueVideo({ stopId, file, title, alreadyInLibrary = false }) {
   if (!file || !file.size) {
     vlogError("enqueue.bad_file", { hasFile: !!file, size: file?.size });
     throw new Error("No file or empty file");
@@ -305,6 +305,11 @@ export async function enqueueVideo({ stopId, file, title }) {
     folderId: null,                    // Drive folder where file will live
     retries: 0,
     error: null,
+    // Durability flag: is there a copy that iOS can't evict? A library import
+    // is inherently safe — its original still lives in the Photos library — so
+    // it starts true. An in-app RECORDING is the only copy until the user saves
+    // it to their phone, so it starts false and the UI pushes a Save step.
+    savedToDevice: !!alreadyInLibrary,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -319,6 +324,17 @@ export async function enqueueVideo({ stopId, file, title }) {
   notify();
   _kick();
   return id;
+}
+
+// Mark that the user has saved this video to their phone (Photos/Files) — a
+// durable copy iOS can't evict, so the video can no longer be lost. Written
+// directly (not via _setItem) so it applies in ANY status, including "local".
+export async function markSavedToDevice(id) {
+  const cur = await idbGet(id).catch(() => null);
+  if (!cur) return;
+  await idbPut({ ...cur, savedToDevice: true, updatedAt: Date.now() });
+  vlogInfo("saved_to_device", null, id);
+  notify();
 }
 
 // "Cancel" = stop trying to upload, but KEEP the video. The blob stays in

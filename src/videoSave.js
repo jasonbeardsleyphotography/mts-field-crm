@@ -7,6 +7,9 @@
 
 import { getVideoFile, fileFromQueueItem, peekLiveVideoFile } from "./videoQueue";
 
+// Returns true if the save/share flow completed (a durable copy was made),
+// false if it couldn't run or the user dismissed it — so callers can mark the
+// video as backed-up only when it actually is.
 export async function saveVideoToDevice(item) {
   try {
     // Prefer the in-memory copy: it's readable even when iOS has evicted the
@@ -15,19 +18,24 @@ export async function saveVideoToDevice(item) {
     let file = (item?.id && peekLiveVideoFile(item.id)) || null;
     if (!file) file = item?.file ? fileFromQueueItem(item) : null;
     if (!file) file = await getVideoFile(item.id);
-    if (!file) { alert("This video's file couldn't be found in storage."); return; }
+    if (!file) { alert("This video's file couldn't be found in storage."); return false; }
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      navigator.share({ files: [file] }).catch(e => {
+      try {
+        await navigator.share({ files: [file] });
+        return true; // share sheet completed (user picked Save Video / a target)
+      } catch (e) {
         if (e && e.name !== "AbortError") console.warn("share failed", e);
-      });
-      return;
+        return false; // user dismissed, or share failed — not confirmed saved
+      }
     }
     const url = URL.createObjectURL(file);
     const a = document.createElement("a");
     a.href = url; a.download = file.name || "video.mp4";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    return true;
   } catch (e) {
     alert("Couldn't save the video: " + (e?.message || e));
+    return false;
   }
 }
