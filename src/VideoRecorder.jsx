@@ -88,8 +88,17 @@ export default function VideoRecorder({ onRecorded, onClose }) {
     let dead = false;
     (async () => {
       try {
+        // Hard-cap at 720p/30fps: `ideal` is only a hint some phones ignore
+        // (handing back 1080p, which balloons the file and the upload time).
+        // `max` makes 720p a ceiling the camera cannot exceed, so field videos
+        // stay small enough to upload quickly and reliably.
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+          video: {
+            facingMode: "environment",
+            width:  { ideal: 1280, max: 1280 },
+            height: { ideal: 720,  max: 720  },
+            frameRate: { ideal: 30, max: 30 },
+          },
           audio: true,
         });
         if (dead) { stream.getTracks().forEach(t => t.stop()); return; }
