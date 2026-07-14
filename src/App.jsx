@@ -150,37 +150,44 @@ export default function App() {
   // promise instead of launching a second token request. This prevents the
   // rapid-fire popup loop that occurs when multiple concurrent Drive/Calendar
   // 401 responses each independently call silentReauth().
+  // GIS silent token (the ORIGINAL implicit-flow mechanism) — now only a
+  // FALLBACK, used when the server session flow isn't available (non-Safari,
+  // or before the user has done the server sign-in once).
+  const _gisSilentReauth = useCallback(() => new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok) => { if (settled) return; settled = true; clearTimeout(watchdog); resolve(ok); };
+    const watchdog = setTimeout(() => finish(false), 30000);
+    if (!window.google?.accounts?.oauth2) { finish(false); return; }
+    const client = window.google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID, scope: SCOPES,
+      callback: r => { if (r.access_token) { saveToken(r.access_token, r.expires_in); finish(true); } else finish(false); },
+      error_callback: () => finish(false),
+    });
+    client.requestAccessToken({ prompt: "" });
+  }), []);
+
   const _reauthInFlight = useRef(null);
   const silentReauth = useCallback(() => {
     if (_reauthInFlight.current) return _reauthInFlight.current;
-    _reauthInFlight.current = new Promise((resolve) => {
-      // Watchdog: GIS occasionally fires neither callback nor error_callback
-      // (popup dismissed, network stall). Without this, _reauthInFlight would
-      // stay set forever and permanently block all future token refreshes.
-      // Bound the lock to 30s; settle as failure and clear so the next attempt
-      // can proceed.
-      let settled = false;
-      const finish = (ok) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(watchdog);
-        _reauthInFlight.current = null;
-        resolve(ok);
-      };
-      const watchdog = setTimeout(() => finish(false), 30000);
-      if (!window.google?.accounts?.oauth2) { finish(false); return; }
-      const client = window.google.accounts.oauth2.initTokenClient({
-        client_id: CLIENT_ID, scope: SCOPES,
-        callback: r => {
-          if (r.access_token) { saveToken(r.access_token, r.expires_in); finish(true); }
-          else finish(false);
-        },
-        error_callback: () => finish(false),
-      });
-      client.requestAccessToken({ prompt: "" });
-    });
+    _reauthInFlight.current = (async () => {
+      // 1) SERVER SESSION (refresh-token flow). Silent, and immune to Safari
+      //    clearing Google's cookies because the refresh token lives on our
+      //    server behind a first-party session cookie — this is the fix for the
+      //    recurring hourly sign-in popups. Returns 401 when there's no session
+      //    yet or the refresh token has expired (weekly in Testing mode).
+      try {
+        const r = await fetch("/api/token", { credentials: "same-origin", cache: "no-store" });
+        if (r.ok) {
+          const d = await r.json().catch(() => null);
+          if (d?.access_token) { saveToken(d.access_token, d.expires_in); return true; }
+        }
+      } catch { /* network — fall through to GIS */ }
+      // 2) Fall back to the original GIS silent token.
+      return await _gisSilentReauth();
+    })();
+    _reauthInFlight.current.finally(() => { _reauthInFlight.current = null; });
     return _reauthInFlight.current;
-  }, []);
+  }, [_gisSilentReauth]);
 
   // ── COLD-START SILENT REAUTH ──────────────────────────────────────────────
   // On boot, if there's no fresh token (none, or past stored expiry), try
@@ -202,10 +209,9 @@ export default function App() {
     let attempt = 0;
     const run = async () => {
       if (cancelled) return;
-      if (!window.google?.accounts?.oauth2) {
-        setTimeout(run, 200); // GIS not loaded yet — poll, doesn't count as an attempt
-        return;
-      }
+      // Note: no longer gated on GIS being loaded — silentReauth tries the
+      // server session (/api/token) first, which needs no Google script. GIS is
+      // only used as a fallback inside silentReauth.
       const ok = await silentReauth();
       if (cancelled) return;
       if (ok) { setAuthBootChecked(true); return; }
@@ -302,6 +308,22 @@ export default function App() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // Handle the return from the server sign-in redirect (/api/oauth/callback
+  // bounces back with ?signedin=1 or ?oauth_error=…). Surface any error and
+  // strip the one-time flags so a later refresh doesn't repeat them.
+  useEffect(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (p.has("oauth_error")) setError("Sign-in didn't complete — try again, or use classic sign-in.");
+      if (p.has("signedin") || p.has("oauth_error")) {
+        p.delete("signedin"); p.delete("oauth_error");
+        const qs = p.toString();
+        window.history.replaceState({}, "", window.location.pathname + (qs ? "?" + qs : "") + window.location.hash);
+      }
+    } catch {}
+  }, []);
+
   const [rawEvents, setRawEvents] = useState({});
   const [businessDays, setBusinessDays] = useState(() => getBusinessDays(10));
   const [selDay, setSelDay] = useState(0);
@@ -583,6 +605,17 @@ export default function App() {
     // guards after 60s so sign-in isn't permanently blocked.
     setTimeout(() => { _interactiveInFlight.current = false; _authBusy.current = false; }, 60_000);
     _tokenClientRef.current.requestAccessToken();
+  }, []);
+
+  // ── SERVER SIGN-IN (authorization-code flow) ──────────────────────────────
+  // Top-level redirect to our backend, which sends the user to Google's consent
+  // screen and stores a refresh token server-side. After this ONE sign-in, token
+  // renewal is silent (via /api/token) for as long as the refresh token lives
+  // (weekly in Testing mode) — no more hourly popups. This is the primary
+  // sign-in; initAuth() (the GIS popup) remains as a fallback.
+  const serverSignIn = useCallback(() => {
+    _authBusy.current = true;
+    window.location.href = "/api/oauth/start";
   }, []);
 
   // ── AUTHED FETCH — wraps fetchEvents with silent reauth on 401 ────────
@@ -1732,7 +1765,10 @@ export default function App() {
     <div style={{height:"100dvh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0a0b10",fontFamily:"'Oswald','DM Sans',system-ui,sans-serif",color:"#f0f4fa",padding:20,paddingTop:"max(20px,env(safe-area-inset-top))",boxSizing:"border-box"}}>
       <div style={{fontSize:28,fontWeight:900,letterSpacing:3,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif"}}>MTS FIELD SALES</div>
       <div style={{fontSize:12,color:"#5a6580",marginBottom:32,fontWeight:500,letterSpacing:1}}>Monster Tree Service of Rochester</div>
-      <button onClick={initAuth} style={{padding:"16px 40px",borderRadius:12,background:"#1a2035",border:"1px solid #2a3560",color:"#f0f4fa",fontSize:16,fontWeight:700,cursor:"pointer",letterSpacing:.5}}>Sign in with Google</button>
+      <button onClick={serverSignIn} style={{padding:"16px 40px",borderRadius:12,background:"#1a2035",border:"1px solid #2a3560",color:"#f0f4fa",fontSize:16,fontWeight:700,cursor:"pointer",letterSpacing:.5}}>Sign in with Google</button>
+      {/* Fallback: the original popup sign-in, in case the redirect flow ever
+          has trouble — so a backend hiccup can never lock you out. */}
+      <button onClick={initAuth} style={{marginTop:14,padding:"8px 16px",borderRadius:8,background:"transparent",border:"none",color:"#5a6580",fontSize:12,fontWeight:600,cursor:"pointer",letterSpacing:.3,textDecoration:"underline"}}>Trouble signing in? Use classic sign-in</button>
       {error && <div style={{marginTop:16,color:"#ff5555",fontSize:12}}>{error}</div>}
     </div>
   );
@@ -1752,7 +1788,7 @@ export default function App() {
       {needsReconnect && (
         <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:"rgba(246,191,38,.12)",borderBottom:"1px solid rgba(246,191,38,.3)"}}>
           <span style={{flex:1,fontSize:12,color:"#F6BF26",fontWeight:600}}>Google session expired — reconnect to sync.</span>
-          <button onClick={initAuth} style={{padding:"6px 14px",borderRadius:8,background:"rgba(246,191,38,.2)",border:"1px solid rgba(246,191,38,.5)",color:"#F6BF26",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>Reconnect Google</button>
+          <button onClick={serverSignIn} style={{padding:"6px 14px",borderRadius:8,background:"rgba(246,191,38,.2)",border:"1px solid rgba(246,191,38,.5)",color:"#F6BF26",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>Reconnect Google</button>
         </div>
       )}
       <style>{`

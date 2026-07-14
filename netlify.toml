@@ -6,6 +6,25 @@
   path = "/api/video-stream"
   function = "video-stream"
 
+# Server-side Google OAuth (authorization-code flow). These MUST come before
+# the SPA catch-all below, or "/*" would swallow them and serve index.html.
+# The refresh token lives server-side (Netlify Blobs), so token renewal no
+# longer depends on Safari-cleared Google cookies — killing the hourly popup.
+[[redirects]]
+  from = "/api/oauth/start"
+  to = "/.netlify/functions/oauth-start"
+  status = 200
+
+[[redirects]]
+  from = "/api/oauth/callback"
+  to = "/.netlify/functions/oauth-callback"
+  status = 200
+
+[[redirects]]
+  from = "/api/token"
+  to = "/.netlify/functions/token"
+  status = 200
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
