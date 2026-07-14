@@ -314,10 +314,16 @@ export default function RouteMap({ stops, selectedId }) {
       positions.push(coords[s.id]); bounds.extend(coords[s.id]);
     });
 
-    // Full route polyline — Google Directions → OSRM fallback → straight-line fallback
+    // Full route polyline — FREE OSRM routing, straight-line fallback.
+    // This used to call Google's paid Directions API and re-fire on every
+    // redraw (including every stop tap), running up a large monthly bill for
+    // what is only a cosmetic overview line. Turn-by-turn navigation happens
+    // via the native Google Maps hand-off (free), so this line never needed a
+    // paid API. A signature guard also skips redraws when the route is
+    // unchanged, so we don't hammer the free OSRM endpoint either.
     if (positions.length >= 2) {
       let staleRoute = false;
-      const drawOSRM = async () => {
+      const drawRoute = async () => {
         const path = await fetchOSRMPath(positions);
         if (staleRoute || route.current) return;
         route.current = new window.google.maps.Polyline({
@@ -326,26 +332,7 @@ export default function RouteMap({ stops, selectedId }) {
           strokeWeight: path ? 3 : 2, map:map.current,
         });
       };
-      try {
-        new window.google.maps.DirectionsService().route({
-          origin:positions[0], destination:positions[positions.length-1],
-          waypoints:positions.slice(1,-1).map(p=>({location:p,stopover:true})).slice(0,23),
-          travelMode:window.google.maps.TravelMode.DRIVING, optimizeWaypoints:false,
-        }, (result, status) => {
-          if (staleRoute) return;
-          if (status === "OK") {
-            route.current = new window.google.maps.DirectionsRenderer({
-              map:map.current, directions:result, suppressMarkers:true, preserveViewport:true,
-              polylineOptions:{strokeColor:"#039BE5",strokeOpacity:.6,strokeWeight:3},
-            });
-          } else {
-            drawOSRM();
-          }
-        });
-      } catch(e) {
-        drawOSRM();
-      }
-      // Expose cleanup so the effect can cancel inflight OSRM fetch
+      drawRoute();
       route._cancelOSRM = () => { staleRoute = true; };
     }
 
@@ -355,7 +342,12 @@ export default function RouteMap({ stops, selectedId }) {
       map.current.fitBounds(bounds, {top:20,right:20,bottom:20,left:20});
       prevSet.current = set;
     }
-  }, [coords, stops, selectedId]);
+    // NOTE: selectedId is deliberately NOT a dependency. Selection visuals are
+    // handled entirely by the separate HIGHLIGHT effect (marker.setIcon/etc.),
+    // so re-running this heavy marker+route rebuild on every stop tap was pure
+    // waste — and back when the route line used the paid Directions API, each
+    // tap fired a billable request. Keep it keyed only to real data changes.
+  }, [coords, stops]);
 
   // ── RE-CLUSTER MARKERS ON ZOOM ─────────────────────────────────────────
   // Which pins overlap depends on zoom, so we recompute the whole layout each
@@ -386,21 +378,21 @@ export default function RouteMap({ stops, selectedId }) {
     const firstStop = stops[0];
     if (!firstStop || !coords[firstStop.id] || !userLoc.current) return;
 
-    try {
-      new window.google.maps.DirectionsService().route({
-        origin: userLoc.current,
-        destination: coords[firstStop.id],
-        travelMode: window.google.maps.TravelMode.DRIVING,
-      }, (result, status) => {
-        if (stale) return;
-        if (status === "OK") {
-          nextRoute.current = new window.google.maps.DirectionsRenderer({
-            map: map.current, directions: result, suppressMarkers: true, preserveViewport: true,
-            polylineOptions: { strokeColor: "#FFD600", strokeOpacity: .8, strokeWeight: 5 },
-          });
-        }
+    // Free OSRM (with straight-line fallback) for the current-location→next-stop
+    // guide line — same reasoning as the full route: it's a cosmetic overlay,
+    // and turn-by-turn nav is the native Google Maps hand-off, so it doesn't
+    // need the paid Directions API.
+    (async () => {
+      const from = userLoc.current;
+      const to = coords[firstStop.id];
+      const path = await fetchOSRMPath([from, to]);
+      if (stale) return;
+      nextRoute.current = new window.google.maps.Polyline({
+        path: path || [from, to],
+        strokeColor: "#FFD600", strokeOpacity: path ? .8 : .5,
+        strokeWeight: path ? 5 : 3, map: map.current,
       });
-    } catch(e) {}
+    })();
     return () => {
       stale = true;
       if (nextRoute.current) { nextRoute.current.setMap(null); nextRoute.current = null; }
