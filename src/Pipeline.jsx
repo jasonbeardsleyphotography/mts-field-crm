@@ -1,6 +1,5 @@
-import { IconFire, IconRevision, IconPause, IconMail, IconX, IconCheckCircle, IconPhone, IconTrash, IconEdit, IconClipboard, IconSingleops, IconVideo, IconStar, IconCamera, IconImage, IconDownload, IconPen, IconNoSymbol } from "./icons";
-import CameraView from "./CameraView";
-import PhotoMarkup from "./PhotoMarkup";
+import { IconFire, IconRevision, IconPause, IconMail, IconX, IconCheckCircle, IconNoSymbol } from "./icons";
+import OnsiteWindow from "./OnsiteWindow";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import JSZip from "jszip";
 
@@ -41,14 +40,10 @@ async function _saveBlobAsFile(blob, filename) {
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
 }
-import { loadFieldFromDrive, queueFieldDriveSync } from "./driveSync";
+import { loadFieldFromDrive } from "./driveSync";
 import { loadField, peekField, primeField, updateField } from "./fieldStore";
-import { isUploadPending, onUploadChange } from "./uploadStatus";
-import { markStopForPhotoSync } from "./photoSync";
-import { downscaleDataUrl, stripPhotoDataUrls, OVERSIZE_DATAURL_LEN, newPhotoId, photoKey } from "./imageUtils";
-import { listAll as listAllQueue, onQueueChange, enqueueVideo, retryItem as retryQueueVideo, cancelItem as cancelQueueVideo, deleteItem as deleteQueueVideo } from "./videoQueue";
-import { saveVideoToDevice } from "./videoSave";
-import { buildShareUrl, buildStreamUrl } from "./driveUpload";
+import { downscaleDataUrl, stripPhotoDataUrls, OVERSIZE_DATAURL_LEN, photoKey } from "./imageUtils";
+import { listAll as listAllQueue, onQueueChange } from "./videoQueue";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Pipeline
@@ -140,9 +135,6 @@ async function pushToGoogleContacts(card, token) {
   } catch(e) { console.warn("Contact push failed:", e); return { success: false }; }
 }
 
-const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
-const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
-
 const PIPELINE_KEY = "mts-pipeline";
 const FIELD_KEY = id => `mts-field-${id}`;
 const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
@@ -199,70 +191,6 @@ function _mergePhotoArrays(local = [], cloud = []) {
 
 const F = "'Oswald',sans-serif";
 
-// A video still living in the upload queue (waiting / uploading / failed /
-// kept-local), rendered on the card's detail popup so the video is ALWAYS
-// visible and saveable from the client card at every stage — not just after
-// it reaches Drive. Mirrors the row OnsiteWindow shows.
-function QueuedVideoRow({ item }) {
-  const [previewUrl, setPreviewUrl] = useState(null);
-  useEffect(() => {
-    if (!item?.file) return;
-    let url = null;
-    try { url = URL.createObjectURL(item.file); setPreviewUrl(url); } catch {}
-    return () => { if (url) { try { URL.revokeObjectURL(url); } catch {} } };
-  }, [item?.id]);
-
-  const statusColor =
-    item.status === "error" ? "#FF5555" :
-    item.status === "uploading" ? "#10B981" :
-    item.status === "local" ? "#8898a8" : "#7a7050";
-  const statusLabel =
-    item.status === "queued" ? "Waiting to upload…" :
-    item.status === "uploading" ? `Uploading ${item.progress || 0}%` :
-    item.status === "error" ? "Upload failed" :
-    item.status === "local" ? "On this phone only" : item.status;
-  const sizeMB = (item.fileSize / (1024 * 1024)).toFixed(1);
-
-  return (
-    <div style={{marginBottom:8,borderRadius:8,background:"#0e1120",border:"1px solid rgba(246,191,38,.25)",overflow:"hidden"}}>
-      {previewUrl && <video controls preload="metadata" src={previewUrl} style={{width:"100%",maxHeight:240,display:"block",background:"#000"}} />}
-      <div style={{padding:"8px 10px"}}>
-        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
-          <div style={{flex:1,minWidth:0,fontSize:11,color:"#c0c8d0",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>
-          <span style={{fontSize:9,color:statusColor,fontWeight:800,fontFamily:F,letterSpacing:0.4,textTransform:"uppercase",flexShrink:0}}>{statusLabel}</span>
-        </div>
-        {(item.status === "uploading" || item.status === "queued") && (
-          <div style={{height:3,background:"rgba(255,255,255,.05)",borderRadius:2,overflow:"hidden",marginBottom:4}}>
-            <div style={{height:"100%",width:`${item.progress || 0}%`,background:statusColor,transition:"width .3s"}}/>
-          </div>
-        )}
-        <div style={{display:"flex",alignItems:"center",gap:6}}>
-          <div style={{flex:1,fontSize:9,color:"#5a6580",fontFamily:F,letterSpacing:0.3}}>{sizeMB}MB</div>
-          <button onClick={() => saveVideoToDevice(item)} title="Save this video to your phone" style={{padding:"3px 8px",borderRadius:5,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Save</button>
-          <button onClick={() => retryQueueVideo(item.id)} style={{padding:"3px 8px",borderRadius:5,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.25)",color:"#F6BF26",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
-            {item.status === "uploading" ? "Restart" : item.status === "local" ? "Upload" : "Retry"}
-          </button>
-          {item.status === "local" ? (
-            <button onClick={() => { if (window.confirm("Permanently delete this video from the phone? This can't be undone — save it to Photos/Files first if you still need it.")) deleteQueueVideo(item.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#a06060",fontSize:9,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center"}}>
-              <IconX size={10} color="#a06060"/>
-            </button>
-          ) : (
-            <button onClick={() => { if (window.confirm("Stop uploading this video? It stays on this card so you can save it to your phone or upload it later.")) cancelQueueVideo(item.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#a06060",fontSize:9,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center"}}>
-              <IconX size={10} color="#a06060"/>
-            </button>
-          )}
-        </div>
-        {(item.status === "error" || item.status === "local") && (
-          <div style={{fontSize:9,color:"#9fb0c0",marginTop:3,fontFamily:F,lineHeight:1.5}}>
-            {item.status === "error" ? "The video is still saved on this phone." : "This video is kept on this phone."} Tap <b style={{color:"#10B981"}}>Save</b> to keep a copy in Photos/Files.
-          </div>
-        )}
-        {item.error && <div style={{fontSize:9,color:"#FF8888",marginTop:3,fontFamily:F}}>{item.error}</div>}
-      </div>
-    </div>
-  );
-}
-
 // Downscale any oversized (legacy 4K) photo dataUrls in a stop's field, one at
 // a time to keep peak memory low, and persist the result through fieldStore's
 // queue. Returns the updated field if anything shrank, else null.
@@ -309,10 +237,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   const [pipelineSheet, setPipelineSheet] = useState(null); // {card, type:'email'|'sms'}
   const [fieldCache, setFieldCache] = useState({}); // Drive-loaded field data cache
   const [detailLoading, setDetailLoading] = useState(false);
-  const [editFields, setEditFields] = useState({}); // editable overrides for detail popup
   const [contactSave, setContactSave] = useState({}); // {[cardId]: 'saving'|'saved'|'error'}
-  const [detailAiScopeLoading, setDetailAiScopeLoading] = useState(false);
-  const [detailAiAddonLoading, setDetailAiAddonLoading] = useState(false);
   // Email client preference — persisted so user doesn't have to re-select
   const [emailClient, setEmailClient] = useState(() => localStorage.getItem("mts-email-client") || "outlook_web");
   const [bulkEmailQueue, setBulkEmailQueue] = useState(null); // [{email,subject,body,name,cardId,opened}] | null
@@ -322,22 +247,6 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   });
   const [draftTemplates, setDraftTemplates] = useState(null); // edits in progress
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
-  // Detail popup — camera / markup / YouTube upload state
-  const [detailShowCamera, setDetailShowCamera] = useState(null); // "scope" | "addon" | null
-  const [detailMarkup, setDetailMarkup] = useState(null); // { section, idx } | null
-  // Source URL fed to PhotoMarkup — may be a dataUrl (local), a blob URL
-  // (fetched from Drive for promoted photos), or null while loading.
-  const [detailMarkupSrc, setDetailMarkupSrc] = useState(null);
-  const [detailMarkupLoading, setDetailMarkupLoading] = useState(false);
-  // Tracks uploads started from OnsiteWindow that are still running after user tapped Done
-  const [externalYtActive, setExternalYtActive] = useState(false);
-  const detailScopeLibRef = useRef(null);
-  const detailAddonLibRef = useRef(null);
-  const detailYtFileRef = useRef(null);
-  // Tracks whether a mousedown started directly on the detail-popup backdrop,
-  // so a drag that ends outside the card (e.g. selecting the client name and
-  // releasing past the card edge) doesn't close the popup.
-  const detailBackdropDownRef = useRef(false);
   // Pipeline undo — stores the card state snapshot before the last manual move
   const pipelineRef = useRef({});      // always-current mirror of pipeline (avoids stale closure)
   const [undoAction, setUndoAction] = useState(null); // { prevCard, label } | null
@@ -346,176 +255,9 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   const fieldCacheRef = useRef({});
   useEffect(() => { fieldCacheRef.current = fieldCache; }, [fieldCache]);
 
-  // Save edited field data to IndexedDB (and Drive if token available).
-  // Uses fieldStore.updateField (the shared per-stop queue) so this serializes
-  // with photoSync uploads, OnsiteWindow auto-saves, and any other writes —
-  // no concurrent path can clobber the photo array via a stale read.
-  const saveEditedField = useCallback((id, key, value) => {
-    setEditFields(prev => ({ ...prev, [id]: { ...(prev[id] || {}), [key]: value } }));
-    updateField(id, () => ({ [key]: value })).then(() => {
-      if (token) {
-        const syncKey = `_mtsPipelineFieldSync_${id}`;
-        if (window[syncKey]) clearTimeout(window[syncKey]);
-        window[syncKey] = setTimeout(() => {
-          window[syncKey] = null;
-          // Serialized + coalesced so a pipeline edit can't race with an
-          // OnsiteWindow capture for the same stop and push stale data.
-          queueFieldDriveSync(token, id);
-        }, 2000);
-      }
-    }).catch(() => {});
-  }, [token]);
-
-  // ── GEMINI AI — used in detail popup ─────────────────────────────────
-  const callGemini = async (prompt) => {
-    const res = await fetch(`${GEMINI_URL}?key=${GEMINI_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-    });
-    const data = await res.json();
-    return data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response.";
-  };
-
-  const generateDetailScopeSummary = async (card, fd) => {
-    if (!GEMINI_KEY) { saveEditedField(card.id, "aiScopeSummary", "Add VITE_GEMINI_KEY to .env"); return; }
-    setDetailAiScopeLoading(true);
-    try {
-      const text = await callGemini(`You are an ISA-certified arborist's field assistant. Summarize these field notes into a structured estimate summary. Include: species/trees observed, conditions found, recommended treatments, equipment needed, and a rough job value estimate if enough info exists. Be concise and professional.
-
-Client: ${card.cn}
-Address: ${card.addr}
-Job notes from office: ${card.notes || "None"}
-Scope notes: ${fd.scopeNotes || fd.myNotes || "None"}
-Constraints: ${card.constraint || "None"}`);
-      saveEditedField(card.id, "aiScopeSummary", text);
-    } catch(e) { saveEditedField(card.id, "aiScopeSummary", "Error: " + e.message); }
-    setDetailAiScopeLoading(false);
-  };
-
-  const generateDetailAddonEmail = async (card, fd) => {
-    if (!GEMINI_KEY) { saveEditedField(card.id, "aiAddonEmail", "Add VITE_GEMINI_KEY to .env"); return; }
-    setDetailAiAddonLoading(true);
-    try {
-      const text = await callGemini(`You are an ISA-certified arborist writing a professional, educational email to a homeowner. Based on these additional findings discovered during a site visit:
-
-1. For each issue found, write a brief educational paragraph explaining what it is, why it matters for tree/plant health, and what treatments or recommendations exist.
-2. Reference science-based information — cite Cornell Cooperative Extension, Northeast university extension resources, or ISA best practices where relevant.
-3. NEVER use the word "chemical" — instead use "treatments," "applications," "plant healthcare solutions," or "recommendations."
-4. Tone should be educational but down-to-earth. Keep it warm and professional.
-5. End with a brief recommendation and offer to discuss further.
-6. Sign as Jason from Monster Tree Service of Rochester.
-
-Client first name: ${(card.cn || "").split(" ")[0]}
-Add-on findings: ${fd.addonNotes || "None"}
-Property: ${card.addr || ""}`);
-      saveEditedField(card.id, "aiAddonEmail", text);
-    } catch(e) { saveEditedField(card.id, "aiAddonEmail", "Error: " + e.message); }
-    setDetailAiAddonLoading(false);
-  };
-
-  // ── DETAIL POPUP — PHOTO / VIDEO HELPERS ─────────────────────────────
-  const detailAddPhoto = async (rawDataUrl, section, cardId) => {
-    // Downscale to the 2400px budget before storing (camera shoots up to 4K).
-    const dataUrl = await downscaleDataUrl(rawDataUrl);
-    const photo = { dataUrl, ts: Date.now(), id: newPhotoId() };
-    const key = section === "addon" ? "addonPhotos" : "scopePhotos";
-    setEditFields(prev => {
-      const cur = prev[cardId] || {};
-      const cached = fieldCacheRef.current[cardId] || peekField(cardId);
-      const existing = cur[key] || cached?.[key] || cached?.photos || [];
-      return { ...prev, [cardId]: { ...cur, [key]: [...existing, photo] } };
-    });
-    updateField(cardId, (existing) => {
-      const arr = existing[key] || existing.photos || [];
-      return { [key]: [...arr, photo] };
-    }).catch(() => {});
-    markStopForPhotoSync(cardId);
-  };
-
-  // Resolve the stable key of the photo at a rendered index, using the same
-  // array the detail view renders from (editFields override → cached field).
-  const _detailPhotoKeyAt = (idx, key, cardId) => {
-    const cur = editFields[cardId] || {};
-    const cached = fieldCacheRef.current[cardId] || peekField(cardId);
-    const arr = cur[key] || cached?.[key] || cached?.photos || [];
-    return arr[idx] ? photoKey(arr[idx]) : null;
-  };
-
-  const detailRemovePhoto = (idx, section, cardId) => {
-    const key = section === "addon" ? "addonPhotos" : "scopePhotos";
-    // Match by stable key, not index — IDB ordering can differ from the
-    // rendered order after a cross-device merge, so index-based removal could
-    // delete the wrong photo.
-    const pk = _detailPhotoKeyAt(idx, key, cardId);
-    if (pk === null) return;
-    setEditFields(prev => {
-      const cur = prev[cardId] || {};
-      const cached = fieldCacheRef.current[cardId] || peekField(cardId);
-      const existing = cur[key] || cached?.[key] || cached?.photos || [];
-      return { ...prev, [cardId]: { ...cur, [key]: existing.filter(p => photoKey(p) !== pk) } };
-    });
-    updateField(cardId, (existing) => {
-      const arr = existing[key] || existing.photos || [];
-      return { [key]: arr.filter(p => photoKey(p) !== pk) };
-    }).catch(() => {});
-  };
-
-  const detailSaveMarkup = (newDataUrl, idx, section, cardId) => {
-    const key = section === "addon" ? "addonPhotos" : "scopePhotos";
-    const pk = _detailPhotoKeyAt(idx, key, cardId);
-    if (pk === null) return;
-    const applyMarkup = (p) => photoKey(p) === pk ? { ...p, dataUrl: newDataUrl, url: undefined } : p;
-    setEditFields(prev => {
-      const cur = prev[cardId] || {};
-      const cached = fieldCacheRef.current[cardId] || peekField(cardId);
-      const existing = [...(cur[key] || cached?.[key] || cached?.photos || [])];
-      return { ...prev, [cardId]: { ...cur, [key]: existing.map(applyMarkup) } };
-    });
-    updateField(cardId, (existing) => {
-      const arr = existing[key] || existing.photos || [];
-      return { [key]: arr.map(applyMarkup) };
-    }).catch(() => {});
-    markStopForPhotoSync(cardId);
-    setDetailMarkup(null);
-  };
-
-  // Save edits to the current photo without closing markup, then switch index.
-  const detailSaveMarkupOnly = (newDataUrl, idx, section, cardId) => {
-    const key = section === "addon" ? "addonPhotos" : "scopePhotos";
-    const pk = _detailPhotoKeyAt(idx, key, cardId);
-    if (pk === null) return;
-    const applyMarkup = (p) => photoKey(p) === pk ? { ...p, dataUrl: newDataUrl, url: undefined } : p;
-    setEditFields(prev => {
-      const cur = prev[cardId] || {};
-      const cached = fieldCacheRef.current[cardId] || peekField(cardId);
-      const existing = [...(cur[key] || cached?.[key] || cached?.photos || [])];
-      return { ...prev, [cardId]: { ...cur, [key]: existing.map(applyMarkup) } };
-    });
-    updateField(cardId, (existing) => {
-      const arr = existing[key] || existing.photos || [];
-      return { [key]: arr.map(applyMarkup) };
-    }).catch(() => {});
-    markStopForPhotoSync(cardId);
-  };
-
 
   // ── DOWNLOAD PHOTOS ───────────────────────────────────────────────────
   const [downloadingPhotos, setDownloadingPhotos] = useState(false);
-  // Tracks individual photo downloads in progress: Set of "scope_0", "addon_2", etc.
-  const [downloadingSet, setDownloadingSet] = useState(() => new Set());
-
-  const downloadSinglePhoto = useCallback(async (p, filename, key) => {
-    setDownloadingSet(s => new Set([...s, key]));
-    try {
-      const blob = await _fetchPhotoBlob(p, token);
-      await _saveBlobAsFile(blob, filename);
-    } catch (e) {
-      console.warn("Photo download failed:", e);
-    } finally {
-      setDownloadingSet(s => { const n = new Set(s); n.delete(key); return n; });
-    }
-  }, [token]);
 
   const downloadAllPhotos = useCallback(async (card, scopePhotos, addonPhotos) => {
     const all = [
@@ -543,66 +285,6 @@ Property: ${card.addr || ""}`);
       setDownloadingPhotos(false);
     }
   }, [token]);
-
-  const detailHandleLibraryPhotos = (e, section, cardId) => {
-    Array.from(e.target.files || []).forEach(file => {
-      _detailProcessPhoto(file, section, cardId, detailAddPhoto);
-    });
-    e.target.value = "";
-  };
-
-  const detailHandleYtFile = (e, card, fd) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const videoUrls = fd.videoUrls || (fd.videoUrl ? [fd.videoUrl] : []);
-      const lastName = (card.cn || "").split(" ").pop();
-      const jobPart = card.jn ? ` #${card.jn}` : "";
-      const datePart = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
-      const totalCount = videoUrls.length + (queueByStop[card.id] || []).length + 1;
-      const seqNum = String(totalCount).padStart(2, "0");
-      const title = `${lastName}${jobPart} ${datePart} - ${seqNum}`;
-      enqueueVideo({ stopId: card.id, file, title }).catch(err => {
-        console.warn("Failed to queue video:", err);
-        alert("Failed to queue video: " + (err.message || err));
-      });
-    }
-    e.target.value = "";
-  };
-
-  const detailDeleteVideo = async (url, idx, card, fd) => {
-    const driveId = url?.match(/\/file\/d\/([a-zA-Z0-9_-]+)/)?.[1];
-    const ytId    = url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
-    if (driveId) {
-      if (!window.confirm("Delete this video from Google Drive AND remove it from the app?")) return;
-      if (token) {
-        try {
-          await fetch(`https://www.googleapis.com/drive/v3/files/${driveId}`, {
-            method: "DELETE", headers: { Authorization: `Bearer ${token}` },
-          });
-        } catch(e) { console.warn("Drive delete error:", e); }
-      }
-    } else if (ytId) {
-      if (!window.confirm("Delete this video from YouTube AND remove it from the app?")) return;
-      if (token) {
-        try {
-          await fetch(`https://www.googleapis.com/youtube/v3/videos?id=${ytId}`, {
-            method: "DELETE", headers: { Authorization: `Bearer ${token}` },
-          });
-        } catch(e) { console.warn("YT delete error:", e); }
-      }
-    } else {
-      if (!window.confirm("Remove this video from the app?")) return;
-    }
-    const key = "videoUrls";
-    setEditFields(prev => {
-      const cur = prev[card.id] || {};
-      const existing = cur[key] || fieldCacheRef.current[card.id]?.videoUrls || fd.videoUrls || [];
-      return { ...prev, [card.id]: { ...cur, [key]: existing.filter((_, i) => i !== idx) } };
-    });
-    updateField(card.id, (existing) => ({
-      videoUrls: (existing.videoUrls || []).filter((_, i) => i !== idx),
-    })).catch(() => {});
-  };
 
   // Persist
   useEffect(() => { savePipeline(pipeline); }, [pipeline]);
@@ -689,98 +371,6 @@ Property: ${card.addr || ""}`);
     return () => { dead = true; };
   }, [detailCard?.id, token]);
 
-  // ── EXTERNAL UPLOAD STATUS ───────────────────────────────────────────────
-  // Subscribe to OnsiteWindow's module-level upload tracker so the detail
-  // popup shows "↑ Uploading…" even after the user tapped Done and OnsiteWindow
-  // unmounted (the network request is still live in the background).
-  useEffect(() => {
-    if (!detailCard?.id) { setExternalYtActive(false); return; }
-    setExternalYtActive(isUploadPending(detailCard.id));
-    const unsub = onUploadChange((stopId, count) => {
-      if (stopId === detailCard.id) setExternalYtActive(count > 0);
-    });
-    return unsub;
-  }, [detailCard?.id]);
-
-  // ── MARKUP SOURCE LOADER ────────────────────────────────────────────────
-  // When detailMarkup is set, resolve the image source for PhotoMarkup.
-  // If the photo still has a local dataUrl, use it directly. If it has been
-  // promoted (only a Drive url remains), fetch it into a blob URL so the
-  // canvas-based markup tool can read the pixels cross-origin-safely.
-  useEffect(() => {
-    if (!detailMarkup || !detailCard) {
-      if (detailMarkupSrc?.startsWith("blob:")) {
-        try { URL.revokeObjectURL(detailMarkupSrc); } catch {}
-      }
-      setDetailMarkupSrc(null);
-      setDetailMarkupLoading(false);
-      return;
-    }
-    const baseFd = fieldCache[detailCard.id] || peekField(detailCard.id);
-    const overrides = editFields[detailCard.id] || {};
-    const fd = { ...baseFd, ...overrides };
-    const photos = detailMarkup.section === "addon"
-      ? (fd.addonPhotos || [])
-      : (fd.scopePhotos || fd.photos || []);
-    const photo = photos[detailMarkup.idx];
-    // "" sentinel = "effect ran but found no usable source" (distinct from null = "not yet resolved")
-    if (!photo) { setDetailMarkupSrc(""); return; }
-
-    // Local copy available — no fetch needed
-    if (photo.dataUrl) {
-      setDetailMarkupSrc(photo.dataUrl);
-      setDetailMarkupLoading(false);
-      return;
-    }
-
-    // Promoted photo — fetch from Drive URL into a blob.
-    // We must use the Drive API with the auth token rather than fetching
-    // the thumbnail URL directly. The thumbnail URL is public (no auth
-    // required to display it in an <img> tag), but browsers block a
-    // programmatic fetch() to drive.google.com because that host doesn't
-    // return Access-Control-Allow-Origin headers for thumbnail URLs. The
-    // Drive files API (?alt=media) does support CORS when an Authorization
-    // header is supplied, so we use that path instead.
-    if (!photo.url) { setDetailMarkupSrc(""); return; }
-
-    // Extract the Drive file ID from the stored thumbnail/webContentLink URL.
-    const fileIdMatch = photo.url.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
-                        photo.url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-    const fileId = fileIdMatch?.[1];
-
-    let cancelled = false;
-    let blobUrl = null;
-    setDetailMarkupLoading(true);
-    (async () => {
-      try {
-        let res;
-        if (fileId && token) {
-          // Drive API download — CORS-safe with Authorization header
-          res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-        } else {
-          // Fallback: try direct URL (may work on some networks/configs)
-          res = await fetch(photo.url);
-        }
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        const blob = await res.blob();
-        if (cancelled) return;
-        blobUrl = URL.createObjectURL(blob);
-        setDetailMarkupSrc(blobUrl);
-      } catch (e) {
-        console.warn("[Pipeline markup] failed to load photo from Drive:", e);
-        if (!cancelled) setDetailMarkupSrc(""); // "" = failed, not null = pending
-      } finally {
-        if (!cancelled) setDetailMarkupLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-      if (blobUrl) { try { URL.revokeObjectURL(blobUrl); } catch {} }
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailMarkup, detailCard?.id]);
   // Runs on mount, on interval (every 5 min when tab visible), and when the
   // tab becomes visible again — catches cards that entered 'waiting' after
   // mount and ages them without requiring a full reload.
@@ -916,7 +506,7 @@ Property: ${card.addr || ""}`);
     return () => { alive = false; off(); };
   }, []);
 
-  // When the Drive upload queue finishes a video, update fieldCache + editFields
+  // When the Drive upload queue finishes a video, update fieldCache
   // with the new Drive URL so the detail popup shows it without needing a reload.
   useEffect(() => {
     const handler = (e) => {
@@ -925,12 +515,6 @@ Property: ${card.addr || ""}`);
       setFieldCache(prev => {
         const cur = prev[stopId] || {};
         const existing = cur.videoUrls || [];
-        if (existing.includes(shareUrl)) return prev;
-        return { ...prev, [stopId]: { ...cur, videoUrls: [...existing, shareUrl] } };
-      });
-      setEditFields(prev => {
-        const cur = prev[stopId] || {};
-        const existing = cur.videoUrls || fieldCacheRef.current[stopId]?.videoUrls || [];
         if (existing.includes(shareUrl)) return prev;
         return { ...prev, [stopId]: { ...cur, videoUrls: [...existing, shareUrl] } };
       });
@@ -1388,305 +972,70 @@ Property: ${card.addr || ""}`);
       {/* ── FULL CARD DETAIL POPUP ──────────────────────────────────── */}
       {detailCard && (() => {
         const card = detailCard;
-        const baseFd = fieldCache[card.id] || peekField(card.id);
-        const overrides = editFields[card.id] || {};
-        const fd = { ...baseFd, ...overrides };
+        const fd = fieldCache[card.id] || peekField(card.id);
         const stage = STAGES.find(st => st.id === card.stage);
         const isDeclined = card.stage === "declined";
-        const B = "'DM Sans',system-ui,sans-serif";
-        const editStyle = (color) => ({width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:8,background:"rgba(255,255,255,.03)",border:`1px solid ${color}30`,color,fontSize:14,fontFamily:B,lineHeight:1.2,resize:"vertical",outline:"none",minHeight:"unset"});
         const scopePhotos = fd.scopePhotos || fd.photos || [];
         const addonPhotos = fd.addonPhotos || [];
-        const videoUrls = fd.videoUrls || (fd.videoUrl ? [fd.videoUrl] : []);
-        const getYtId      = url => url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
-        const getDriveId   = url => url?.match(/\/(?:file\/d|watch)\/([a-zA-Z0-9_-]+)/)?.[1];
 
-        // Camera overlay — renders above everything else in the popup
-        if (detailShowCamera) return <CameraView
-          onPhoto={(dataUrl) => { detailAddPhoto(dataUrl, detailShowCamera, card.id); }}
-          onClose={() => setDetailShowCamera(null)}
-        />;
-
-        // Markup overlay
-        if (detailMarkup) {
-          const photos = detailMarkup.section === "addon" ? addonPhotos : scopePhotos;
-          const photo = photos[detailMarkup.idx];
-          if (photo) {
-            // null  = effect not yet run (always show spinner — effect resolves fast for local photos)
-            // ""    = effect ran but found no usable source (show error)
-            // url   = ready to edit
-            if (detailMarkupLoading || detailMarkupSrc === null) {
-              return (
-                <div style={{position:"fixed",inset:0,background:"#080a10",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12}}>
-                  <div style={{fontSize:13,color:"#5a6580",fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>Loading photo…</div>
-                  <div style={{fontSize:10,color:"#3a4a60"}}>{photo.url && !photo.dataUrl ? "Fetching from Drive" : "Preparing…"}</div>
-                  <button onClick={() => setDetailMarkup(null)} style={{marginTop:8,padding:"8px 20px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#5a6580",fontSize:12,cursor:"pointer"}}>Cancel</button>
-                </div>
-              );
-            }
-            if (detailMarkupSrc === "") {
-              // Effect ran and found no usable source — show error, let user dismiss
-              return (
-                <div style={{position:"fixed",inset:0,background:"#080a10",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12,padding:24}}>
-                  <div style={{fontSize:13,color:"#FF8888",fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>Could not load photo</div>
-                  <div style={{fontSize:11,color:"#5a6580",textAlign:"center"}}>The local copy is unavailable and the cloud copy could not be reached. Check your connection.</div>
-                  <button onClick={() => setDetailMarkup(null)} style={{marginTop:8,padding:"8px 20px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",color:"#5a6580",fontSize:12,cursor:"pointer"}}>Back</button>
-                </div>
-              );
-            }
-            return <PhotoMarkup
-              key={`${detailMarkup.section}-${detailMarkup.idx}`}
-              photoDataUrl={detailMarkupSrc}
-              onSave={dataUrl => detailSaveMarkup(dataUrl, detailMarkup.idx, detailMarkup.section, card.id)}
-              onCancel={() => setDetailMarkup(null)}
-              hasPrev={detailMarkup.idx > 0}
-              hasNext={detailMarkup.idx < photos.length - 1}
-              onPrev={(dataUrl, hasEdits) => {
-                if (hasEdits) detailSaveMarkupOnly(dataUrl, detailMarkup.idx, detailMarkup.section, card.id);
-                setDetailMarkup(m => ({ ...m, idx: m.idx - 1 }));
-              }}
-              onNext={(dataUrl, hasEdits) => {
-                if (hasEdits) detailSaveMarkupOnly(dataUrl, detailMarkup.idx, detailMarkup.section, card.id);
-                setDetailMarkup(m => ({ ...m, idx: m.idx + 1 }));
-              }}
-            />;
-          }
-        }
-
-        return <div
-          onMouseDown={e => { detailBackdropDownRef.current = e.target === e.currentTarget; }}
-          onClick={e => { if (detailBackdropDownRef.current && e.target === e.currentTarget) setDetailCard(null); }}
-          style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
-          <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",width:"100%",maxWidth:880,height:"100%",maxHeight:"min(100vh, 900px)",display:"flex",flexDirection:"column",overflow:"hidden",borderRadius:14,boxShadow:"0 20px 60px rgba(0,0,0,.6)",border:"1px solid #1a2030"}}>
-            <div style={{flex:1,overflowY:"auto"}}>
-
-            {/* Header — paddingTop respects iPhone notch / Dynamic Island */}
-            <div style={{padding:"16px 20px",paddingTop:"max(16px, env(safe-area-inset-top))",background:"#0a0b10",borderBottom:"1px solid #1a2030",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:1}}>
-              <div style={{flex:1}}>
-                <div onClick={() => copyClientName(card.cn)} title="Tap to copy name" style={{fontSize:20,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.5,cursor:"pointer",userSelect:"none"}}>{card.hot && <IconFire size={16} color="#FFB300" style={{marginRight:6,flexShrink:0}}/>}{card.cn}</div>
-                {card.addr && <div style={{fontSize:13,color:"#8a96a8",fontFamily:F,textTransform:"uppercase",letterSpacing:1,marginTop:2}}>{card.addr}</div>}
-                {(() => {
-                  const lc = formatContact(lastContact[card.id]);
-                  return lc ? <div style={{fontSize:11,color:"#64B5F6",marginTop:4,fontWeight:600,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>{lc}</div> : null;
+        // Pipeline's card detail view now renders the SAME OnsiteWindow
+        // component the Route "swipe a card" flow uses — one shared editing
+        // screen instead of two hand-maintained copies that kept drifting
+        // apart. backLabel/topBar are OnsiteWindow's extension points for the
+        // chrome that's genuinely Pipeline-only (stage moves, repeat-client
+        // banner, photo zip export, jump-to-Route) and has no Route
+        // equivalent; everything else — notes, photos, video, AI summaries,
+        // Line Items, Job Tags — is now identical between the two screens.
+        return (
+          <OnsiteWindow
+            key={card.id}
+            stop={{
+              id: card.id, cn: card.cn, addr: card.addr, phone: card.phone,
+              email: card.email, jn: card.jn, notes: card.notes,
+              constraint: card.constraint,
+            }}
+            token={token}
+            backLabel="Close"
+            onBack={() => setDetailCard(null)}
+            onDone={() => setDetailCard(null)}
+            onDecline={() => { moveCard(card.id, "declined"); setDetailCard(null); }}
+            topBar={
+              <div style={{padding:"10px 20px",background:"#0a0b10",borderBottom:"1px solid #1a2030",display:"flex",flexDirection:"column",gap:10}}>
+                {repeatClients[card.id] && (() => {
+                  const prev = repeatClients[card.id];
+                  const prevStage = STAGES.find(s => s.id === prev.stage);
+                  return (
+                    <div style={{padding:"8px 12px",borderRadius:8,background:"rgba(139,92,246,.08)",border:"1px solid rgba(139,92,246,.2)",display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{fontSize:13}}>↩</span>
+                      <div style={{flex:1}}>
+                        <span style={{fontSize:12,fontWeight:700,color:"#a78bfa",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Return client</span>
+                        <span style={{fontSize:11,color:"#7060a0",marginLeft:8}}>Previous card: {prevStage?.label || prev.stage} · {daysSince(prev.stageChangedAt || prev.addedAt)}</span>
+                      </div>
+                      <button onClick={()=>setDetailCard(prev)} style={{padding:"4px 10px",borderRadius:6,background:"rgba(139,92,246,.12)",border:"1px solid rgba(139,92,246,.25)",color:"#a78bfa",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>View</button>
+                    </div>
+                  );
                 })()}
-              </div>
-              {detailLoading && <div style={{fontSize:10,color:"#3B82F6",fontWeight:600,display:"flex",alignItems:"center",gap:4}}><span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>↻</span> syncing</div>}
-              <span style={{padding:"4px 12px",borderRadius:99,background:stage?.bg,color:stage?.color,fontSize:12,fontWeight:700,fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{stage?.label}</span>
-              <button onClick={() => setDetailCard(null)} style={{width:32,height:32,borderRadius:8,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
-            </div>
 
-            <div style={{padding:"16px 20px"}}>
-              {/* Stage move bar — sits above contact info for quick access */}
-              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14,paddingBottom:12,borderBottom:"1px solid #1a2030"}}>
-                {isDeclined && <button onClick={() => { reactivate(card.id); setDetailCard({...card, stage:"estimate_needed"}); }} style={{padding:"6px 12px",borderRadius:8,background:"rgba(255,183,77,.1)",border:"1px solid rgba(255,183,77,.3)",color:"#FFB74D",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>↩ REACTIVATE</button>}
-                {STAGES.filter(st => st.id !== card.stage && !(isDeclined && st.id !== "estimate_needed")).map(st => (
-                  <button key={st.id} onClick={() => { moveCard(card.id, st.id); setDetailCard(null); }} style={{padding:"6px 10px",borderRadius:8,background:st.bg,border:`1px solid ${st.color}40`,color:st.color,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.3}}>{st.label}</button>
-                ))}
-              </div>
+                <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                  <span style={{padding:"4px 12px",borderRadius:99,background:stage?.bg,color:stage?.color,fontSize:11,fontWeight:700,fontFamily:F,textTransform:"uppercase",letterSpacing:0.5,flexShrink:0}}>{stage?.label}</span>
+                  {isDeclined && <button onClick={() => { reactivate(card.id); setDetailCard({...card, stage:"estimate_needed"}); }} style={{padding:"6px 12px",borderRadius:8,background:"rgba(255,183,77,.1)",border:"1px solid rgba(255,183,77,.3)",color:"#FFB74D",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>↩ REACTIVATE</button>}
+                  {STAGES.filter(st => st.id !== card.stage && !(isDeclined && st.id !== "estimate_needed")).map(st => (
+                    <button key={st.id} onClick={() => { moveCard(card.id, st.id); setDetailCard(null); }} style={{padding:"6px 10px",borderRadius:8,background:st.bg,border:`1px solid ${st.color}40`,color:st.color,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.3}}>{st.label}</button>
+                  ))}
+                </div>
 
-              {/* Repeat client banner */}
-              {repeatClients[card.id] && (() => {
-                const prev = repeatClients[card.id];
-                const prevStage = STAGES.find(s => s.id === prev.stage);
-                return (
-                  <div style={{marginBottom:14,padding:"8px 12px",borderRadius:8,background:"rgba(139,92,246,.08)",border:"1px solid rgba(139,92,246,.2)",display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{fontSize:13}}>↩</span>
-                    <div style={{flex:1}}>
-                      <span style={{fontSize:12,fontWeight:700,color:"#a78bfa",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Return client</span>
-                      <span style={{fontSize:11,color:"#7060a0",marginLeft:8}}>Previous card: {prevStage?.label || prev.stage} · {daysSince(prev.stageChangedAt || prev.addedAt)}</span>
-                    </div>
-                    <button onClick={()=>setDetailCard(prev)} style={{padding:"4px 10px",borderRadius:6,background:"rgba(139,92,246,.12)",border:"1px solid rgba(139,92,246,.25)",color:"#a78bfa",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>View</button>
-                  </div>
-                );
-              })()}
-
-              {/* Contact */}
-              <div style={{display:"flex",gap:16,marginBottom:16,flexWrap:"wrap"}}>
-                {card.phone && <div style={{fontSize:14,color:"#a0b8d0",display:"flex",alignItems:"center",gap:6}}><IconPhone size={14} color="#a0b8d0"/><a href={`tel:${card.phone.replace(/\D/g,"")}`} onClick={()=>markContact(card.id,"call")} style={{color:"#a0b8d0",textDecoration:"none"}}>{card.phone}</a></div>}
-                {card.email && <button onClick={()=>{navigator.clipboard?.writeText(card.email).catch(()=>{});markContact(card.id,"email");}} style={{fontSize:14,color:"#a0b8d0",background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:6}} title="Copy email">
-                  <IconMail size={14} color="#a0b8d0"/><span style={{color:"#a0b8d0"}}>{card.email}</span>
-                </button>}
-                {card.jn && <button onClick={() => openSingleOps(card.jn)} style={{fontSize:14,color:"#3B82F6",background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}><span style={{display:"flex",alignItems:"center",gap:4}}>SingleOps #{card.jn}<IconClipboard size={12} color="#3B82F6"/></span></button>}
-              </div>
-
-              {/* Job notes */}
-              {card.notes && <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>JOB NOTES</div>
-                <div style={{fontSize:14,color:"#8898a8",lineHeight:1.6,fontStyle:"italic"}}>{card.notes}</div>
-              </div>}
-
-              {/* Scope section */}
-              {(fd.scopeNotes || fd.myNotes) && <div style={{marginBottom:16}}>
-                <div style={{fontSize:12,fontWeight:700,color:"#3B82F6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>SCOPE</div>
-                <textarea value={fd.scopeNotes || fd.myNotes || ""} onChange={e => saveEditedField(card.id, "scopeNotes", e.target.value)} rows={Math.max(5, Math.round(Math.ceil((fd.scopeNotes || fd.myNotes || "").length / 60) * 1.3))} style={editStyle("#b0b8c8")} />
-                <button onClick={() => saveEditedField(card.id, "scopeNotes", (fd.scopeNotes || fd.myNotes || "").toUpperCase())} style={{marginTop:4,padding:"5px 12px",borderRadius:6,background:"rgba(176,184,200,.06)",border:"1px solid rgba(176,184,200,.15)",color:"#6a7a90",fontSize:10,fontWeight:800,cursor:"pointer",letterSpacing:1}}>AA → ALL CAPS</button>
-                <button onClick={() => generateDetailScopeSummary(card, fd)} disabled={detailAiScopeLoading} style={{marginTop:6,width:"100%",padding:"9px 12px",borderRadius:8,background:detailAiScopeLoading?"rgba(59,130,246,.05)":"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.25)",color:detailAiScopeLoading?"#3a5a80":"#3B82F6",fontSize:11,fontWeight:700,cursor:detailAiScopeLoading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
-                  <span style={{fontSize:13}}>{detailAiScopeLoading?"⏳":"✦"}</span>
-                  {detailAiScopeLoading ? "Generating summary…" : fd.aiScopeSummary ? "Regenerate scope summary" : "Generate scope summary"}
-                </button>
-              </div>}
-
-              {fd.aiScopeSummary && <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>AI SCOPE SUMMARY</div>
-                <textarea value={fd.aiScopeSummary} onChange={e => saveEditedField(card.id, "aiScopeSummary", e.target.value)} style={editStyle("#a0b0c8")} />
-              </div>}
-
-              {/* Scope photos — fully editable */}
-              <div style={{marginBottom:16}}>
-                {(scopePhotos.length > 0 || addonPhotos.length > 0) && (
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",marginBottom:8}}>
-                    <button
-                      onClick={() => downloadAllPhotos(card, scopePhotos, addonPhotos)}
-                      disabled={downloadingPhotos}
-                      style={{padding:"5px 12px",borderRadius:7,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.3)",color:"#3B82F6",fontSize:10,fontWeight:700,cursor:downloadingPhotos?"default":"pointer",display:"flex",alignItems:"center",gap:5,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",opacity:downloadingPhotos?0.6:1}}
-                    >
-                      <IconDownload size={11} color="#3B82F6"/>
-                      {downloadingPhotos ? "Zipping…" : `Download All (${scopePhotos.length + addonPhotos.length})`}
+                <div style={{display:"flex",gap:6}}>
+                  <button onClick={() => { setDetailCard(null); onSwitchToRoute(card.id); }} style={{flex:1,padding:"7px 0",borderRadius:8,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.3,textTransform:"uppercase"}}>→ View in Route</button>
+                  {(scopePhotos.length + addonPhotos.length) > 0 && (
+                    <button onClick={() => downloadAllPhotos(card, scopePhotos, addonPhotos)} disabled={downloadingPhotos} style={{flex:1,padding:"7px 0",borderRadius:8,background:"rgba(16,185,129,.08)",border:"1px solid rgba(16,185,129,.25)",color:"#10B981",fontSize:11,fontWeight:700,cursor:downloadingPhotos?"default":"pointer",opacity:downloadingPhotos?0.6:1,fontFamily:F,letterSpacing:0.3,textTransform:"uppercase"}}>
+                      {downloadingPhotos ? "Zipping…" : `Download All Photos (${scopePhotos.length + addonPhotos.length})`}
                     </button>
-                  </div>
-                )}
-                {scopePhotos.length > 0 && <>
-                  <div style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>SCOPE PHOTOS ({scopePhotos.length})</div>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:8,marginBottom:8}}>
-                    {scopePhotos.map((p, i) => (
-                      <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
-                        <img src={p.url || p.dataUrl} alt="" onClick={() => setDetailMarkup({section:"scope",idx:i})} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
-                        <button onClick={() => detailRemovePhoto(i,"scope",card.id)} style={{position:"absolute",top:4,right:4,width:22,height:22,borderRadius:11,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={11} color="#ff6666"/></button>
-                        <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:3}}>
-                          <div onClick={() => setDetailMarkup({section:"scope",idx:i})} style={{padding:"4px 9px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
-                          <button onClick={e=>{e.stopPropagation();downloadSinglePhoto(p,`${card.cn.replace(/\s+/g,"_")}_scope_${i+1}.jpg`,`scope_${i}`);}} disabled={downloadingSet.has(`scope_${i}`)} style={{padding:"4px 9px",borderRadius:5,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:downloadingSet.has(`scope_${i}`)?0.5:1}}><IconDownload size={12} color="#ccc"/></button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </>}
-                <input ref={detailScopeLibRef} type="file" accept="image/*" multiple onChange={e => detailHandleLibraryPhotos(e,"scope",card.id)} style={{display:"none"}} />
-                <div style={{display:"flex",gap:6}}>
-                  <button onClick={() => setDetailShowCamera("scope")} style={{flex:1,padding:"8px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4}}>
-                    <IconCamera size={14} color="#5a7090"/><span style={{fontSize:10,color:"#5a7090",fontWeight:600}}>Camera</span>
-                  </button>
-                  <button onClick={() => detailScopeLibRef.current?.click()} style={{flex:1,padding:"8px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4}}>
-                    <IconImage size={14} color="#5a7090"/><span style={{fontSize:10,color:"#5a7090",fontWeight:600}}>Library</span>
-                  </button>
+                  )}
                 </div>
               </div>
-
-              {/* Add-on section */}
-              {fd.addonNotes && <div style={{marginBottom:16}}>
-                <div style={{fontSize:12,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>ADD-ON</div>
-                <textarea value={fd.addonNotes} onChange={e => saveEditedField(card.id, "addonNotes", e.target.value)} rows={Math.max(4, Math.ceil((fd.addonNotes || "").length / 60))} style={editStyle("#c8b0a0")} />
-                <button onClick={() => saveEditedField(card.id, "addonNotes", (fd.addonNotes || "").toUpperCase())} style={{marginTop:4,padding:"5px 12px",borderRadius:6,background:"rgba(200,176,160,.06)",border:"1px solid rgba(200,176,160,.15)",color:"#8a6a50",fontSize:10,fontWeight:800,cursor:"pointer",letterSpacing:1}}>AA → ALL CAPS</button>
-                <button onClick={() => generateDetailAddonEmail(card, fd)} disabled={detailAiAddonLoading} style={{marginTop:6,width:"100%",padding:"9px 12px",borderRadius:8,background:detailAiAddonLoading?"rgba(255,138,101,.05)":"rgba(255,138,101,.1)",border:"1px solid rgba(255,138,101,.25)",color:detailAiAddonLoading?"#906050":"#FF8A65",fontSize:11,fontWeight:700,cursor:detailAiAddonLoading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>
-                  <span style={{fontSize:13}}>{detailAiAddonLoading?"⏳":"✦"}</span>
-                  {detailAiAddonLoading ? "Generating email…" : fd.aiAddonEmail ? "Regenerate add-on email" : "Generate add-on email"}
-                </button>
-              </div>}
-
-              {fd.aiAddonEmail && <div style={{marginBottom:16}}>
-                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
-                  <span style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,flex:1}}>AI ADD-ON EMAIL</span>
-                  <button onClick={()=>{
-                    const subject = `Additional findings from your estimate — Monster Tree Service`;
-                    openEmailCompose(card.email||"", subject, fd.aiAddonEmail);
-                  }} style={{padding:"3px 8px",borderRadius:5,background:"rgba(255,138,101,.08)",border:"1px solid rgba(255,138,101,.25)",color:"#FF8A65",fontSize:10,fontWeight:700,cursor:"pointer"}}>Send</button>
-                  <button onClick={()=>{navigator.clipboard?.writeText(fd.aiAddonEmail).catch(()=>{});}} style={{padding:"3px 8px",borderRadius:5,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",fontSize:10,fontWeight:700,cursor:"pointer"}}>Copy</button>
-                </div>
-                <textarea value={fd.aiAddonEmail} onChange={e => saveEditedField(card.id, "aiAddonEmail", e.target.value)} style={editStyle("#c8a090")} />
-              </div>}
-
-              {/* Add-on photos — fully editable */}
-              <div style={{marginBottom:16}}>
-                {addonPhotos.length > 0 && <>
-                  <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>ADD-ON PHOTOS ({addonPhotos.length})</div>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:8,marginBottom:8}}>
-                    {addonPhotos.map((p, i) => (
-                      <div key={i} style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid #1a2540",aspectRatio:"4/3"}}>
-                        <img src={p.url || p.dataUrl} alt="" onClick={() => setDetailMarkup({section:"addon",idx:i})} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
-                        <button onClick={() => detailRemovePhoto(i,"addon",card.id)} style={{position:"absolute",top:4,right:4,width:22,height:22,borderRadius:11,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={11} color="#ff6666"/></button>
-                        <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:3}}>
-                          <div onClick={() => setDetailMarkup({section:"addon",idx:i})} style={{padding:"4px 9px",borderRadius:5,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
-                          <button onClick={e=>{e.stopPropagation();downloadSinglePhoto(p,`${card.cn.replace(/\s+/g,"_")}_addon_${i+1}.jpg`,`addon_${i}`);}} disabled={downloadingSet.has(`addon_${i}`)} style={{padding:"4px 9px",borderRadius:5,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:downloadingSet.has(`addon_${i}`)?0.5:1}}><IconDownload size={12} color="#ccc"/></button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </>}
-                <input ref={detailAddonLibRef} type="file" accept="image/*" multiple onChange={e => detailHandleLibraryPhotos(e,"addon",card.id)} style={{display:"none"}} />
-                <div style={{display:"flex",gap:6}}>
-                  <button onClick={() => setDetailShowCamera("addon")} style={{flex:1,padding:"8px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4}}>
-                    <IconCamera size={14} color="#5a7090"/><span style={{fontSize:10,color:"#5a7090",fontWeight:600}}>Camera</span>
-                  </button>
-                  <button onClick={() => detailAddonLibRef.current?.click()} style={{flex:1,padding:"8px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4}}>
-                    <IconImage size={14} color="#5a7090"/><span style={{fontSize:10,color:"#5a7090",fontWeight:600}}>Library</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Video — upload, view, delete */}
-              <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
-                  VIDEO
-                  {((queueByStop[card.id] || []).some(i => i.status === "uploading" || i.status === "queued") || externalYtActive) && <span style={{fontSize:9,color:"#F6BF26",fontWeight:700,padding:"1px 8px",borderRadius:10,background:"rgba(246,191,38,.1)",border:"1px solid rgba(246,191,38,.2)",animation:"pulse 1s infinite"}}>↑ Uploading…</span>}
-                </div>
-                {/* Videos still on this phone (queued / uploading / failed /
-                    kept-local) — always visible and saveable from the card,
-                    at every stage, not only once they reach Drive. */}
-                {(queueByStop[card.id] || []).map(it => <QueuedVideoRow key={it.id} item={it} />)}
-                {videoUrls.map((url, i) => {
-                  const ytId    = getYtId(url);
-                  const driveId = getDriveId(url);
-                  // Always rebuild the watch link fresh from the driveId rather than
-                  // trusting the stored URL — older cards saved a Drive /preview link
-                  // (broken "No preview available" iframe); this fixes those in place
-                  // without needing to touch stored card data.
-                  const shareLink = driveId ? buildShareUrl(driveId) : url;
-                  return <div key={i} style={{marginBottom:8,borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",overflow:"hidden"}}>
-                    {ytId ? (
-                      <div style={{position:"relative",paddingBottom:"56.25%"}}>
-                        <iframe src={`https://www.youtube.com/embed/${ytId}`} style={{position:"absolute",inset:0,width:"100%",height:"100%",border:"none"}} allowFullScreen />
-                      </div>
-                    ) : driveId ? (
-                      <video controls preload="metadata" src={buildStreamUrl(driveId)} style={{width:"100%",maxHeight:240,display:"block",background:"#000"}} />
-                    ) : (
-                      <a href={url} target="_blank" rel="noopener noreferrer" style={{display:"block",padding:"10px 12px",fontSize:13,color:"#6a8ab0"}}>{url}</a>
-                    )}
-                    <div style={{padding:"6px 8px",display:"flex",gap:6,alignItems:"center"}}>
-                      <div style={{fontSize:9,color:"#5a6890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{shareLink}</div>
-                      <button onClick={()=>{const html=`<a href="${shareLink}">Link to Video Review</a>`;if(navigator.clipboard?.write){navigator.clipboard.write([new ClipboardItem({"text/html":new Blob([html],{type:"text/html"}),"text/plain":new Blob([shareLink],{type:"text/plain"})})]).catch(()=>navigator.clipboard?.writeText(shareLink));}else{navigator.clipboard?.writeText(shareLink);}}} style={{padding:"4px 8px",borderRadius:5,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#5a90b0",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>Copy link</button>
-                      <button onClick={() => detailDeleteVideo(url, i, card, fd)} style={{padding:"4px 6px",borderRadius:5,background:"rgba(200,60,60,.08)",border:"1px solid rgba(200,60,60,.15)",color:"#e06060",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}><IconX size={10} color="#e06060"/></button>
-                    </div>
-                  </div>;
-                })}
-                <input ref={detailYtFileRef} type="file" accept="video/*" onChange={e => detailHandleYtFile(e, card, fd)} style={{display:"none"}} />
-                <button onClick={() => detailYtFileRef.current?.click()} style={{width:"100%",padding:"9px 0",borderRadius:8,background:"rgba(59,130,246,.06)",border:"1px dashed rgba(59,130,246,.25)",color:"#4a7ab0",fontSize:11,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                  <IconVideo size={13} color="#4a7ab0"/>{videoUrls.length > 0 ? `Add another video (${videoUrls.length + 1})` : "Upload video to Drive"}
-                </button>
-              </div>
-
-              {/* Audio clips */}
-              {(fd.audioClips || []).length > 0 && <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:4}}>VOICE MEMOS ({fd.audioClips.length})</div>
-                {fd.audioClips.map((clip, i) => (
-                  <audio key={i} controls src={clip.dataUrl} style={{width:"100%",marginBottom:4,height:36}} />
-                ))}
-              </div>}
-
-              {/* Metadata */}
-              <div style={{fontSize:12,color:"#4a5a70",marginBottom:16}}>
-                Added {card.addedAt ? new Date(card.addedAt).toLocaleDateString() : "—"} · {card.constraint || "No constraints"}
-              </div>
-
-            </div>
-            </div>{/* end scrollable */}
-
-            {/* Sticky bottom bar — Route button lives here so it doesn't crowd the header */}
-            <div style={{flexShrink:0,padding:"10px 20px",paddingBottom:"max(10px,env(safe-area-inset-bottom))",background:"#0a0b10",borderTop:"1px solid #1a2030",display:"flex",gap:8,alignItems:"center"}}>
-              <button onClick={() => { setDetailCard(null); onSwitchToRoute(card.id); }} style={{flex:1,padding:"11px 0",borderRadius:10,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>← Route</button>
-              <button onClick={() => setDetailCard(null)} style={{flex:2,padding:"11px 0",borderRadius:10,background:"#1a2035",border:"1px solid #2a3560",color:"#8898a8",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Close</button>
-            </div>
-
-          </div>{/* end centered card */}
-        </div>;{/* end backdrop */}
+            }
+          />
+        );
       })()}
 
       {/* ── EMAIL TEMPLATE SHEET ──────────────────────────────────────── */}
@@ -1878,24 +1227,4 @@ export { STAGES, loadPipeline, savePipeline, pushCalendarColor };
    Module-level helpers — outside React so async work survives navigation
    ═══════════════════════════════════════════════════════════════════════════ */
 
-// Photo resize + immediate IndexedDB save for the detail popup
-function _detailProcessPhoto(file, section, cardId, addCallback) {
-  const reader = new FileReader();
-  reader.onload = (ev) => {
-    const img = new Image();
-    img.onload = () => {
-      const MAX = 2400;
-      let w = img.width, h = img.height;
-      if (w > MAX) { h = h * MAX / w; w = MAX; }
-      if (h > MAX) { w = w * MAX / h; h = MAX; }
-      const c = document.createElement("canvas");
-      c.width = w; c.height = h;
-      c.getContext("2d").drawImage(img, 0, 0, w, h);
-      const dataUrl = c.toDataURL("image/jpeg", 0.82);
-      addCallback(dataUrl, section, cardId);
-    };
-    img.src = ev.target.result;
-  };
-  reader.readAsDataURL(file);
-}
 

@@ -51,6 +51,7 @@ import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPe
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+const SINGLEOPS_URL = "https://app.singleops.com/";
 // Lowercased lookup so the AI's item pick (which can drift in case/whitespace)
 // still resolves to the exact catalog string SingleOps expects.
 const SINGLEOPS_ITEMS_LOWER = new Map(SINGLEOPS_ITEMS.map(i => [i.toLowerCase(), i]));
@@ -130,7 +131,14 @@ function CatalogPicker({ value, onChange, placeholder = "Search catalog…" }) {
   );
 }
 
-export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkReject, token }) {
+// This is now the SINGLE shared editing screen for a stop/card — both the
+// Route "swipe a card off the route" flow AND the Pipeline card detail view
+// render this same component, so the two can never drift out of sync again
+// the way they had been. `backLabel` and `topBar` are the two extension
+// points Pipeline uses to layer its own chrome (stage-move bar, repeat-client
+// banner, etc. — concepts that don't exist in Route) around the identical
+// shared editor beneath.
+export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkReject, token, backLabel = "Route", topBar = null }) {
   const s = stop;
   // Synchronous peek for initial state — returns {} or the localStorage
   // mirror if one exists. The real async load runs below and hydrates.
@@ -1325,7 +1333,7 @@ ${combined}`);
 
       {/* ── HEADER ────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",paddingTop:"max(10px,env(safe-area-inset-top))",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
-        <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:4,padding:"6px 12px",borderRadius:8,background:"transparent",border:"1px solid #252d47",color:"#90a8c0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}><IconArrowLeft size={13} color="#90a8c0"/>Route</button>
+        <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:4,padding:"6px 12px",borderRadius:8,background:"transparent",border:"1px solid #252d47",color:"#90a8c0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}><IconArrowLeft size={13} color="#90a8c0"/>{backLabel}</button>
         {/* Cloud-save status. Green cloud = this stop is safely synced to the
             cloud; amber cloud + "SAVING" = saved on this device, still pushing up. */}
         <div title={cloudSynced ? "Saved to cloud" : "Saved on this device — still syncing to cloud"}
@@ -1337,11 +1345,11 @@ ${combined}`);
         </div>
         <div style={{flex:1,minWidth:0}}/>
         {/* Decline — moved from bottom bar so it can't be hit when reaching for DONE */}
-        {!declineConfirm ? (
+        {onDecline && (!declineConfirm ? (
           <button onClick={()=>setDeclineConfirm(true)} title="Decline lead" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"6px 8px",borderRadius:8,background:"transparent",border:"1px solid #252d47",cursor:"pointer",flexShrink:0}}><IconX size={15} color="#a06060"/></button>
         ) : (
           <button onClick={()=>{setDeclineConfirm(false);onDecline();}} style={{display:"flex",alignItems:"center",gap:4,padding:"6px 10px",borderRadius:8,background:"rgba(200,60,60,.2)",border:"1px solid rgba(200,60,60,.4)",color:"#FF5555",fontSize:10,fontWeight:800,cursor:"pointer",animation:"pulse 1s infinite",flexShrink:0,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Confirm?</button>
-        )}
+        ))}
         {/* Mark to Reject in SingleOps — sends to pipeline with orange warning flag */}
         {onMarkReject && (!rejectConfirm ? (
           <button onClick={()=>setRejectConfirm(true)} title="Flag: reject in SingleOps" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"6px 8px",borderRadius:8,background:"transparent",border:"1px solid #3a2810",cursor:"pointer",flexShrink:0}}>
@@ -1352,6 +1360,11 @@ ${combined}`);
         ))}
         <button onClick={handleDone} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:8,background:"#10B981",border:"none",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}><IconCheckCircle size={13} color="#fff"/>DONE</button>
       </div>
+
+      {/* Extension slot for chrome that only makes sense in ONE calling
+          context (e.g. Pipeline's stage-move bar) — absent (null) for Route,
+          so Route's appearance is completely unchanged. */}
+      {topBar}
 
       {/* ── SCROLLABLE BODY ────────────────────────────────────────────── */}
       <div onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
@@ -1380,7 +1393,11 @@ ${combined}`);
             <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0,textAlign:"right",maxWidth:"55%"}}>
               {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>{s.phone}<IconPhone size={12} color="#a0b8d0"/></a>}
               {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,maxWidth:"100%",minWidth:0}}><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.email}</span><IconMail size={12} color="#a0b8d0"/></a>}
-              {s.jn && <span style={{fontSize:11,color:"#4a5a70"}}>#{s.jn}</span>}
+              {s.jn && (
+                <button onClick={() => { navigator.clipboard?.writeText(s.jn).catch(() => {}); window.open(SINGLEOPS_URL, "_blank"); }} title="Copy job # and open SingleOps" style={{fontSize:11,color:"#4a7ab0",background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:3,fontWeight:600}}>
+                  #{s.jn}<IconClipboard size={10} color="#4a7ab0"/>
+                </button>
+              )}
             </div>
           </div>
           <button onClick={() => setShowParcelMap(true)} style={{display:"flex",alignItems:"center",gap:5,marginTop:8,padding:"6px 11px",borderRadius:8,background:"rgba(255,214,0,.08)",border:"1px solid rgba(255,214,0,.25)",color:"#FFD600",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer"}}>
