@@ -46,11 +46,19 @@ import {
   markSavedToDevice,
 } from "./videoQueue";
 import { saveVideoToDevice } from "./videoSave";
+import { SINGLEOPS_ITEMS, SINGLEOPS_JOB_TAGS, SINGLEOPS_JOB_TAG_GROUPS } from "./singleOpsCatalog";
 import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
-const ACTION_LABEL = { remove: "Remove", trim: "Trim", stumpGrind: "Stump Grind", plantHealthCare: "PHC", other: "Other" };
+// Lowercased lookup so the AI's item pick (which can drift in case/whitespace)
+// still resolves to the exact catalog string SingleOps expects.
+const SINGLEOPS_ITEMS_LOWER = new Map(SINGLEOPS_ITEMS.map(i => [i.toLowerCase(), i]));
+function resolveCatalogItem(name) {
+  if (!name) return "";
+  const exact = SINGLEOPS_ITEMS_LOWER.get(String(name).trim().toLowerCase());
+  return exact || "";
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Onsite Window
@@ -87,6 +95,41 @@ function PhotoZoneTag({ zone, onChange }) {
   );
 }
 
+// Lightweight typeahead over the ~450-item SingleOps catalog — used both to
+// fix an AI mismatch and to add a line item manually with zero AI cost.
+// Native <select>/<datalist> were considered but a custom filtered list is
+// far more reliable cross-browser (iOS Safari's datalist support is poor).
+function CatalogPicker({ value, onChange, placeholder = "Search catalog…" }) {
+  const [query, setQuery] = useState(value || "");
+  const [open, setOpen] = useState(false);
+  useEffect(() => { setQuery(value || ""); }, [value]);
+  const matches = query.trim().length >= 2
+    ? SINGLEOPS_ITEMS.filter(i => i.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 8)
+    : [];
+  return (
+    <div style={{position:"relative"}}>
+      <input
+        value={query}
+        onChange={e => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        placeholder={placeholder}
+        style={{width:"100%",boxSizing:"border-box",padding:"7px 9px",borderRadius:7,background:"#0a0c14",border:"1px solid rgba(59,130,246,.35)",color:"#e0e8f0",fontSize:11,fontFamily:"'DM Sans',system-ui,sans-serif",outline:"none"}}
+      />
+      {open && matches.length > 0 && (
+        <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:20,marginTop:2,background:"#141826",border:"1px solid #253049",borderRadius:8,boxShadow:"0 8px 24px rgba(0,0,0,.5)",maxHeight:200,overflowY:"auto"}}>
+          {matches.map(m => (
+            <button key={m} onMouseDown={e => e.preventDefault()} onClick={() => { onChange(m); setQuery(m); setOpen(false); }}
+              style={{display:"block",width:"100%",textAlign:"left",padding:"7px 10px",background:"transparent",border:"none",borderBottom:"1px solid #1a2035",color:"#c8d0e0",fontSize:11,cursor:"pointer"}}>
+              {m}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkReject, token }) {
   const s = stop;
   // Synchronous peek for initial state — returns {} or the localStorage
@@ -103,6 +146,12 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [suggestedItems, setSuggestedItems] = useState([]); // pending AI suggestions awaiting tap-to-confirm
   const [extractLoading, setExtractLoading] = useState(false);
   const [extractError, setExtractError] = useState(null);
+  // Per-JOB tags (equipment/crew/access/scheduling) — matches SingleOps's own
+  // tag list, applied once to the whole visit, not per line item.
+  const [jobTags, setJobTags] = useState(fd.jobTags || []);
+  const [suggestedTags, setSuggestedTags] = useState([]);
+  const [tagSuggestLoading, setTagSuggestLoading] = useState(false);
+  const [summaryCopied, setSummaryCopied] = useState(false);
   const [scopePhotos, setScopePhotos] = useState(fd.scopePhotos || fd.photos || []);
   const [addonPhotos, setAddonPhotos] = useState(fd.addonPhotos || []);
   // Support multiple video uploads — stored as array
@@ -199,6 +248,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       videoUrls,
       audioClips,
       lineItems,
+      jobTags,
       aiScopeSummary: aiScopeResult,
       aiAddonEmail: aiAddonResult,
       // Persist client name + job # so the background photo uploader (which
@@ -226,6 +276,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           videoUrls: latest.videoUrls,
           audioClips: latest.audioClips,
           lineItems: latest.lineItems,
+          jobTags: latest.jobTags,
           aiScopeSummary: latest.aiScopeSummary,
           aiAddonEmail: latest.aiAddonEmail,
           cn: s.cn,
@@ -252,7 +303,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         queueFieldDriveSync(token, s.id);
       }, 3000);
     }
-  }, [hydrated, scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, lineItems, aiScopeResult, aiAddonResult, s.id, token]);
+  }, [hydrated, scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, lineItems, jobTags, aiScopeResult, aiAddonResult, s.id, token]);
 
   // ── PANIC FLUSH ──────────────────────────────────────────────────────────
   // iOS aggressively suspends WKWebView pages on backgrounding / app switch
@@ -280,6 +331,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         videoUrls: d.videoUrls,
         audioClips: d.audioClips,
         lineItems: d.lineItems,
+        jobTags: d.jobTags,
         aiScopeSummary: d.aiScopeSummary,
         aiAddonEmail: d.aiAddonEmail,
       }).catch(() => {});
@@ -322,6 +374,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           videoUrls: d.videoUrls,
           audioClips: d.audioClips,
           lineItems: d.lineItems,
+          jobTags: d.jobTags,
           aiScopeSummary: d.aiScopeSummary,
           aiAddonEmail: d.aiAddonEmail,
         }).catch(() => {});
@@ -366,6 +419,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         const idbVideoUrls = data.videoUrls || (data.videoUrl ? [data.videoUrl] : []);
         const idbAudioClips = data.audioClips || [];
         const idbLineItems = data.lineItems || [];
+        const idbJobTags = data.jobTags || [];
 
         // Scalars: only adopt IDB value if state is still the initial default.
         if (idbScopeNotes)        setScopeNotes(prev => prev || idbScopeNotes);
@@ -388,6 +442,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         if (idbAudioClips.length)  setAudioClips(prev => mergeByKey(idbAudioClips, prev, a => a.ts || a.timestamp || a.url));
         if (idbVideoUrls.length)   setVideoUrls(prev => prev.length === 0 ? idbVideoUrls : Array.from(new Set([...idbVideoUrls, ...prev])));
         if (idbLineItems.length)   setLineItems(prev => mergeByKey(idbLineItems, prev, li => li.id));
+        if (idbJobTags.length)     setJobTags(prev => Array.from(new Set([...idbJobTags, ...prev])));
 
         // ── RECOVERY CHECK ──────────────────────────────────────────────
         // Compare what IDB actually has against what the slim mirror
@@ -449,7 +504,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // so we don't fire a Drive pull that could overwrite locally-captured photos.
   useEffect(() => {
     const hasLocal = !!(fd.scopeNotes || fd.myNotes || fd.addonNotes ||
-      (fd.scopePhotos || fd.photos || []).length || fd._scopePhotoCount || fd._addonPhotoCount || (fd.lineItems || []).length);
+      (fd.scopePhotos || fd.photos || []).length || fd._scopePhotoCount || fd._addonPhotoCount || (fd.lineItems || []).length || (fd.jobTags || []).length);
     if (!hasLocal && token) {
       let dead = false;
       setCloudLoading(true);
@@ -478,6 +533,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           audioClips:  mergeByKey(cloud.audioClips,  local.audioClips, a => a.ts || a.timestamp || a.url),
           videoUrls:   Array.from(new Set([...(cloud.videoUrls || []), ...(local.videoUrls || [])])),
           lineItems:   mergeByKey(cloud.lineItems, local.lineItems, li => li.id),
+          jobTags:     Array.from(new Set([...(cloud.jobTags || []), ...(local.jobTags || [])])),
         };
         // Functional setState everywhere — preserves anything the user
         // captured/typed during the Drive fetch window (state takes
@@ -490,6 +546,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         else if (cloud.videoUrl) setVideoUrls(prev => prev.length === 0 ? [cloud.videoUrl] : prev);
         if (merged.audioClips?.length) setAudioClips(prev => mergeByKey(merged.audioClips, prev, a => a.ts || a.timestamp || a.url));
         if (merged.lineItems?.length) setLineItems(prev => mergeByKey(merged.lineItems, prev, li => li.id));
+        if (merged.jobTags?.length) setJobTags(prev => Array.from(new Set([...merged.jobTags, ...prev])));
         if (cloud.aiScopeSummary) setAiScopeResult(prev => prev || cloud.aiScopeSummary);
         if (cloud.aiAddonEmail) setAiAddonResult(prev => prev || cloud.aiAddonEmail);
         // Route through the per-stop write queue so this can't clobber
@@ -502,6 +559,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           const exAudio = ex.audioClips || [];
           const exVids  = ex.videoUrls || (ex.videoUrl ? [ex.videoUrl] : []);
           const exLineItems = ex.lineItems || [];
+          const exJobTags = ex.jobTags || [];
           return {
             ...merged,
             scopePhotos: mergeByKey(merged.scopePhotos || [], exScope, photoKey),
@@ -509,6 +567,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
             audioClips:  mergeByKey(merged.audioClips  || [], exAudio, a => a.ts || a.timestamp || a.url),
             videoUrls:   Array.from(new Set([...(merged.videoUrls || []), ...exVids])),
             lineItems:   mergeByKey(merged.lineItems || [], exLineItems, li => li.id),
+            jobTags:     Array.from(new Set([...(merged.jobTags || []), ...exJobTags])),
           };
         }).catch(() => {});
         primeField(s.id, merged);
@@ -985,16 +1044,22 @@ Property: ${s.addr || ""}`);
     setExtractLoading(true);
     setExtractError(null);
     try {
-      const raw = await callGemini(`You are an ISA-certified arborist's field assistant. Read these field notes and extract each distinct piece of work as a structured line item. Respond with ONLY a JSON array — no markdown fences, no prose, no explanation.
+      // The full real SingleOps catalog is handed to the model so it matches
+      // against Jason's ACTUAL billable items — not a made-up category. ~450
+      // items is only a few thousand tokens, trivial cost on gemini-2.5-flash.
+      const raw = await callGemini(`You are an ISA-certified arborist's field assistant. Read these field notes and extract each distinct piece of work as a structured line item, matched against the company's real SingleOps catalog. Respond with ONLY a JSON array — no markdown fences, no prose, no explanation.
 
 Each item must have exactly these fields:
-- "action": one of "remove", "trim", "stumpGrind", "plantHealthCare", "other"
-- "target": short label for the tree/plant/area (e.g. "Oak", "Arborvitae")
-- "location": short location on the property, or "" if not mentioned
+- "item": the SINGLE closest matching name from the CATALOG list below, copied EXACTLY as it appears there (character-for-character). If nothing in the catalog is a reasonable match, use "" (empty string) — do NOT invent a name or force a bad match.
+- "target": short label for the tree/plant/area this work applies to (e.g. "Sugar Maple", "Arborvitae hedge") — this is the SPECIES/TARGET, separate from the catalog item name.
+- "location": short location on the property, or "" if not mentioned (e.g. "Front yard", "Left of driveway")
 - "qty": a number (default 1 if not stated)
 - "notes": a short phrase capturing any extra detail (specific limbs, condition, "quote only", etc.)
 
-Only include items that describe actual tree/plant work — skip general commentary. If nothing qualifies, return [].
+Only include items that describe actual billable tree/plant work — skip general commentary. If nothing qualifies, return [].
+
+CATALOG (pick "item" only from this exact list, or ""):
+${SINGLEOPS_ITEMS.join(" | ")}
 
 Field notes:
 ${combined}`);
@@ -1008,12 +1073,15 @@ ${combined}`);
         setExtractLoading(false);
         return;
       }
-      const existingKeys = new Set(lineItems.map(li => `${li.action}|${li.target}|${li.location}|${li.notes}`.toLowerCase()));
+      const existingKeys = new Set(lineItems.map(li => `${li.item}|${li.target}|${li.location}|${li.notes}`.toLowerCase()));
       const fresh = items
         .filter(it => it && it.target)
         .map((it, i) => ({
           id: `li_${Date.now()}_${i}`,
-          action: it.action || "other",
+          // Re-resolve against the catalog ourselves rather than trusting the
+          // model's casing/whitespace verbatim — guarantees an exact match to
+          // what's actually in SingleOps, or "" (shown as unmatched) if it drifted.
+          item: resolveCatalogItem(it.item),
           target: String(it.target).slice(0, 60),
           location: String(it.location || "").slice(0, 60),
           qty: Number(it.qty) > 0 ? Number(it.qty) : 1,
@@ -1021,13 +1089,78 @@ ${combined}`);
         }))
         // Skip items that look identical to ones already confirmed, so re-running
         // extraction after adding a sentence doesn't re-suggest everything.
-        .filter(it => !existingKeys.has(`${it.action}|${it.target}|${it.location}|${it.notes}`.toLowerCase()));
+        .filter(it => !existingKeys.has(`${it.item}|${it.target}|${it.location}|${it.notes}`.toLowerCase()));
       setSuggestedItems(fresh);
       if (fresh.length === 0 && items.length > 0) setExtractError("No new items — everything found is already in your list.");
     } catch(e) {
       setExtractError("Extraction failed: " + e.message);
     }
     setExtractLoading(false);
+  };
+
+  // ── JOB TAGS: AI-assisted suggestion from the same real SingleOps tag
+  // list, tap-to-confirm, same manual-only cost pattern as everything above.
+  const suggestJobTags = async () => {
+    if (!GEMINI_KEY) { setExtractError("Add VITE_GEMINI_KEY to .env"); return; }
+    const combined = `${scopeNotes || ""}\n${addonNotes || ""}`.trim();
+    if (!combined) { setExtractError("Add some scope or add-on notes first."); return; }
+    setTagSuggestLoading(true);
+    try {
+      const tagList = SINGLEOPS_JOB_TAGS.map(t => t.tag).join(" | ");
+      const raw = await callGemini(`You are a tree service dispatcher. Read these field notes and pick any tags from the CATALOG below that clearly apply to this job (equipment needed, access/site conditions, scheduling flags). Respond with ONLY a JSON array of exact tag strings from the list — no markdown, no prose. Only include tags with clear textual support in the notes (e.g. mentions of a crane, poison ivy, a septic system, a specific crew size). Do NOT guess crew size or equipment unless stated or clearly implied. If nothing applies, return [].
+
+CATALOG:
+${tagList}
+
+Field notes:
+${combined}`);
+      let tags;
+      try {
+        const cleaned = raw.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+        tags = JSON.parse(cleaned);
+        if (!Array.isArray(tags)) throw new Error("not an array");
+      } catch { setTagSuggestLoading(false); return; }
+      const validTags = new Set(SINGLEOPS_JOB_TAGS.map(t => t.tag));
+      const fresh = tags.filter(t => validTags.has(t) && !jobTags.includes(t));
+      setSuggestedTags(fresh);
+    } catch {}
+    setTagSuggestLoading(false);
+  };
+  const toggleJobTag = (tag) => setJobTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+  const acceptSuggestedTag = (tag) => { setJobTags(prev => [...prev, tag]); setSuggestedTags(prev => prev.filter(t => t !== tag)); };
+  const acceptAllSuggestedTags = () => { setJobTags(prev => Array.from(new Set([...prev, ...suggestedTags]))); setSuggestedTags([]); };
+
+  // ── COPY SUMMARY — plain-text export of everything captured on this visit,
+  // formatted for a future Claude-in-browser session (or manual paste) to
+  // read cleanly and act on in SingleOps: matched catalog item, composed
+  // Target string (qty + location + species, matching how SingleOps displays
+  // it), notes, and the job-level tags.
+  const buildSingleOpsSummary = () => {
+    const lines = [];
+    lines.push(`CLIENT: ${s.cn || ""}`);
+    if (s.addr) lines.push(`ADDRESS: ${s.addr}`);
+    if (s.jn) lines.push(`JOB #: ${s.jn}`);
+    lines.push("");
+    if (jobTags.length) { lines.push(`JOB TAGS: ${jobTags.join(", ")}`); lines.push(""); }
+    lines.push("LINE ITEMS:");
+    if (lineItems.length === 0) lines.push("(none yet)");
+    lineItems.forEach((it, i) => {
+      const targetStr = [it.qty > 1 ? it.qty : null, it.location, it.target].filter(Boolean).join(" ");
+      lines.push(`${i + 1}. ${it.item || "⚠ UNMATCHED — pick manually"}`);
+      lines.push(`   Target: ${targetStr}`);
+      lines.push(`   Qty: ${it.qty}`);
+      if (it.notes) lines.push(`   Notes: ${it.notes}`);
+    });
+    if (scopeNotes) { lines.push(""); lines.push("SCOPE NOTES:"); lines.push(scopeNotes); }
+    if (addonNotes) { lines.push(""); lines.push("ADD-ON NOTES:"); lines.push(addonNotes); }
+    return lines.join("\n");
+  };
+  const copySingleOpsSummary = async () => {
+    try {
+      await navigator.clipboard.writeText(buildSingleOpsSummary());
+      setSummaryCopied(true);
+      setTimeout(() => setSummaryCopied(false), 2000);
+    } catch {}
   };
 
   const acceptSuggestedItem = (id) => {
@@ -1042,6 +1175,12 @@ ${combined}`);
   };
   const dismissSuggestedItem = (id) => setSuggestedItems(prev => prev.filter(it => it.id !== id));
   const removeLineItem = (id) => setLineItems(prev => prev.filter(it => it.id !== id));
+  const updateLineItem = (id, patch) => setLineItems(prev => prev.map(it => it.id === id ? { ...it, ...patch } : it));
+  const updateSuggestedItem = (id, patch) => setSuggestedItems(prev => prev.map(it => it.id === id ? { ...it, ...patch } : it));
+  const addManualLineItem = () => setLineItems(prev => [...prev, { id: `li_${Date.now()}_m`, item: "", target: "", location: "", qty: 1, notes: "" }]);
+  // Composed, copy-ready Target string matching how SingleOps actually
+  // displays it (qty + location + species), e.g. "1 Front Middle Pin Oak".
+  const targetString = (it) => [it.qty > 1 ? it.qty : null, it.location, it.target].filter(Boolean).join(" ");
 
   // ── VIDEO: enqueue for background upload to Google Drive via videoQueue ──
   // The actual upload (chunked PUT to Drive) runs entirely inside videoQueue.js,
@@ -1131,7 +1270,7 @@ ${combined}`);
         return [...map.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0));
       };
       return {
-        scopeNotes, addonNotes, videoUrls, audioClips, lineItems,
+        scopeNotes, addonNotes, videoUrls, audioClips, lineItems, jobTags,
         aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult,
         scopePhotos: mergePhotos(scopePhotos, ex.scopePhotos || ex.photos || []),
         addonPhotos: mergePhotos(addonPhotos, ex.addonPhotos || []),
@@ -1487,9 +1626,9 @@ ${combined}`);
             Structured, machine-readable summary of the Scope/Add-on notes
             above, built by tapping "Extract" (AI-assisted, manual only —
             never runs automatically). Free text stays the source of truth;
-            this is a derived, tap-to-confirm list meant to feed future
-            automation (e.g. building a SingleOps proposal) without adding
-            separate data entry. */}
+            "item" is matched against the REAL SingleOps catalog (see
+            singleOpsCatalog.js) so this is ready to feed proposal-building
+            automation, not a made-up category. */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
             <div style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,flex:1}}>Line Items</div>
@@ -1507,15 +1646,25 @@ ${combined}`);
                 <div style={{flex:1,fontSize:10,color:"#5a90c0",fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Suggested — tap to add</div>
                 <button onClick={acceptAllSuggested} style={{padding:"3px 9px",borderRadius:6,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.35)",color:"#10B981",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.3,textTransform:"uppercase",whiteSpace:"nowrap"}}>Add all</button>
               </div>
-              <div style={{display:"flex",flexDirection:"column",gap:5}}>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {suggestedItems.map(it => (
-                  <div key={it.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 9px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540"}}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12,color:"#e0e8f0",fontWeight:600}}>{it.qty > 1 ? `${it.qty}× ` : ""}{ACTION_LABEL[it.action] || it.action} — {it.target}{it.location ? ` (${it.location})` : ""}</div>
-                      {it.notes && <div style={{fontSize:10,color:"#5a6580",marginTop:1}}>{it.notes}</div>}
+                  <div key={it.id} style={{padding:"7px 9px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540"}}>
+                    <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        {it.item ? (
+                          <div style={{fontSize:12,color:"#e0e8f0",fontWeight:700}}>{it.item}</div>
+                        ) : (
+                          <div style={{marginBottom:4}}>
+                            <div style={{fontSize:10,color:"#F6BF26",fontWeight:700,marginBottom:3}}>⚠ No catalog match — pick one:</div>
+                            <CatalogPicker value={it.item} onChange={v => updateSuggestedItem(it.id, { item: v })} />
+                          </div>
+                        )}
+                        <div style={{fontSize:10,color:"#5a6580",marginTop:2}}>Target: {targetString(it)}</div>
+                        {it.notes && <div style={{fontSize:10,color:"#5a6580",marginTop:1}}>{it.notes}</div>}
+                      </div>
+                      <button onClick={() => acceptSuggestedItem(it.id)} style={{padding:"4px 10px",borderRadius:6,background:"rgba(16,185,129,.12)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:10,fontWeight:800,cursor:"pointer",flexShrink:0}}>Add</button>
+                      <button onClick={() => dismissSuggestedItem(it.id)} style={{width:26,height:26,borderRadius:6,background:"transparent",border:"1px solid #252d47",color:"#a06060",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><IconX size={11} color="#a06060"/></button>
                     </div>
-                    <button onClick={() => acceptSuggestedItem(it.id)} style={{padding:"4px 10px",borderRadius:6,background:"rgba(16,185,129,.12)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:10,fontWeight:800,cursor:"pointer",flexShrink:0}}>Add</button>
-                    <button onClick={() => dismissSuggestedItem(it.id)} style={{width:26,height:26,borderRadius:6,background:"transparent",border:"1px solid #252d47",color:"#a06060",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><IconX size={11} color="#a06060"/></button>
                   </div>
                 ))}
               </div>
@@ -1524,21 +1673,106 @@ ${combined}`);
 
           {/* Confirmed items */}
           {lineItems.length === 0 && suggestedItems.length === 0 && !extractLoading && (
-            <div style={{fontSize:11,color:"#4a5a70",fontStyle:"italic",fontFamily:B}}>No line items yet — write your Scope/Add-on notes, then tap Extract.</div>
+            <div style={{fontSize:11,color:"#4a5a70",fontStyle:"italic",fontFamily:B,marginBottom:8}}>No line items yet — write your Scope/Add-on notes, then tap Extract.</div>
           )}
           {lineItems.length > 0 && (
-            <div style={{display:"flex",flexDirection:"column",gap:5}}>
+            <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
               {lineItems.map(it => (
-                <div key={it.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 9px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540"}}>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:12,color:"#e0e8f0",fontWeight:600}}>{it.qty > 1 ? `${it.qty}× ` : ""}{ACTION_LABEL[it.action] || it.action} — {it.target}{it.location ? ` (${it.location})` : ""}</div>
-                    {it.notes && <div style={{fontSize:10,color:"#5a6580",marginTop:1}}>{it.notes}</div>}
+                <div key={it.id} style={{padding:"7px 9px",borderRadius:8,background:"#0e1120",border:`1px solid ${it.item ? "#1a2540" : "rgba(246,191,38,.3)"}`}}>
+                  <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      {it.item ? (
+                        <div style={{fontSize:12,color:"#e0e8f0",fontWeight:700}}>{it.item}</div>
+                      ) : (
+                        <div style={{marginBottom:4}}>
+                          <div style={{fontSize:10,color:"#F6BF26",fontWeight:700,marginBottom:3}}>⚠ No catalog match — pick one:</div>
+                          <CatalogPicker value={it.item} onChange={v => updateLineItem(it.id, { item: v })} />
+                        </div>
+                      )}
+                      <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
+                        <input value={it.target} onChange={e => updateLineItem(it.id, { target: e.target.value })} placeholder="Species/target" style={{flex:"1 1 120px",padding:"5px 7px",borderRadius:6,background:"#0a0c14",border:"1px solid #1a2540",color:"#c8d0e0",fontSize:10,fontFamily:B}} />
+                        <input value={it.location} onChange={e => updateLineItem(it.id, { location: e.target.value })} placeholder="Location" style={{flex:"1 1 100px",padding:"5px 7px",borderRadius:6,background:"#0a0c14",border:"1px solid #1a2540",color:"#c8d0e0",fontSize:10,fontFamily:B}} />
+                        <input type="number" min="1" value={it.qty} onChange={e => updateLineItem(it.id, { qty: Math.max(1, Number(e.target.value) || 1) })} style={{width:48,padding:"5px 7px",borderRadius:6,background:"#0a0c14",border:"1px solid #1a2540",color:"#c8d0e0",fontSize:10,fontFamily:B}} />
+                      </div>
+                      <div style={{fontSize:9,color:"#4a5a70",marginTop:3}}>Target: {targetString(it)}</div>
+                      {it.notes && <div style={{fontSize:10,color:"#5a6580",marginTop:1}}>{it.notes}</div>}
+                    </div>
+                    <button onClick={() => removeLineItem(it.id)} style={{width:26,height:26,borderRadius:6,background:"transparent",border:"1px solid #252d47",color:"#a06060",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><IconX size={11} color="#a06060"/></button>
                   </div>
-                  <button onClick={() => removeLineItem(it.id)} style={{width:26,height:26,borderRadius:6,background:"transparent",border:"1px solid #252d47",color:"#a06060",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><IconX size={11} color="#a06060"/></button>
                 </div>
               ))}
             </div>
           )}
+
+          <button onClick={addManualLineItem} style={{width:"100%",padding:"8px 0",borderRadius:8,background:"transparent",border:"1px dashed #1a2540",color:"#5a7090",fontSize:11,fontWeight:600,cursor:"pointer"}}>+ Add line item manually</button>
+        </div>
+
+        {/* ── JOB TAGS ──────────────────────────────────────────────────
+            Per-JOB (not per-line-item) tags matching SingleOps's own tag
+            list exactly — equipment, crew size, access/site conditions,
+            scheduling flags. Tap to toggle; "Suggest" is the same cheap,
+            manual-only AI pattern as Line Items. */}
+        <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#8B5CF6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,flex:1}}>Job Tags</div>
+            <button onClick={suggestJobTags} disabled={tagSuggestLoading} style={{padding:"6px 12px",borderRadius:8,background:"rgba(139,92,246,.1)",border:"1px solid rgba(139,92,246,.3)",color:"#8B5CF6",fontSize:10,fontWeight:800,cursor:tagSuggestLoading?"default":"pointer",opacity:tagSuggestLoading?0.6:1,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:5}}>
+              <IconSparkles size={12} color="#8B5CF6"/>{tagSuggestLoading ? "Reading notes…" : "Suggest"}
+            </button>
+          </div>
+
+          {suggestedTags.length > 0 && (
+            <div style={{marginBottom:10,padding:"8px 10px",borderRadius:10,background:"rgba(139,92,246,.05)",border:"1px dashed rgba(139,92,246,.25)"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                <div style={{flex:1,fontSize:10,color:"#a78bda",fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Suggested</div>
+                <button onClick={acceptAllSuggestedTags} style={{padding:"3px 9px",borderRadius:6,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.35)",color:"#10B981",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.3,textTransform:"uppercase",whiteSpace:"nowrap"}}>Add all</button>
+              </div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                {suggestedTags.map(tag => (
+                  <button key={tag} onClick={() => acceptSuggestedTag(tag)} style={{padding:"5px 10px",borderRadius:999,background:"rgba(16,185,129,.12)",border:"1px solid rgba(16,185,129,.35)",color:"#10B981",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>+ {tag}</button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {jobTags.length > 0 && (
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+              {jobTags.map(tag => (
+                <button key={tag} onClick={() => toggleJobTag(tag)} style={{padding:"5px 10px",borderRadius:999,background:"rgba(139,92,246,.15)",border:"1px solid rgba(139,92,246,.4)",color:"#c8b0f0",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:4}}>
+                  {tag}<IconX size={9} color="#c8b0f0"/>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Full picker, grouped for scanability */}
+          <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:160,overflowY:"auto",padding:"8px 9px",borderRadius:8,background:"#0a0c14",border:"1px solid #1a2540"}}>
+            {Object.entries(SINGLEOPS_JOB_TAG_GROUPS).map(([groupKey, groupLabel]) => {
+              const inGroup = SINGLEOPS_JOB_TAGS.filter(t => t.group === groupKey && !jobTags.includes(t.tag));
+              if (!inGroup.length) return null;
+              return (
+                <div key={groupKey}>
+                  <div style={{fontSize:8,color:"#4a5a70",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginBottom:3}}>{groupLabel}</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                    {inGroup.map(t => (
+                      <button key={t.tag} onClick={() => toggleJobTag(t.tag)} style={{padding:"3px 8px",borderRadius:999,background:"transparent",border:"1px solid #252d47",color:"#7a8aaa",fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{t.tag}</button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── SUMMARY EXPORT ────────────────────────────────────────────
+            Plain-text dump of everything captured on this visit — client,
+            job tags, line items (matched catalog item + composed Target
+            string), and both note fields. Meant as the clean, structured
+            handoff a future Claude-in-browser session (or a manual paste)
+            can read to act on in SingleOps. */}
+        <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
+          <button onClick={copySingleOpsSummary} style={{width:"100%",padding:"10px 0",borderRadius:8,background:"rgba(16,185,129,.08)",border:"1px solid rgba(16,185,129,.25)",color:"#10B981",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+            <IconClipboard size={13} color="#10B981"/>{summaryCopied ? "Copied!" : "Copy Summary for SingleOps"}
+          </button>
         </div>
 
       </div>
