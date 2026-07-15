@@ -46,7 +46,7 @@ import {
   markSavedToDevice,
 } from "./videoQueue";
 import { saveVideoToDevice } from "./videoSave";
-import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconMic, IconVolume2, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin } from "./icons";
+import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
@@ -115,9 +115,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [showParcelMap, setShowParcelMap] = useState(false);
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const [saveSafetyPrompt, setSaveSafetyPrompt] = useState(null); // { id, file } just-recorded video awaiting a durable save
-  const [recording, setRecording] = useState(false);
-  const [recDuration, setRecDuration] = useState(0);
-  const [playingIdx, setPlayingIdx] = useState(null);
   const ytFileRef = useRef(null);
   // (formerly: ytUploadCount — now tracked entirely via videoQueueItems)
   const mountedRef = useRef(true);
@@ -146,10 +143,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const swipeDir = useRef(null);
   const scopeLibRef = useRef(null);
   const addonLibRef = useRef(null);
-  const mediaRecRef = useRef(null);
-  const chunksRef = useRef([]);
-  const recTimerRef = useRef(null);
-  const audioElRef = useRef(null);
   const notesRef = useRef(null);
   // CRITICAL: 'hydrated' is STATE, not a ref, because the auto-save effect
   // must re-run when it flips true. With a ref, React doesn't know to
@@ -583,59 +576,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     markStopForPhotoSync(s.id);
     setMarkupIdx(null);
   };
-
-  // ── AUDIO RECORDING ─────────────────────────────────────────────────
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
-      chunksRef.current = [];
-      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
-      mr.onstop = () => {
-        stream.getTracks().forEach(t => t.stop());
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-        const reader = new FileReader();
-        reader.onload = () => {
-          setAudioClips(prev => [...prev, { dataUrl: reader.result, ts: Date.now(), duration: recDuration, size: blob.size }]);
-        };
-        reader.readAsDataURL(blob);
-        setRecDuration(0);
-      };
-      mediaRecRef.current = mr;
-      mr.start();
-      setRecording(true);
-      let sec = 0;
-      recTimerRef.current = setInterval(() => { sec++; setRecDuration(sec); }, 1000);
-    } catch(e) {
-      console.warn("Mic access denied", e);
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecRef.current && recording) {
-      clearInterval(recTimerRef.current);
-      mediaRecRef.current.stop();
-      setRecording(false);
-    }
-  };
-
-  const removeAudio = (i) => setAudioClips(prev => prev.filter((_, j) => j !== i));
-
-  const playAudio = (i) => {
-    if (playingIdx === i) {
-      audioElRef.current?.pause();
-      setPlayingIdx(null);
-      return;
-    }
-    if (audioElRef.current) audioElRef.current.pause();
-    const a = new Audio(audioClips[i].dataUrl);
-    a.onended = () => setPlayingIdx(null);
-    a.play();
-    audioElRef.current = a;
-    setPlayingIdx(i);
-  };
-
-  const fmtDur = (s) => `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
 
   // URL type helpers — kept for backward compat with legacy YouTube links on older cards
   const getYtId = (url) => url?.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/)?.[1];
@@ -1265,6 +1205,12 @@ Property: ${s.addr || ""}`);
             <button onClick={()=>scopeLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
               <IconImage size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
             </button>
+            {/* Record Video — moved up into this row, right alongside the photo
+                capture buttons, so it's one tap away instead of a separate
+                section scrolled below. */}
+            <button onClick={() => setShowVideoRecorder(true)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(255,59,48,.06)",border:"1px dashed rgba(255,59,48,.3)",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
+              <IconVideo size={16} color="#FF6B5E"/><span style={{fontSize:11,color:"#FF6B5E",fontWeight:600}}>Video</span>
+            </button>
           </div>
         </div>
 
@@ -1393,12 +1339,11 @@ Property: ${s.addr || ""}`);
             </div>
           )}
 
-          {/* Record in-app — capped to ~720p/1.5Mbps so uploads stay fast over cellular */}
-          <button onClick={() => setShowVideoRecorder(true)} style={{width:"100%",padding:"11px 0",borderRadius:8,background:"rgba(255,59,48,.08)",border:"1px solid rgba(255,59,48,.3)",color:"#FF6B5E",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-            <IconVideo size={15} color="#FF6B5E"/><span>{(videoUrls.length + videoQueueItems.length) > 0 ? `Record another video (${videoUrls.length + videoQueueItems.length + 1})` : "Record Video"}</span>
-          </button>
+          {/* Recording is now the "Video" button up in the Camera/Library row
+              above — this stays as the secondary path for importing a video
+              already shot with the native Camera app. */}
           <input ref={ytFileRef} type="file" accept="video/*" onChange={handleYtFile} style={{display:"none"}} />
-          <button onClick={() => ytFileRef.current?.click()} style={{width:"100%",padding:"9px 0",marginTop:6,borderRadius:8,background:"transparent",border:"1px solid #1a2540",color:"#5a7090",fontSize:11,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+          <button onClick={() => ytFileRef.current?.click()} style={{width:"100%",padding:"9px 0",borderRadius:8,background:"transparent",border:"1px solid #1a2540",color:"#5a7090",fontSize:11,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
             <IconVideo size={13} color="#5a7090"/><span>Choose from Library</span>
           </button>
           <div style={{marginTop:6,fontSize:9,lineHeight:1.4,color:"#5a6580",fontFamily:F,letterSpacing:0.2,textAlign:"center"}}>
@@ -1443,32 +1388,6 @@ Property: ${s.addr || ""}`);
               <IconImage size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
             </button>
           </div>
-        </div>
-
-        {/* ── VOICE MEMO ──────────────────────────────────────────────── */}
-        <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
-          <div style={{fontSize:10,fontWeight:600,color:"#3a4860",letterSpacing:1,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>VOICE MEMO</div>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            {!recording ? (
-              <button onClick={startRecording} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:8,background:"rgba(255,59,48,.04)",border:"1px solid rgba(255,59,48,.15)",color:"#8a5050",fontSize:11,fontWeight:600,cursor:"pointer"}}>
-                <span style={{width:8,height:8,borderRadius:4,background:"#8a5050",display:"inline-block"}}/>Record
-              </button>
-            ) : (
-              <button onClick={stopRecording} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:8,background:"rgba(255,59,48,.15)",border:"1px solid rgba(255,59,48,.35)",color:"#FF3B30",fontSize:11,fontWeight:700,cursor:"pointer",animation:"pulse 1s infinite"}}>
-                <span style={{width:8,height:8,borderRadius:2,background:"#FF3B30",display:"inline-block"}}/>Stop · {fmtDur(recDuration)}
-              </button>
-            )}
-          </div>
-          <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
-          {audioClips.length > 0 && <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4}}>
-            {audioClips.map((clip, i) => (
-              <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540"}}>
-                <button onClick={() => playAudio(i)} style={{width:28,height:28,borderRadius:14,background:playingIdx===i?"rgba(255,59,48,.15)":"rgba(59,130,246,.1)",border:"none",color:playingIdx===i?"#FF3B30":"#3B82F6",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{playingIdx===i?"■":"▶"}</button>
-                <div style={{flex:1,fontSize:11,color:"#6a7a90"}}>Memo · {clip.duration ? fmtDur(clip.duration) : "—"}{clip.size ? ` · ${(clip.size/1024).toFixed(0)} KB` : ""}</div>
-                <button onClick={() => removeAudio(i)} style={{padding:"3px 8px",borderRadius:6,background:"rgba(200,60,60,.1)",border:"1px solid rgba(200,60,60,.2)",color:"#e06060",fontSize:10,fontWeight:700,cursor:"pointer"}}><IconX size={12} /></button>
-              </div>
-            ))}
-          </div>}
         </div>
 
       </div>
