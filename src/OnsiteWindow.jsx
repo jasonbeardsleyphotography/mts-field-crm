@@ -50,6 +50,7 @@ import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPe
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+const ACTION_LABEL = { remove: "Remove", trim: "Trim", stumpGrind: "Stump Grind", plantHealthCare: "PHC", other: "Other" };
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Onsite Window
@@ -94,6 +95,14 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // Backward compat: migrate old myNotes/photos to scope
   const [scopeNotes, setScopeNotes] = useState(fd.scopeNotes || fd.myNotes || "");
   const [addonNotes, setAddonNotes] = useState(fd.addonNotes || "");
+  // Structured line items extracted (on-demand, AI-assisted) from the free-text
+  // notes above. Free text stays the source of truth — these are a machine-
+  // readable summary of it, meant to feed future automation (proposal
+  // building, etc.) without requiring separate data entry.
+  const [lineItems, setLineItems] = useState(fd.lineItems || []);
+  const [suggestedItems, setSuggestedItems] = useState([]); // pending AI suggestions awaiting tap-to-confirm
+  const [extractLoading, setExtractLoading] = useState(false);
+  const [extractError, setExtractError] = useState(null);
   const [scopePhotos, setScopePhotos] = useState(fd.scopePhotos || fd.photos || []);
   const [addonPhotos, setAddonPhotos] = useState(fd.addonPhotos || []);
   // Support multiple video uploads — stored as array
@@ -189,6 +198,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       addonNotes,
       videoUrls,
       audioClips,
+      lineItems,
       aiScopeSummary: aiScopeResult,
       aiAddonEmail: aiAddonResult,
       // Persist client name + job # so the background photo uploader (which
@@ -215,6 +225,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           addonNotes: latest.addonNotes,
           videoUrls: latest.videoUrls,
           audioClips: latest.audioClips,
+          lineItems: latest.lineItems,
           aiScopeSummary: latest.aiScopeSummary,
           aiAddonEmail: latest.aiAddonEmail,
           cn: s.cn,
@@ -241,7 +252,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         queueFieldDriveSync(token, s.id);
       }, 3000);
     }
-  }, [hydrated, scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, aiScopeResult, aiAddonResult, s.id, token]);
+  }, [hydrated, scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, lineItems, aiScopeResult, aiAddonResult, s.id, token]);
 
   // ── PANIC FLUSH ──────────────────────────────────────────────────────────
   // iOS aggressively suspends WKWebView pages on backgrounding / app switch
@@ -268,6 +279,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         addonNotes: d.addonNotes,
         videoUrls: d.videoUrls,
         audioClips: d.audioClips,
+        lineItems: d.lineItems,
         aiScopeSummary: d.aiScopeSummary,
         aiAddonEmail: d.aiAddonEmail,
       }).catch(() => {});
@@ -309,6 +321,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           addonNotes: d.addonNotes,
           videoUrls: d.videoUrls,
           audioClips: d.audioClips,
+          lineItems: d.lineItems,
           aiScopeSummary: d.aiScopeSummary,
           aiAddonEmail: d.aiAddonEmail,
         }).catch(() => {});
@@ -352,6 +365,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         const idbAddonPhotos = data.addonPhotos || [];
         const idbVideoUrls = data.videoUrls || (data.videoUrl ? [data.videoUrl] : []);
         const idbAudioClips = data.audioClips || [];
+        const idbLineItems = data.lineItems || [];
 
         // Scalars: only adopt IDB value if state is still the initial default.
         if (idbScopeNotes)        setScopeNotes(prev => prev || idbScopeNotes);
@@ -373,6 +387,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         if (idbAddonPhotos.length) setAddonPhotos(prev => mergeByKey(idbAddonPhotos, prev, photoKey));
         if (idbAudioClips.length)  setAudioClips(prev => mergeByKey(idbAudioClips, prev, a => a.ts || a.timestamp || a.url));
         if (idbVideoUrls.length)   setVideoUrls(prev => prev.length === 0 ? idbVideoUrls : Array.from(new Set([...idbVideoUrls, ...prev])));
+        if (idbLineItems.length)   setLineItems(prev => mergeByKey(idbLineItems, prev, li => li.id));
 
         // ── RECOVERY CHECK ──────────────────────────────────────────────
         // Compare what IDB actually has against what the slim mirror
@@ -434,7 +449,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // so we don't fire a Drive pull that could overwrite locally-captured photos.
   useEffect(() => {
     const hasLocal = !!(fd.scopeNotes || fd.myNotes || fd.addonNotes ||
-      (fd.scopePhotos || fd.photos || []).length || fd._scopePhotoCount || fd._addonPhotoCount);
+      (fd.scopePhotos || fd.photos || []).length || fd._scopePhotoCount || fd._addonPhotoCount || (fd.lineItems || []).length);
     if (!hasLocal && token) {
       let dead = false;
       setCloudLoading(true);
@@ -462,6 +477,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           addonPhotos: mergeByKey(cloud.addonPhotos, local.addonPhotos, photoKey),
           audioClips:  mergeByKey(cloud.audioClips,  local.audioClips, a => a.ts || a.timestamp || a.url),
           videoUrls:   Array.from(new Set([...(cloud.videoUrls || []), ...(local.videoUrls || [])])),
+          lineItems:   mergeByKey(cloud.lineItems, local.lineItems, li => li.id),
         };
         // Functional setState everywhere — preserves anything the user
         // captured/typed during the Drive fetch window (state takes
@@ -473,6 +489,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         if (merged.videoUrls?.length) setVideoUrls(prev => Array.from(new Set([...merged.videoUrls, ...prev])));
         else if (cloud.videoUrl) setVideoUrls(prev => prev.length === 0 ? [cloud.videoUrl] : prev);
         if (merged.audioClips?.length) setAudioClips(prev => mergeByKey(merged.audioClips, prev, a => a.ts || a.timestamp || a.url));
+        if (merged.lineItems?.length) setLineItems(prev => mergeByKey(merged.lineItems, prev, li => li.id));
         if (cloud.aiScopeSummary) setAiScopeResult(prev => prev || cloud.aiScopeSummary);
         if (cloud.aiAddonEmail) setAiAddonResult(prev => prev || cloud.aiAddonEmail);
         // Route through the per-stop write queue so this can't clobber
@@ -484,12 +501,14 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           const exAddon = ex.addonPhotos || [];
           const exAudio = ex.audioClips || [];
           const exVids  = ex.videoUrls || (ex.videoUrl ? [ex.videoUrl] : []);
+          const exLineItems = ex.lineItems || [];
           return {
             ...merged,
             scopePhotos: mergeByKey(merged.scopePhotos || [], exScope, photoKey),
             addonPhotos: mergeByKey(merged.addonPhotos || [], exAddon, photoKey),
             audioClips:  mergeByKey(merged.audioClips  || [], exAudio, a => a.ts || a.timestamp || a.url),
             videoUrls:   Array.from(new Set([...(merged.videoUrls || []), ...exVids])),
+            lineItems:   mergeByKey(merged.lineItems || [], exLineItems, li => li.id),
           };
         }).catch(() => {});
         primeField(s.id, merged);
@@ -950,6 +969,80 @@ Property: ${s.addr || ""}`);
     setAiAddonLoading(false);
   };
 
+  // ── LINE ITEM EXTRACTION ────────────────────────────────────────────
+  // Turns the free-text Scope/Add-on notes into structured, machine-readable
+  // line items (action + target + qty + notes) — same manual-tap, same cheap
+  // gemini-2.5-flash model as the AI Scope Summary / Add-on Email above. Never
+  // runs automatically (not on typing, not on a timer, not per-photo) — only
+  // when the user taps the button, exactly like the two calls above it. The
+  // free-text notes remain the source of truth; this is a derived, editable
+  // summary of them meant to feed future automation (e.g. proposal building)
+  // without requiring separate manual data entry in the field.
+  const extractLineItems = async () => {
+    if (!GEMINI_KEY) { setExtractError("Add VITE_GEMINI_KEY to .env"); return; }
+    const combined = `${scopeNotes || ""}\n${addonNotes || ""}`.trim();
+    if (!combined) { setExtractError("Add some scope or add-on notes first."); return; }
+    setExtractLoading(true);
+    setExtractError(null);
+    try {
+      const raw = await callGemini(`You are an ISA-certified arborist's field assistant. Read these field notes and extract each distinct piece of work as a structured line item. Respond with ONLY a JSON array — no markdown fences, no prose, no explanation.
+
+Each item must have exactly these fields:
+- "action": one of "remove", "trim", "stumpGrind", "plantHealthCare", "other"
+- "target": short label for the tree/plant/area (e.g. "Oak", "Arborvitae")
+- "location": short location on the property, or "" if not mentioned
+- "qty": a number (default 1 if not stated)
+- "notes": a short phrase capturing any extra detail (specific limbs, condition, "quote only", etc.)
+
+Only include items that describe actual tree/plant work — skip general commentary. If nothing qualifies, return [].
+
+Field notes:
+${combined}`);
+      let items;
+      try {
+        const cleaned = raw.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+        items = JSON.parse(cleaned);
+        if (!Array.isArray(items)) throw new Error("not an array");
+      } catch {
+        setExtractError("Couldn't read the AI's response — try again.");
+        setExtractLoading(false);
+        return;
+      }
+      const existingKeys = new Set(lineItems.map(li => `${li.action}|${li.target}|${li.location}|${li.notes}`.toLowerCase()));
+      const fresh = items
+        .filter(it => it && it.target)
+        .map((it, i) => ({
+          id: `li_${Date.now()}_${i}`,
+          action: it.action || "other",
+          target: String(it.target).slice(0, 60),
+          location: String(it.location || "").slice(0, 60),
+          qty: Number(it.qty) > 0 ? Number(it.qty) : 1,
+          notes: String(it.notes || "").slice(0, 200),
+        }))
+        // Skip items that look identical to ones already confirmed, so re-running
+        // extraction after adding a sentence doesn't re-suggest everything.
+        .filter(it => !existingKeys.has(`${it.action}|${it.target}|${it.location}|${it.notes}`.toLowerCase()));
+      setSuggestedItems(fresh);
+      if (fresh.length === 0 && items.length > 0) setExtractError("No new items — everything found is already in your list.");
+    } catch(e) {
+      setExtractError("Extraction failed: " + e.message);
+    }
+    setExtractLoading(false);
+  };
+
+  const acceptSuggestedItem = (id) => {
+    const item = suggestedItems.find(it => it.id === id);
+    if (!item) return;
+    setLineItems(prev => [...prev, item]);
+    setSuggestedItems(prev => prev.filter(it => it.id !== id));
+  };
+  const acceptAllSuggested = () => {
+    setLineItems(prev => [...prev, ...suggestedItems]);
+    setSuggestedItems([]);
+  };
+  const dismissSuggestedItem = (id) => setSuggestedItems(prev => prev.filter(it => it.id !== id));
+  const removeLineItem = (id) => setLineItems(prev => prev.filter(it => it.id !== id));
+
   // ── VIDEO: enqueue for background upload to Google Drive via videoQueue ──
   // The actual upload (chunked PUT to Drive) runs entirely inside videoQueue.js,
   // persisted to its own IndexedDB store. By the time enqueueVideo() resolves
@@ -1038,7 +1131,7 @@ Property: ${s.addr || ""}`);
         return [...map.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0));
       };
       return {
-        scopeNotes, addonNotes, videoUrls, audioClips,
+        scopeNotes, addonNotes, videoUrls, audioClips, lineItems,
         aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult,
         scopePhotos: mergePhotos(scopePhotos, ex.scopePhotos || ex.photos || []),
         addonPhotos: mergePhotos(addonPhotos, ex.addonPhotos || []),
@@ -1388,6 +1481,64 @@ Property: ${s.addr || ""}`);
               <IconImage size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
             </button>
           </div>
+        </div>
+
+        {/* ── LINE ITEMS ─────────────────────────────────────────────────
+            Structured, machine-readable summary of the Scope/Add-on notes
+            above, built by tapping "Extract" (AI-assisted, manual only —
+            never runs automatically). Free text stays the source of truth;
+            this is a derived, tap-to-confirm list meant to feed future
+            automation (e.g. building a SingleOps proposal) without adding
+            separate data entry. */}
+        <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,flex:1}}>Line Items</div>
+            <button onClick={extractLineItems} disabled={extractLoading} style={{padding:"6px 12px",borderRadius:8,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.3)",color:"#3B82F6",fontSize:10,fontWeight:800,cursor:extractLoading?"default":"pointer",opacity:extractLoading?0.6:1,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:5}}>
+              <IconSparkles size={12} color="#3B82F6"/>{extractLoading ? "Reading notes…" : "Extract from notes"}
+            </button>
+          </div>
+
+          {extractError && <div style={{fontSize:11,color:"#F6BF26",marginBottom:8,fontFamily:B}}>{extractError}</div>}
+
+          {/* Suggested (pending) items — tap-to-confirm, nothing saved until accepted */}
+          {suggestedItems.length > 0 && (
+            <div style={{marginBottom:10,padding:"8px 10px",borderRadius:10,background:"rgba(59,130,246,.05)",border:"1px dashed rgba(59,130,246,.25)"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                <div style={{flex:1,fontSize:10,color:"#5a90c0",fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Suggested — tap to add</div>
+                <button onClick={acceptAllSuggested} style={{padding:"3px 9px",borderRadius:6,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.35)",color:"#10B981",fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.3,textTransform:"uppercase",whiteSpace:"nowrap"}}>Add all</button>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                {suggestedItems.map(it => (
+                  <div key={it.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 9px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540"}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,color:"#e0e8f0",fontWeight:600}}>{it.qty > 1 ? `${it.qty}× ` : ""}{ACTION_LABEL[it.action] || it.action} — {it.target}{it.location ? ` (${it.location})` : ""}</div>
+                      {it.notes && <div style={{fontSize:10,color:"#5a6580",marginTop:1}}>{it.notes}</div>}
+                    </div>
+                    <button onClick={() => acceptSuggestedItem(it.id)} style={{padding:"4px 10px",borderRadius:6,background:"rgba(16,185,129,.12)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:10,fontWeight:800,cursor:"pointer",flexShrink:0}}>Add</button>
+                    <button onClick={() => dismissSuggestedItem(it.id)} style={{width:26,height:26,borderRadius:6,background:"transparent",border:"1px solid #252d47",color:"#a06060",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><IconX size={11} color="#a06060"/></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Confirmed items */}
+          {lineItems.length === 0 && suggestedItems.length === 0 && !extractLoading && (
+            <div style={{fontSize:11,color:"#4a5a70",fontStyle:"italic",fontFamily:B}}>No line items yet — write your Scope/Add-on notes, then tap Extract.</div>
+          )}
+          {lineItems.length > 0 && (
+            <div style={{display:"flex",flexDirection:"column",gap:5}}>
+              {lineItems.map(it => (
+                <div key={it.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 9px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540"}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,color:"#e0e8f0",fontWeight:600}}>{it.qty > 1 ? `${it.qty}× ` : ""}{ACTION_LABEL[it.action] || it.action} — {it.target}{it.location ? ` (${it.location})` : ""}</div>
+                    {it.notes && <div style={{fontSize:10,color:"#5a6580",marginTop:1}}>{it.notes}</div>}
+                  </div>
+                  <button onClick={() => removeLineItem(it.id)} style={{width:26,height:26,borderRadius:6,background:"transparent",border:"1px solid #252d47",color:"#a06060",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><IconX size={11} color="#a06060"/></button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
       </div>
