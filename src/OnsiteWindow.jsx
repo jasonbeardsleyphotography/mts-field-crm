@@ -181,7 +181,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [showParcelMap, setShowParcelMap] = useState(false);
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const [saveSafetyPrompt, setSaveSafetyPrompt] = useState(null); // { id, file } just-recorded video awaiting a durable save
-  const ytFileRef = useRef(null);
   // (formerly: ytUploadCount — now tracked entirely via videoQueueItems)
   const mountedRef = useRef(true);
   const stopIdRef = useRef(s.id);
@@ -608,6 +607,35 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     });
   };
   const handleScopePhotos = (e) => { Array.from(e.target.files || []).forEach(f => processPhoto(f, "scope")); e.target.value = ""; };
+
+  // Single Library picker accepts BOTH photos and videos — routes each file
+  // by its actual MIME type instead of making the user pick a separate
+  // "photo library" vs "video library" button for what's the same OS picker.
+  const handleScopeLibraryFiles = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+    let videoSeq = videoUrls.length + videoQueueItems.length;
+    for (const file of files) {
+      if (file.type.startsWith("video/")) {
+        videoSeq++;
+        const lastName = (s.cn || "").split(" ").pop();
+        const jobPart = s.jn ? ` #${s.jn}` : "";
+        const datePart = new Date().toLocaleDateString("en-US", {month:"2-digit",day:"2-digit",year:"numeric"});
+        const title = `${lastName}${jobPart} ${datePart} - ${String(videoSeq).padStart(2,"0")}`;
+        try {
+          // Library imports are already safe — the original still lives in the
+          // phone's Photos library — so mark them backed-up and skip the prompt.
+          await enqueueVideo({ stopId: s.id, file, title, alreadyInLibrary: true });
+        } catch (err) {
+          console.warn("Failed to enqueue video:", err);
+          alert("Failed to queue video: " + (err.message || err));
+        }
+      } else {
+        processPhoto(file, "scope");
+      }
+    }
+  };
   const handleAddonPhotos = (e) => { Array.from(e.target.files || []).forEach(f => processPhoto(f, "addon")); e.target.value = ""; };
   const removeScopePhoto = (i) => {
     // Identify the photo by stable key (id/ts/url) so we never delete the
@@ -1211,21 +1239,6 @@ ${combined}`);
     return `${lastName}${jobPart} ${datePart} - ${seqNum}`;
   };
 
-  const handleYtFile = async (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      try {
-        // Library imports are already safe — the original still lives in the
-        // phone's Photos library — so mark them backed-up and skip the prompt.
-        await enqueueVideo({ stopId: s.id, file, title: buildVideoTitle(), alreadyInLibrary: true });
-      } catch (err) {
-        console.warn("Failed to enqueue video:", err);
-        alert("Failed to queue video: " + (err.message || err));
-      }
-    }
-    e.target.value = "";
-  };
-
   const handleRecordedVideo = async (file) => {
     setShowVideoRecorder(false);
     try {
@@ -1394,8 +1407,8 @@ ${combined}`);
               {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>{s.phone}<IconPhone size={12} color="#a0b8d0"/></a>}
               {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,maxWidth:"100%",minWidth:0}}><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.email}</span><IconMail size={12} color="#a0b8d0"/></a>}
               {s.jn && (
-                <button onClick={() => { navigator.clipboard?.writeText(s.jn).catch(() => {}); window.open(SINGLEOPS_URL, "_blank"); }} title="Copy job # and open SingleOps" style={{fontSize:11,color:"#4a7ab0",background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:3,fontWeight:600}}>
-                  #{s.jn}<IconClipboard size={10} color="#4a7ab0"/>
+                <button onClick={() => { navigator.clipboard?.writeText(s.jn).catch(() => {}); window.open(SINGLEOPS_URL, "_blank"); }} title="Copy job # and open SingleOps" style={{fontSize:16,color:"#5a90d0",background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:5,fontWeight:800,marginTop:2}}>
+                  #{s.jn}<IconClipboard size={14} color="#5a90d0"/>
                 </button>
               )}
             </div>
@@ -1446,21 +1459,23 @@ ${combined}`);
               </div>
             ))}
           </div>}
-          <input ref={scopeLibRef} type="file" accept="image/*" multiple onChange={handleScopePhotos} style={{display:"none"}} />
+          {/* Single Library input handles BOTH photos and videos — routed by
+              MIME type in handleScopeLibraryFiles, so there's one picker
+              instead of separate photo/video library buttons. */}
+          <input ref={scopeLibRef} type="file" accept="image/*,video/*" multiple onChange={handleScopeLibraryFiles} style={{display:"none"}} />
           <div style={{display:"flex",gap:6,marginTop:8}}>
             <button onClick={()=>{setCameraSection("scope");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
               <IconCamera size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Camera</span>
             </button>
-            <button onClick={()=>scopeLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
-              <IconImage size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
-            </button>
-            {/* Record Video — moved up into this row, right alongside the photo
-                capture buttons, so it's one tap away instead of a separate
-                section scrolled below. */}
+            {/* Record Video — right alongside Camera, one tap away instead of
+                a separate section scrolled below. */}
             <button onClick={() => setShowVideoRecorder(true)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(255,59,48,.06)",border:"1px dashed rgba(255,59,48,.3)",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
               <IconVideo size={16} color="#FF6B5E"/><span style={{fontSize:11,color:"#FF6B5E",fontWeight:600}}>Video</span>
             </button>
           </div>
+          <button onClick={()=>scopeLibRef.current?.click()} style={{width:"100%",padding:"8px 0",marginTop:6,borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+            <IconImage size={14} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library (photo or video)</span>
+          </button>
         </div>
 
         {/* ── VIDEO ─────────────────────────────────────────────────── */}
@@ -1588,14 +1603,10 @@ ${combined}`);
             </div>
           )}
 
-          {/* Recording is now the "Video" button up in the Camera/Library row
-              above — this stays as the secondary path for importing a video
-              already shot with the native Camera app. */}
-          <input ref={ytFileRef} type="file" accept="video/*" onChange={handleYtFile} style={{display:"none"}} />
-          <button onClick={() => ytFileRef.current?.click()} style={{width:"100%",padding:"9px 0",borderRadius:8,background:"transparent",border:"1px solid #1a2540",color:"#5a7090",fontSize:11,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-            <IconVideo size={13} color="#5a7090"/><span>Choose from Library</span>
-          </button>
-          <div style={{marginTop:6,fontSize:9,lineHeight:1.4,color:"#5a6580",fontFamily:F,letterSpacing:0.2,textAlign:"center"}}>
+          {/* Recording and library-import both live in the row above now
+              (Camera/Video buttons + the combined Library bar) — no separate
+              video-only import control needed here. */}
+          <div style={{fontSize:9,lineHeight:1.4,color:"#5a6580",fontFamily:F,letterSpacing:0.2,textAlign:"center"}}>
             Library imports upload faster at <strong style={{color:"#8a93a8"}}>1080p</strong> (iPhone Settings → Camera → Record Video) than 4K.
           </div>
         </div>
