@@ -1425,8 +1425,8 @@ ${combined}`);
           {/* Job # and Parcel Map, opposite each other on one row */}
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginTop:10}}>
             {s.jn ? (
-              <button onClick={() => { navigator.clipboard?.writeText(s.jn).catch(() => {}); window.open(SINGLEOPS_URL, "_blank"); }} title="Copy job # and open SingleOps" style={{fontSize:16,color:"#5a90d0",background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:5,fontWeight:800}}>
-                #{s.jn}<IconClipboard size={14} color="#5a90d0"/>
+              <button onClick={() => { navigator.clipboard?.writeText(s.jn).catch(() => {}); window.open(SINGLEOPS_URL, "_blank"); }} title="Copy job # and open SingleOps" style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(96,181,255,.12)",border:"1px solid rgba(96,181,255,.4)",color:"#7ec4ff",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer",flexShrink:0,boxShadow:"0 0 12px rgba(96,181,255,.35)"}}>
+                <IconClipboard size={13} color="#7ec4ff"/>#{s.jn}
               </button>
             ) : <div />}
             <button onClick={() => setShowParcelMap(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(255,214,0,.08)",border:"1px solid rgba(255,214,0,.25)",color:"#FFD600",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer",flexShrink:0}}>
