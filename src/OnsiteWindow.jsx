@@ -52,6 +52,18 @@ import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPe
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 const SINGLEOPS_URL = "https://app.singleops.com/";
+// Photos are appended by several independent async paths (camera capture,
+// library import, parcel-map snapshot) that can each take a different amount
+// of time to downscale/save — two photos taken back-to-back can finish
+// processing in the OPPOSITE order they were taken, landing out of sequence
+// in the array. Since nothing sorts at render time, that scramble was
+// directly visible. Sorting by `ts` (set synchronously at capture, not at
+// resolution) after every append guarantees chronological order regardless
+// of which async op finishes first. Used both in-component and by the
+// module-level _processPhoto below, so it's a plain top-level function.
+function sortPhotosByTs(arr) {
+  return [...arr].sort((a, b) => (a.ts || a.timestamp || 0) - (b.ts || b.timestamp || 0));
+}
 // Lowercased lookup so the AI's item pick (which can drift in case/whitespace)
 // still resolves to the exact catalog string SingleOps expects.
 const SINGLEOPS_ITEMS_LOWER = new Map(SINGLEOPS_ITEMS.map(i => [i.toLowerCase(), i]));
@@ -159,8 +171,11 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [jobTags, setJobTags] = useState(fd.jobTags || []);
   const [suggestedTags, setSuggestedTags] = useState([]);
   const [tagSuggestLoading, setTagSuggestLoading] = useState(false);
-  const [scopePhotos, setScopePhotos] = useState(fd.scopePhotos || fd.photos || []);
-  const [addonPhotos, setAddonPhotos] = useState(fd.addonPhotos || []);
+  // sortPhotosByTs on initial load too, so any photo array already saved
+  // out of order (from before this ordering fix existed) self-corrects the
+  // moment the card is opened, not just for newly-added photos.
+  const [scopePhotos, setScopePhotos] = useState(() => sortPhotosByTs(fd.scopePhotos || fd.photos || []));
+  const [addonPhotos, setAddonPhotos] = useState(() => sortPhotosByTs(fd.addonPhotos || []));
   // Support multiple video uploads — stored as array
   const [videoUrls, setVideoUrls] = useState(fd.videoUrls || (fd.videoUrl ? [fd.videoUrl] : []));
   const [audioClips, setAudioClips] = useState(fd.audioClips || []);
@@ -600,8 +615,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     if (!file) return;
     _processPhoto(file, section, s.id).then(photo => {
       if (!photo || !mountedRef.current) return;
-      if (section === "addon") setAddonPhotos(prev => [...prev, photo]);
-      else setScopePhotos(prev => [...prev, photo]);
+      if (section === "addon") setAddonPhotos(prev => sortPhotosByTs([...prev, photo]));
+      else setScopePhotos(prev => sortPhotosByTs([...prev, photo]));
       // Immediate, serialized Drive sync — see camera onPhoto for the rationale.
       if (token) queueFieldDriveSync(token, s.id);
     });
@@ -911,10 +926,10 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         const photo = { dataUrl, ts: Date.now(), id: newPhotoId() };
         try {
           await updateField(s.id, (existing) => ({
-            addonPhotos: [...(existing.addonPhotos || []), photo],
+            addonPhotos: sortPhotosByTs([...(existing.addonPhotos || []), photo]),
           }));
         } catch (e) { console.warn("Parcel snapshot IDB save failed:", e); }
-        setAddonPhotos(prev => [...prev, photo]);
+        setAddonPhotos(prev => sortPhotosByTs([...prev, photo]));
         markStopForPhotoSync(s.id);
         if (token) queueFieldDriveSync(token, s.id);
         setShowParcelMap(false);
@@ -940,12 +955,12 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         try {
           await updateField(s.id, (existing) => {
             const existingPhotos = existing[key] || existing.photos || [];
-            return { [key]: [...existingPhotos, photo] };
+            return { [key]: sortPhotosByTs([...existingPhotos, photo]) };
           });
         } catch (e) { console.warn("Camera photo IDB save failed:", e); }
         // Now reflect in component state so the UI updates
-        if (cameraSection === "addon") setAddonPhotos(prev => [...prev, photo]);
-        else setScopePhotos(prev => [...prev, photo]);
+        if (cameraSection === "addon") setAddonPhotos(prev => sortPhotosByTs([...prev, photo]));
+        else setScopePhotos(prev => sortPhotosByTs([...prev, photo]));
         markStopForPhotoSync(s.id); // queue for Drive upload
         // IMMEDIATE Drive sync so photos can't be lost if the user closes the
         // app before the 3-sec auto-save timer fires. Serialized + coalesced
@@ -1810,7 +1825,7 @@ function _processPhoto(file, section, stopId) {
           await updateField(stopId, (existing) => {
             const key = section === "addon" ? "addonPhotos" : "scopePhotos";
             const existingPhotos = existing[key] || existing.photos || [];
-            return { [key]: [...existingPhotos, photo] };
+            return { [key]: sortPhotosByTs([...existingPhotos, photo]) };
           });
           markStopForPhotoSync(stopId);
         } catch (e) { console.warn("Photo background save failed:", e); }
