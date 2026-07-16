@@ -159,7 +159,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [jobTags, setJobTags] = useState(fd.jobTags || []);
   const [suggestedTags, setSuggestedTags] = useState([]);
   const [tagSuggestLoading, setTagSuggestLoading] = useState(false);
-  const [summaryCopied, setSummaryCopied] = useState(false);
   const [scopePhotos, setScopePhotos] = useState(fd.scopePhotos || fd.photos || []);
   const [addonPhotos, setAddonPhotos] = useState(fd.addonPhotos || []);
   // Support multiple video uploads — stored as array
@@ -1128,39 +1127,6 @@ ${combined}`);
   const acceptSuggestedTag = (tag) => { setJobTags(prev => [...prev, tag]); setSuggestedTags(prev => prev.filter(t => t !== tag)); };
   const acceptAllSuggestedTags = () => { setJobTags(prev => Array.from(new Set([...prev, ...suggestedTags]))); setSuggestedTags([]); };
 
-  // ── COPY SUMMARY — plain-text export of everything captured on this visit,
-  // formatted for a future Claude-in-browser session (or manual paste) to
-  // read cleanly and act on in SingleOps: matched catalog item, composed
-  // Target string (qty + location + species, matching how SingleOps displays
-  // it), notes, and the job-level tags.
-  const buildSingleOpsSummary = () => {
-    const lines = [];
-    lines.push(`CLIENT: ${s.cn || ""}`);
-    if (s.addr) lines.push(`ADDRESS: ${s.addr}`);
-    if (s.jn) lines.push(`JOB #: ${s.jn}`);
-    lines.push("");
-    if (jobTags.length) { lines.push(`JOB TAGS: ${jobTags.join(", ")}`); lines.push(""); }
-    lines.push("LINE ITEMS:");
-    if (lineItems.length === 0) lines.push("(none yet)");
-    lineItems.forEach((it, i) => {
-      const targetStr = [it.qty > 1 ? it.qty : null, it.location, it.target].filter(Boolean).join(" ");
-      lines.push(`${i + 1}. ${it.item || "⚠ UNMATCHED — pick manually"}`);
-      lines.push(`   Target: ${targetStr}`);
-      lines.push(`   Qty: ${it.qty}`);
-      if (it.notes) lines.push(`   Notes: ${it.notes}`);
-    });
-    if (scopeNotes) { lines.push(""); lines.push("SCOPE NOTES:"); lines.push(scopeNotes); }
-    if (addonNotes) { lines.push(""); lines.push("ADD-ON NOTES:"); lines.push(addonNotes); }
-    return lines.join("\n");
-  };
-  const copySingleOpsSummary = async () => {
-    try {
-      await navigator.clipboard.writeText(buildSingleOpsSummary());
-      setSummaryCopied(true);
-      setTimeout(() => setSummaryCopied(false), 2000);
-    } catch {}
-  };
-
   const acceptSuggestedItem = (id) => {
     const item = suggestedItems.find(it => it.id === id);
     if (!item) return;
@@ -1723,18 +1689,6 @@ ${combined}`);
               );
             })}
           </div>
-        </div>
-
-        {/* ── SUMMARY EXPORT ────────────────────────────────────────────
-            Plain-text dump of everything captured on this visit — client,
-            job tags, line items (matched catalog item + composed Target
-            string), and both note fields. Meant as the clean, structured
-            handoff a future Claude-in-browser session (or a manual paste)
-            can read to act on in SingleOps. */}
-        <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
-          <button onClick={copySingleOpsSummary} style={{width:"100%",padding:"10px 0",borderRadius:8,background:"rgba(16,185,129,.08)",border:"1px solid rgba(16,185,129,.25)",color:"#10B981",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-            <IconClipboard size={13} color="#10B981"/>{summaryCopied ? "Copied!" : "Copy Summary for SingleOps"}
-          </button>
         </div>
 
       </div>
