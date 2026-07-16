@@ -1281,8 +1281,19 @@ ${combined}`);
   };
 
   // ── RENDER ────────────────────────────────────────────────────────────
+  // Two nested layers: an outer viewport-covering backdrop, and an inner
+  // "shell" that holds the actual header/body/bottom-bar content. On phones
+  // (the common case) the shell fills the backdrop edge-to-edge exactly like
+  // before — zero visual change. Past a desktop-width breakpoint (see the
+  // media query in the <style> block below), the backdrop dims to a
+  // translucent overlay and the shell shrinks to a centered, rounded,
+  // shadowed card — so on a wide monitor this reads as a popup floating
+  // over the page behind it, not a screen stretched wall-to-wall. The
+  // save-safety prompt / toast stay direct children of the OUTER backdrop
+  // (not the shell) so they stay correctly full-viewport-centered
+  // regardless of how narrow the shell gets.
   return (
-    <div style={{position:"fixed",inset:0,zIndex:100,background:"#0a0b10",display:"flex",flexDirection:"column",fontFamily:B,color:"#f0f4fa",overflow:"hidden"}}>
+    <div className="mts-onsite-backdrop" style={{position:"fixed",inset:0,zIndex:100,background:"#0a0b10",display:"flex",flexDirection:"column",overflow:"hidden"}}>
 
       {/* ── SAVE-TO-PHONE SAFETY PROMPT ────────────────────────────────────
           Fires right after every in-app recording. A fresh recording lives
@@ -1318,7 +1329,15 @@ ${combined}`);
           <span style={{fontSize:16}}>👍</span> Video Saved!
         </div>
       )}
-      <style>{`@keyframes vs-toast{from{opacity:0;transform:translate(-50%,-8px)}to{opacity:1;transform:translate(-50%,0)}}`}</style>
+      <style>{`
+@keyframes vs-toast{from{opacity:0;transform:translate(-50%,-8px)}to{opacity:1;transform:translate(-50%,0)}}
+@media (min-width: 860px) {
+  .mts-onsite-backdrop { background: rgba(0,0,0,.6) !important; padding: 3vh 24px; align-items: center; justify-content: center; }
+  .mts-onsite-shell { max-width: 760px !important; max-height: 94vh !important; border-radius: 16px !important; border: 1px solid #1a2030; box-shadow: 0 24px 70px rgba(0,0,0,.65); }
+}
+`}</style>
+
+      <div className="mts-onsite-shell" style={{display:"flex",flexDirection:"column",flex:1,width:"100%",height:"100%",background:"#0a0b10",fontFamily:B,color:"#f0f4fa",overflow:"hidden"}}>
 
       {/* ── HEADER ────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",paddingTop:"max(10px,env(safe-area-inset-top))",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
@@ -1757,6 +1776,7 @@ ${combined}`);
         {s.addr && <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(s.addr)}`} target="_blank" rel="noreferrer" style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",textDecoration:"none"}}><IconNavigation size={18} color="#3B82F6"/></a>}
         <button onClick={handleDone} style={{flex:3,padding:"12px 0",borderRadius:10,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconCheckCircle size={18} color="#10B981"/><span style={{fontSize:13,color:"#10B981",fontWeight:800,fontFamily:F,letterSpacing:0.5}}>DONE</span></button>
       </div>
+      </div>{/* end .mts-onsite-shell */}
     </div>
   );
 }
