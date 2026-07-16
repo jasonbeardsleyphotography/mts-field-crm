@@ -138,7 +138,7 @@ function CatalogPicker({ value, onChange, placeholder = "Search catalog…" }) {
 // points Pipeline uses to layer its own chrome (stage-move bar, repeat-client
 // banner, etc. — concepts that don't exist in Route) around the identical
 // shared editor beneath.
-export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkReject, token, backLabel = "Route", topBar = null, belowLibrarySlot = null, bottomExtra = null }) {
+export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkReject, token, backLabel = "Route", topBar = null, belowScopePhotosSlot = null, bottomExtra = null }) {
   const s = stop;
   // Synchronous peek for initial state — returns {} or the localStorage
   // mirror if one exists. The real async load runs below and hydrates.
@@ -1366,39 +1366,39 @@ ${combined}`);
 
         {swipeX < -30 && <div style={{position:"fixed",top:"50%",right:12,transform:"translateY(-50%)",padding:"10px 14px",borderRadius:10,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:12,fontWeight:800,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",opacity:Math.min(Math.abs(swipeX)/120,1),zIndex:102}}>→ PIPELINE</div>}
 
-        {/* Address + contact. Left column: name, address, job # (right under
-            the address — same column, not a separate right-aligned row, so
-            the header uses width efficiently), constraint. Right: phone/email
-            only. Parcel Map is its own centered row below, between the header
-            and Job Notes — not tucked into either column. */}
+        {/* Address + contact, all in one compact header block:
+            Row 1: name/address/constraint (left) — phone/email (right)
+            Row 2: job # (left) — Parcel Map (right), directly across from
+                   each other so both fit on one line instead of Parcel Map
+                   eating a whole extra bordered row of its own. */}
         <div style={{padding:"10px 16px",background:"#0d0f18",borderBottom:"1px solid #1a2030"}}>
           <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
-            {/* Left: name + address + job # */}
+            {/* Left: name + address */}
             <div style={{minWidth:0,flex:1}}>
               <div style={{fontSize:16,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.2,marginBottom:3}}>{s.cn}</div>
               <div style={{fontSize:12,color:"#96a2b4",fontFamily:F,textTransform:"uppercase",letterSpacing:1}}>{s.addr}</div>
-              {s.jn && (
-                <button onClick={() => { navigator.clipboard?.writeText(s.jn).catch(() => {}); window.open(SINGLEOPS_URL, "_blank"); }} title="Copy job # and open SingleOps" style={{fontSize:16,color:"#5a90d0",background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:5,fontWeight:800,marginTop:4}}>
-                  #{s.jn}<IconClipboard size={14} color="#5a90d0"/>
-                </button>
-              )}
               {s.constraint && (
                 <div style={{fontSize:11,color:"#FF80AB",marginTop:2}}>{s.constraint}</div>
               )}
             </div>
-            {/* Right: phone/email only */}
+            {/* Right: phone/email */}
             <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0,textAlign:"right",maxWidth:"50%"}}>
               {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>{s.phone}<IconPhone size={12} color="#a0b8d0"/></a>}
               {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,maxWidth:"100%",minWidth:0}}><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.email}</span><IconMail size={12} color="#a0b8d0"/></a>}
             </div>
           </div>
-        </div>
 
-        {/* Parcel Map — centered, its own row */}
-        <div style={{padding:"8px 16px",background:"#0d0f18",borderBottom:"1px solid #1a2030",display:"flex",justifyContent:"center"}}>
-          <button onClick={() => setShowParcelMap(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(255,214,0,.08)",border:"1px solid rgba(255,214,0,.25)",color:"#FFD600",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer"}}>
-            <IconMapPin size={13} color="#FFD600"/>Parcel Map
-          </button>
+          {/* Job # and Parcel Map, opposite each other on one row */}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginTop:10}}>
+            {s.jn ? (
+              <button onClick={() => { navigator.clipboard?.writeText(s.jn).catch(() => {}); window.open(SINGLEOPS_URL, "_blank"); }} title="Copy job # and open SingleOps" style={{fontSize:16,color:"#5a90d0",background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:5,fontWeight:800}}>
+                #{s.jn}<IconClipboard size={14} color="#5a90d0"/>
+              </button>
+            ) : <div />}
+            <button onClick={() => setShowParcelMap(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(255,214,0,.08)",border:"1px solid rgba(255,214,0,.25)",color:"#FFD600",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer",flexShrink:0}}>
+              <IconMapPin size={13} color="#FFD600"/>Parcel Map
+            </button>
+          </div>
         </div>
 
         {/* ── JOB NOTES (collapsible, always shows preview) ─────────── */}
@@ -1437,12 +1437,7 @@ ${combined}`);
             <IconImage size={14} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library (photo or video)</span>
           </button>
 
-          {/* Extension slot — Pipeline uses this for its Download All Photos
-              zip export, which has no Route equivalent. Null (nothing) there. */}
-          {belowLibrarySlot}
-
-          {/* Scope photos — now shown below the capture/import controls
-              rather than above them. */}
+          {/* Scope photos — shown below the capture/import controls. */}
           {scopePhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12}}>
             {scopePhotos.map((p, i) => (
               <div key={photoKey(p)||i} style={{display:"flex",flexDirection:"column",gap:3}}>
@@ -1465,6 +1460,11 @@ ${combined}`);
               </div>
             ))}
           </div>}
+
+          {/* Extension slot — Pipeline uses this for its Download All Photos
+              button (individual JPGs, no zip), which has no Route equivalent.
+              Rendered after the photo grid per request. Null on Route. */}
+          {belowScopePhotosSlot}
         </div>
 
         {/* ── VIDEO ─────────────────────────────────────────────────── */}

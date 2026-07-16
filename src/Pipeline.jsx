@@ -1,7 +1,6 @@
 import { IconFire, IconRevision, IconPause, IconMail, IconX, IconCheckCircle, IconNoSymbol } from "./icons";
 import OnsiteWindow from "./OnsiteWindow";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import JSZip from "jszip";
 
 // Extract a Drive file ID from any Drive URL format we store.
 function _driveFileId(url) {
@@ -259,26 +258,36 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   // ── DOWNLOAD PHOTOS ───────────────────────────────────────────────────
   const [downloadingPhotos, setDownloadingPhotos] = useState(false);
 
+  // Individual JPGs, never a zip — on mobile (where Web Share supports
+  // multiple files) this opens ONE share sheet with every photo attached, so
+  // "Save Images" drops them all into Photos as separate files in one tap.
+  // On desktop (no file-sharing support) it downloads each file individually
+  // to the Downloads folder, one after another.
   const downloadAllPhotos = useCallback(async (card, scopePhotos, addonPhotos) => {
+    const cleanName = card.cn.replace(/[^a-z0-9_\- ]/gi, "_");
     const all = [
-      ...scopePhotos.map((p, i) => ({ p, name: `scope_${String(i + 1).padStart(2, "0")}.jpg` })),
-      ...addonPhotos.map((p, i) => ({ p, name: `addon_${String(i + 1).padStart(2, "0")}.jpg` })),
+      ...scopePhotos.map((p, i) => ({ p, name: `${cleanName}_scope_${String(i + 1).padStart(2, "0")}.jpg` })),
+      ...addonPhotos.map((p, i) => ({ p, name: `${cleanName}_addon_${String(i + 1).padStart(2, "0")}.jpg` })),
     ].filter(x => x.p.dataUrl || x.p.url);
     if (!all.length) return;
 
     setDownloadingPhotos(true);
     try {
-      const zip = new JSZip();
-      const folder = zip.folder(card.cn.replace(/[^a-z0-9_\- ]/gi, "_"));
+      const files = [];
       // Sequential to avoid hammering Drive API with many parallel auth'd fetches
       for (const { p, name } of all) {
         try {
           const blob = await _fetchPhotoBlob(p, token);
-          folder.file(name, blob);
+          files.push(new File([blob], name, { type: blob.type || "image/jpeg" }));
         } catch {}
       }
-      const blob = await zip.generateAsync({ type: "blob" });
-      await _saveBlobAsFile(blob, `${card.cn.replace(/[^a-z0-9_\- ]/gi, "_")}_photos.zip`);
+      if (!files.length) return;
+      if (navigator.canShare && navigator.canShare({ files })) {
+        try { await navigator.share({ files }); }
+        catch (e) { if (e?.name !== "AbortError") console.warn("share failed:", e); }
+        return;
+      }
+      for (const f of files) { await _saveBlobAsFile(f, f.name); }
     } catch (e) {
       console.warn("downloadAllPhotos failed:", e);
     } finally {
@@ -989,9 +998,9 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
                 ))}
               </div>
             }
-            belowLibrarySlot={(scopePhotos.length + addonPhotos.length) > 0 && (
-              <button onClick={() => downloadAllPhotos(card, scopePhotos, addonPhotos)} disabled={downloadingPhotos} style={{width:"100%",marginTop:6,padding:"6px 0",borderRadius:7,background:"rgba(16,185,129,.06)",border:"1px solid rgba(16,185,129,.2)",color:"#10B981",fontSize:10,fontWeight:700,cursor:downloadingPhotos?"default":"pointer",opacity:downloadingPhotos?0.6:1,fontFamily:F,letterSpacing:0.3,textTransform:"uppercase"}}>
-                {downloadingPhotos ? "Zipping…" : `Download All Photos (${scopePhotos.length + addonPhotos.length})`}
+            belowScopePhotosSlot={(scopePhotos.length + addonPhotos.length) > 0 && (
+              <button onClick={() => downloadAllPhotos(card, scopePhotos, addonPhotos)} disabled={downloadingPhotos} style={{width:"100%",marginTop:12,padding:"6px 0",borderRadius:7,background:"rgba(16,185,129,.06)",border:"1px solid rgba(16,185,129,.2)",color:"#10B981",fontSize:10,fontWeight:700,cursor:downloadingPhotos?"default":"pointer",opacity:downloadingPhotos?0.6:1,fontFamily:F,letterSpacing:0.3,textTransform:"uppercase"}}>
+                {downloadingPhotos ? "Saving…" : `Download All Photos (${scopePhotos.length + addonPhotos.length})`}
               </button>
             )}
             bottomExtra={
