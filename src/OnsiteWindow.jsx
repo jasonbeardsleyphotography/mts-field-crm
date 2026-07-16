@@ -180,6 +180,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [showParcelMap, setShowParcelMap] = useState(false);
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const [saveSafetyPrompt, setSaveSafetyPrompt] = useState(null); // { id, file } just-recorded video awaiting a durable save
+  const [videoSavedToast, setVideoSavedToast] = useState(false);
   // (formerly: ytUploadCount — now tracked entirely via videoQueueItems)
   const mountedRef = useRef(true);
   const stopIdRef = useRef(s.id);
@@ -1182,11 +1183,48 @@ ${combined}`);
     }
   };
 
+  // Short WebAudio "success" chime — two quick ascending tones. No external
+  // asset/network dependency, so it's instant and works offline.
+  const playSavedChime = () => {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      [660, 990].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        const t0 = ctx.currentTime + i * 0.09;
+        gain.gain.setValueAtTime(0.0001, t0);
+        gain.gain.exponentialRampToValueAtTime(0.18, t0 + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.16);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(t0);
+        osc.stop(t0 + 0.18);
+      });
+      setTimeout(() => { try { ctx.close(); } catch {} }, 500);
+    } catch {}
+  };
+
   const handleSafetySave = async () => {
     const p = saveSafetyPrompt;
     if (!p) return;
+    // The iOS share sheet that follows (Save Video / AirDrop / etc.) is a
+    // platform-level picker Apple requires for any web app writing to
+    // Photos — there is no scriptable "just save it" API, so that one
+    // dialog can't be removed. Everything on OUR side closes immediately
+    // and cleanly the instant it reports success — no extra confirmation
+    // step of our own.
     const ok = await saveVideoToDevice({ id: p.id, file: p.file });
-    if (ok) { try { await markSavedToDevice(p.id); } catch {} setSaveSafetyPrompt(null); }
+    if (ok) {
+      try { await markSavedToDevice(p.id); } catch {}
+      setSaveSafetyPrompt(null);
+      try { navigator.vibrate?.([15, 40, 15]); } catch {}
+      playSavedChime();
+      setVideoSavedToast(true);
+      setTimeout(() => setVideoSavedToast(false), 2200);
+    }
     // If not ok (user dismissed the share sheet), keep the prompt up so they
     // can try again — the whole point is not to let it slip by unsaved.
   };
@@ -1271,6 +1309,16 @@ ${combined}`);
           </div>
         </div>
       )}
+
+      {/* Brief "video saved" confirmation — fires once saveVideoToDevice
+          actually confirms the share/save completed, then auto-dismisses.
+          Pairs with the chime + haptic in handleSafetySave. */}
+      {videoSavedToast && (
+        <div style={{position:"fixed",top:"max(70px, calc(env(safe-area-inset-top) + 60px))",left:"50%",transform:"translateX(-50%)",zIndex:410,display:"flex",alignItems:"center",gap:8,padding:"12px 20px",borderRadius:999,background:"#10B981",color:"#04140d",fontSize:13,fontWeight:900,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",boxShadow:"0 8px 24px rgba(16,185,129,.4)",pointerEvents:"none",animation:"vs-toast .25s ease-out"}}>
+          <span style={{fontSize:16}}>👍</span> Video Saved!
+        </div>
+      )}
+      <style>{`@keyframes vs-toast{from{opacity:0;transform:translate(-50%,-8px)}to{opacity:1;transform:translate(-50%,0)}}`}</style>
 
       {/* ── HEADER ────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",paddingTop:"max(10px,env(safe-area-inset-top))",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
