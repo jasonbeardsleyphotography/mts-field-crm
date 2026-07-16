@@ -138,7 +138,7 @@ function CatalogPicker({ value, onChange, placeholder = "Search catalog…" }) {
 // points Pipeline uses to layer its own chrome (stage-move bar, repeat-client
 // banner, etc. — concepts that don't exist in Route) around the identical
 // shared editor beneath.
-export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkReject, token, backLabel = "Route", topBar = null }) {
+export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkReject, token, backLabel = "Route", topBar = null, belowLibrarySlot = null, bottomExtra = null }) {
   const s = stop;
   // Synchronous peek for initial state — returns {} or the localStorage
   // mirror if one exists. The real async load runs below and hydrates.
@@ -1026,44 +1026,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     return data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response.";
   };
 
-  const generateScopeSummary = async () => {
-    if (!GEMINI_KEY) { setAiScopeResult("Add VITE_GEMINI_KEY to .env"); return; }
-    setAiScopeLoading(true);
-    try {
-      const text = await callGemini(`You are an ISA-certified arborist's field assistant. Summarize these field notes into a structured estimate summary. Include: species/trees observed, conditions found, recommended treatments, equipment needed, and a rough job value estimate if enough info exists. Be concise and professional.
-
-Client: ${s.cn}
-Address: ${s.addr}
-Job notes from office: ${s.notes || "None"}
-Scope notes: ${scopeNotes || "None"}
-Constraints: ${s.constraint || "None"}`);
-      setAiScopeResult(text);
-    } catch(e) { setAiScopeResult("Error: " + e.message); }
-    setAiScopeLoading(false);
-  };
-
-  const generateAddonEmail = async () => {
-    if (!GEMINI_KEY) { setAiAddonResult("Add VITE_GEMINI_KEY to .env"); return; }
-    setAiAddonLoading(true);
-    try {
-      const text = await callGemini(`You are an ISA-certified arborist writing a professional, educational email to a homeowner. Based on these additional findings discovered during a site visit:
-
-1. For each issue found, write a brief educational paragraph explaining what it is, why it matters for tree/plant health, and what treatments or recommendations exist.
-2. Reference science-based information — cite Cornell Cooperative Extension, Northeast university extension resources, or ISA best practices where relevant. Use phrases like "According to Cornell Extension research..." or "ISA best management practices recommend..."
-3. NEVER use the word "chemical" — instead use "treatments," "applications," "plant healthcare solutions," or "recommendations."
-4. Tone should be educational but down-to-earth — like a knowledgeable neighbor explaining things, not a textbook.
-5. Keep it warm and professional. Do not be alarming.
-6. End with a brief recommendation and offer to discuss further.
-7. Sign as Jason from Monster Tree Service of Rochester.
-
-Client first name: ${(s.cn || "").split(" ")[0]}
-Add-on findings: ${addonNotes || "None"}
-Property: ${s.addr || ""}`);
-      setAiAddonResult(text);
-    } catch(e) { setAiAddonResult("Error: " + e.message); }
-    setAiAddonLoading(false);
-  };
-
   // ── LINE ITEM EXTRACTION ────────────────────────────────────────────
   // Turns the free-text Scope/Add-on notes into structured, machine-readable
   // line items (action + target + qty + notes) — same manual-tap, same cheap
@@ -1390,30 +1352,37 @@ ${combined}`);
 
         {swipeX < -30 && <div style={{position:"fixed",top:"50%",right:12,transform:"translateY(-50%)",padding:"10px 14px",borderRadius:10,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:12,fontWeight:800,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",opacity:Math.min(Math.abs(swipeX)/120,1),zIndex:102}}>→ PIPELINE</div>}
 
-        {/* Address + contact — name/address on the left, contact details
-            (phone, email, job #) right-justified across from them. */}
+        {/* Address + contact. Left column: name, address, job # (right under
+            the address — same column, not a separate right-aligned row, so
+            the header uses width efficiently), constraint. Right: phone/email
+            only. Parcel Map is its own centered row below, between the header
+            and Job Notes — not tucked into either column. */}
         <div style={{padding:"10px 16px",background:"#0d0f18",borderBottom:"1px solid #1a2030"}}>
           <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
-            {/* Left: name + address */}
+            {/* Left: name + address + job # */}
             <div style={{minWidth:0,flex:1}}>
               <div style={{fontSize:16,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.2,marginBottom:3}}>{s.cn}</div>
               <div style={{fontSize:12,color:"#96a2b4",fontFamily:F,textTransform:"uppercase",letterSpacing:1}}>{s.addr}</div>
+              {s.jn && (
+                <button onClick={() => { navigator.clipboard?.writeText(s.jn).catch(() => {}); window.open(SINGLEOPS_URL, "_blank"); }} title="Copy job # and open SingleOps" style={{fontSize:16,color:"#5a90d0",background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:5,fontWeight:800,marginTop:4}}>
+                  #{s.jn}<IconClipboard size={14} color="#5a90d0"/>
+                </button>
+              )}
               {s.constraint && (
                 <div style={{fontSize:11,color:"#FF80AB",marginTop:2}}>{s.constraint}</div>
               )}
             </div>
-            {/* Right: contact details, justified right */}
-            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0,textAlign:"right",maxWidth:"55%"}}>
+            {/* Right: phone/email only */}
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0,textAlign:"right",maxWidth:"50%"}}>
               {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>{s.phone}<IconPhone size={12} color="#a0b8d0"/></a>}
               {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,maxWidth:"100%",minWidth:0}}><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.email}</span><IconMail size={12} color="#a0b8d0"/></a>}
-              {s.jn && (
-                <button onClick={() => { navigator.clipboard?.writeText(s.jn).catch(() => {}); window.open(SINGLEOPS_URL, "_blank"); }} title="Copy job # and open SingleOps" style={{fontSize:16,color:"#5a90d0",background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center",gap:5,fontWeight:800,marginTop:2}}>
-                  #{s.jn}<IconClipboard size={14} color="#5a90d0"/>
-                </button>
-              )}
             </div>
           </div>
-          <button onClick={() => setShowParcelMap(true)} style={{display:"flex",alignItems:"center",gap:5,marginTop:8,padding:"6px 11px",borderRadius:8,background:"rgba(255,214,0,.08)",border:"1px solid rgba(255,214,0,.25)",color:"#FFD600",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer"}}>
+        </div>
+
+        {/* Parcel Map — centered, its own row */}
+        <div style={{padding:"8px 16px",background:"#0d0f18",borderBottom:"1px solid #1a2030",display:"flex",justifyContent:"center"}}>
+          <button onClick={() => setShowParcelMap(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(255,214,0,.08)",border:"1px solid rgba(255,214,0,.25)",color:"#FFD600",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer"}}>
             <IconMapPin size={13} color="#FFD600"/>Parcel Map
           </button>
         </div>
@@ -1433,11 +1402,34 @@ ${combined}`);
 
         {/* ── SCOPE ────────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
-          <textarea value={scopeNotes} onChange={e => setScopeNotes(e.target.value)} placeholder="Scope of work..." rows={6}
+          <textarea value={scopeNotes} onChange={e => setScopeNotes(e.target.value)} placeholder="Scope of work..." rows={5}
             style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none",transition:"border-color .15s"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
 
-          {/* Scope photos */}
-          {scopePhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
+          {/* Single Library input handles BOTH photos and videos — routed by
+              MIME type in handleScopeLibraryFiles, so there's one picker
+              instead of separate photo/video library buttons. */}
+          <input ref={scopeLibRef} type="file" accept="image/*,video/*" multiple onChange={handleScopeLibraryFiles} style={{display:"none"}} />
+          <div style={{display:"flex",gap:6,marginTop:10}}>
+            <button onClick={()=>{setCameraSection("scope");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
+              <IconCamera size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Camera</span>
+            </button>
+            {/* Record Video — right alongside Camera, one tap away instead of
+                a separate section scrolled below. */}
+            <button onClick={() => setShowVideoRecorder(true)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(255,59,48,.06)",border:"1px dashed rgba(255,59,48,.3)",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
+              <IconVideo size={16} color="#FF6B5E"/><span style={{fontSize:11,color:"#FF6B5E",fontWeight:600}}>Video</span>
+            </button>
+          </div>
+          <button onClick={()=>scopeLibRef.current?.click()} style={{width:"100%",padding:"8px 0",marginTop:6,borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+            <IconImage size={14} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library (photo or video)</span>
+          </button>
+
+          {/* Extension slot — Pipeline uses this for its Download All Photos
+              zip export, which has no Route equivalent. Null (nothing) there. */}
+          {belowLibrarySlot}
+
+          {/* Scope photos — now shown below the capture/import controls
+              rather than above them. */}
+          {scopePhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12}}>
             {scopePhotos.map((p, i) => (
               <div key={photoKey(p)||i} style={{display:"flex",flexDirection:"column",gap:3}}>
                 <div style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
@@ -1459,23 +1451,6 @@ ${combined}`);
               </div>
             ))}
           </div>}
-          {/* Single Library input handles BOTH photos and videos — routed by
-              MIME type in handleScopeLibraryFiles, so there's one picker
-              instead of separate photo/video library buttons. */}
-          <input ref={scopeLibRef} type="file" accept="image/*,video/*" multiple onChange={handleScopeLibraryFiles} style={{display:"none"}} />
-          <div style={{display:"flex",gap:6,marginTop:8}}>
-            <button onClick={()=>{setCameraSection("scope");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
-              <IconCamera size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Camera</span>
-            </button>
-            {/* Record Video — right alongside Camera, one tap away instead of
-                a separate section scrolled below. */}
-            <button onClick={() => setShowVideoRecorder(true)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(255,59,48,.06)",border:"1px dashed rgba(255,59,48,.3)",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
-              <IconVideo size={16} color="#FF6B5E"/><span style={{fontSize:11,color:"#FF6B5E",fontWeight:600}}>Video</span>
-            </button>
-          </div>
-          <button onClick={()=>scopeLibRef.current?.click()} style={{width:"100%",padding:"8px 0",marginTop:6,borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-            <IconImage size={14} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library (photo or video)</span>
-          </button>
         </div>
 
         {/* ── VIDEO ─────────────────────────────────────────────────── */}
@@ -1602,53 +1577,12 @@ ${combined}`);
               })}
             </div>
           )}
-
-          {/* Recording and library-import both live in the row above now
-              (Camera/Video buttons + the combined Library bar) — no separate
-              video-only import control needed here. */}
-          <div style={{fontSize:9,lineHeight:1.4,color:"#5a6580",fontFamily:F,letterSpacing:0.2,textAlign:"center"}}>
-            Library imports upload faster at <strong style={{color:"#8a93a8"}}>1080p</strong> (iPhone Settings → Camera → Record Video) than 4K.
-          </div>
         </div>
 
-        {/* ── ADD-ON ──────────────────────────────────────────────────── */}
-        <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
-          <div style={{fontSize:11,fontWeight:700,color:"#FF8A65",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>ADD-ON</div>
-          <textarea value={addonNotes} onChange={e => setAddonNotes(e.target.value)} placeholder="Additional recommendations..." rows={3}
-            style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:14,fontFamily:B,lineHeight:1.6,resize:"vertical",outline:"none",transition:"border-color .15s"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
-
-          {/* Add-on photos */}
-          {addonPhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
-            {addonPhotos.map((p, i) => (
-              <div key={photoKey(p)||i} style={{display:"flex",flexDirection:"column",gap:3}}>
-                <div style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
-                  <img src={p.url || p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("addon");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
-                  <button onClick={e=>{e.stopPropagation();removeAddonPhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} color="#ff6666"/></button>
-                  <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
-                    <div onClick={()=>{setMarkupIdx(i);setMarkupSection("addon");}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
-                    <button onClick={e=>{e.stopPropagation();downloadPhoto(p,`addon_${i+1}.jpg`,`addon_${i}`);}} disabled={dlSet.has(`addon_${i}`)} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`addon_${i}`)?0.5:1}}><IconDownload size={13} color="#ccc"/></button>
-                  </div>
-                </div>
-                <PhotoZoneTag zone={p.zone} onChange={zone => {
-                  updateField(s.id, ex => {
-                    const arr = ex.addonPhotos || [];
-                    return { addonPhotos: arr.map((ph,j) => j===i ? {...ph,zone} : ph) };
-                  }).catch(()=>{});
-                  setAddonPhotos(prev => prev.map((ph,j) => j===i ? {...ph,zone} : ph));
-                }} />
-              </div>
-            ))}
-          </div>}
-          <input ref={addonLibRef} type="file" accept="image/*" multiple onChange={handleAddonPhotos} style={{display:"none"}} />
-          <div style={{display:"flex",gap:6,marginTop:8}}>
-            <button onClick={()=>{setCameraSection("addon");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
-              <IconCamera size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Camera</span>
-            </button>
-            <button onClick={()=>addonLibRef.current?.click()} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
-              <IconImage size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
-            </button>
-          </div>
-        </div>
+        {/* ADD-ON section removed per request. addonNotes/addonPhotos data
+            (and its sync/hydration machinery) is left intact so nothing on
+            OLD cards that already has add-on content is lost or orphaned —
+            there is just no longer any UI here to add to or edit it. */}
 
         {/* ── LINE ITEMS ─────────────────────────────────────────────────
             Structured, machine-readable summary of the Scope/Add-on notes
@@ -1804,6 +1738,15 @@ ${combined}`);
         </div>
 
       </div>
+
+      {/* Extension slot rendered just above the sticky bar — Pipeline uses
+          this for its "Move back to Route" action, which has no Route
+          equivalent (a Route stop is already in Route). Null there. */}
+      {bottomExtra && (
+        <div style={{flexShrink:0,padding:"8px 16px 0",background:"#0d0f18"}}>
+          {bottomExtra}
+        </div>
+      )}
 
       {/* ── STICKY BOTTOM BAR ──────────────────────────────────────── */}
       <div style={{flexShrink:0,padding:"10px 16px",paddingBottom:"max(10px,env(safe-area-inset-bottom))",background:"#0d0f18",borderTop:"1px solid #1a1f2e",display:"flex",gap:8,zIndex:101}}>

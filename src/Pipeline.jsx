@@ -523,28 +523,6 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
     return () => window.removeEventListener("mts-video-uploaded", handler);
   }, []);
 
-  // Repeat client map — active cards whose last name OR address matches a sold/declined card.
-  // Used to show a "↩ return client" indicator so Jason knows this is a known property.
-  const repeatClients = useMemo(() => {
-    const result = {};
-    const cards = Object.values(pipeline);
-    const history = cards.filter(c => c.stage === "sold" || c.stage === "declined");
-    const active  = cards.filter(c => c.stage !== "sold" && c.stage !== "declined");
-    for (const card of active) {
-      const lastName  = (card.cn  || "").trim().split(/\s+/).pop().toLowerCase();
-      const addrKey   = (card.addr || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 14);
-      const match = history.find(h => {
-        if (h.id === card.id) return false;
-        const hLast = (h.cn  || "").trim().split(/\s+/).pop().toLowerCase();
-        const hAddr = (h.addr || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 14);
-        return (lastName.length > 1 && hLast === lastName) ||
-               (addrKey.length > 8  && hAddr === addrKey);
-      });
-      if (match) result[card.id] = match;
-    }
-    return result;
-  }, [pipeline]);
-
   // Cards in waiting for 2+ days (due for follow-up nudge)
   const dueForFollowUp = useMemo(() => {
     const TWO_DAYS = 2 * 24 * 60 * 60 * 1000;
@@ -1000,39 +978,32 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
             onDone={() => setDetailCard(null)}
             onDecline={() => { moveCard(card.id, "declined"); setDetailCard(null); }}
             topBar={
-              <div style={{padding:"10px 20px",background:"#0a0b10",borderBottom:"1px solid #1a2030",display:"flex",flexDirection:"column",gap:10}}>
-                {repeatClients[card.id] && (() => {
-                  const prev = repeatClients[card.id];
-                  const prevStage = STAGES.find(s => s.id === prev.stage);
-                  return (
-                    <div style={{padding:"8px 12px",borderRadius:8,background:"rgba(139,92,246,.08)",border:"1px solid rgba(139,92,246,.2)",display:"flex",alignItems:"center",gap:8}}>
-                      <span style={{fontSize:13}}>↩</span>
-                      <div style={{flex:1}}>
-                        <span style={{fontSize:12,fontWeight:700,color:"#a78bfa",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Return client</span>
-                        <span style={{fontSize:11,color:"#7060a0",marginLeft:8}}>Previous card: {prevStage?.label || prev.stage} · {daysSince(prev.stageChangedAt || prev.addedAt)}</span>
-                      </div>
-                      <button onClick={()=>setDetailCard(prev)} style={{padding:"4px 10px",borderRadius:6,background:"rgba(139,92,246,.12)",border:"1px solid rgba(139,92,246,.25)",color:"#a78bfa",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>View</button>
-                    </div>
-                  );
-                })()}
-
-                <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                  <span style={{padding:"4px 12px",borderRadius:99,background:stage?.bg,color:stage?.color,fontSize:11,fontWeight:700,fontFamily:F,textTransform:"uppercase",letterSpacing:0.5,flexShrink:0}}>{stage?.label}</span>
-                  {isDeclined && <button onClick={() => { reactivate(card.id); setDetailCard({...card, stage:"estimate_needed"}); }} style={{padding:"6px 12px",borderRadius:8,background:"rgba(255,183,77,.1)",border:"1px solid rgba(255,183,77,.3)",color:"#FFB74D",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>↩ REACTIVATE</button>}
-                  {STAGES.filter(st => st.id !== card.stage && !(isDeclined && st.id !== "estimate_needed")).map(st => (
-                    <button key={st.id} onClick={() => { moveCard(card.id, st.id); setDetailCard(null); }} style={{padding:"6px 10px",borderRadius:8,background:st.bg,border:`1px solid ${st.color}40`,color:st.color,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.3}}>{st.label}</button>
-                  ))}
-                </div>
-
-                <div style={{display:"flex",gap:6}}>
-                  <button onClick={() => { setDetailCard(null); onSwitchToRoute(card.id); }} style={{flex:1,padding:"7px 0",borderRadius:8,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.3,textTransform:"uppercase"}}>→ View in Route</button>
-                  {(scopePhotos.length + addonPhotos.length) > 0 && (
-                    <button onClick={() => downloadAllPhotos(card, scopePhotos, addonPhotos)} disabled={downloadingPhotos} style={{flex:1,padding:"7px 0",borderRadius:8,background:"rgba(16,185,129,.08)",border:"1px solid rgba(16,185,129,.25)",color:"#10B981",fontSize:11,fontWeight:700,cursor:downloadingPhotos?"default":"pointer",opacity:downloadingPhotos?0.6:1,fontFamily:F,letterSpacing:0.3,textTransform:"uppercase"}}>
-                      {downloadingPhotos ? "Zipping…" : `Download All Photos (${scopePhotos.length + addonPhotos.length})`}
-                    </button>
-                  )}
-                </div>
+              // Return-client banner removed per request. Stage-move bar is
+              // the only thing left here — genuinely Pipeline-only, no Route
+              // equivalent.
+              <div style={{padding:"10px 20px",background:"#0a0b10",borderBottom:"1px solid #1a2030",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                <span style={{padding:"4px 12px",borderRadius:99,background:stage?.bg,color:stage?.color,fontSize:11,fontWeight:700,fontFamily:F,textTransform:"uppercase",letterSpacing:0.5,flexShrink:0}}>{stage?.label}</span>
+                {isDeclined && <button onClick={() => { reactivate(card.id); setDetailCard({...card, stage:"estimate_needed"}); }} style={{padding:"6px 12px",borderRadius:8,background:"rgba(255,183,77,.1)",border:"1px solid rgba(255,183,77,.3)",color:"#FFB74D",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:F,textTransform:"uppercase"}}>↩ REACTIVATE</button>}
+                {STAGES.filter(st => st.id !== card.stage && !(isDeclined && st.id !== "estimate_needed")).map(st => (
+                  <button key={st.id} onClick={() => { moveCard(card.id, st.id); setDetailCard(null); }} style={{padding:"6px 10px",borderRadius:8,background:st.bg,border:`1px solid ${st.color}40`,color:st.color,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.3}}>{st.label}</button>
+                ))}
               </div>
+            }
+            belowLibrarySlot={(scopePhotos.length + addonPhotos.length) > 0 && (
+              <button onClick={() => downloadAllPhotos(card, scopePhotos, addonPhotos)} disabled={downloadingPhotos} style={{width:"100%",marginTop:6,padding:"6px 0",borderRadius:7,background:"rgba(16,185,129,.06)",border:"1px solid rgba(16,185,129,.2)",color:"#10B981",fontSize:10,fontWeight:700,cursor:downloadingPhotos?"default":"pointer",opacity:downloadingPhotos?0.6:1,fontFamily:F,letterSpacing:0.3,textTransform:"uppercase"}}>
+                {downloadingPhotos ? "Zipping…" : `Download All Photos (${scopePhotos.length + addonPhotos.length})`}
+              </button>
+            )}
+            bottomExtra={
+              <button
+                onClick={() => {
+                  if (window.confirm(`Move ${card.cn} back to today's Route?\n\nThis removes the card from the Pipeline board and puts it back as an active, unfinished visit on today's Route — same as it was before you first marked it done.`)) {
+                    setDetailCard(null);
+                    onSwitchToRoute(card.id);
+                  }
+                }}
+                style={{width:"100%",padding:"9px 0",borderRadius:8,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.3,textTransform:"uppercase"}}
+              >→ Move back to Route</button>
             }
           />
         );
