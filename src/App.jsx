@@ -660,7 +660,26 @@ export default function App() {
       const targetDay = days[targetIdx] || days[0];
       const ts = new Date(targetDay); ts.setHours(0,0,0,0);
       const te = new Date(targetDay); te.setHours(23,59,59,999);
-      const todayEvents = await authedFetchEvents(token, ts, te);
+      // Retry today's fetch a couple of times before giving up. On a PWA
+      // cold-launched from a locked/sleeping phone, the network stack can
+      // report "online" a beat before it can actually complete a request —
+      // a bare fetch() failure here (not a 401, which authedFetchEvents
+      // already retries once via silent reauth) previously had ZERO retry,
+      // so that one transient hiccup left the route permanently empty for
+      // today until the user manually reopened the app. Mirrors the same
+      // backoff pattern already used for cold-start silent reauth above.
+      let todayEvents, loadErr;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try { todayEvents = await authedFetchEvents(token, ts, te); loadErr = null; break; }
+        catch (err) {
+          loadErr = err;
+          // A 401 that authedFetchEvents' own inline reauth couldn't fix is a
+          // real auth failure, not a transient hiccup — retrying won't help.
+          if (err?.status === 401 || (err?.message || "").includes("401")) break;
+          if (attempt < 2) await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
+        }
+      }
+      if (loadErr) throw loadErr;
       const localStops1 = localStopsGet();
       // Roll forward any local stops from past dates to today so they don't disappear.
       const validDayKeys1 = new Set(days.map(d => d.toDateString()));
