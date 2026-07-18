@@ -38,9 +38,12 @@ const CAL_BASE = "https://www.googleapis.com/calendar/v3/calendars/primary";
 const SCOPES = "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/youtube https://www.googleapis.com/auth/contacts";
 
 // ── HELPERS ──────────────────────────────────────────────────────────────────
-function getBusinessDays(n) {
+// includeWeekends: opt-in (persisted via mts-include-weekends) — when false
+// (the long-standing default), Saturdays/Sundays are skipped entirely, so
+// there was no day tab to select and no way to add a visit to a weekend.
+function getBusinessDays(n, includeWeekends = false) {
   const days = []; let d = new Date(); d.setHours(0,0,0,0);
-  while (days.length < n) { if (d.getDay()!==0 && d.getDay()!==6) days.push(new Date(d)); d.setDate(d.getDate()+1); }
+  while (days.length < n) { if (includeWeekends || (d.getDay()!==0 && d.getDay()!==6)) days.push(new Date(d)); d.setDate(d.getDate()+1); }
   return days;
 }
 
@@ -325,7 +328,13 @@ export default function App() {
   }, []);
 
   const [rawEvents, setRawEvents] = useState({});
-  const [businessDays, setBusinessDays] = useState(() => getBusinessDays(10));
+  // Opt-in: include Saturdays/Sundays as selectable/addable days. Persisted
+  // so the choice sticks across sessions. Default false preserves existing
+  // behavior for anyone who hasn't opted in.
+  const [includeWeekends, setIncludeWeekends] = useState(() => lsGet("mts-include-weekends", false));
+  const includeWeekendsRef = useRef(includeWeekends);
+  useEffect(() => { includeWeekendsRef.current = includeWeekends; }, [includeWeekends]);
+  const [businessDays, setBusinessDays] = useState(() => getBusinessDays(10, includeWeekends));
   const [selDay, setSelDay] = useState(0);
   // Always-current ref so load(preserveDay=true) reads the real selDay
   // without needing selDay in its useCallback deps (which would cause a
@@ -650,7 +659,7 @@ export default function App() {
     if (!token) return;
     setLoading(true);
     try {
-      const days = getBusinessDays(10);
+      const days = getBusinessDays(10, includeWeekendsRef.current);
       setBusinessDays(days);
 
       // PHASE 1: Load the currently-selected day first (or today on initial load)
@@ -1730,6 +1739,19 @@ export default function App() {
     return d.toLocaleDateString("en-US",{weekday:"short",month:"numeric",day:"numeric"}) + (isToday ? " ★" : "");
   });
 
+  // Flips the weekend opt-in, persists it, and reloads the day list/events
+  // from scratch — the day-index meanings shift once weekends are added to
+  // or removed from the sequence, so a partial patch isn't safe here.
+  const toggleIncludeWeekends = () => {
+    const next = !includeWeekends;
+    setIncludeWeekends(next);
+    includeWeekendsRef.current = next;
+    lsSet("mts-include-weekends", next);
+    setSelDay(0);
+    setBusinessDays(getBusinessDays(10, next));
+    load(false);
+  };
+
   // ── SIGN IN ──────────────────────────────────────────────────────────────
   // Register service worker for PWA + listen for new deploys.
   // When Vite builds a new bundle, the service worker sees new assets and
@@ -1880,6 +1902,9 @@ export default function App() {
           <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"5px 10px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0b10",color:"#f0f4fa",fontSize:11,fontWeight:600,cursor:"pointer",outline:"none",appearance:"auto",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
             {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
           </select>
+          <button onClick={toggleIncludeWeekends} title={includeWeekends ? "Weekends included in your day list — tap to exclude them again" : "Weekends are hidden — tap to include Saturdays/Sundays as addable days"} style={{padding:"5px 7px",borderRadius:8,background:includeWeekends?"rgba(246,191,38,.15)":"transparent",border:`1px solid ${includeWeekends?"rgba(246,191,38,.4)":"#2a3560"}`,color:includeWeekends?"#F6BF26":"#3a4a60",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <IconCalendar size={14} color={includeWeekends?"#F6BF26":"#3a4a60"} />
+          </button>
         </div>}
         {view === "pipeline" && <button onClick={()=>setSearchOpen(true)} title="Search everything" style={{padding:"5px 7px",borderRadius:8,background:"transparent",border:"1px solid #2a3560",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
           <IconSearch size={14} color="#3a4a60" />
