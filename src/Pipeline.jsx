@@ -986,6 +986,10 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
             onBack={() => setDetailCard(null)}
             onDone={() => setDetailCard(null)}
             onDecline={() => { moveCard(card.id, "declined"); setDetailCard(null); }}
+            onEditDetails={(edits) => {
+              setPipeline(prev => prev[card.id] ? { ...prev, [card.id]: { ...prev[card.id], ...edits } } : prev);
+              setDetailCard(prev => prev ? { ...prev, ...edits } : prev);
+            }}
             topBar={
               // Return-client banner removed per request. Stage-move bar is
               // the only thing left here — genuinely Pipeline-only, no Route

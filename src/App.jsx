@@ -107,6 +107,14 @@ async function clearLocalDataForAccountSwitch(newAccountId) {
 function localStopsGet() { return lsGet("mts-local-stops", {}); }
 function localStopsSet(val) { lsSet("mts-local-stops", val); }
 
+// Manual corrections to a calendar-derived stop's contact/address details.
+// Calendar-parsed stops are recomputed fresh from the event every load, so
+// edits can't live on the parsed object itself — this is a merge-on-top layer
+// keyed by stop id, applied wherever the final stop list is built.
+// Format: { [id]: { cn?, addr?, phone?, email?, jn? } }
+function stopOverridesGet() { return lsGet("mts-stop-overrides", {}); }
+function stopOverridesSet(val) { lsSet("mts-stop-overrides", val); }
+
 // ═════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ═════════════════════════════════════════════════════════════════════════════
@@ -360,6 +368,7 @@ export default function App() {
 
   // ── ONSITE WINDOW ──────────────────────────────────────────────────────
   const [onsiteStop, setOnsiteStop] = useState(null); // stop object when onsite window open
+  const [stopOverridesVersion, setStopOverridesVersion] = useState(0); // bumped when a stop's details are manually edited
   const [undoToast, setUndoToast] = useState(null); // {id, cn, timer}
   const undoToastTimer = useRef(null);
   const [contactPrompt, setContactPrompt] = useState(null);
@@ -1220,7 +1229,13 @@ export default function App() {
     }
   }, [dayKey, allParsed]);
 
-  const stopMap = useMemo(() => { const m = {}; allParsed.forEach(s => m[s.id] = s); return m; }, [allParsed]);
+  const stopMap = useMemo(() => {
+    const overrides = stopOverridesGet();
+    const m = {};
+    allParsed.forEach(s => { m[s.id] = overrides[s.id] ? { ...s, ...overrides[s.id] } : s; });
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allParsed, stopOverridesVersion]);
   const currentOrder = (ordIds[dayKey]?.length > 0) ? ordIds[dayKey] : allParsed.map(s => s.id);
   const stops = currentOrder.map(id => stopMap[id]).filter(Boolean);
 
@@ -2337,6 +2352,19 @@ export default function App() {
         onBack={() => setOnsiteStop(null)}
         onDone={() => markDone(onsiteStop.id)}
         onDecline={() => { decline(onsiteStop.id); setOnsiteStop(null); }}
+        onEditDetails={(edits) => {
+          const overrides = stopOverridesGet();
+          overrides[onsiteStop.id] = { ...(overrides[onsiteStop.id] || {}), ...edits };
+          stopOverridesSet(overrides);
+          setStopOverridesVersion(v => v + 1);
+          setOnsiteStop(prev => prev ? { ...prev, ...edits } : prev);
+          // If this stop already has a pipeline card, keep its details in sync too.
+          const pl = loadPipeline();
+          if (pl[onsiteStop.id]) {
+            pl[onsiteStop.id] = { ...pl[onsiteStop.id], ...edits };
+            savePipeline(pl);
+          }
+        }}
         onMarkReject={() => {
           const stop = stopMap[onsiteStop.id];
           if (stop) {

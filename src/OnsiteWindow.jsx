@@ -150,7 +150,7 @@ function CatalogPicker({ value, onChange, placeholder = "Search catalog…" }) {
 // points Pipeline uses to layer its own chrome (stage-move bar, repeat-client
 // banner, etc. — concepts that don't exist in Route) around the identical
 // shared editor beneath.
-export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkReject, token, backLabel = "Route", topBar = null, belowScopePhotosSlot = null, bottomExtra = null }) {
+export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkReject, onEditDetails, token, backLabel = "Route", topBar = null, belowScopePhotosSlot = null, bottomExtra = null }) {
   const s = stop;
   // Synchronous peek for initial state — returns {} or the localStorage
   // mirror if one exists. The real async load runs below and hydrates.
@@ -196,6 +196,25 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const [saveSafetyPrompt, setSaveSafetyPrompt] = useState(null); // { id, file } just-recorded video awaiting a durable save
   const [videoSavedToast, setVideoSavedToast] = useState(false);
+  // Editing the stop's own contact/address details, in place in the header.
+  const [editingDetails, setEditingDetails] = useState(false);
+  const [editCn, setEditCn] = useState(s.cn || "");
+  const [editAddr, setEditAddr] = useState(s.addr || "");
+  const [editPhone, setEditPhone] = useState(s.phone || "");
+  const [editEmail, setEditEmail] = useState(s.email || "");
+  const [editJn, setEditJn] = useState(s.jn || "");
+  const openEditDetails = () => {
+    setEditCn(s.cn || ""); setEditAddr(s.addr || ""); setEditPhone(s.phone || "");
+    setEditEmail(s.email || ""); setEditJn(s.jn || "");
+    setEditingDetails(true);
+  };
+  const saveEditDetails = () => {
+    onEditDetails && onEditDetails({
+      cn: editCn.trim(), addr: editAddr.trim(),
+      phone: editPhone.trim(), email: editEmail.trim(), jn: editJn.trim(),
+    });
+    setEditingDetails(false);
+  };
   // (formerly: ytUploadCount — now tracked entirely via videoQueueItems)
   const mountedRef = useRef(true);
   const stopIdRef = useRef(s.id);
@@ -1406,6 +1425,22 @@ ${combined}`);
                    each other so both fit on one line instead of Parcel Map
                    eating a whole extra bordered row of its own. */}
         <div style={{padding:"10px 16px",background:"#0d0f18",borderBottom:"1px solid #1a2030"}}>
+          {editingDetails ? (
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              <input value={editCn} onChange={e=>setEditCn(e.target.value)} placeholder="Client name" style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:8,background:"#0a0c14",border:"1px solid #253049",color:"#fff",fontSize:13,fontFamily:B,outline:"none"}} />
+              <input value={editAddr} onChange={e=>setEditAddr(e.target.value)} placeholder="Address" style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:8,background:"#0a0c14",border:"1px solid #253049",color:"#e0e8f0",fontSize:13,fontFamily:B,outline:"none"}} />
+              <div style={{display:"flex",gap:8}}>
+                <input value={editPhone} onChange={e=>setEditPhone(e.target.value)} placeholder="Phone" style={{flex:1,minWidth:0,boxSizing:"border-box",padding:"8px 10px",borderRadius:8,background:"#0a0c14",border:"1px solid #253049",color:"#e0e8f0",fontSize:13,fontFamily:B,outline:"none"}} />
+                <input value={editEmail} onChange={e=>setEditEmail(e.target.value)} placeholder="Email" style={{flex:1,minWidth:0,boxSizing:"border-box",padding:"8px 10px",borderRadius:8,background:"#0a0c14",border:"1px solid #253049",color:"#e0e8f0",fontSize:13,fontFamily:B,outline:"none"}} />
+              </div>
+              <input value={editJn} onChange={e=>setEditJn(e.target.value)} placeholder="Job #" style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:8,background:"#0a0c14",border:"1px solid #253049",color:"#7ec4ff",fontSize:13,fontFamily:B,outline:"none"}} />
+              <div style={{display:"flex",gap:8,marginTop:2}}>
+                <button onClick={()=>setEditingDetails(false)} style={{flex:1,padding:"8px 0",borderRadius:8,background:"transparent",border:"1px solid #252d47",color:"#90a8c0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Cancel</button>
+                <button onClick={saveEditDetails} style={{flex:1,padding:"8px 0",borderRadius:8,background:"#10B981",border:"none",color:"#04140d",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Save</button>
+              </div>
+            </div>
+          ) : (
+          <>
           <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
             {/* Left: name + address */}
             <div style={{minWidth:0,flex:1}}>
@@ -1415,10 +1450,17 @@ ${combined}`);
                 <div style={{fontSize:11,color:"#FF80AB",marginTop:2}}>{s.constraint}</div>
               )}
             </div>
-            {/* Right: phone/email */}
-            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0,textAlign:"right",maxWidth:"50%"}}>
-              {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>{s.phone}<IconPhone size={12} color="#a0b8d0"/></a>}
-              {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,maxWidth:"100%",minWidth:0}}><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.email}</span><IconMail size={12} color="#a0b8d0"/></a>}
+            {/* Right: phone/email + edit */}
+            <div style={{display:"flex",alignItems:"flex-start",gap:8,flexShrink:0}}>
+              <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,textAlign:"right",maxWidth:160}}>
+                {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>{s.phone}<IconPhone size={12} color="#a0b8d0"/></a>}
+                {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,maxWidth:"100%",minWidth:0}}><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.email}</span><IconMail size={12} color="#a0b8d0"/></a>}
+              </div>
+              {onEditDetails && (
+                <button onClick={openEditDetails} title="Edit client / address details" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:6,borderRadius:8,background:"transparent",border:"1px solid #252d47",cursor:"pointer",flexShrink:0}}>
+                  <IconPen size={13} color="#90a8c0"/>
+                </button>
+              )}
             </div>
           </div>
 
@@ -1433,6 +1475,8 @@ ${combined}`);
               <IconMapPin size={13} color="#FFD600"/>Parcel Map
             </button>
           </div>
+          </>
+          )}
         </div>
 
         {/* ── JOB NOTES (collapsible, always shows preview) ─────────── */}
