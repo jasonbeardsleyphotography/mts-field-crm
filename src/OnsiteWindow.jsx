@@ -196,6 +196,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const [saveSafetyPrompt, setSaveSafetyPrompt] = useState(null); // { id, file } just-recorded video awaiting a durable save
   const [videoSavedToast, setVideoSavedToast] = useState(false);
+  const [savingVideo, setSavingVideo] = useState(false);
   // Editing the stop's own contact/address details, in place in the header.
   const [editingDetails, setEditingDetails] = useState(false);
   const [editCn, setEditCn] = useState(s.cn || "");
@@ -1241,7 +1242,6 @@ ${combined}`);
     } catch {}
   };
 
-  const [savingVideo, setSavingVideo] = useState(false);
   const handleSafetySave = async () => {
     const p = saveSafetyPrompt;
     if (!p || savingVideo) return;
