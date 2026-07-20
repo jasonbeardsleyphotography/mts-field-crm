@@ -667,6 +667,7 @@ export default function App() {
   const load = useCallback(async (preserveDay = false) => {
     if (!token) return;
     setLoading(true);
+    setError(null);
     try {
       const days = getBusinessDays(10, includeWeekendsRef.current);
       setBusinessDays(days);
@@ -687,14 +688,14 @@ export default function App() {
       // today until the user manually reopened the app. Mirrors the same
       // backoff pattern already used for cold-start silent reauth above.
       let todayEvents, loadErr;
-      for (let attempt = 0; attempt < 3; attempt++) {
+      for (let attempt = 0; attempt < 5; attempt++) {
         try { todayEvents = await authedFetchEvents(token, ts, te); loadErr = null; break; }
         catch (err) {
           loadErr = err;
           // A 401 that authedFetchEvents' own inline reauth couldn't fix is a
           // real auth failure, not a transient hiccup — retrying won't help.
           if (err?.status === 401 || (err?.message || "").includes("401")) break;
-          if (attempt < 2) await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
+          if (attempt < 4) await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
         }
       }
       if (loadErr) throw loadErr;
@@ -782,6 +783,20 @@ export default function App() {
     _prevTokenRef.current = token;
     if (token && wasNull) load();
   }, [token, load]);
+
+  // Self-healing fallback for the case above: if Phase 1's own 5-attempt
+  // retry still failed (cold-launch network stack genuinely wasn't ready
+  // within ~10s), don't just sit on an empty route forever — keep retrying
+  // in the background, and retry immediately the moment the device reports
+  // it's back online. This is what previously required a full force-quit +
+  // reopen to recover from.
+  useEffect(() => {
+    if (!token || !error || loading || Object.keys(rawEvents).length > 0) return;
+    const t = setTimeout(() => load(true), 5000);
+    const onOnline = () => load(true);
+    window.addEventListener("online", onOnline);
+    return () => { clearTimeout(t); window.removeEventListener("online", onOnline); };
+  }, [token, error, loading, rawEvents, load]);
 
   // ── CLOUD SYNC: Pull app state from Drive on startup ───────────────
   const [syncIndicator, setSyncIndicator] = useState("idle");
@@ -1845,6 +1860,16 @@ export default function App() {
         <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:"rgba(246,191,38,.12)",borderBottom:"1px solid rgba(246,191,38,.3)"}}>
           <span style={{flex:1,fontSize:12,color:"#F6BF26",fontWeight:600}}>Google session expired — reconnect to sync.</span>
           <button onClick={serverSignIn} style={{padding:"6px 14px",borderRadius:8,background:"rgba(246,191,38,.2)",border:"1px solid rgba(246,191,38,.5)",color:"#F6BF26",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>Reconnect Google</button>
+        </div>
+      )}
+      {/* Shown when today's stops failed to load (all retries exhausted) and
+          nothing has come in yet — a background retry is already scheduled,
+          but this gives an immediate manual option instead of forcing a
+          full app restart to recover, which was the only fix before. */}
+      {error && !loading && Object.keys(rawEvents).length === 0 && (
+        <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:"rgba(255,85,85,.1)",borderBottom:"1px solid rgba(255,85,85,.3)"}}>
+          <span style={{flex:1,fontSize:12,color:"#ff8080",fontWeight:600}}>Couldn't load today's stops — retrying automatically…</span>
+          <button onClick={() => load(true)} style={{padding:"6px 14px",borderRadius:8,background:"rgba(255,85,85,.2)",border:"1px solid rgba(255,85,85,.5)",color:"#ff8080",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>Retry Now</button>
         </div>
       )}
       <style>{`
