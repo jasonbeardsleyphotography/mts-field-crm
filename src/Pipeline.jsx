@@ -295,6 +295,12 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
     }
   }, [token]);
 
+  // Land on "All" whenever this mounts with a search already filled in (e.g.
+  // jumping here from Universal Search) — otherwise the tab bar keeps
+  // showing "Estimate Needed" highlighted while the list is actually
+  // searching every stage, which reads as a UI glitch.
+  useEffect(() => { if (search.trim()) setActiveTab("all"); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Persist
   useEffect(() => { savePipeline(pipeline); }, [pipeline]);
   useEffect(() => { if (onCloudSync) onCloudSync(); }, [pipeline, onCloudSync]);
@@ -824,7 +830,12 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
 
   // ── MOBILE: List + Tabs ──────────────────────────────────────────────────
   const mobileView = () => {
-    const filtered = activeTab === "all" ? allCards : (cardsByStage[activeTab] || []);
+    // A search must always look across every stage — a card the tab filter
+    // would otherwise hide (because activeTab resets to "estimate_needed"
+    // every time this component remounts, e.g. jumping here from Universal
+    // Search) previously read as "not in the pipeline" when it was really
+    // just sitting on a different, currently-unselected tab.
+    const filtered = (search.trim() || activeTab === "all") ? allCards : (cardsByStage[activeTab] || []);
     const sorted = [...filtered].filter(searchFilter).sort((a, b) => (b.hot ? 1 : 0) - (a.hot ? 1 : 0) || (a.addedAt || 0) - (b.addedAt || 0));
 
     return (
