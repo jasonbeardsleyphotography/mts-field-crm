@@ -64,6 +64,7 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
   const [paused, setPausedState] = useState(isPaused());
   const [, tick] = useState(0);
   const [restarting, setRestarting] = useState({});
+  const [saving, setSaving] = useState({});
   const [showDiag, setShowDiag] = useState(false);
   const [logEntries, setLogEntries] = useState([]);
 
@@ -336,15 +337,28 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
               {/* Action buttons */}
               <div style={{ display: "flex", gap: 8 }}>
                 <button
-                  onClick={() => saveVideoToDevice(item)}
+                  onClick={async () => {
+                    // Immediate visible feedback the instant this is tapped —
+                    // without it, a slow/wedged IDB read (e.g. right after the
+                    // app went blank under memory pressure) leaves the button
+                    // looking dead for several seconds, which reads as "not
+                    // responding" even though it's still working.
+                    if (saving[item.id]) return;
+                    setSaving(s => ({ ...s, [item.id]: true }));
+                    try { await saveVideoToDevice(item); }
+                    finally { setSaving(s => { const n = { ...s }; delete n[item.id]; return n; }); }
+                  }}
+                  disabled={!!saving[item.id]}
                   title="Save this video to your phone"
                   style={{
                     padding: "8px 12px", borderRadius: 8, flexShrink: 0,
                     background: "rgba(16,185,129,.1)", border: "1px solid rgba(16,185,129,.3)",
                     color: "#10B981", fontSize: 11, fontWeight: 800,
-                    cursor: "pointer", fontFamily: F, letterSpacing: 0.5,
+                    cursor: saving[item.id] ? "default" : "pointer",
+                    opacity: saving[item.id] ? 0.6 : 1,
+                    fontFamily: F, letterSpacing: 0.5,
                   }}
-                >Save</button>
+                >{saving[item.id] ? "Saving…" : "Save"}</button>
                 {/* ALWAYS present — a queued item showing a red note with no
                     button, or an uploading item with nothing to tap, read as
                     dead ends in the field. Any state can be force-restarted. */}

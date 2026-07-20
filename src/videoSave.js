@@ -17,7 +17,18 @@ export async function saveVideoToDevice(item) {
     // gesture. Fall back to the IDB blob, then to the async lookup.
     let file = (item?.id && peekLiveVideoFile(item.id)) || null;
     if (!file) file = item?.file ? fileFromQueueItem(item) : null;
-    if (!file) file = await getVideoFile(item.id);
+    // Bounded wait: a wedged IndexedDB connection (e.g. right after the app
+    // was under enough memory pressure to go blank/reload) can otherwise
+    // leave this awaiting forever with the button showing no feedback at
+    // all, reading to the user as "not responding." 10s is well past the
+    // internal IDB retry budget (~2s) so this only ever fires on a genuine
+    // hang, not a slow-but-working read.
+    if (!file) {
+      file = await Promise.race([
+        getVideoFile(item.id),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 10_000)),
+      ]).catch(() => null);
+    }
     if (!file) { alert("This video's file couldn't be found in storage."); return false; }
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try {

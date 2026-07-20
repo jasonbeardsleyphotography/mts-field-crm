@@ -1241,26 +1241,32 @@ ${combined}`);
     } catch {}
   };
 
+  const [savingVideo, setSavingVideo] = useState(false);
   const handleSafetySave = async () => {
     const p = saveSafetyPrompt;
-    if (!p) return;
-    // The iOS share sheet that follows (Save Video / AirDrop / etc.) is a
-    // platform-level picker Apple requires for any web app writing to
-    // Photos — there is no scriptable "just save it" API, so that one
-    // dialog can't be removed. Everything on OUR side closes immediately
-    // and cleanly the instant it reports success — no extra confirmation
-    // step of our own.
-    const ok = await saveVideoToDevice({ id: p.id, file: p.file });
-    if (ok) {
-      try { await markSavedToDevice(p.id); } catch {}
-      setSaveSafetyPrompt(null);
-      try { navigator.vibrate?.([15, 40, 15]); } catch {}
-      playSavedChime();
-      setVideoSavedToast(true);
-      setTimeout(() => setVideoSavedToast(false), 2200);
+    if (!p || savingVideo) return;
+    setSavingVideo(true);
+    try {
+      // The iOS share sheet that follows (Save Video / AirDrop / etc.) is a
+      // platform-level picker Apple requires for any web app writing to
+      // Photos — there is no scriptable "just save it" API, so that one
+      // dialog can't be removed. Everything on OUR side closes immediately
+      // and cleanly the instant it reports success — no extra confirmation
+      // step of our own.
+      const ok = await saveVideoToDevice({ id: p.id, file: p.file });
+      if (ok) {
+        try { await markSavedToDevice(p.id); } catch {}
+        setSaveSafetyPrompt(null);
+        try { navigator.vibrate?.([15, 40, 15]); } catch {}
+        playSavedChime();
+        setVideoSavedToast(true);
+        setTimeout(() => setVideoSavedToast(false), 2200);
+      }
+      // If not ok (user dismissed the share sheet), keep the prompt up so they
+      // can try again — the whole point is not to let it slip by unsaved.
+    } finally {
+      setSavingVideo(false);
     }
-    // If not ok (user dismissed the share sheet), keep the prompt up so they
-    // can try again — the whole point is not to let it slip by unsaved.
   };
 
   if (showVideoRecorder) {
@@ -1342,10 +1348,10 @@ ${combined}`);
             <div style={{fontSize:13,color:"#9fb0c4",lineHeight:1.55,textAlign:"center",marginBottom:18}}>
               This keeps a permanent copy in your <b style={{color:"#cdd8e6"}}>Photos</b> so it can never be lost — even if the upload fails. It uploads in the background either way.
             </div>
-            <button onClick={handleSafetySave} style={{width:"100%",padding:"14px 0",borderRadius:11,background:"#10B981",border:"none",color:"#04140d",fontSize:14,fontWeight:900,fontFamily:F,letterSpacing:0.8,textTransform:"uppercase",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:10}}>
-              <IconDownload size={17} color="#04140d"/> Save to Phone
+            <button onClick={handleSafetySave} disabled={savingVideo} style={{width:"100%",padding:"14px 0",borderRadius:11,background:"#10B981",border:"none",color:"#04140d",fontSize:14,fontWeight:900,fontFamily:F,letterSpacing:0.8,textTransform:"uppercase",cursor:savingVideo?"default":"pointer",opacity:savingVideo?0.7:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:10}}>
+              {savingVideo ? "Saving…" : (<><IconDownload size={17} color="#04140d"/> Save to Phone</>)}
             </button>
-            <button onClick={() => setSaveSafetyPrompt(null)} style={{width:"100%",padding:"9px 0",borderRadius:9,background:"transparent",border:"none",color:"#6a7688",fontSize:12,fontWeight:700,fontFamily:F,letterSpacing:0.4,cursor:"pointer"}}>
+            <button onClick={() => setSaveSafetyPrompt(null)} disabled={savingVideo} style={{width:"100%",padding:"9px 0",borderRadius:9,background:"transparent",border:"none",color:"#6a7688",fontSize:12,fontWeight:700,fontFamily:F,letterSpacing:0.4,cursor:savingVideo?"default":"pointer",opacity:savingVideo?0.5:1}}>
               Skip — rely on the upload only
             </button>
             <div style={{fontSize:10.5,color:"#c98a3a",textAlign:"center",marginTop:8,lineHeight:1.45}}>
