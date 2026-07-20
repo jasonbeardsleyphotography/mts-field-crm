@@ -1456,27 +1456,25 @@ ${combined}`);
                 <div style={{fontSize:11,color:"#FF80AB",marginTop:2}}>{s.constraint}</div>
               )}
             </div>
-            {/* Right: phone/email + edit */}
-            <div style={{display:"flex",alignItems:"flex-start",gap:8,flexShrink:0}}>
-              <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,textAlign:"right",maxWidth:160}}>
-                {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>{s.phone}<IconPhone size={12} color="#a0b8d0"/></a>}
-                {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,maxWidth:"100%",minWidth:0}}><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.email}</span><IconMail size={12} color="#a0b8d0"/></a>}
-              </div>
-              {onEditDetails && (
-                <button onClick={openEditDetails} title="Edit client / address details" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:6,borderRadius:8,background:"transparent",border:"1px solid #252d47",cursor:"pointer",flexShrink:0}}>
-                  <IconPen size={13} color="#90a8c0"/>
-                </button>
-              )}
+            {/* Right: phone/email */}
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0,textAlign:"right",maxWidth:"50%"}}>
+              {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>{s.phone}<IconPhone size={12} color="#a0b8d0"/></a>}
+              {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,maxWidth:"100%",minWidth:0}}><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.email}</span><IconMail size={12} color="#a0b8d0"/></a>}
             </div>
           </div>
 
-          {/* Job # and Parcel Map, opposite each other on one row */}
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginTop:10}}>
+          {/* Job # — edit — Parcel Map, all on one row */}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginTop:10}}>
             {s.jn ? (
               <button onClick={() => { navigator.clipboard?.writeText(s.jn).catch(() => {}); window.open(SINGLEOPS_URL, "_blank"); }} title="Copy job # and open SingleOps" style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(96,181,255,.12)",border:"1px solid rgba(96,181,255,.4)",color:"#7ec4ff",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer",flexShrink:0,boxShadow:"0 0 12px rgba(96,181,255,.35)"}}>
                 <IconClipboard size={13} color="#7ec4ff"/>#{s.jn}
               </button>
             ) : <div />}
+            {onEditDetails && (
+              <button onClick={openEditDetails} title="Edit client / address details" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:6,borderRadius:8,background:"transparent",border:"1px solid #252d47",cursor:"pointer",flexShrink:0}}>
+                <IconPen size={13} color="#90a8c0"/>
+              </button>
+            )}
             <button onClick={() => setShowParcelMap(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(255,214,0,.08)",border:"1px solid rgba(255,214,0,.25)",color:"#FFD600",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer",flexShrink:0}}>
               <IconMapPin size={13} color="#FFD600"/>Parcel Map
             </button>
