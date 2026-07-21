@@ -87,8 +87,10 @@ export function loadMaps() {
 // member count, guaranteeing the pins never touch.
 const MARKER_PX        = 22;  // approx pin diameter
 const CLUSTER_THRESH_PX = 26; // pins whose centers are within this get grouped
-const SEP_PX           = 30;  // center-to-center spacing of fanned pins
-const MIN_RING_PX      = 17;  // smallest fan radius (for pairs)
+const SEP_PX           = 20;  // center-to-center spacing of fanned pins — tightened
+                               // from 30px, which fanned stops out far enough to
+                               // read as separate addresses rather than one cluster
+const MIN_RING_PX      = 12;  // smallest fan radius (for pairs) — tightened from 17
 
 function metersPerPixel(lat, zoom) {
   return 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
@@ -107,10 +109,14 @@ function metersBetween(a, b) {
 
 // Group stops whose pins would overlap on screen at `zoom`, then spread each
 // group around its centroid in a ring sized to keep ~SEP_PX between pins.
-// Returns { posById, clusteredIds }. Singletons keep their true position.
+// Returns { posById, clusteredIds, clusters }. Singletons keep their true
+// position and aren't included in `clusters` (only actual fanned groups are —
+// used to draw a faint grouping halo so a fan doesn't read as separate
+// addresses). Radius is in SCREEN PIXELS; the caller converts to meters.
 function computeClusterLayout(ids, coords, zoom) {
   const posById = {};
   const clusteredIds = new Set();
+  const clusters = [];
   const withPos = ids.filter(id => coords[id]);
 
   // Build overlap adjacency (centers within CLUSTER_THRESH_PX screen pixels).
@@ -156,8 +162,9 @@ function computeClusterLayout(ids, coords, zoom) {
       posById[id] = offsetLatLng(centroid, angle, radiusPx * mpp);
       clusteredIds.add(id);
     });
+    clusters.push({ centroid, radiusPx, count });
   }
-  return { posById, clusteredIds };
+  return { posById, clusteredIds, clusters };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -165,6 +172,7 @@ export default function RouteMap({ stops, selectedId }) {
   const ref = useRef(null);
   const map = useRef(null);
   const markers = useRef([]); // [{marker, stopId}]
+  const haloCircles = useRef([]); // faint backing circles behind fanned clusters
   const layoutInputs = useRef({ ids: [], coords: {} }); // for re-layout on zoom
   const route = useRef(null);
   const nextRoute = useRef(null); // directions to next stop
@@ -274,6 +282,7 @@ export default function RouteMap({ stops, selectedId }) {
   useEffect(() => {
     if (!map.current) return;
     markers.current.forEach(m => m.marker.setMap(null)); markers.current = [];
+    haloCircles.current.forEach(c => c.setMap(null)); haloCircles.current = [];
     if (route._cancelOSRM) { route._cancelOSRM(); delete route._cancelOSRM; }
     if (route.current) { route.current.setMap(null); route.current = null; }
     if (!Object.keys(coords).length) return;
@@ -283,7 +292,21 @@ export default function RouteMap({ stops, selectedId }) {
     // listener below) so pins separate as you zoom in and re-merge sensibly out.
     const zoom = map.current.getZoom() ?? 11;
     const idsWithPos = stops.filter(s => coords[s.id]).map(s => s.id);
-    const { posById } = computeClusterLayout(idsWithPos, coords, zoom);
+    const { posById, clusters } = computeClusterLayout(idsWithPos, coords, zoom);
+
+    // Faint backing circle behind each fanned cluster — a visual cue that
+    // these pins are one grouped location fanned out for legibility, not
+    // several genuinely separate addresses.
+    haloCircles.current = clusters.map(({ centroid, radiusPx, count }) => {
+      const mpp = metersPerPixel(centroid.lat, zoom);
+      return new window.google.maps.Circle({
+        map: map.current, center: centroid,
+        radius: (radiusPx + MARKER_PX / 2 + 4) * mpp,
+        fillColor: "#ffffff", fillOpacity: 0.07,
+        strokeColor: "#ffffff", strokeOpacity: 0.18, strokeWeight: 1,
+        clickable: false, zIndex: 1,
+      });
+    });
     layoutInputs.current = { ids: idsWithPos, coords };
 
     const positions = [];
@@ -361,10 +384,21 @@ export default function RouteMap({ stops, selectedId }) {
       setMapZoom(zoom);
       const { ids, coords: c } = layoutInputs.current;
       if (!ids.length) return;
-      const { posById } = computeClusterLayout(ids, c, zoom);
+      const { posById, clusters } = computeClusterLayout(ids, c, zoom);
       markers.current.forEach(({ marker, stopId }) => {
         const p = posById[stopId];
         if (p) marker.setPosition(p);
+      });
+      haloCircles.current.forEach(circle => circle.setMap(null));
+      haloCircles.current = clusters.map(({ centroid, radiusPx }) => {
+        const mpp = metersPerPixel(centroid.lat, zoom);
+        return new window.google.maps.Circle({
+          map: map.current, center: centroid,
+          radius: (radiusPx + MARKER_PX / 2 + 4) * mpp,
+          fillColor: "#ffffff", fillOpacity: 0.07,
+          strokeColor: "#ffffff", strokeOpacity: 0.18, strokeWeight: 1,
+          clickable: false, zIndex: 1,
+        });
       });
     });
     return () => listener.remove();
