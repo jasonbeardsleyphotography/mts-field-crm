@@ -80,7 +80,14 @@ async function fetchGoogleAccountId(token) {
     const d = await r.json();
     const emails = d.emailAddresses || [];
     const primary = emails.find(e => e.metadata?.primary) || emails[0];
-    return primary?.value ? primary.value.toLowerCase() : (d.resourceName || null);
+    // Return ONLY a real email as the account identity. Previously this fell
+    // back to the People API resourceName (e.g. "people/c123") when the email
+    // list came back empty (partial response / permission warmup right after
+    // sign-in). That resourceName then got stored as the account id, and on a
+    // later load — when the email DID resolve — the mismatch looked like a
+    // different account and wiped ALL local data (pipeline, photos, videos).
+    // Returning null instead just makes the caller retry next load, harmless.
+    return primary?.value ? primary.value.toLowerCase() : null;
   } catch { return null; }
 }
 
@@ -216,7 +223,9 @@ export default function App() {
     // absorbs those so the user isn't bounced to "Sign in" unnecessarily. If
     // the session really is gone, every attempt fails and we still land on the
     // sign-in screen, just a couple seconds later.
-    const BACKOFFS = [400, 900]; // ms between attempts (2 fast retries)
+    const BACKOFFS = [400, 900, 1800, 3000]; // ms between attempts — a few more,
+    // longer waits so a flaky-cellular cold start (the stated field environment)
+    // doesn't give up on a perfectly-alive server session after barely ~1s.
     let attempt = 0;
     const run = async () => {
       if (cancelled) return;
@@ -231,8 +240,13 @@ export default function App() {
         setTimeout(run, delay);
         return;
       }
-      // Exhausted retries — session is genuinely unavailable, show sign-in.
-      saveToken(null);
+      // Exhausted retries — show the sign-in screen, but do NOT delete the
+      // stored token record. Deleting it made the visibility handler treat the
+      // user as having explicitly signed out (`if (!saved && authBootChecked)
+      // return`), so a merely-transient cold-start failure on flaky cell became
+      // a permanent strand on the sign-in screen with no auto-recovery. Keeping
+      // the (expired) record lets the next foreground silently retry; explicit
+      // sign-out is the only path that should clear it.
       setAuthBootChecked(true);
     };
     run();
@@ -292,7 +306,12 @@ export default function App() {
       if (!acct) { _acctChecked.current = false; return; } // couldn't resolve — retry
       let prev = null;
       try { prev = localStorage.getItem("mts-account"); } catch {}
-      if (prev && prev !== acct) {
+      // Only wipe on a genuine email↔email switch. Guard against ever nuking
+      // data when either side isn't a real email (legacy resourceName values,
+      // or any non-email that slipped in) — a destructive wipe must require
+      // unambiguous proof of a different account, not a format mismatch.
+      const bothEmails = prev && prev.includes("@") && acct.includes("@");
+      if (prev && prev !== acct && bothEmails) {
         await clearLocalDataForAccountSwitch(acct); // wipes + reloads
         return;
       }
@@ -810,12 +829,44 @@ export default function App() {
   // it's back online. This is what previously required a full force-quit +
   // reopen to recover from.
   useEffect(() => {
-    if (!token || !error || loading || Object.keys(rawEvents).length > 0) return;
+    // Stop auto-retrying once we've surfaced a hard auth failure — a dead
+    // session can't be fixed by re-fetching, and looping every 5s just drains
+    // battery/data with failing /api/token calls. The Reconnect bar is the
+    // recovery path in that state.
+    if (!token || !error || loading || needsReconnect || Object.keys(rawEvents).length > 0) return;
     const t = setTimeout(() => load(true), 5000);
     const onOnline = () => load(true);
     window.addEventListener("online", onOnline);
     return () => { clearTimeout(t); window.removeEventListener("online", onOnline); };
-  }, [token, error, loading, rawEvents, load]);
+  }, [token, error, loading, needsReconnect, rawEvents, load]);
+
+  // ── DAY-ROLLOVER RECOVERY ────────────────────────────────────────────────
+  // The installed PWA stays mounted across background→foreground on iOS, and
+  // load() only fires on a null→token transition — so if the app is left open
+  // past midnight and merely RESUMED (not relaunched), businessDays[0] still
+  // points at yesterday, dayKey resolves to yesterday, and the route shows the
+  // wrong day (usually empty) with no fix short of a full relaunch. That warm-
+  // resume-after-midnight case is almost certainly a major driver of the
+  // recurring "no stops when I open the app, but reopening fixes it" reports:
+  // a force-quit relaunch recomputes businessDays via load(), a resume does not.
+  // On every foreground (and once a minute while foregrounded), if the real
+  // "today" no longer matches businessDays[0], recompute the day list and
+  // reload today.
+  useEffect(() => {
+    if (!token) return;
+    const check = () => {
+      if (document.visibilityState !== "visible") return;
+      const realToday = new Date(); realToday.setHours(0, 0, 0, 0);
+      const firstBiz = businessDays[0];
+      if (!firstBiz || firstBiz.toDateString() !== realToday.toDateString()) {
+        load(false); // recomputes businessDays + fetches today, jumps to today
+      }
+    };
+    document.addEventListener("visibilitychange", check);
+    const iv = setInterval(check, 60 * 1000);
+    check(); // also catch a resume that fired no visibility event
+    return () => { document.removeEventListener("visibilitychange", check); clearInterval(iv); };
+  }, [token, businessDays, load]);
 
   // ── CLOUD SYNC: Pull app state from Drive on startup ───────────────
   const [syncIndicator, setSyncIndicator] = useState("idle");

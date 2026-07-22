@@ -3,7 +3,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v8";
+const CACHE = "mts-field-v9";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
@@ -25,7 +25,14 @@ self.addEventListener("activate", (e) => {
 
 const BYPASS = ["googleapis.com", "generativelanguage", "accounts.google.com",
                 "maps.googleapis.com", "fonts.googleapis.com", "fonts.gstatic.com",
-                "router.project-osrm.org"];
+                "router.project-osrm.org",
+                // Same-origin backend endpoints (token refresh, OAuth) must NEVER
+                // be cached: the stale-while-revalidate path below would otherwise
+                // serve a previous /api/token response — an already-expired access
+                // token stamped with a fresh-looking expiry — making silent reauth
+                // hand back a dead token and every Calendar fetch 401 until a hard
+                // relaunch. Always go straight to the network for these.
+                "/api/"];
 
 self.addEventListener("fetch", (e) => {
   const url = e.request.url;
