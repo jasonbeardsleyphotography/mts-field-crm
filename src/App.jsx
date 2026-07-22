@@ -665,7 +665,13 @@ export default function App() {
 
   // ── LOAD — today first, then background-fill remaining days ──────────
   const load = useCallback(async (preserveDay = false) => {
-    if (!token) return;
+    // Use the freshest token available. A background silent-reauth may have
+    // written a newer token to localStorage than the one captured in this
+    // callback's closure; using the stale closure token would 401 needlessly
+    // (and, when the closure token is the DEAD one, keep failing every retry).
+    const savedTok = lsGet("mts-token", null);
+    const tok = (savedTok?.token && savedTok.expiry > Date.now()) ? savedTok.token : token;
+    if (!tok) return;
     setLoading(true);
     setError(null);
     try {
@@ -689,7 +695,7 @@ export default function App() {
       // backoff pattern already used for cold-start silent reauth above.
       let todayEvents, loadErr;
       for (let attempt = 0; attempt < 5; attempt++) {
-        try { todayEvents = await authedFetchEvents(token, ts, te); loadErr = null; break; }
+        try { todayEvents = await authedFetchEvents(tok, ts, te); loadErr = null; break; }
         catch (err) {
           loadErr = err;
           // A 401 that authedFetchEvents' own inline reauth couldn't fix is a
@@ -722,6 +728,10 @@ export default function App() {
       });
       if (!preserveDay) setSelDay(0);
       setExpanded(null); setReorderMode(false); setMoving(null);
+      // Phase 1 succeeded — clear any lingering failure/reconnect UI so the
+      // red "couldn't load" banner and yellow reconnect bar don't stick around
+      // after stops have actually come in.
+      setError(null); setNeedsReconnect(false);
       setLoading(false);
 
       // PHASE 2: Background-fill remaining days
@@ -731,7 +741,7 @@ export default function App() {
           try {
             const s = new Date(day); s.setHours(0,0,0,0);
             const e = new Date(day); e.setHours(23,59,59,999);
-            const events = await authedFetchEvents(token, s, e);
+            const events = await authedFetchEvents(tok, s, e);
             const localStops2 = localStopsGet();
             // Clean up confirmed-pushed local stops whose real Calendar event came back.
             const fetchedIds = new Set(events.map(ev => ev.id));
@@ -762,6 +772,15 @@ export default function App() {
       // only if silent reauth failed). Don't double-clear here — a transient
       // network error that surfaces as "401" in the message would otherwise
       // log the user out unnecessarily.
+      //
+      // But DO flag auth failures: when the fetch ultimately fails with a 401
+      // that silent reauth couldn't fix, no amount of "Retry" or reopening the
+      // app will recover it — the Google session is genuinely dead (e.g. a
+      // Testing-mode refresh token that expired after a week). The only fix is
+      // an interactive reconnect, so surface that prominently instead of a
+      // powerless "retrying…" banner.
+      const isAuth = e?.status === 401 || (e?.message || "").includes("401");
+      if (isAuth) setNeedsReconnect(true);
       setError(e.message);
       setLoading(false);
     }
@@ -1252,7 +1271,16 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allParsed, stopOverridesVersion]);
   const currentOrder = (ordIds[dayKey]?.length > 0) ? ordIds[dayKey] : allParsed.map(s => s.id);
-  const stops = currentOrder.map(id => stopMap[id]).filter(Boolean);
+  // Memoized so `stops` keeps a stable identity across unrelated re-renders
+  // (e.g. the rapid state churn while a cloud sync runs). Without this, every
+  // render produced a brand-new array, re-running the RouteMap marker/geocode
+  // effects and re-fitting the map bounds — which read on screen as the map
+  // "shaking back and forth" whenever sync fired.
+  const stops = useMemo(
+    () => currentOrder.map(id => stopMap[id]).filter(Boolean),
+    [currentOrder.join(","), stopMap]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  );
 
   const active = useMemo(() => stops.filter(s => !dismissed[s.id]), [stops, dismissed]);
   const completed = useMemo(() => stops.filter(s => dismissed[s.id]).sort((a, b) => (dismissed[b.id] || 0) - (dismissed[a.id] || 0)), [stops, dismissed]);
@@ -1857,19 +1885,25 @@ export default function App() {
           have local data. Keeps the app usable and offers ONE interactive
           re-auth instead of bouncing to the sign-in screen in a loop. */}
       {needsReconnect && (
-        <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:"rgba(246,191,38,.12)",borderBottom:"1px solid rgba(246,191,38,.3)"}}>
-          <span style={{flex:1,fontSize:12,color:"#F6BF26",fontWeight:600}}>Google session expired — reconnect to sync.</span>
-          <button onClick={serverSignIn} style={{padding:"6px 14px",borderRadius:8,background:"rgba(246,191,38,.2)",border:"1px solid rgba(246,191,38,.5)",color:"#F6BF26",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>Reconnect Google</button>
+        <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:"rgba(246,191,38,.16)",borderBottom:"1px solid rgba(246,191,38,.4)"}}>
+          <span style={{flex:1,fontSize:12.5,color:"#F6BF26",fontWeight:700}}>{Object.keys(rawEvents).length === 0 ? "Can't reach Google — reconnect to load your stops." : "Google session expired — reconnect to sync."}</span>
+          <button onClick={async () => {
+            // Fast path first: a silent reauth often succeeds without the full
+            // sign-in redirect. Only if that fails do we bounce to serverSignIn.
+            const ok = await silentReauth();
+            if (ok) { setNeedsReconnect(false); await new Promise(r=>setTimeout(r,200)); load(true); }
+            else { serverSignIn(); }
+          }} style={{padding:"8px 16px",borderRadius:8,background:"rgba(246,191,38,.28)",border:"1px solid rgba(246,191,38,.6)",color:"#F6BF26",fontSize:12.5,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>Reconnect</button>
         </div>
       )}
       {/* Shown when today's stops failed to load (all retries exhausted) and
           nothing has come in yet — a background retry is already scheduled,
           but this gives an immediate manual option instead of forcing a
           full app restart to recover, which was the only fix before. */}
-      {error && !loading && Object.keys(rawEvents).length === 0 && (
+      {error && !loading && Object.keys(rawEvents).length === 0 && !needsReconnect && (
         <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:"rgba(255,85,85,.1)",borderBottom:"1px solid rgba(255,85,85,.3)"}}>
           <span style={{flex:1,fontSize:12,color:"#ff8080",fontWeight:600}}>Couldn't load today's stops — retrying automatically…</span>
-          <button onClick={() => load(true)} style={{padding:"6px 14px",borderRadius:8,background:"rgba(255,85,85,.2)",border:"1px solid rgba(255,85,85,.5)",color:"#ff8080",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>Retry Now</button>
+          <button onClick={async () => { const ok = await silentReauth(); await new Promise(r=>setTimeout(r,200)); load(true); if(!ok) setNeedsReconnect(true); }} style={{padding:"6px 14px",borderRadius:8,background:"rgba(255,85,85,.2)",border:"1px solid rgba(255,85,85,.5)",color:"#ff8080",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>Retry Now</button>
         </div>
       )}
       <style>{`
@@ -1912,12 +1946,17 @@ export default function App() {
           </button>
         </div>
         {token && <button onClick={async () => {
-            // If we're in an error state, refresh the token first before retrying
-            if (syncIndicator === "error" || syncIndicator === "auth-error") {
+            // If we're in an error state — OR the route never loaded — refresh
+            // the token first, then re-fetch stops. Tapping this button when the
+            // route is empty is a natural recovery instinct, so make it actually
+            // recover: a stops-load, not just a Drive field sync.
+            const routeEmpty = Object.keys(rawEvents).length === 0;
+            if (syncIndicator === "error" || syncIndicator === "auth-error" || routeEmpty) {
               await silentReauth();
               // Give the new token a moment to settle in localStorage
               await new Promise(r => setTimeout(r, 300));
             }
+            if (routeEmpty) { setNeedsReconnect(false); load(true); }
             // Full reconcile: pull everything (force, ignoring the seen-map),
             // union-merging Drive into local, THEN push every local field back
             // so this device's complete data lands on Drive. Pull-before-push
