@@ -438,7 +438,14 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
     const groups = {};
     STAGES.forEach(s => { groups[s.id] = []; });
     Object.values(pipeline).forEach(card => {
-      if (groups[card.stage]) groups[card.stage].push(card);
+      // Bucket any card whose stage isn't a known stage (missing/null/legacy
+      // or renamed value, or a corrupted cloud-merged record) into
+      // estimate_needed instead of dropping it. Previously such a card landed
+      // in NO group, making it invisible on the desktop kanban and in every
+      // mobile stage tab — reachable only via the "All" tab or search. That
+      // was a real "shows in search but not on any board / lost card" vector.
+      const bucket = groups[card.stage] ? card.stage : "estimate_needed";
+      groups[bucket].push(card);
     });
     Object.keys(groups).forEach(k => {
       if (k === "declined") {
