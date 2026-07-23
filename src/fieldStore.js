@@ -125,15 +125,32 @@ export async function loadField(id) {
 export async function saveField(id, data) {
   if (!id) return;
   const enriched = { ...data, savedAt: Date.now() };
-  try {
-    const store = await tx("readwrite");
-    await new Promise((ok, err) => {
-      const r = store.put(enriched, id);
-      r.onsuccess = () => ok();
-      r.onerror   = () => err(r.error);
-    });
-  } catch (e) {
-    console.warn("fieldStore save failed:", e);
+  // Retry the IndexedDB write on failure. iOS closes/aborts IDB transactions
+  // when the app is backgrounded under memory pressure — most likely right
+  // after a big photo write. Previously a single failed put was caught and
+  // SWALLOWED with just a console.warn, and because the localStorage mirror
+  // below strips the base64 photo data (only counts survive), that transient
+  // hiccup permanently destroyed the photos: gone from IDB (write failed) and
+  // never in the mirror. Retrying on a fresh connection (mirrors videoQueue's
+  // hardening) turns that silent data loss back into a recoverable blip. We
+  // also listen for async transaction abort, not just the request onerror,
+  // since iOS surfaces eviction as an abort after the put "succeeds".
+  let idbOk = false;
+  for (let attempt = 0; attempt < 4 && !idbOk; attempt++) {
+    try {
+      const store = await tx("readwrite");
+      await new Promise((ok, err) => {
+        const r = store.put(enriched, id);
+        r.onsuccess = () => ok();
+        r.onerror   = () => err(r.error || new Error("put error"));
+        if (r.transaction) r.transaction.onabort = () => err(r.transaction.error || new Error("tx abort"));
+      });
+      idbOk = true;
+    } catch (e) {
+      dbPromise = null; // force a fresh connection on the next attempt
+      if (attempt < 3) await new Promise(res => setTimeout(res, 200 * (attempt + 1)));
+      else console.warn("fieldStore save failed after retries:", e);
+    }
   }
   // Mirror a *lightweight slice* to localStorage so legacy code (Drive sync
   // key-iteration, App.jsx pullFromDrive) still sees entries exist. Strips
