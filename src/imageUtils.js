@@ -8,11 +8,18 @@
    matching the file-picker path's 2400px / q0.82 budget (~700 KB base64).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-export const PHOTO_MAX_DIM = 2400;
-export const PHOTO_QUALITY = 0.82;
+// Bumped from 2400px/q0.82 to 3200px/q0.88 so field photos carry more detail
+// and print sharper when dropped into a SingleOps proposal page. A 3200px q0.88
+// JPEG is typically ~1.5–2.5 MB base64 (vs ~700–900 KB before). Photos are
+// uploaded to Drive individually and their in-JSON dataUrl is evicted after
+// upload, so the larger size doesn't permanently bloat the field record.
+export const PHOTO_MAX_DIM = 3200;
+export const PHOTO_QUALITY = 0.88;
 // base64 length above which a photo is considered oversized and worth a
-// downscale pass. A 2400px q0.82 JPEG is typically < 900 KB; 4K q0.9 is 2–4 MB.
-export const OVERSIZE_DATAURL_LEN = 1_200_000;
+// downscale pass. Raised in step with the bigger capture budget so a normal
+// new 3200px/q0.88 photo isn't needlessly re-decoded every sync; genuinely
+// huge legacy 4K originals (> ~3 MB base64) still get shrunk to the cap.
+export const OVERSIZE_DATAURL_LEN = 3_200_000;
 
 // ── PHOTO IDENTITY ───────────────────────────────────────────────────────────
 // Every photo gets a globally-unique `id` at creation. This is the PRIMARY

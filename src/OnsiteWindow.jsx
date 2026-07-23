@@ -8,7 +8,7 @@ import { loadField, peekField, primeField, mergeField, updateField, saveFieldSyn
 import { loadPipeline } from "./Pipeline";
 import { incUpload, decUpload } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
-import { downscaleDataUrl, newPhotoId, photoKey } from "./imageUtils";
+import { downscaleDataUrl, newPhotoId, photoKey, PHOTO_MAX_DIM, PHOTO_QUALITY } from "./imageUtils";
 import { buildShareUrl, buildStreamUrl } from "./driveUpload";
 
 function _driveFileId(url) {
@@ -1859,14 +1859,16 @@ function _processPhoto(file, section, stopId) {
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = async () => {
-        const MAX = 2400;
+        // Use the shared capture budget (PHOTO_MAX_DIM / PHOTO_QUALITY) so the
+        // library-import path matches the camera path — raising one raises both.
+        const MAX = PHOTO_MAX_DIM;
         let w = img.width, h = img.height;
         if (w > MAX) { h = h * MAX / w; w = MAX; }
         if (h > MAX) { w = w * MAX / h; h = MAX; }
         const c = document.createElement("canvas");
         c.width = w; c.height = h;
         c.getContext("2d").drawImage(img, 0, 0, w, h);
-        const photo = { dataUrl: c.toDataURL("image/jpeg", 0.82), ts: Date.now(), id: newPhotoId() };
+        const photo = { dataUrl: c.toDataURL("image/jpeg", PHOTO_QUALITY), ts: Date.now(), id: newPhotoId() };
         // updateField is queued per-stop in fieldStore, so this composes
         // safely with concurrent text saves and other photo ops.
         try {
