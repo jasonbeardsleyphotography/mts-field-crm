@@ -201,7 +201,7 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
       {/* Storage-stuck banner: repeated blob-read failures mean iOS wedged
           this page's storage access — only a full app reload clears it.
           Give the user that button right here instead of a dead end. */}
-      {items.some(i => (i.probeFails || 0) >= 2) && (
+      {items.some(i => (i.sliceFails || 0) >= 2) && (
         <div style={{
           padding: "10px 16px", flexShrink: 0,
           background: "rgba(255,140,0,.08)",
@@ -375,7 +375,7 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
                         delete next[item.id];
                         return next;
                       }), 4000);
-                      retryItem(item.id);
+                      retryItem(item.id).catch(() => {});
                     }}
                     disabled={!!restarting[item.id]}
                     style={{
@@ -392,10 +392,10 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
                   onClick={() => {
                     if (item.status === "local") {
                       if (window.confirm("Permanently delete this video from the phone? Save it first if you still need it.")) {
-                        deleteItem(item.id);
+                        deleteItem(item.id).catch(() => {});
                       }
                     } else if (window.confirm("Stop uploading this video? It stays on the client's card so you can save or upload it later.")) {
-                      cancelItem(item.id);
+                      cancelItem(item.id).catch(() => {});
                     }
                   }}
                   style={{

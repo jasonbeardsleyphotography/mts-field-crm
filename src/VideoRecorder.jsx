@@ -211,7 +211,13 @@ export default function VideoRecorder({ onRecorded, onClose }) {
       mr = new MediaRecorder(streamRef.current, opts);
     } catch {
       try { mr = new MediaRecorder(streamRef.current); } catch (e) {
+        // Can't record on this device/codec — but the camera + mic are still
+        // live. Every other exit path stops the tracks; this one used to just
+        // return, leaving the iOS recording indicator on and the mic hot until
+        // the user manually backed out. Release them and close.
         setError("Recording isn't supported on this device/browser.");
+        try { streamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+        setTimeout(() => onClose?.(), 1800);
         return;
       }
     }

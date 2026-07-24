@@ -177,19 +177,53 @@ const idbAll    = ()     => _idbOp("readonly",  (s, ret) => { s.getAll().onsucce
 // on success/delete. A soft cap bounds worst-case memory if many videos pile
 // up unsent; the oldest overflow falls back to the (fragile) IDB bytes.
 const _liveBlobs = new Map(); // id -> Blob (insertion-ordered)
-const LIVE_BLOB_MAX = 12;
+// ids whose bytes are safe SOMEWHERE ELSE (uploaded to Drive, or saved to the
+// phone's Photos). Only these are safe to evict from the in-memory cache — an
+// unsent recording that isn't durable yet has its ONLY reliable copy here
+// (IDB can be evicted by iOS under the same pressure).
+const _durableIds = new Set();
+const LIVE_BLOB_SOFT_MAX = 12; // preferred ceiling — evict durable blobs past this
+const LIVE_BLOB_HARD_MAX = 30; // absolute ceiling — only here do we drop a sole copy
+
+function _markDurable(id, durable) {
+  if (!id) return;
+  if (durable) _durableIds.add(id); else _durableIds.delete(id);
+}
 
 function _stashLiveBlob(id, blob) {
   if (!blob) return;
   _liveBlobs.set(id, blob);
-  while (_liveBlobs.size > LIVE_BLOB_MAX) {
+  if (_liveBlobs.size <= LIVE_BLOB_SOFT_MAX) return;
+  // Over the soft cap: evict the OLDEST blob that's already safe elsewhere,
+  // never the sole copy of an unsent recording. Previously this was blind FIFO,
+  // so a tech recording 13+ videos in a no-signal area (the target case) could
+  // silently evict video #1's only in-memory copy; if iOS had also evicted its
+  // IDB bytes, the recording was gone forever. Only if we're past the HARD cap
+  // and nothing durable is evictable do we drop the oldest as a last resort.
+  const evictOneDurable = () => {
+    for (const key of _liveBlobs.keys()) {
+      if (key === id) continue;
+      if (_durableIds.has(key)) {
+        _liveBlobs.delete(key);
+        vlogWarn?.("liveblob.evict_durable", { id: key });
+        return true;
+      }
+    }
+    return false;
+  };
+  while (_liveBlobs.size > LIVE_BLOB_SOFT_MAX) {
+    if (evictOneDurable()) continue;
+    // Nothing durable to shed — keep the sole-copy blobs in memory up to the
+    // hard cap to protect them; only past that drop the oldest (its IDB copy,
+    // if still present, remains the fallback).
+    if (_liveBlobs.size <= LIVE_BLOB_HARD_MAX) break;
     const oldest = _liveBlobs.keys().next().value;
     if (oldest === id) break;
     _liveBlobs.delete(oldest);
-    vlogWarn?.("liveblob.overflow_evict", { id: oldest });
+    vlogWarn?.("liveblob.hardcap_evict_nondurable", { id: oldest });
   }
 }
-function _dropLiveBlob(id) { _liveBlobs.delete(id); }
+function _dropLiveBlob(id) { _liveBlobs.delete(id); _durableIds.delete(id); }
 
 /** Best readable source for an item's bytes: the in-memory blob if we still
  *  have it (never evicted), otherwise the IDB-stored blob (may be evicted). */
@@ -332,7 +366,14 @@ export async function enqueueVideo({ stopId, file, title, alreadyInLibrary = fal
 export async function markSavedToDevice(id) {
   const cur = await idbGet(id).catch(() => null);
   if (!cur) return;
-  await idbPut({ ...cur, savedToDevice: true, updatedAt: Date.now() });
+  // Re-read immediately before writing and build on the FRESHEST record, so a
+  // cancel (status→"local") or a worker progress write that landed while the
+  // share sheet was open isn't clobbered by a stale snapshot — which could
+  // resurrect an upload the user explicitly stopped. We only ever flip
+  // savedToDevice; every other field comes from the latest record.
+  const fresh = (await idbGet(id).catch(() => null)) || cur;
+  await idbPut({ ...fresh, savedToDevice: true, updatedAt: Date.now() });
+  _markDurable(id, true); // saved to Photos — now safe to evict from the live cache
   vlogInfo("saved_to_device", null, id);
   notify();
 }
@@ -467,6 +508,11 @@ export async function retryItem(id) {
 
 let _processing = false;   // false | run-sequence number of the worker holding the lock
 let _processingStartMs = 0;
+// Timestamp of the last sign of LIFE from the active worker (upload progress or
+// worker start). The lock watchdog keys off THIS, not worker-start time, so a
+// healthy multi-minute upload on slow cellular isn't aborted every 2 minutes —
+// only a genuinely wedged worker (no progress for the window) gets released.
+let _lastProgressMs = 0;
 let _getToken = null;
 let _watcherInstalled = false;
 
@@ -503,6 +549,7 @@ function _invalidateWorker(why) {
   _abortInFlight();
   _processing = false;
   _processingStartMs = 0;
+  _lastProgressMs = 0;
 }
 
 export function forceUnstick() {
@@ -516,7 +563,11 @@ export function forceUnstick() {
 }
 
 export function _kick() {
-  if (_processing && _processingStartMs && Date.now() - _processingStartMs > WORKER_LOCK_WATCHDOG_MS) {
+  // Release the worker only if it's shown no progress for the watchdog window —
+  // not merely because the upload has been running a while (a big video on slow
+  // cell legitimately takes many minutes). _lastProgressMs is bumped on every
+  // upload progress event.
+  if (_processing && _lastProgressMs && Date.now() - _lastProgressMs > WORKER_LOCK_WATCHDOG_MS) {
     _invalidateWorker("watchdog_release");
   }
   if (_processing) return;
@@ -534,6 +585,7 @@ async function _processNext() {
   const myEpoch = _epoch;
   _processing = myRun;
   _processingStartMs = Date.now();
+  _lastProgressMs = Date.now();
   await _acquireWakeLock();
   try {
     while (true) {
@@ -565,6 +617,7 @@ async function _processNext() {
     if (_processing === myRun) {
       _processing = false;
       _processingStartMs = 0;
+      _lastProgressMs = 0;
       _releaseWakeLock();
     }
   }
@@ -607,6 +660,11 @@ async function _setItem(id, patch) {
   }
   const next = { ...cur, ...patch, updatedAt: Date.now() };
   await idbPut(next);
+  // Track whether this item's bytes are now safe elsewhere, so the live-blob
+  // cache only ever evicts durable copies (never the sole copy of an unsent
+  // recording). "local" (user stopped upload, kept on card) is NOT durable
+  // unless it was also saved to the phone.
+  _markDurable(id, !!next.savedToDevice || next.status === "done");
   notify();
   return next;
 }
@@ -771,6 +829,7 @@ async function _processItem(id, myEpoch = _epoch, restarts = 0) {
     const onUploadProgress = (absBytes) => {
       if (stale()) return; // zombie worker — the replacement owns progress now
       const now = Date.now();
+      _lastProgressMs = now; // heartbeat for the lock watchdog — bump on EVERY event, pre-throttle
       if (now - lastProgressWrite < 1500) return;
       lastProgressWrite = now;
       const pct = Math.min(99, Math.floor((absBytes / item.fileSize) * 100));
@@ -808,7 +867,18 @@ async function _processItem(id, myEpoch = _epoch, restarts = 0) {
       // may have evicted. `probe` was just fetched above.
       const live = _liveBlobs.get(id);
       const sourceBlob = live || probe.file;
-      if (!sourceBlob) { vlogInfo("upload.no_source_blob", null, id); return false; }
+      if (!sourceBlob) {
+        // Neither the in-memory copy nor the IDB bytes are reachable — set an
+        // explicit error instead of silently returning, which left the item
+        // spinning "uploading" until a watchdog eventually caught it. Force
+        // Restart / Save-if-still-on-device remain available from this state.
+        vlogWarn("upload.no_source_blob", null, id);
+        await _setItem(id, {
+          status: "error",
+          error: "Phone storage is stuck — close this app completely and reopen it, then tap Force Restart. If you saved the video to your phone it's safe.",
+        }).catch(() => {});
+        return true;
+      }
 
       if (remainingBytes <= MATERIALIZE_CAP_BYTES) {
         try {
@@ -1014,7 +1084,13 @@ async function _finalize(id, fileId, token) {
   } catch (e) {
     vlogWarn("finalize.field_write_failed", { msg: e?.message }, id);
   }
-  await idbDelete(id);
+  // The upload is DONE and the share link is already saved above — so cleaning
+  // up the queue record is best-effort. If idbDelete throws (IDB wedged), do
+  // NOT let it propagate: it used to bubble to the worker's storage-shaped
+  // catch, requeue this finished item, and then re-report a fully successful
+  // upload as "completed but file ID was lost." Swallow it; a leftover record
+  // re-finalizes harmlessly (the link-dedupe above makes it a no-op).
+  try { await idbDelete(id); } catch (e) { vlogWarn("finalize.delete_failed_nonfatal", { msg: e?.message || String(e) }, id); }
   _dropLiveBlob(id); // uploaded — release the in-memory copy
   vlogInfo("finalize.ok", { fileId, shareUrl }, id);
   notify();
@@ -1038,8 +1114,13 @@ function _wallClockUnstick() {
     // Drive session into a wedged state. updatedAt is refreshed every ~1.5s
     // by progress writes while bytes are actually moving, so 45s of silence
     // genuinely means dead.
+    // Require an established sessionUrl: an item still in Phase-1 setup (folder
+    // resolution + initDriveSession, which can take >45s on slow cell) has NO
+    // session yet and no bytes to protect, and requeuing it mid-init spawns a
+    // second worker that starts a DUPLICATE Drive session/file. Only sweep
+    // items that have a real resumable session whose bytes have gone silent.
     const stale = all.filter(
-      i => i.status === "uploading" && Date.now() - (i.updatedAt || 0) > 45_000
+      i => i.status === "uploading" && i.sessionUrl && Date.now() - (i.updatedAt || 0) > 45_000
     );
     if (!stale.length) return;
     Promise.all(stale.map(i => idbPut({ ...i, status: "queued", statusSetAt: Date.now() })))
