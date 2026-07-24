@@ -35,12 +35,21 @@ const ZOOM_PILL_HIDE_MS   = 1500;
 const FOCUS_INDICATOR_MS  = 800;
 const BURST_FRAME_COUNT   = 3;    // frames grabbed per shutter press; sharpest wins
 
-// Grabs `count` frames from `video` a rAF tick apart, drawing each at full
-// resolution and scoring it for sharpness. Never throws — a bad frame is
-// skipped, not fatal — so the caller always gets whatever frames succeeded
-// (possibly fewer than `count`, possibly zero).
+// Free a canvas's backing store immediately (0×0 releases the pixel buffer)
+// rather than waiting for GC — important at full sensor resolution.
+function releaseCanvas(c) { try { c.width = 0; c.height = 0; } catch {} }
+
+// Grabs `count` frames from `video` a rAF tick apart, scoring each for
+// sharpness and keeping ONLY the sharpest so far — losing frames are released
+// the instant they lose. Never throws — a bad frame is skipped, not fatal.
+// Returns the single best { bitmap, score } or null.
+//
+// Keeping only one frame alive matters: at 4K each canvas backing store is
+// ~33 MB, so accumulating all `count` frames (the old behavior) briefly pinned
+// ~100 MB per shutter tap and could spike the renderer into a white-screen
+// reload on an older device — losing the capture mid-shoot.
 async function grabBurst(video, vw, vh, count, mountedRef) {
-  const frames = [];
+  let best = null; // { bitmap, score }
   for (let i = 0; i < count; i++) {
     await new Promise((r) => requestAnimationFrame(r));
     if (!mountedRef.current) break;
@@ -51,10 +60,15 @@ async function grabBurst(video, vw, vh, count, mountedRef) {
       canvas.getContext("2d").drawImage(video, 0, 0, vw, vh);
       let score = -Infinity;
       try { score = scoreSharpness(canvas); } catch {}
-      frames.push({ bitmap: canvas, score });
+      if (!best || score > best.score) {
+        if (best) releaseCanvas(best.bitmap); // previous best just lost — free it
+        best = { bitmap: canvas, score };
+      } else {
+        releaseCanvas(canvas); // this frame lost — free it now
+      }
     } catch {}
   }
-  return frames;
+  return best;
 }
 
 const haptic = (ms = 10) => { try { navigator.vibrate?.(ms); } catch {} };
@@ -269,13 +283,11 @@ export default function CameraView({ onPhoto, onClose }) {
     setTimeout(() => setFlash(false), 90);
 
     try {
-      const frames = await grabBurst(video, vw, vh, BURST_FRAME_COUNT, mountedRef);
-      const best = frames.length
-        ? frames.reduce((a, b) => (b.score > a.score ? b : a))
-        : null;
+      const best = await grabBurst(video, vw, vh, BURST_FRAME_COUNT, mountedRef);
       if (best && mountedRef.current) {
         onPhoto(best.bitmap.toDataURL("image/jpeg", 0.9));
       }
+      if (best) releaseCanvas(best.bitmap); // free the full-res buffer once encoded
     } catch (e) {
       console.warn("Burst capture failed:", e);
     } finally {
