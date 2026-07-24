@@ -154,6 +154,10 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
     } catch (e) {
       console.warn("Parcel map snapshot failed:", e);
       setSnapError("Snapshot failed — try again.");
+    } finally {
+      // Always re-enable the button — previously the success path never reset
+      // `snapping`, so if onSnapshot kept this view mounted the button stayed
+      // stuck on "Saving…" forever.
       setSnapping(false);
     }
   };

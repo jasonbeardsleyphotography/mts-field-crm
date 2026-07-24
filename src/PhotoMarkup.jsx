@@ -226,6 +226,7 @@ export default function PhotoMarkup({ photoDataUrl, originalDataUrl = null, onSa
 
   // Image / viewport
   const [imgLoaded, setImgLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [imgDims, setImgDims]     = useState({ w: 0, h: 0 });   // natural image size
   const [fit, setFit]             = useState({ w: 0, h: 0 });   // fit-to-container CSS size
   const [backing, setBacking]     = useState({ w: 0, h: 0 });   // canvas backing resolution
@@ -263,6 +264,11 @@ export default function PhotoMarkup({ photoDataUrl, originalDataUrl = null, onSa
       });
       setImgLoaded(true);
     };
+    // Without an error handler a corrupt/truncated dataUrl (e.g. a partially
+    // synced field record) left the editor stuck on "Loading…" forever with no
+    // way out but the corner ✕. Surface a clear error instead.
+    img.onerror = () => { if (!dead) setLoadError(true); };
+    setLoadError(false);
     img.src = srcUrl;
     return () => { dead = true; };
   }, [srcUrl]);
@@ -491,6 +497,12 @@ export default function PhotoMarkup({ photoDataUrl, originalDataUrl = null, onSa
       const last = lastTapRef.current;
       if (now - last.t < DOUBLE_TAP_MS &&
           Math.hypot(e.clientX - last.x, e.clientY - last.y) < DOUBLE_TAP_RADIUS) {
+        // In X mode, the first tap of this double-tap already stamped an X on
+        // its pointer-up (a double-tap is only recognizable here, on the second
+        // tap's down). Roll that stray X back so the documented "double-tap to
+        // reset the view" gesture doesn't leave an unwanted mark. The double-tap
+        // time/radius window above guarantees it's this gesture's X.
+        if (xMode) setStrokes(prev => (prev.length && prev[prev.length - 1]?.type === "x") ? prev.slice(0, -1) : prev);
         resetView();
         lastTapRef.current = { t: 0, x: 0, y: 0 };
         pointersRef.current.delete(e.pointerId);
@@ -848,10 +860,17 @@ export default function PhotoMarkup({ photoDataUrl, originalDataUrl = null, onSa
 
       {!imgLoaded && (
         <div style={{
-          position: "absolute", inset: 0, display: "flex",
+          position: "absolute", inset: 0, display: "flex", flexDirection: "column", gap: 12,
           alignItems: "center", justifyContent: "center",
-          color: "#5a5a5a", fontSize: 14,
-        }}>Loading…</div>
+          color: loadError ? "#e08080" : "#5a5a5a", fontSize: 14, textAlign: "center", padding: 24,
+        }}>
+          {loadError ? (
+            <>
+              <div>This photo couldn't be loaded — it may not have finished syncing.</div>
+              <button onClick={onCancel} style={{ padding: "8px 18px", borderRadius: 8, background: "rgba(255,255,255,.1)", border: "1px solid #333", color: "#ccc", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Close</button>
+            </>
+          ) : "Loading…"}
+        </div>
       )}
 
       {/* ── TOP-LEFT: Cancel + Revert-to-original ──────────────────────── */}

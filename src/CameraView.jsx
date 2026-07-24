@@ -234,6 +234,7 @@ export default function CameraView({ onPhoto, onClose }) {
 
     setFocusPoint({ x: clientX - r.left, y: clientY - r.top, t: Date.now() });
     setTimeout(() => {
+      if (!mountedRef.current) return; // don't setState after the camera closed
       setFocusPoint(p => (p && Date.now() - p.t >= FOCUS_INDICATOR_MS ? null : p));
     }, FOCUS_INDICATOR_MS + 50);
 

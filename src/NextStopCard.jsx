@@ -19,20 +19,22 @@ export default function NextStopCard({ stop, stopNumber, totalStops, onDismiss, 
     return () => cancelAnimationFrame(frame);
   }, []);
 
-  // Countdown tick
+  // Countdown tick — the updater ONLY computes the next value. Calling
+  // onDismiss() from inside a setState updater was a render-phase side effect
+  // ("Cannot update a component while rendering a different component", and a
+  // possible double-fire under StrictMode). Deps are [] so a re-rendering
+  // parent passing a fresh onDismiss can't keep resetting the tick cadence.
   useEffect(() => {
     timerRef.current = setInterval(() => {
-      setTimeLeft(t => {
-        if (t <= 1) {
-          clearInterval(timerRef.current);
-          onDismiss();
-          return 0;
-        }
-        return t - 1;
-      });
+      setTimeLeft(t => (t <= 1 ? 0 : t - 1));
     }, 1000);
     return () => clearInterval(timerRef.current);
-  }, [onDismiss]);
+  }, []);
+
+  // Fire dismissal once, outside the render phase, when the count hits 0.
+  useEffect(() => {
+    if (timeLeft === 0) { clearInterval(timerRef.current); onDismiss(); }
+  }, [timeLeft, onDismiss]);
 
   const handleNavigate = () => {
     clearInterval(timerRef.current);

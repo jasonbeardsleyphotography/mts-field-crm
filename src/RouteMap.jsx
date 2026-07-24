@@ -20,7 +20,24 @@ const SAT_STYLE = [
 
 // ── GEOCODING ────────────────────────────────────────────────────────────────
 const ZIP_CITY = {"14445":"East Rochester","14450":"Fairport","14472":"Honeoye Falls","14502":"Macedon","14526":"Penfield","14534":"Pittsford","14543":"Rush","14564":"Victor","14580":"Webster","14607":"Rochester","14608":"Rochester","14609":"Rochester","14610":"Rochester","14611":"Rochester","14612":"Rochester","14614":"Rochester","14615":"Rochester","14616":"Rochester","14617":"Rochester","14618":"Rochester","14619":"Rochester","14620":"Rochester","14621":"Rochester","14622":"Rochester","14623":"Rochester","14624":"Rochester","14625":"Penfield","14626":"Rochester","14424":"Canandaigua"};
-const geoCache = {};
+// Geocoding is a PAID Google API. The cache was in-memory only, so every cold
+// launch of the PWA re-geocoded all of the day's stop addresses (~20 billable
+// requests each open). Persist it to localStorage keyed by normalized address
+// so a given address is geocoded once, ever, across launches and devices-days.
+const GEOCACHE_KEY = "mts-geocache";
+let geoCache = {};
+try { geoCache = JSON.parse(localStorage.getItem(GEOCACHE_KEY) || "{}") || {}; } catch { geoCache = {}; }
+function _persistGeoCache() {
+  try {
+    const keys = Object.keys(geoCache);
+    if (keys.length > 800) { // bound growth across years of addresses
+      const trimmed = {};
+      for (const k of keys.slice(-600)) trimmed[k] = geoCache[k];
+      geoCache = trimmed;
+    }
+    localStorage.setItem(GEOCACHE_KEY, JSON.stringify(geoCache));
+  } catch {}
+}
 
 function fullAddress(addr) {
   if (!addr) return null;
@@ -41,6 +58,7 @@ export async function geocode(addr) {
       const loc = r.results[0].geometry.location;
       const c = { lat: loc.lat(), lng: loc.lng() };
       geoCache[full] = c;
+      _persistGeoCache();
       return c;
     }
   } catch(e) {}
@@ -181,12 +199,34 @@ export default function RouteMap({ stops, selectedId }) {
   const watchId = useRef(null);
   const userLoc = useRef(null); // latest GPS coords
   const [ready, setReady] = useState(false);
+  const [userLocState, setUserLocState] = useState(null); // mirror of userLoc.current, to re-run the directions effect
   const [coords, setCoords] = useState({});
   const [parcelsOn, setParcelsOn] = useState(false);
   const [mapZoom, setMapZoom] = useState(11);
   const parcelHandle = useRef(null);
 
-  useEffect(() => { loadMaps().then(() => setReady(true)).catch(() => {}); }, []);
+  useEffect(() => {
+    let cancelled = false;
+    loadMaps().then(() => { if (!cancelled) setReady(true); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Unmount teardown: the marker/route effect only clears its previous output at
+  // the START of its next run, so on unmount the markers, halo circles, and
+  // route/next-route polylines stayed attached to the map and any in-flight OSRM
+  // draw could resolve onto a dead map. Repeatedly toggling Route↔Pipeline over a
+  // long shift accreted detached Google Maps overlays. Clean them all up here.
+  useEffect(() => {
+    return () => {
+      try { if (route._cancelOSRM) route._cancelOSRM(); } catch {}
+      try { markers.current.forEach(m => m.marker.setMap(null)); } catch {}
+      try { haloCircles.current.forEach(c => c.setMap(null)); } catch {}
+      try { route.current?.setMap(null); } catch {}
+      try { nextRoute.current?.setMap(null); } catch {}
+      markers.current = []; haloCircles.current = [];
+      route.current = null; nextRoute.current = null;
+    };
+  }, []);
 
   // Create map — satellite hybrid
   useEffect(() => {
@@ -226,6 +266,12 @@ export default function RouteMap({ stops, selectedId }) {
       pos => {
         const latlng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         userLoc.current = latlng;
+        // Mirror the fix into state so the "directions to next stop" effect
+        // actually re-runs when the FIRST GPS lock lands (it arrives seconds
+        // after geocoding, so a ref-only value left the guide line undrawn) and
+        // as the truck moves. Throttled to ~75m so we don't re-fetch the route
+        // on every high-accuracy tick.
+        setUserLocState(prev => (!prev || metersBetween(prev, latlng) > 75) ? latlng : prev);
         if (!locMarker.current) {
           locMarker.current = new window.google.maps.Marker({
             position: latlng, map: map.current, zIndex: 999,
@@ -410,14 +456,14 @@ export default function RouteMap({ stops, selectedId }) {
     if (nextRoute.current) { nextRoute.current.setMap(null); nextRoute.current = null; }
     let stale = false;
     const firstStop = stops[0];
-    if (!firstStop || !coords[firstStop.id] || !userLoc.current) return;
+    const from = userLocState || userLoc.current;
+    if (!firstStop || !coords[firstStop.id] || !from) return;
 
     // Free OSRM (with straight-line fallback) for the current-location→next-stop
     // guide line — same reasoning as the full route: it's a cosmetic overlay,
     // and turn-by-turn nav is the native Google Maps hand-off, so it doesn't
     // need the paid Directions API.
     (async () => {
-      const from = userLoc.current;
       const to = coords[firstStop.id];
       const path = await fetchOSRMPath([from, to]);
       if (stale) return;
@@ -431,7 +477,7 @@ export default function RouteMap({ stops, selectedId }) {
       stale = true;
       if (nextRoute.current) { nextRoute.current.setMap(null); nextRoute.current = null; }
     };
-  }, [coords, stops, ready]);
+  }, [coords, stops, ready, userLocState]);
 
   // ── HIGHLIGHT SELECTED MARKER ──────────────────────────────────────────
   useEffect(() => {
