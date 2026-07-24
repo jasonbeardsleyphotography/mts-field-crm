@@ -492,7 +492,14 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
       if (hydrated && !dead) setFieldSummaryVersion(v => v + 1);
     })();
     return () => { dead = true; };
-  }, [allCards]);
+    // Keyed on the SET of card ids, not `allCards` itself: allCards is a fresh
+    // array on every pipeline change (hot toggle, stage move, 5-min aging tick,
+    // pause), which re-ran a full loadField sweep over every card each time —
+    // hundreds of IDB reads per trivial interaction. Field data only needs
+    // re-hydrating when a card is actually added/removed, i.e. when the id set
+    // changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allCards.map(c => c.id).sort().join(",")]);
 
   const fieldSummaryMap = useMemo(() => {
     const m = {};

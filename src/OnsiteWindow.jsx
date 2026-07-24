@@ -345,7 +345,12 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         queueFieldDriveSync(token, s.id);
       }, 3000);
     }
-  }, [hydrated, scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, lineItems, jobTags, aiScopeResult, aiAddonResult, s.id, token]);
+    // s.cn / s.jn ARE in the deps: they're written into the field record above,
+    // and the edit-details feature can change them without any other field
+    // changing — without them here the effect kept a stale closure and saved the
+    // OLD name/job#, so the photo/video uploader named Drive files with the
+    // pre-edit client name.
+  }, [hydrated, scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, lineItems, jobTags, aiScopeResult, aiAddonResult, s.id, s.cn, s.jn, token]);
 
   // ── PANIC FLUSH ──────────────────────────────────────────────────────────
   // iOS aggressively suspends WKWebView pages on backgrounding / app switch
@@ -1638,7 +1643,10 @@ ${combined}`);
                 // saved a Drive /preview link (the "No preview available" iframe).
                 const shareLink = driveId ? buildShareUrl(driveId) : url;
                 return (
-                  <div key={idx} style={{borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",overflow:"hidden"}}>
+                  // Key by the stable URL, not the array index — deleting a
+                  // middle video with index keys made React swap the trailing
+                  // <video> elements' src and reload them (losing playback).
+                  <div key={url || idx} style={{borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",overflow:"hidden"}}>
                     {ytId && <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" style={{width:"100%",height:90,objectFit:"cover"}} />}
                     {driveId && <video controls preload="metadata" src={buildStreamUrl(driveId)} style={{width:"100%",height:160,display:"block",background:"#000"}} />}
                     <div style={{padding:"6px 8px",display:"flex",alignItems:"center",gap:6}}>

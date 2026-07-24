@@ -890,9 +890,17 @@ export default function App() {
             }
             savePipeline(merged);
           }
-          // Merge dismissed: cloud wins, keep local-only
+          // Merge dismissed by newest timestamp (same rule as pullFromDrive) —
+          // NOT a blind cloud-wins spread, which could re-hide a card the user
+          // just un-dismissed locally by stamping the stale cloud value over it.
           if (cloud.dismissed) {
-            setDismissed(prev => ({ ...prev, ...cloud.dismissed }));
+            setDismissed(prev => {
+              const m = { ...prev };
+              for (const [id, ts] of Object.entries(cloud.dismissed)) {
+                if ((ts || 0) > (prev[id] || 0)) m[id] = ts;
+              }
+              return m;
+            });
           }
           // Merge lastContact per-id, newest wins (cloud wins on ties)
           if (cloud.lastContact) {
@@ -1098,10 +1106,16 @@ export default function App() {
               // Photos are always union-merged regardless of which text wins.
               const cloudNewer = (data.savedAt || 0) >= (ex.savedAt || 0);
               return {
-                scopeNotes:     cloudNewer ? (data.scopeNotes || data.myNotes || ex.scopeNotes || "") : (ex.scopeNotes || data.scopeNotes || data.myNotes || ""),
-                addonNotes:     cloudNewer ? (data.addonNotes || ex.addonNotes || "") : (ex.addonNotes || data.addonNotes || ""),
-                aiScopeSummary: cloudNewer ? (data.aiScopeSummary || ex.aiScopeSummary || "") : (ex.aiScopeSummary || data.aiScopeSummary || ""),
-                aiAddonEmail:   cloudNewer ? (data.aiAddonEmail   || ex.aiAddonEmail   || "") : (ex.aiAddonEmail   || data.aiAddonEmail   || ""),
+                // Use ?? (not ||) so the winning side's value is taken LITERALLY,
+                // including an intentional "" (a note the user cleared). With ||,
+                // an empty string was treated as "absent" and the merge fell
+                // through to the other side's stale text — so deleting a note on
+                // the newer device silently resurrected the old note, and then
+                // re-uploaded it, resurrecting it on the first device too.
+                scopeNotes:     cloudNewer ? ((data.scopeNotes ?? data.myNotes) ?? ex.scopeNotes ?? "") : (ex.scopeNotes ?? (data.scopeNotes ?? data.myNotes) ?? ""),
+                addonNotes:     cloudNewer ? (data.addonNotes ?? ex.addonNotes ?? "") : (ex.addonNotes ?? data.addonNotes ?? ""),
+                aiScopeSummary: cloudNewer ? (data.aiScopeSummary ?? ex.aiScopeSummary ?? "") : (ex.aiScopeSummary ?? data.aiScopeSummary ?? ""),
+                aiAddonEmail:   cloudNewer ? (data.aiAddonEmail   ?? ex.aiAddonEmail   ?? "") : (ex.aiAddonEmail   ?? data.aiAddonEmail   ?? ""),
                 scopePhotos: unionByKey(localScope, cloudScope, photoKey),
                 addonPhotos: unionByKey(localAddon, cloudAddon, photoKey),
                 audioClips:  unionByKey(localAudio, cloudAudio, a => a.ts || a.timestamp || a.url),
@@ -1423,10 +1437,10 @@ export default function App() {
         });
         return;
       }
-      if (dirtyIds.size > 0 && !_healthDismissed.current.has("dirty")) {
+      if (dirtyIds.length > 0 && !_healthDismissed.current.has("dirty")) {
         setHealthBanner({
           type: "dirty",
-          message: `${dirtyIds.size} stop${dirtyIds.size > 1 ? "s" : ""} have unsaved changes pending sync`,
+          message: `${dirtyIds.length} stop${dirtyIds.length > 1 ? "s" : ""} have unsaved changes pending sync`,
           actionLabel: null,
           action: null,
         });
