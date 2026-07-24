@@ -101,11 +101,28 @@ export async function loadField(id) {
     });
     if (data) return data;
 
-    // No IDB entry — migrate from localStorage if present.
+    // No IDB entry — fall back to the localStorage entry if present.
     const lsRaw = localStorage.getItem(LS_PREFIX + id);
     if (!lsRaw) return {};
-    const lsData = JSON.parse(lsRaw);
-    // Write through so next read hits IDB.
+    const lsData = JSON.parse(lsRaw) || {};
+    // CRITICAL GUARD: the localStorage entry is the SLIM MIRROR that saveField
+    // writes — it strips base64 photo/audio data and keeps only counts
+    // (_scopePhotoCount etc.). If IDB was evicted (iOS's ~7-day privacy clear,
+    // which this app explicitly designs around) but the mirror says media
+    // existed, the real photos live ONLY on Drive right now. Returning this
+    // photo-less record as if it were the complete field would let the next
+    // Drive push overwrite the cloud file with empty photo arrays — permanently
+    // destroying every photo. So when the mirror claims media it doesn't carry,
+    // return {} (forcing a Drive recovery pull) and do NOT write it through to
+    // IDB (which would corrupt IDB with the photo-less copy too).
+    const claimsMedia = ((lsData._scopePhotoCount || 0) + (lsData._addonPhotoCount || 0) + (lsData._audioCount || 0)) > 0;
+    const hasArrays = !!((lsData.scopePhotos && lsData.scopePhotos.length) ||
+      (lsData.photos && lsData.photos.length) ||
+      (lsData.addonPhotos && lsData.addonPhotos.length) ||
+      (lsData.audioClips && lsData.audioClips.length));
+    if (claimsMedia && !hasArrays) return {};
+    // Genuine legacy full record (or a mirror with no media to lose) — adopt it
+    // and write through so the next read hits IDB.
     saveField(id, lsData).catch(() => {});
     return lsData || {};
   } catch (e) {
