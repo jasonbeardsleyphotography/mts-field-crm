@@ -1897,6 +1897,20 @@ export default function App() {
     let refreshing = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       if (refreshing) return;
+      // RELOAD-LOOP BREAKER: auto-reloading on every controllerchange is a known
+      // footgun — if the controller keeps changing (a wedged SW update, flaky
+      // network serving inconsistent sw.js, an activate that re-claims), the page
+      // reloads over and over and iOS Safari shows "A problem repeatedly
+      // occurred." Cap it: no more than 2 auto-reloads within 30s. After that we
+      // stop reloading and just let the current code run — a stale tab is far
+      // better than an app that won't open at all.
+      try {
+        const now = Date.now();
+        const hist = JSON.parse(sessionStorage.getItem("mts-sw-reloads") || "[]").filter(t => now - t < 30000);
+        if (hist.length >= 2) { console.warn("SW reload loop suppressed"); return; }
+        hist.push(now);
+        sessionStorage.setItem("mts-sw-reloads", JSON.stringify(hist));
+      } catch {}
       refreshing = true;
       // Don't reload in the middle of an auth flow (interactive popup or
       // reconnect) — a reload there restarts cold-start reauth and can feed the
