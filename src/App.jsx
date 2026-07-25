@@ -858,7 +858,10 @@ export default function App() {
       if (document.visibilityState !== "visible") return;
       const realToday = new Date(); realToday.setHours(0, 0, 0, 0);
       const firstBiz = businessDays[0];
-      if (!firstBiz || firstBiz.toDateString() !== realToday.toDateString()) {
+      // Only reload on a CONFIRMED day mismatch (firstBiz exists and differs) —
+      // never merely because businessDays is momentarily empty, which could
+      // otherwise fire a spurious reload during startup.
+      if (firstBiz && firstBiz.toDateString() !== realToday.toDateString()) {
         load(false); // recomputes businessDays + fetches today, jumps to today
       }
     };
@@ -1194,10 +1197,19 @@ export default function App() {
 
   // ── PARSE ────────────────────────────────────────────────────────────────
   const dayKey = businessDays[selDay]?.toDateString();
+  // Depend on THIS day's events array, not the whole rawEvents object. Startup
+  // loads today first, then background-fills the other 9 days one by one — each
+  // call replaced the rawEvents object, so keying on `rawEvents` recomputed
+  // allParsed (→ stopMap → stops → markers) up to 9 times as the background
+  // days streamed in, tearing down and rebuilding every map marker each time.
+  // That was the startup "flickering." rawEvents[dayKey] keeps a stable
+  // reference once today is loaded (background fills touch OTHER keys), so the
+  // route + markers settle once and stay put.
+  const rawForDay = rawEvents[dayKey];
   const allParsed = useMemo(() => {
-    const raw = rawEvents[dayKey] || [];
+    const raw = rawForDay || [];
     return raw.map(parseEvent).filter(Boolean).filter(s => !s.isAdmin);
-  }, [rawEvents, dayKey]);
+  }, [rawForDay, dayKey]);
 
   // ── CLIENT INDEX — for the Add Stop modal's name autosuggest ─────────
   // Pulls from pipeline (every job ever recorded) + the current week's
@@ -2096,7 +2108,14 @@ export default function App() {
           </> : <span style={{fontSize:12,fontWeight:500,color:"#9a80c8"}}><span style={{display:"flex",alignItems:"center",gap:4}}><IconReorder size={12} color="#9a80c8"/>Tap a stop to pick it up</span></span>}
         </div>}
         <div className="mts-map-inner">
-          {mapStops.length>0 && <RouteMap stops={mapStops} selectedId={expanded}/>}
+          {/* Always mounted while on the Route view — do NOT gate on
+              mapStops.length. Gating tore the whole Google Map down (and, now,
+              ran its unmount teardown) every time the stop list momentarily
+              emptied during startup churn or a day switch, then rebuilt it from
+              scratch — a full re-init + re-geocode that read as the map
+              vanishing and "taking forever to load." RouteMap no-ops cleanly
+              with zero stops. */}
+          <RouteMap stops={mapStops} selectedId={expanded}/>
         </div>
       </div>
 
