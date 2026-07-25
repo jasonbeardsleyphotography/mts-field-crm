@@ -856,12 +856,17 @@ export default function App() {
     if (!token) return;
     const check = () => {
       if (document.visibilityState !== "visible") return;
-      const realToday = new Date(); realToday.setHours(0, 0, 0, 0);
+      // Compare businessDays[0] to what getBusinessDays WOULD produce as the
+      // first day RIGHT NOW — NOT to the raw calendar "today". When weekends are
+      // excluded (the default) and today is a weekend, the first business day is
+      // the next weekday, which never equals the raw today — so the old check
+      // saw a permanent "mismatch" and called load() forever (infinite loop:
+      // nonstop refresh spinner, flicker, eventual crash). The freshly-computed
+      // expected first day already accounts for weekends, so it only differs
+      // from businessDays[0] on a GENUINE rollover.
+      const expectedFirst = getBusinessDays(1, includeWeekendsRef.current)[0];
       const firstBiz = businessDays[0];
-      // Only reload on a CONFIRMED day mismatch (firstBiz exists and differs) —
-      // never merely because businessDays is momentarily empty, which could
-      // otherwise fire a spurious reload during startup.
-      if (firstBiz && firstBiz.toDateString() !== realToday.toDateString()) {
+      if (firstBiz && expectedFirst && firstBiz.toDateString() !== expectedFirst.toDateString()) {
         load(false); // recomputes businessDays + fetches today, jumps to today
       }
     };
