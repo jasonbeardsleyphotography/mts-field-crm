@@ -30,7 +30,10 @@ export default function AddStopModal({
   const [email, setEmail] = useState("");
   const [notes, setNotes] = useState("");
   const [time, setTime] = useState("AM");
-  const [dest, setDest] = useState("route");
+  // What KIND of thing we're adding. visit/driveby land on the Route as
+  // calendar events (parseEvent classifies them by summary text); todo lands on
+  // the Route as a TD; pipeline goes straight to a Pipeline lead.
+  const [type, setType] = useState("visit");
 
   // Suggestion state
   const [nameSuggestions, setNameSuggestions] = useState([]);
@@ -45,7 +48,7 @@ export default function AddStopModal({
   // Reset everything on close
   const reset = () => {
     setName(""); setAddr(""); setPhone(""); setEmail(""); setNotes("");
-    setTime("AM"); setDest("route");
+    setTime("AM"); setType("visit");
     setNameSuggestions([]); setAddrSuggestions([]);
     setShowNameDrop(false); setShowAddrDrop(false);
     endAutocompleteSession();
@@ -96,10 +99,22 @@ export default function AddStopModal({
       email: email.trim(),
       notes: notes.trim(),
       time,
-      dest,
+      type,
+      // Back-compat for any caller still keying off dest.
+      dest: type === "pipeline" ? "pipeline" : "route",
     });
     onClose();
   };
+
+  // The four things the + button can create. `timed` = shows the AM/PM/All-Day
+  // window picker (only real visits/drive-bys have an arrival window).
+  const TYPES = [
+    { id: "visit",    label: "Visit",    emoji: "📍", color: "#3B82F6", timed: true,  hint: "Scheduled estimate appointment" },
+    { id: "driveby",  label: "Drive-by", emoji: "🚗", color: "#FFD54F", timed: true,  hint: "Quick look at the property — no appointment" },
+    { id: "todo",     label: "To-Do",    emoji: "✓",  color: "#B39DDB", timed: false, hint: "A task or reminder tied to a client" },
+    { id: "pipeline", label: "Pipeline", emoji: "📋", color: "#F6BF26", timed: false, hint: "Straight to a Pipeline lead (Estimate Needed)" },
+  ];
+  const activeType = TYPES.find(t => t.id === type) || TYPES[0];
 
   const inputStyle = {
     width: "100%", boxSizing: "border-box",
@@ -128,20 +143,26 @@ export default function AddStopModal({
       }}>
         <div style={{ fontSize: 15, fontWeight: 700, color: "#f0f4fa", marginBottom: 14, fontFamily: F, letterSpacing: 1, textTransform: "uppercase" }}>Add a stop</div>
 
-        {/* Destination toggle */}
-        <div style={{ display: "flex", gap: 4, marginBottom: 12, background: "#0a0c14", borderRadius: 8, padding: 3 }}>
-          {[["route", "➕ Route"], ["pipeline", "📋 Pipeline"]].map(([d, label]) => (
-            <button key={d} onClick={() => setDest(d)} style={{
-              flex: 1, padding: "7px 0", borderRadius: 6,
-              background: dest === d ? (d === "route" ? "rgba(59,130,246,.2)" : "rgba(246,191,38,.15)") : "transparent",
-              border: dest === d ? (d === "route" ? "1px solid rgba(59,130,246,.4)" : "1px solid rgba(246,191,38,.3)") : "1px solid transparent",
-              color: dest === d ? (d === "route" ? "#3B82F6" : "#F6BF26") : "#4a5a70",
-              fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: F,
-              textTransform: "uppercase", letterSpacing: 0.5, transition: "all .15s",
-            }}>{label}</button>
-          ))}
+        {/* Type picker — Visit / Drive-by / To-Do / Pipeline (2×2 grid) */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 8 }}>
+          {TYPES.map(t => {
+            const on = type === t.id;
+            return (
+              <button key={t.id} onClick={() => setType(t.id)} style={{
+                padding: "9px 0", borderRadius: 8,
+                background: on ? t.color + "22" : "#0a0c14",
+                border: `1px solid ${on ? t.color + "88" : "#1a2540"}`,
+                color: on ? t.color : "#5a6580",
+                fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: F,
+                textTransform: "uppercase", letterSpacing: 0.5, transition: "all .15s",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              }}>
+                <span style={{ fontSize: 13 }}>{t.emoji}</span>{t.label}
+              </button>
+            );
+          })}
         </div>
-        {dest === "pipeline" && <div style={{ fontSize: 10, color: "#4a6040", marginBottom: 10, padding: "6px 10px", borderRadius: 6, background: "rgba(246,191,38,.04)", border: "1px solid rgba(246,191,38,.1)" }}>Goes straight to Pipeline → Estimate Needed. No route stop created.</div>}
+        <div style={{ fontSize: 10.5, color: "#5a6580", marginBottom: 10, padding: "6px 10px", borderRadius: 6, background: "rgba(255,255,255,.02)", border: "1px solid #161c2a", lineHeight: 1.4 }}>{activeType.hint}</div>
 
         {/* Client name with typeahead */}
         <div style={{ position: "relative", marginBottom: 8 }}>
@@ -212,8 +233,8 @@ export default function AddStopModal({
           style={{ ...inputStyle, resize: "vertical", marginBottom: 8 }}
         />
 
-        {/* Time frame — only relevant for Route */}
-        {dest === "route" && <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+        {/* Time frame — only for visits & drive-bys (real arrival windows) */}
+        {activeType.timed && <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
           {["AM", "PM", "All Day"].map(t => (
             <button key={t} onClick={() => setTime(t)} style={{
               flex: 1, padding: "8px 0", borderRadius: 8,
@@ -229,12 +250,12 @@ export default function AddStopModal({
           <button onClick={onClose} style={{ flex: 1, padding: "10px 0", borderRadius: 8, background: "transparent", border: "1px solid #1a2030", color: "#5a6580", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
           <button onClick={submit} style={{
             flex: 2, padding: "10px 0", borderRadius: 8,
-            background: dest === "pipeline" ? "rgba(246,191,38,.15)" : "rgba(59,130,246,.15)",
-            border: dest === "pipeline" ? "1px solid rgba(246,191,38,.3)" : "1px solid rgba(59,130,246,.25)",
-            color: dest === "pipeline" ? "#F6BF26" : "#3B82F6",
+            background: activeType.color + "26",
+            border: `1px solid ${activeType.color}55`,
+            color: activeType.color,
             fontSize: 13, fontWeight: 700, cursor: "pointer",
           }}>
-            {dest === "pipeline" ? "Add to Pipeline →" : "Add to Route →"}
+            {type === "pipeline" ? "Add to Pipeline →" : `Add ${activeType.label} →`}
           </button>
         </div>
       </div>

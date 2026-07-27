@@ -2433,9 +2433,21 @@ export default function App() {
             savePipeline(pl);
             if (token) pushCalendarColor(id, "estimate_needed", token);
           } else {
-            // Add to currently-selected day's route. Default time windows
-            // match Jason's standard arrival ranges: AM 8–12, PM 11–3.
+            // Add to currently-selected day's route. The event SUMMARY prefix is
+            // what parseEvent keys off to classify the stop:
+            //   "TASK …"            → a Visit (scheduled estimate)
+            //   "TASK … - DRIVE BY" → a Visit flagged drive-by (DB badge)
+            //   "TODO: …"           → a To-Do (renders as a TD, no arrival window)
+            const label = form.name || form.addr;
+            const isTodo = form.type === "todo";
+            const isDriveBy = form.type === "driveby";
+            const summary = isTodo
+              ? `TODO: ${label}`
+              : isDriveBy ? `TASK ${label} - DRIVE BY` : `TASK ${label}`;
+            // To-Dos have no arrival window — give them a full-day span. Visits
+            // and drive-bys use the chosen window (AM 8–12, PM 11–3).
             const [startHour, endHour] =
+              isTodo ? [8, 17] :
               form.time === "AM" ? [8, 12] :
               form.time === "PM" ? [11, 15] :
               [8, 17]; // All Day → full work day
@@ -2450,11 +2462,11 @@ export default function App() {
             if (form.notes) descParts.push(`Notes: ${form.notes}`);
             const localEvent = {
               id,
-              summary: `TASK ${form.name || form.addr}`,
+              summary,
               location: form.addr,
               start: { dateTime: startDt.toISOString() },
               end: { dateTime: endDt.toISOString() },
-              colorId: "7",
+              colorId: isTodo ? "5" : "7", // TDs a different calendar color than visits
               description: descParts.join("\n"),
             };
             // Persist locally so the stop is immediately visible (and survives reload
