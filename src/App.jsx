@@ -1364,8 +1364,23 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   );
 
-  const active = useMemo(() => stops.filter(s => !dismissed[s.id]), [stops, dismissed]);
-  const completed = useMemo(() => stops.filter(s => dismissed[s.id]).sort((a, b) => (dismissed[b.id] || 0) - (dismissed[a.id] || 0)), [stops, dismissed]);
+  // A completion counts for the calendar DAY it happened on. dismissed[id] is
+  // the timestamp you marked the stop done/declined; comparing its date to the
+  // day you're viewing keeps the Completed drawer accurate per-day. Before this,
+  // the filter was global, so a job finished on one day showed as "completed"
+  // (and was hidden from active) on any OTHER day whose route included the same
+  // job — which is why the drawer listed items on days you hadn't worked yet.
+  const viewedDayStr = businessDays[selDay]?.toDateString();
+  const dismissedForViewedDay = (id) => {
+    const d = dismissed[id];
+    if (!d) return false;
+    if (d === true) return true; // legacy flag with no date — treat as dismissed
+    return !viewedDayStr || new Date(d).toDateString() === viewedDayStr;
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const active = useMemo(() => stops.filter(s => !dismissedForViewedDay(s.id)), [stops, dismissed, viewedDayStr]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const completed = useMemo(() => stops.filter(s => dismissedForViewedDay(s.id)).sort((a, b) => (dismissed[b.id] || 0) - (dismissed[a.id] || 0)), [stops, dismissed, viewedDayStr]);
   const mapStops = useMemo(() => active.filter(s => s.isTask), [active]);
 
   // Route search filter
@@ -1714,7 +1729,7 @@ export default function App() {
     const last = undoStack[undoStack.length-1];
     setUndoStack(u => u.slice(0,-1));
     if (last.type === "dismiss") setDismissed(p => { const n={...p}; delete n[last.id]; return n; });
-    if (last.type === "restore") setDismissed(p => ({...p, [last.id]: true}));
+    if (last.type === "restore") setDismissed(p => ({...p, [last.id]: Date.now()}));
     if (last.type === "reorder") setOrdIds(prev => ({...prev, [dayKey]: last.prevOrder}));
   };
   const navigate = addr => {
