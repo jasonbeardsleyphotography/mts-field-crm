@@ -713,15 +713,21 @@ export default function PhotoMarkup({ photoDataUrl, originalDataUrl = null, onSa
     setSrcUrl(rc.toDataURL("image/jpeg", 0.92));
   };
 
-  // Revert to the un-edited original (if one was stashed). Loads the clean
-  // photo back into the editor with all marks cleared; the user then hits Done
-  // to save it. Confirms first so an accidental tap can't wipe real edits.
-  const canRevert = !!originalDataUrl && srcUrl !== originalDataUrl;
+  // Clear all markup. Two kinds can exist: baked-in edits from a previous save
+  // (removable only by reverting to the stashed clean original) and live strokes
+  // from the current session (removable directly). The button shows whenever
+  // EITHER exists, so there's always a one-tap "erase all my markup" — not just
+  // one-at-a-time Undo. Confirms first so an accidental tap can't wipe real work.
+  const hasBaked = !!originalDataUrl && srcUrl !== originalDataUrl;
+  const canRevert = hasBaked || strokes.length > 0;
   const handleRevert = () => {
-    if (!originalDataUrl) return;
-    if (!window.confirm("Revert to the original photo? This removes all markup on this photo.")) return;
+    if (!canRevert) return;
+    const msg = hasBaked
+      ? "Revert to the original photo? This erases ALL markup on this photo."
+      : "Clear all markup on this photo?";
+    if (!window.confirm(msg)) return;
     setStrokes([]);
-    setSrcUrl(originalDataUrl);
+    if (hasBaked) setSrcUrl(originalDataUrl);
   };
 
   // Render image + all strokes to a new canvas and return a dataUrl.
@@ -888,10 +894,10 @@ export default function PhotoMarkup({ photoDataUrl, originalDataUrl = null, onSa
             onClick={handleRevert}
             onPointerDown={e => e.stopPropagation()}
             style={{ ...fab(), width: "auto", padding: "0 14px", gap: 6, fontSize: 13, fontWeight: 600 }}
-            title="Revert to the original, un-edited photo"
+            title={hasBaked ? "Revert to the original, un-edited photo" : "Erase all markup on this photo"}
           >
             <IconRotateCcw size={16} color="#fff" />
-            Original
+            {hasBaked ? "Original" : "Clear"}
           </button>
         )}
       </div>
