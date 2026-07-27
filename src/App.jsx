@@ -1410,6 +1410,7 @@ export default function App() {
   const [uploadsOpen, setUploadsOpen] = useState(false);
   const [storageOpen, setStorageOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false); // route "hamburger" settings sheet
   const [debugOpen, setDebugOpen] = useState(false);
   const [nextStopCard, setNextStopCard] = useState(null); // { stop, stopNumber, totalStops }
   const _debugTapCount = useRef(0);
@@ -2077,9 +2078,6 @@ export default function App() {
           <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"5px 10px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0b10",color:"#f0f4fa",fontSize:11,fontWeight:600,cursor:"pointer",outline:"none",appearance:"auto",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
             {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
           </select>
-          <button onClick={toggleIncludeWeekends} title={includeWeekends ? "Weekends included in your day list — tap to exclude them again" : "Weekends are hidden — tap to include Saturdays/Sundays as addable days"} style={{padding:"5px 7px",borderRadius:8,background:includeWeekends?"rgba(246,191,38,.15)":"transparent",border:`1px solid ${includeWeekends?"rgba(246,191,38,.4)":"#2a3560"}`,color:includeWeekends?"#F6BF26":"#3a4a60",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-            <IconCalendar size={14} color={includeWeekends?"#F6BF26":"#3a4a60"} />
-          </button>
         </div>}
         {view === "pipeline" && <button onClick={()=>setSearchOpen(true)} title="Search everything" style={{padding:"5px 7px",borderRadius:8,background:"transparent",border:"1px solid #2a3560",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
           <IconSearch size={14} color="#3a4a60" />
@@ -2300,10 +2298,12 @@ export default function App() {
 
       {/* ── BOTTOM BAR ──────────────────────────────────────────────── */}
       {view === "route" && <div style={{borderTop:"1px solid #0e1520",padding:"4px 8px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",gap:5,background:"#080a10",flexShrink:0}}>
-        {/* Refresh */}
-        <button onClick={() => load(true)} disabled={loading} title="Refresh"
-          style={{width:34,height:34,borderRadius:8,background:"#1a2035",border:"1px solid #1a2030",cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <IconRefresh size={15} color={loading?"#2a3050":"#5a6580"} style={{animation:loading?"spin 1s linear infinite":undefined}} />
+        {/* Settings — hamburger menu holding sync, weekend toggle, video
+            uploads, data recovery, storage, and sign out (previously all loose
+            on this bar). Bottom-left. */}
+        <button onClick={()=>setSettingsOpen(true)} title="Settings & tools"
+          style={{width:34,height:34,borderRadius:8,background:"#1a2035",border:"1px solid #252d47",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#8aa0c0" strokeWidth={2} strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
         {/* Undo */}
         <button onClick={undo} disabled={!undoStack.length} title="Undo"
@@ -2319,29 +2319,6 @@ export default function App() {
             <span style={{fontSize:11,fontWeight:700,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",color:reorderMode?"#c8a0e8":"#5a6890"}}>{reorderMode?"DONE":"REORDER"}</span>
           </button>
         </div>
-        {/* Video Uploads — always reachable, even when the tracker strip is
-            hidden (e.g. the queue read failed or every item is kept-local). */}
-        <button onClick={()=>setUploadsOpen(true)} title="Video uploads"
-          style={{width:34,height:34,borderRadius:8,background:"rgba(255,107,94,.1)",border:"1px solid rgba(255,107,94,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <IconVideo size={15} color="#FF6B5E" />
-        </button>
-        {/* Data Recovery */}
-        <button onClick={()=>setRecoveryOpen(true)} title="Find old job photos"
-          style={{width:34,height:34,borderRadius:8,background:"rgba(99,102,241,.1)",border:"1px solid rgba(99,102,241,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <IconClock size={15} color="#818cf8" />
-        </button>
-        {/* Storage */}
-        <button onClick={()=>setStorageOpen(true)} title="Storage usage"
-          style={{width:34,height:34,borderRadius:8,background:"rgba(99,102,241,.1)",border:"1px solid rgba(99,102,241,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <IconDatabase size={15} color="#818cf8" />
-        </button>
-        {/* Sign Out */}
-        <button
-          onClick={()=>{ if(signOutConfirm){ setToken(null); setNeedsReconnect(false); _acctChecked.current=false; try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
-          title={signOutConfirm ? "Tap again to confirm" : "Sign out"}
-          style={{width:34,height:34,borderRadius:8,background:signOutConfirm?"rgba(255,85,85,.15)":"transparent",border:`1px solid ${signOutConfirm?"rgba(255,85,85,.4)":"#1a2035"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all .15s"}}>
-          <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={signOutConfirm?"#FF5555":"#3a4a60"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-        </button>
         {/* Add Visit */}
         <button onClick={()=>setAddStopOpen(true)} title="Add a stop"
           style={{width:34,height:34,borderRadius:8,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -2366,6 +2343,56 @@ export default function App() {
           <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={signOutConfirm?"#FF5555":"#3a4a60"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         </button>
       </div>}
+
+      {/* ── ROUTE SETTINGS SHEET ─────────────────────────────────────────
+          Holds the tools that used to be loose across the route bottom bar +
+          header (sync, weekend toggle, video uploads, data recovery, storage,
+          sign out), opened from the bottom-left hamburger. */}
+      {settingsOpen && (() => {
+        const Row = ({ icon, label, sub, onClick, danger, accent }) => (
+          <button onClick={onClick} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 6px",background:"transparent",border:"none",borderBottom:"1px solid #131a28",cursor:"pointer",textAlign:"left"}}>
+            <span style={{width:36,height:36,borderRadius:9,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:(accent||"#5a6580")+"1a",border:`1px solid ${(accent||"#5a6580")}55`}}>{icon}</span>
+            <span style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:14.5,fontWeight:700,color:danger?"#FF6B6B":"#e6ecf5"}}>{label}</div>
+              {sub && <div style={{fontSize:11.5,color:"#5a6580",marginTop:1,lineHeight:1.35}}>{sub}</div>}
+            </span>
+          </button>
+        );
+        return (
+          <div onClick={()=>setSettingsOpen(false)} style={{position:"fixed",inset:0,zIndex:350,background:"rgba(0,0,0,.55)",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
+            <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",borderTop:"1px solid #1a2030",borderTopLeftRadius:18,borderTopRightRadius:18,padding:"8px 16px",paddingBottom:"max(16px,env(safe-area-inset-bottom))",boxShadow:"0 -14px 44px rgba(0,0,0,.55)"}}>
+              <div style={{width:42,height:4,borderRadius:2,background:"#2a3550",margin:"4px auto 12px"}}/>
+              <div style={{fontSize:11,fontWeight:800,color:"#4a5a70",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif",margin:"0 6px 6px"}}>Settings &amp; Tools</div>
+              <Row accent="#5a8ab0"
+                icon={<IconRefresh size={17} color="#8aa0c0" style={{animation:loading?"spin 1s linear infinite":undefined}}/>}
+                label="Sync now" sub="Reload today's stops from the calendar"
+                onClick={()=>{ load(true); setSettingsOpen(false); }} />
+              <Row accent={includeWeekends?"#F6BF26":"#5a6580"}
+                icon={<IconCalendar size={17} color={includeWeekends?"#F6BF26":"#8aa0c0"}/>}
+                label={includeWeekends?"Weekends: On":"Weekends: Off"}
+                sub={includeWeekends?"Saturdays & Sundays are selectable days":"Tap to include Saturdays & Sundays"}
+                onClick={()=>{ toggleIncludeWeekends(); }} />
+              <Row accent="#FF6B5E"
+                icon={<IconVideo size={17} color="#FF6B5E"/>}
+                label="Video uploads" sub="Queued, uploading, or failed videos"
+                onClick={()=>{ setUploadsOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#818cf8"
+                icon={<IconClock size={17} color="#818cf8"/>}
+                label="Find old job photos" sub="Search past visits by name or date"
+                onClick={()=>{ setRecoveryOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#818cf8"
+                icon={<IconDatabase size={17} color="#818cf8"/>}
+                label="Storage usage" sub="Photo/video storage on this device"
+                onClick={()=>{ setStorageOpen(true); setSettingsOpen(false); }} />
+              <Row danger accent="#FF6B6B"
+                icon={<svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>}
+                label={signOutConfirm?"Tap again to confirm sign out":"Sign out"}
+                sub={signOutConfirm?"Your data is safe in Drive and re-syncs on next sign in":null}
+                onClick={()=>{ if(signOutConfirm){ setToken(null); setNeedsReconnect(false); _acctChecked.current=false; try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false); setSettingsOpen(false); } else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }} />
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── ADD STOP POPUP ─────────────────────────────────────────── */}
       <AddStopModal
