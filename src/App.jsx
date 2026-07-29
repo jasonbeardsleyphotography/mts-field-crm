@@ -35,7 +35,12 @@ import {
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const CAL_BASE = "https://www.googleapis.com/calendar/v3/calendars/primary";
-const SCOPES = "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/youtube https://www.googleapis.com/auth/contacts";
+// NOTE: no youtube scope. The app uploads videos to Drive now (not YouTube),
+// so youtube is dead weight — and Google rejects youtube + drive.file in the
+// same authorization request ("scopes that cannot be requested together",
+// Error 400: invalid_request), which was blocking sign-in. Deleting a legacy
+// YouTube video from the card still works; only the YouTube-side delete no-ops.
+const SCOPES = "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/contacts";
 
 // ── HELPERS ──────────────────────────────────────────────────────────────────
 // includeWeekends: opt-in (persisted via mts-include-weekends) — when false

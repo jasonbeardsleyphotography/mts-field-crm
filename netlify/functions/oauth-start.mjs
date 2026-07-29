@@ -8,12 +8,13 @@
    verified in the callback.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-// Same scopes the app has always requested (Calendar, Drive files, YouTube,
-// Contacts). Kept in sync with SCOPES in src/App.jsx.
+// Calendar, Drive files, Contacts. Kept in sync with SCOPES in src/App.jsx.
+// NO youtube scope: the app uploads to Drive now, and Google rejects
+// youtube + drive.file together ("scopes that cannot be requested together",
+// Error 400: invalid_request), which was blocking the sign-in redirect.
 const SCOPES =
   "https://www.googleapis.com/auth/calendar " +
   "https://www.googleapis.com/auth/drive.file " +
-  "https://www.googleapis.com/auth/youtube " +
   "https://www.googleapis.com/auth/contacts";
 
 export default async (req) => {
