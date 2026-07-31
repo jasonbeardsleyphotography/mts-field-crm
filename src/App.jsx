@@ -1369,23 +1369,16 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   );
 
-  // A completion counts for the calendar DAY it happened on. dismissed[id] is
-  // the timestamp you marked the stop done/declined; comparing its date to the
-  // day you're viewing keeps the Completed drawer accurate per-day. Before this,
-  // the filter was global, so a job finished on one day showed as "completed"
-  // (and was hidden from active) on any OTHER day whose route included the same
-  // job — which is why the drawer listed items on days you hadn't worked yet.
-  const viewedDayStr = businessDays[selDay]?.toDateString();
-  const dismissedForViewedDay = (id) => {
-    const d = dismissed[id];
-    if (!d) return false;
-    if (d === true) return true; // legacy flag with no date — treat as dismissed
-    return !viewedDayStr || new Date(d).toDateString() === viewedDayStr;
-  };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const active = useMemo(() => stops.filter(s => !dismissedForViewedDay(s.id)), [stops, dismissed, viewedDayStr]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const completed = useMemo(() => stops.filter(s => dismissedForViewedDay(s.id)).sort((a, b) => (dismissed[b.id] || 0) - (dismissed[a.id] || 0)), [stops, dismissed, viewedDayStr]);
+  // Dismissed is a global id→timestamp map. A dismissed stop is hidden from
+  // active and shown in Completed on whatever day its route includes it. (A
+  // previous attempt to scope this to the dismissal DATE broke delete/complete
+  // on any non-today day: the timestamp is the moment you TAP — always today —
+  // so acting on a future day's stop never matched that day and the stop popped
+  // back. Reverted. Calendar events have a unique id per day, so this global
+  // model is correct for them; the cross-day artifact only affects stable-id
+  // local stops, handled by deleting the local stop itself.)
+  const active = useMemo(() => stops.filter(s => !dismissed[s.id]), [stops, dismissed]);
+  const completed = useMemo(() => stops.filter(s => dismissed[s.id]).sort((a, b) => (dismissed[b.id] || 0) - (dismissed[a.id] || 0)), [stops, dismissed]);
   const mapStops = useMemo(() => active.filter(s => s.isTask), [active]);
 
   // Route search filter
@@ -1631,9 +1624,21 @@ export default function App() {
   }, [stopMap, token, dayKey, rawEvents]);
 
   // Decline = remove from route with confirmation
+  // Once a stop is handled (declined / rejected / done), a locally-added stop
+  // must be removed from the local-stops list — otherwise it keeps rolling
+  // forward to the next day and reappearing, even though it's dismissed. Only
+  // deleteStop did this before; markDone/decline/markReject didn't, which is why
+  // a swiped-to-Pipeline local stop kept coming back on the next day.
+  const dropLocalStop = (id) => {
+    if (!id || !id.startsWith("local-")) return;
+    const ls = localStopsGet();
+    if (ls[id]) { delete ls[id]; localStopsSet(ls); }
+  };
+
   const decline = (id) => {
     setUndoStack(u => [...u, {type:"dismiss",id}]);
     setDismissed(p => ({...p,[id]:Date.now()}));
+    dropLocalStop(id);
     setExpanded(null);
     setDeclineConfirm(null);
     setOnsiteStop(null);
@@ -1663,6 +1668,7 @@ export default function App() {
       if (token) pushCalendarColor(id, pl[id].stage, token);
     }
     setDismissed(p => ({...p,[id]:Date.now()}));
+    dropLocalStop(id);
     setExpanded(null);
     setRejectConfirm(null);
   };
@@ -1672,6 +1678,7 @@ export default function App() {
     const stop = stopMap[id];
     setUndoStack(u => [...u, {type:"dismiss",id}]);
     setDismissed(p => ({...p,[id]:Date.now()})); // triggers cloud sync automatically
+    dropLocalStop(id);
     setExpanded(null);
     setOnsiteStop(null);
     if (stop) {
