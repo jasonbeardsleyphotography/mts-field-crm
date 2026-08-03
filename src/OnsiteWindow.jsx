@@ -196,6 +196,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const [saveSafetyPrompt, setSaveSafetyPrompt] = useState(null); // { id, file } just-recorded video awaiting a durable save
   const [videoSavedToast, setVideoSavedToast] = useState(false);
+  const [copyToast, setCopyToast] = useState(null); // "Name copied" etc.
+  const copyToastTimer = useRef(null);
   const [savingVideo, setSavingVideo] = useState(false);
   // Editing the stop's own contact/address details, in place in the header.
   const [editingDetails, setEditingDetails] = useState(false);
@@ -1247,6 +1249,43 @@ ${combined}`);
     } catch {}
   };
 
+  // Short, cute "pop" for a tap-to-copy — a quick high blip. WebAudio so it's
+  // instant and needs no asset.
+  const playCopySound = () => {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";
+      const t0 = ctx.currentTime;
+      osc.frequency.setValueAtTime(880, t0);
+      osc.frequency.exponentialRampToValueAtTime(1560, t0 + 0.05);
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.16, t0 + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.13);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t0);
+      osc.stop(t0 + 0.15);
+      setTimeout(() => { try { ctx.close(); } catch {} }, 400);
+    } catch {}
+  };
+
+  // Tap-to-copy: copies text to the clipboard, plays the pop, buzzes, and shows
+  // a brief toast. Used on the client name / address / email in the header so a
+  // tap grabs the value to paste elsewhere.
+  const copyText = (text, label) => {
+    const val = (text || "").trim();
+    if (!val) return;
+    try { navigator.clipboard?.writeText(val); } catch {}
+    try { navigator.vibrate?.(8); } catch {}
+    playCopySound();
+    setCopyToast(label || "Copied");
+    if (copyToastTimer.current) clearTimeout(copyToastTimer.current);
+    copyToastTimer.current = setTimeout(() => setCopyToast(null), 1200);
+  };
+
   const handleSafetySave = async () => {
     const p = saveSafetyPrompt;
     if (!p || savingVideo) return;
@@ -1374,6 +1413,12 @@ ${combined}`);
           <span style={{fontSize:16}}>👍</span> Video Saved!
         </div>
       )}
+      {/* Brief tap-to-copy confirmation — pairs with the pop + haptic. */}
+      {copyToast && (
+        <div style={{position:"fixed",top:"max(70px, calc(env(safe-area-inset-top) + 60px))",left:"50%",transform:"translateX(-50%)",zIndex:410,display:"flex",alignItems:"center",gap:8,padding:"10px 18px",borderRadius:999,background:"#3B82F6",color:"#fff",fontSize:12.5,fontWeight:900,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",boxShadow:"0 8px 24px rgba(59,130,246,.4)",pointerEvents:"none",animation:"vs-toast .2s ease-out"}}>
+          <span style={{fontSize:15}}>📋</span> {copyToast}
+        </div>
+      )}
       <style>{`
 @keyframes vs-toast{from{opacity:0;transform:translate(-50%,-8px)}to{opacity:1;transform:translate(-50%,0)}}
 @media (min-width: 860px) {
@@ -1453,18 +1498,18 @@ ${combined}`);
           ) : (
           <>
           <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
-            {/* Left: name + address */}
+            {/* Left: name + address — tap either to copy it */}
             <div style={{minWidth:0,flex:1}}>
-              <div style={{fontSize:16,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.2,marginBottom:3}}>{s.cn}</div>
-              <div style={{fontSize:12,color:"#96a2b4",fontFamily:F,textTransform:"uppercase",letterSpacing:1}}>{s.addr}</div>
+              <div onClick={(e)=>{e.stopPropagation();copyText(s.cn,"Name copied");}} title="Tap to copy name" style={{fontSize:16,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.2,marginBottom:3,cursor:"pointer"}}>{s.cn}</div>
+              <div onClick={(e)=>{e.stopPropagation();copyText(s.addr,"Address copied");}} title="Tap to copy address" style={{fontSize:12,color:"#96a2b4",fontFamily:F,textTransform:"uppercase",letterSpacing:1,cursor:"pointer"}}>{s.addr}</div>
               {s.constraint && (
                 <div style={{fontSize:11,color:"#FF80AB",marginTop:2}}>{s.constraint}</div>
               )}
             </div>
-            {/* Right: phone/email */}
+            {/* Right: phone (call) + email (tap to copy) */}
             <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0,textAlign:"right",maxWidth:"50%"}}>
               {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>{s.phone}<IconPhone size={12} color="#a0b8d0"/></a>}
-              {s.email && <a href={`mailto:${s.email}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,maxWidth:"100%",minWidth:0}}><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.email}</span><IconMail size={12} color="#a0b8d0"/></a>}
+              {s.email && <div onClick={(e)=>{e.stopPropagation();copyText(s.email,"Email copied");}} title="Tap to copy email" style={{fontSize:12,color:"#a0b8d0",display:"flex",alignItems:"center",gap:4,maxWidth:"100%",minWidth:0,cursor:"pointer"}}><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.email}</span><IconMail size={12} color="#a0b8d0"/></div>}
             </div>
           </div>
 
