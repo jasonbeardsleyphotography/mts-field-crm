@@ -35,7 +35,14 @@ export default async (req) => {
   authUrl.searchParams.set("scope", SCOPES);
   authUrl.searchParams.set("access_type", "offline"); // → refresh token
   authUrl.searchParams.set("prompt", "consent");       // force a refresh token even on re-consent
-  authUrl.searchParams.set("include_granted_scopes", "true");
+  // include_granted_scopes must be FALSE. With it true, Google folds any
+  // PREVIOUSLY-granted scopes into this request — including the old youtube
+  // grant many accounts still have — and then rejects the combined set with
+  // "youtube + drive.file cannot be requested together" (Error 400). That
+  // failed the durable server sign-in and forced the fragile classic fallback,
+  // which is why desktop kept demanding re-sign-in. Requesting exactly our
+  // three compatible scopes sidesteps the conflict entirely.
+  authUrl.searchParams.set("include_granted_scopes", "false");
   authUrl.searchParams.set("state", state);
 
   const headers = new Headers();
