@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import { parseEvent } from "./parseEvent";
 import { loadFieldFromDrive } from "./driveSync";
+import { listFieldIds, loadField } from "./fieldStore";
 import { loadPipeline, savePipeline } from "./Pipeline";
 import { photoKey } from "./imageUtils";
 import {
@@ -270,7 +271,7 @@ function StopCard({ stop, onClick }) {
 
 // ── MAIN RECOVERY SCREEN ──────────────────────────────────────────────────────
 export default function RecoveryScreen({ token, onBack }) {
-  const [mode, setMode] = useState("search"); // "search" | "date"
+  const [mode, setMode] = useState("search"); // "search" | "date" | "device"
   const [query, setQuery] = useState("");
   // Default date: today
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -278,6 +279,12 @@ export default function RecoveryScreen({ token, onBack }) {
   const [results, setResults] = useState(null); // null = not searched yet
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState(null);
+  // "On this device" recovery: every field record saved locally (IndexedDB),
+  // regardless of whether its card still exists on Route/Pipeline. This is the
+  // safety net for data attached to a card that got renamed/lost (e.g. a card
+  // that saved as "stop").
+  const [deviceRecords, setDeviceRecords] = useState(null);
+  const [deviceLoading, setDeviceLoading] = useState(false);
   const [selected, setSelected] = useState(null); // stop object
   const [fieldData, setFieldData] = useState(null);
   const [fieldLoading, setFieldLoading] = useState(false);
@@ -337,6 +344,54 @@ export default function RecoveryScreen({ token, onBack }) {
     setFieldLoading(false);
   }, [token]);
 
+  // Scan every locally-stored field record (IndexedDB) and build a browsable
+  // list with a name + note preview + photo count, so data attached to a
+  // lost/renamed card can still be found and recovered.
+  const loadDeviceRecords = useCallback(async () => {
+    setDeviceLoading(true);
+    try {
+      const ids = await listFieldIds();
+      const out = [];
+      for (const id of ids) {
+        let d;
+        try { d = await loadField(id); } catch { continue; }
+        if (!d) continue;
+        const scopePhotos = d.scopePhotos || d.photos || [];
+        const addonPhotos = d.addonPhotos || [];
+        const photoCount = scopePhotos.length + addonPhotos.length;
+        const notes = (d.scopeNotes || d.myNotes || d.addonNotes || "").trim();
+        // Skip truly empty records (no notes, no photos, no line items).
+        if (!notes && photoCount === 0 && !(d.lineItems || []).length && !(d.videoUrls || []).length) continue;
+        out.push({
+          id,
+          cn: d.cn || "",
+          jn: d.jn || "",
+          notePreview: notes.slice(0, 120),
+          photoCount,
+          savedAt: d.savedAt || 0,
+          data: d,
+        });
+      }
+      // Most recently saved first — the lost card was edited within the hour.
+      out.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+      setDeviceRecords(out);
+    } finally {
+      setDeviceLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mode === "device" && deviceRecords === null && !deviceLoading) loadDeviceRecords();
+  }, [mode, deviceRecords, deviceLoading, loadDeviceRecords]);
+
+  // Open a device record straight into the field view using the already-loaded
+  // local data (no Drive round-trip needed — the data is right here).
+  const openDeviceRecord = useCallback((rec) => {
+    setSelected({ id: rec.id, cn: rec.cn || "(no name)", addr: "", jn: rec.jn });
+    setFieldData(rec.data || {});
+    setFieldLoading(false);
+  }, []);
+
   const addToPipeline = useCallback((stop) => {
     const pl = loadPipeline();
     if (!pl[stop.id]) {
@@ -392,18 +447,37 @@ export default function RecoveryScreen({ token, onBack }) {
       </div>
 
       {/* Mode tabs */}
-      <div style={{ display: "flex", gap: 8, padding: "12px 16px 0", flexShrink: 0 }}>
-        <button style={tabStyle(mode === "search")} onClick={() => { setMode("search"); setResults(null); setError(null); }}>
-          Search by Name / Job #
+      <div style={{ display: "flex", gap: 6, padding: "12px 16px 0", flexShrink: 0 }}>
+        <button style={{ ...tabStyle(mode === "search"), fontSize: 12 }} onClick={() => { setMode("search"); setResults(null); setError(null); }}>
+          Name / Job #
         </button>
-        <button style={tabStyle(mode === "date")} onClick={() => { setMode("date"); setResults(null); setError(null); }}>
-          Browse by Date
+        <button style={{ ...tabStyle(mode === "date"), fontSize: 12 }} onClick={() => { setMode("date"); setResults(null); setError(null); }}>
+          By Date
+        </button>
+        <button style={{ ...tabStyle(mode === "device"), fontSize: 12 }} onClick={() => { setMode("device"); setError(null); }}>
+          On This Device
         </button>
       </div>
 
       {/* Search controls */}
       <div style={{ padding: "12px 16px", flexShrink: 0 }}>
-        {mode === "search" ? (
+        {mode === "device" ? (
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ flex: 1, fontSize: 12, color: "#7ec8f8", fontFamily: "inherit", lineHeight: 1.4 }}>
+              Everything saved on this device — including a card that lost its name. Newest first.
+            </div>
+            <button
+              onClick={() => { setDeviceRecords(null); loadDeviceRecords(); }}
+              disabled={deviceLoading}
+              style={{
+                background: "#1a3a6e", border: "1px solid #2a5080", borderRadius: 8,
+                padding: "10px 16px", color: "#7ec8f8", fontWeight: 700, fontSize: 14,
+                cursor: deviceLoading ? "default" : "pointer", opacity: deviceLoading ? .6 : 1,
+                fontFamily: "inherit", whiteSpace: "nowrap",
+              }}
+            >{deviceLoading ? "Scanning…" : "Refresh"}</button>
+          </div>
+        ) : mode === "search" ? (
           <div style={{ display: "flex", gap: 8 }}>
             <input
               ref={inputRef}
@@ -472,6 +546,43 @@ export default function RecoveryScreen({ token, onBack }) {
           <div style={{ color: "#ff5555", fontSize: 13, padding: "12px 0" }}>{error}</div>
         )}
 
+        {/* ── ON-THIS-DEVICE recovery list ─────────────────────────────── */}
+        {mode === "device" && (
+          deviceLoading && deviceRecords === null ? (
+            <div style={{ color: "#5a6580", textAlign: "center", paddingTop: 40, fontSize: 14 }}>Scanning device storage…</div>
+          ) : deviceRecords && deviceRecords.length === 0 ? (
+            <div style={{ color: "#5a6580", textAlign: "center", paddingTop: 40, fontSize: 14 }}>No saved notes or photos found on this device.</div>
+          ) : deviceRecords ? (
+            <>
+              <div style={{ fontSize: 12, color: "#3a4560", paddingBottom: 10 }}>
+                {deviceRecords.length} saved card{deviceRecords.length !== 1 ? "s" : ""} — tap to view its notes &amp; photos
+              </div>
+              {deviceRecords.map(rec => (
+                <button
+                  key={rec.id}
+                  onClick={() => openDeviceRecord(rec)}
+                  style={{
+                    width: "100%", textAlign: "left", background: "#0e1120",
+                    border: "1px solid #1a2035", borderRadius: 10, padding: "14px 16px",
+                    marginBottom: 8, cursor: "pointer", color: "#f0f4fa",
+                    display: "flex", flexDirection: "column", gap: 4,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ fontWeight: 700, fontSize: 15, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rec.cn || "(no name)"}</div>
+                    <div style={{ fontSize: 11, color: "#7b8ab8", flexShrink: 0 }}>
+                      {rec.photoCount > 0 ? `${rec.photoCount} photo${rec.photoCount === 1 ? "" : "s"}` : ""}
+                    </div>
+                  </div>
+                  {rec.jn && <div style={{ fontSize: 12, color: "#7b8ab8" }}>Job #{rec.jn}</div>}
+                  {rec.notePreview && <div style={{ fontSize: 12.5, color: "#9aa8c0", lineHeight: 1.4 }}>{rec.notePreview}{rec.notePreview.length >= 120 ? "…" : ""}</div>}
+                  {rec.savedAt > 0 && <div style={{ fontSize: 10, color: "#3a4560" }}>saved {formatDate(new Date(rec.savedAt))}</div>}
+                </button>
+              ))}
+            </>
+          ) : null
+        )}
+
         {results !== null && results.length === 0 && !searching && (
           <div style={{ color: "#5a6580", textAlign: "center", paddingTop: 40, fontSize: 14 }}>
             No matching jobs found.
@@ -490,7 +601,7 @@ export default function RecoveryScreen({ token, onBack }) {
           </>
         )}
 
-        {results === null && !searching && (
+        {mode !== "device" && results === null && !searching && (
           <div style={{ color: "#3a4560", textAlign: "center", paddingTop: 48, fontSize: 13, lineHeight: 1.7 }}>
             {mode === "search"
               ? 'Enter a name or job number above and tap Search.\nResults include all past and future jobs.'
