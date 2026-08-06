@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { parseEvent } from "./parseEvent";
 import { loadFieldFromDrive } from "./driveSync";
-import { listFieldIds, loadField } from "./fieldStore";
+import { listFieldIds, loadField, getFieldSlim } from "./fieldStore";
 import { loadPipeline, savePipeline } from "./Pipeline";
 import { photoKey } from "./imageUtils";
 import {
@@ -351,26 +351,33 @@ export default function RecoveryScreen({ token, onBack }) {
     setDeviceLoading(true);
     try {
       const ids = await listFieldIds();
+      const pl = loadPipeline(); // cheap: gives names for records that are pipeline cards
       const out = [];
       for (const id of ids) {
-        let d;
-        try { d = await loadField(id); } catch { continue; }
-        if (!d) continue;
-        const scopePhotos = d.scopePhotos || d.photos || [];
-        const addonPhotos = d.addonPhotos || [];
-        const photoCount = scopePhotos.length + addonPhotos.length;
-        const notes = (d.scopeNotes || d.myNotes || d.addonNotes || "").trim();
-        // Skip truly empty records (no notes, no photos, no line items).
-        if (!notes && photoCount === 0 && !(d.lineItems || []).length && !(d.videoUrls || []).length) continue;
-        out.push({
-          id,
-          cn: d.cn || "",
-          jn: d.jn || "",
-          notePreview: notes.slice(0, 120),
-          photoCount,
-          savedAt: d.savedAt || 0,
-          data: d,
-        });
+        // Use the SLIM (photo-free) summary for the list — loading every full
+        // record (with base64 photos, now 3200px) at once blew up memory and
+        // crashed the screen. Photos load only when a single card is tapped.
+        const slim = getFieldSlim(id);
+        let cn = pl[id]?.cn || "", jn = pl[id]?.jn || "", notes = "", photoCount = 0, savedAt = 0;
+        if (slim) {
+          notes = (slim.scopeNotes || slim.addonNotes || "").trim();
+          photoCount = (slim._scopePhotoCount || 0) + (slim._addonPhotoCount || 0);
+          savedAt = slim.savedAt || 0;
+        } else {
+          // No slim mirror (rare) — read the full record once, take only the
+          // light fields, and release it so photos never accumulate.
+          let d;
+          try { d = await loadField(id); } catch { continue; }
+          if (!d) continue;
+          cn = cn || d.cn || "";
+          jn = jn || d.jn || "";
+          notes = (d.scopeNotes || d.myNotes || d.addonNotes || "").trim();
+          photoCount = (d.scopePhotos || d.photos || []).length + (d.addonPhotos || []).length;
+          savedAt = d.savedAt || 0;
+          d = null;
+        }
+        if (!notes && photoCount === 0) continue; // skip empty records
+        out.push({ id, cn, jn, notePreview: notes.slice(0, 120), photoCount, savedAt });
       }
       // Most recently saved first — the lost card was edited within the hour.
       out.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
@@ -384,11 +391,18 @@ export default function RecoveryScreen({ token, onBack }) {
     if (mode === "device" && deviceRecords === null && !deviceLoading) loadDeviceRecords();
   }, [mode, deviceRecords, deviceLoading, loadDeviceRecords]);
 
-  // Open a device record straight into the field view using the already-loaded
-  // local data (no Drive round-trip needed — the data is right here).
-  const openDeviceRecord = useCallback((rec) => {
-    setSelected({ id: rec.id, cn: rec.cn || "(no name)", addr: "", jn: rec.jn });
-    setFieldData(rec.data || {});
+  // Open a device record — load its FULL data (photos included) from IndexedDB
+  // now, for just this one card, so the list scan never has to hold photos.
+  const openDeviceRecord = useCallback(async (rec) => {
+    setSelected({ id: rec.id, cn: rec.cn || "(saved card)", addr: "", jn: rec.jn });
+    setFieldData(null);
+    setFieldLoading(true);
+    try {
+      const d = await loadField(rec.id);
+      setFieldData(d || {});
+    } catch {
+      setFieldData({});
+    }
     setFieldLoading(false);
   }, []);
 
