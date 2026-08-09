@@ -46,6 +46,12 @@ const SCOPES = "https://www.googleapis.com/auth/calendar https://www.googleapis.
 // includeWeekends: opt-in (persisted via mts-include-weekends) — when false
 // (the long-standing default), Saturdays/Sundays are skipped entirely, so
 // there was no day tab to select and no way to add a visit to a weekend.
+// How many days the day-selector offers. Today loads first and the rest stream
+// in one at a time in the background (see load()'s Phase 2), so a longer list
+// costs nothing at startup — it just means more days are reachable for
+// scheduling ahead and for moving a stop to a later date.
+const DAY_COUNT = 30;
+
 function getBusinessDays(n, includeWeekends = false) {
   const days = []; let d = new Date(); d.setHours(0,0,0,0);
   while (days.length < n) { if (includeWeekends || (d.getDay()!==0 && d.getDay()!==6)) days.push(new Date(d)); d.setDate(d.getDate()+1); }
@@ -366,7 +372,7 @@ export default function App() {
   const [includeWeekends, setIncludeWeekends] = useState(() => lsGet("mts-include-weekends", false));
   const includeWeekendsRef = useRef(includeWeekends);
   useEffect(() => { includeWeekendsRef.current = includeWeekends; }, [includeWeekends]);
-  const [businessDays, setBusinessDays] = useState(() => getBusinessDays(10, includeWeekends));
+  const [businessDays, setBusinessDays] = useState(() => getBusinessDays(DAY_COUNT, includeWeekends));
   const [selDay, setSelDay] = useState(0);
   // Always-current ref so load(preserveDay=true) reads the real selDay
   // without needing selDay in its useCallback deps (which would cause a
@@ -699,7 +705,7 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const days = getBusinessDays(10, includeWeekendsRef.current);
+      const days = getBusinessDays(DAY_COUNT, includeWeekendsRef.current);
       setBusinessDays(days);
 
       // PHASE 1: Load the currently-selected day first (or today on initial load)
@@ -1902,9 +1908,19 @@ export default function App() {
   }, [mapStops]);
   const hasStopsWithAddr = mapStops.some(s => s.addr);
 
-  const dayLabels = businessDays.map(d => {
-    const isToday = d.toDateString() === new Date().toDateString();
-    return d.toLocaleDateString("en-US",{weekday:"short",month:"numeric",day:"numeric"}) + (isToday ? " ★" : "");
+  // With a long day list, plain dates get hard to scan — call out today and
+  // tomorrow by name, and mark the start of each new week so the list reads
+  // clearly when scrolling a month out.
+  const dayLabels = businessDays.map((d, i) => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+    const base = d.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
+    if (d.toDateString() === today.toDateString()) return `${base} ★ TODAY`;
+    if (d.toDateString() === tomorrow.toDateString()) return `${base} · TOMORROW`;
+    // Monday (or the first entry of a new week) gets a subtle week marker.
+    const prev = businessDays[i - 1];
+    const newWeek = prev && d.getDay() < prev.getDay();
+    return newWeek ? `— ${base}` : base;
   });
 
   // Flips the weekend opt-in, persists it, and reloads the day list/events
@@ -1916,7 +1932,7 @@ export default function App() {
     includeWeekendsRef.current = next;
     lsSet("mts-include-weekends", next);
     setSelDay(0);
-    setBusinessDays(getBusinessDays(10, next));
+    setBusinessDays(getBusinessDays(DAY_COUNT, next));
     load(false);
   };
 
@@ -2243,7 +2259,9 @@ export default function App() {
                 {movePicker?.stopId === s.id && (
                   <div style={{marginTop:8,padding:10,borderRadius:8,background:"#0a0c14",border:"1px solid rgba(246,191,38,.25)"}}>
                     <div style={{fontSize:9,color:"#F6BF26",fontWeight:800,fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",marginBottom:8}}>Move to which day?</div>
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6}}>
+                    {/* Scrollable: the day list now runs a month out, which would
+                        otherwise stretch this card far down the screen. */}
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6,maxHeight:240,overflowY:"auto"}}>
                       {businessDays.map((d, idx) => {
                         const isCurrent = idx === selDay;
                         const label = d.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
