@@ -3,6 +3,7 @@ import { loadMaps, geocode } from "./RouteMap";
 import { attachParcelOverlay, detachParcelOverlay, parcelFeatureToInfo } from "./parcelOverlay";
 import { IconX, IconCamera, IconMapPin, IconTrash, IconPlus } from "./icons";
 import { getCurrentGeo } from "./geoCapture";
+import { buildCalloutMap } from "./treeMapExport";
 
 /* Build a small rounded "photo window" marker icon from a full-size photo.
    Photos are 3200px — using one directly as a marker icon would pin a huge
@@ -96,6 +97,8 @@ export default function ParcelMapView({
   const watchId   = useRef(null);
   const [hasFix, setHasFix] = useState(false);
   const [mapReady, setMapReady] = useState(false); // true once map.current exists
+  const [exporting, setExporting] = useState(false);
+  const [planUrl, setPlanUrl] = useState(null);     // built site plan, shown for review
 
   useEffect(() => { loadMaps().then(() => setReady(true)).catch(() => {}); }, []);
 
@@ -230,6 +233,66 @@ export default function ParcelMapView({
 
   // Clear markers on unmount so nothing is left attached to a dead map.
   useEffect(() => () => { pinMarkers.current.forEach(m => m.setMap(null)); pinMarkers.current = []; }, []);
+
+  // Pull the drawn parcel boundary out of the map's data layer so the exported
+  // plan carries the property lines, not just the pins.
+  const getParcelPaths = useCallback(() => {
+    const out = [];
+    try {
+      map.current?.data?.forEach((feature) => {
+        const geo = feature.getGeometry?.();
+        if (!geo) return;
+        const pushPoly = (poly) => poly.getArray().forEach(ring =>
+          out.push(ring.getArray().map(ll => ({ lat: ll.lat(), lng: ll.lng() }))));
+        const t = geo.getType?.();
+        if (t === "Polygon") pushPoly(geo);
+        else if (t === "MultiPolygon") geo.getArray().forEach(pushPoly);
+      });
+    } catch { /* boundary is a bonus — never block the export on it */ }
+    return out;
+  }, []);
+
+  // Build the callout site plan. Shown for review first rather than saved
+  // straight away: the build takes a few seconds, and iOS only allows sharing
+  // from a fresh tap — so the Save button in the preview is the gesture.
+  const exportPlan = useCallback(async () => {
+    if (exporting) return;
+    setExporting(true);
+    setSnapError(null);
+    try {
+      const url = await buildCalloutMap({
+        pins, photos, parcelPaths: getParcelPaths(),
+        meta: {
+          client: stop?.cn, address: stop?.addr,
+          date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+        },
+      });
+      if (!url) { setSnapError("Add at least one pin first."); return; }
+      setPlanUrl(url);
+    } catch (e) {
+      console.warn("Site plan export failed:", e);
+      setSnapError(e?.message === "map-imagery-unavailable"
+        ? "Couldn't load map imagery - check your signal and try again."
+        : "Couldn't build the site plan - try again.");
+    } finally { setExporting(false); }
+  }, [exporting, pins, photos, getParcelPaths, stop?.cn, stop?.addr]);
+
+  const savePlan = useCallback(async () => {
+    if (!planUrl) return;
+    const name = `${(stop?.cn || "site").replace(/[^\w]+/g, "_")}_site_plan.jpg`;
+    try {
+      const blob = await (await fetch(planUrl)).blob();
+      const file = new File([blob], name, { type: "image/jpeg" });
+      if (navigator.canShare?.({ files: [file] })) {
+        try { await navigator.share({ files: [file] }); return; } catch { /* dismissed */ }
+      }
+      const u = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = u; a.download = name;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(u), 20000);
+    } catch { setSnapError("Couldn't save the plan."); }
+  }, [planUrl, stop?.cn]);
 
   // Flip the base imagery between Google (hybrid, with labels) and Esri aerial.
   const toggleImagery = useCallback(() => {
@@ -576,7 +639,68 @@ export default function ParcelMapView({
           <IconCamera size={17} color="#fff" />
           {snapping ? "Saving..." : "Snapshot"}
         </button>
+
+        {/* Callout site plan — photos arranged AROUND the map with leader lines
+            to their pin, so the map itself stays readable. */}
+        <button
+          onClick={exportPlan}
+          disabled={!ready || exporting || pins.length === 0}
+          style={{
+            pointerEvents: "auto", marginLeft: 10,
+            display: "flex", alignItems: "center", gap: 8,
+            padding: "12px 22px", borderRadius: 999,
+            background: pins.length ? "rgba(246,191,38,.92)" : "rgba(28,28,30,.85)",
+            border: `1px solid ${pins.length ? "#F6BF26" : "rgba(255,255,255,.16)"}`,
+            color: pins.length ? "#1a1400" : "#8b93a4",
+            fontSize: 13, fontWeight: 800, fontFamily: F, letterSpacing: 0.5,
+            cursor: ready && !exporting && pins.length ? "pointer" : "default",
+            opacity: exporting ? 0.7 : 1,
+            boxShadow: "0 4px 16px rgba(0,0,0,.4)",
+          }}
+        >
+          <IconMapPin size={16} color={pins.length ? "#1a1400" : "#8b93a4"} />
+          {exporting ? "Building..." : "Site Plan"}
+        </button>
       </div>
+
+      {/* ── SITE PLAN PREVIEW ───────────────────────────────────────────── */}
+      {planUrl && (
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 40, background: "rgba(0,0,0,.88)",
+          display: "flex", flexDirection: "column",
+          padding: "max(14px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom))",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <div style={{ flex: 1, fontSize: 13, fontWeight: 800, color: "#F6BF26", fontFamily: F, letterSpacing: 1, textTransform: "uppercase" }}>
+              Site Plan
+            </div>
+            <button onClick={() => setPlanUrl(null)} aria-label="Close preview" style={{
+              width: 34, height: 34, borderRadius: 17, background: "rgba(28,28,30,.8)",
+              border: "1px solid rgba(255,255,255,.16)", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}><IconX size={16} color="#fff" /></button>
+          </div>
+          <div style={{ flex: 1, minHeight: 0, overflow: "auto", borderRadius: 10, background: "#0d1017" }}>
+            <img src={planUrl} alt="Site plan" style={{ width: "100%", display: "block" }} />
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <button onClick={savePlan} style={{
+              flex: 1, padding: "13px 0", borderRadius: 10,
+              background: "#F6BF26", border: "none", color: "#1a1400",
+              fontSize: 13, fontWeight: 800, fontFamily: F, letterSpacing: 0.5,
+              textTransform: "uppercase", cursor: "pointer",
+            }}>Save / Share</button>
+            <button
+              onClick={async () => { const u = planUrl; setPlanUrl(null); await onSnapshot?.(u); }}
+              style={{
+                flex: 1, padding: "13px 0", borderRadius: 10,
+                background: "rgba(255,255,255,.08)", border: "1px solid rgba(255,255,255,.2)",
+                color: "#e6ecf5", fontSize: 13, fontWeight: 800, fontFamily: F,
+                letterSpacing: 0.5, textTransform: "uppercase", cursor: "pointer",
+              }}>Add to Card</button>
+          </div>
+        </div>
+      )}
 
       {snapError && (
         <div style={{
