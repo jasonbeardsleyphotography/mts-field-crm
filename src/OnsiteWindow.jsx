@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import PhotoMarkup from "./PhotoMarkup";
 import CameraView from "./CameraView";
 import ParcelMapView from "./ParcelMapView";
@@ -9,6 +9,7 @@ import { loadPipeline } from "./Pipeline";
 import { incUpload, decUpload } from "./uploadStatus";
 import { markStopForPhotoSync } from "./photoSync";
 import { downscaleDataUrl, newPhotoId, photoKey, PHOTO_MAX_DIM, PHOTO_QUALITY } from "./imageUtils";
+import { startGeoWarm, stopGeoWarm, getCurrentGeo } from "./geoCapture";
 import { buildShareUrl, buildStreamUrl } from "./driveUpload";
 
 function _driveFileId(url) {
@@ -169,6 +170,9 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // Per-JOB tags (equipment/crew/access/scheduling) — matches SingleOps's own
   // tag list, applied once to the whole visit, not per line item.
   const [jobTags, setJobTags] = useState(fd.jobTags || []);
+  // Tree/location pins plotted on the parcel map. Sources: a photo capture
+  // (stamped with the phone's position), a tap on the map, or the GPS button.
+  const [mapPins, setMapPins] = useState(fd.mapPins || []);
   const [suggestedTags, setSuggestedTags] = useState([]);
   const [tagSuggestLoading, setTagSuggestLoading] = useState(false);
   // sortPhotosByTs on initial load too, so any photo array already saved
@@ -293,6 +297,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       audioClips,
       lineItems,
       jobTags,
+      mapPins,
       aiScopeSummary: aiScopeResult,
       aiAddonEmail: aiAddonResult,
       // Persist client name + job # so the background photo uploader (which
@@ -321,6 +326,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           audioClips: latest.audioClips,
           lineItems: latest.lineItems,
           jobTags: latest.jobTags,
+          mapPins: latest.mapPins,
           aiScopeSummary: latest.aiScopeSummary,
           aiAddonEmail: latest.aiAddonEmail,
           cn: s.cn,
@@ -352,7 +358,25 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     // changing — without them here the effect kept a stale closure and saved the
     // OLD name/job#, so the photo/video uploader named Drive files with the
     // pre-edit client name.
-  }, [hydrated, scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, lineItems, jobTags, aiScopeResult, aiAddonResult, s.id, s.cn, s.jn, token]);
+  }, [hydrated, scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, lineItems, jobTags, mapPins, aiScopeResult, aiAddonResult, s.id, s.cn, s.jn, token]);
+
+  // Keep a warm GPS fix while this card is open. A cold lock takes seconds —
+  // far too slow to sit between the shutter and the saved photo — so we hold a
+  // recent fix and stamp captures from it instantly.
+  useEffect(() => { startGeoWarm(); return () => stopGeoWarm(); }, []);
+
+  // Pins + the photo list handed to the parcel map. Memoized so the map isn't
+  // rebuilding every marker on unrelated re-renders.
+  const allPhotosForMap = useMemo(
+    () => [...scopePhotos, ...addonPhotos],
+    [scopePhotos, addonPhotos]
+  );
+  const handlePinsChange = useCallback((next) => {
+    setMapPins(next);
+    // Queued per-stop write, so this composes safely with photo/text saves.
+    updateField(s.id, () => ({ mapPins: next })).catch(() => {});
+    markStopForPhotoSync(s.id);
+  }, [s.id]);
 
   // ── PANIC FLUSH ──────────────────────────────────────────────────────────
   // iOS aggressively suspends WKWebView pages on backgrounding / app switch
@@ -474,6 +498,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         if (idbScopeNotes)        setScopeNotes(prev => prev || idbScopeNotes);
         if (data.addonNotes)      setAddonNotes(prev => prev || data.addonNotes);
         if (data.aiScopeSummary)  setAiScopeResult(prev => prev || data.aiScopeSummary);
+        if ((data.mapPins || []).length) setMapPins(prev => prev.length ? prev : data.mapPins);
         if (data.aiAddonEmail)    setAiAddonResult(prev => prev || data.aiAddonEmail);
 
         // Arrays: merge by ts/timestamp/url so anything captured during the
@@ -686,8 +711,13 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     const key = target ? photoKey(target) : null;
     setScopePhotos(prev => prev.filter((_, j) => j !== i));
     if (key !== null) {
+      // Drop any map pin that pointed at this photo, so the parcel map doesn't
+      // keep a marker for an image that no longer exists.
+      const pid = target?.id || target?.ts;
+      setMapPins(prev => prev.filter(p => p.photoId !== pid));
       updateField(s.id, (existing) => ({
         scopePhotos: (existing.scopePhotos || existing.photos || []).filter(p => photoKey(p) !== key),
+        mapPins: (existing.mapPins || []).filter(p => p.photoId !== pid),
       })).catch(() => {});
     }
   };
@@ -944,6 +974,9 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   if (showParcelMap) {
     return <ParcelMapView
       stop={s}
+      pins={mapPins}
+      photos={allPhotosForMap}
+      onPinsChange={handlePinsChange}
       onClose={() => setShowParcelMap(false)}
       onSnapshot={async (rawDataUrl) => {
         // Same downscale-then-store flow as camera photos (see showCamera
@@ -972,7 +1005,19 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         // up to 4K; raw 4K base64 OOM-crashes the renderer when several are
         // shown and bloats the Drive payload so sync fails.
         const dataUrl = await downscaleDataUrl(rawDataUrl);
-        const photo = { dataUrl, ts: Date.now(), id: newPhotoId() };
+        // Stamp the shot with where the phone was standing. This comes from the
+        // warm fix held while the card is open, so it costs no shutter delay.
+        // NOTE: this is the PHOTOGRAPHER's position, not the tree's — shooting a
+        // tree from across the yard puts the point where you stood. That's why
+        // every pin is draggable on the parcel map, and why the pin records its
+        // accuracy so a loose fix is visible rather than silently trusted.
+        const geo = await getCurrentGeo();
+        const photo = { dataUrl, ts: Date.now(), id: newPhotoId(), ...(geo ? { geo } : {}) };
+        const pin = geo ? {
+          id: `pin_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          lat: geo.lat, lng: geo.lng, acc: geo.acc,
+          source: "photo", photoId: photo.id, ts: Date.now(),
+        } : null;
         const key = cameraSection === "addon" ? "addonPhotos" : "scopePhotos";
         // CRITICAL: Persist to IDB BEFORE updating React state, through
         // fieldStore's shared per-stop queue. The queue serializes this
@@ -982,12 +1027,17 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         try {
           await updateField(s.id, (existing) => {
             const existingPhotos = existing[key] || existing.photos || [];
-            return { [key]: sortPhotosByTs([...existingPhotos, photo]) };
+            const patch = { [key]: sortPhotosByTs([...existingPhotos, photo]) };
+            // Persist the pin in the SAME queued write as the photo so the two
+            // can never disagree if the app is closed mid-capture.
+            if (pin) patch.mapPins = [...(existing.mapPins || []), pin];
+            return patch;
           });
         } catch (e) { console.warn("Camera photo IDB save failed:", e); }
         // Now reflect in component state so the UI updates
         if (cameraSection === "addon") setAddonPhotos(prev => sortPhotosByTs([...prev, photo]));
         else setScopePhotos(prev => sortPhotosByTs([...prev, photo]));
+        if (pin) setMapPins(prev => [...prev, pin]);
         markStopForPhotoSync(s.id); // queue for Drive upload
         // IMMEDIATE Drive sync so photos can't be lost if the user closes the
         // app before the 3-sec auto-save timer fires. Serialized + coalesced
@@ -1341,7 +1391,7 @@ ${combined}`);
         return [...map.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0));
       };
       return {
-        scopeNotes, addonNotes, videoUrls, audioClips, lineItems, jobTags,
+        scopeNotes, addonNotes, videoUrls, audioClips, lineItems, jobTags, mapPins,
         aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult,
         scopePhotos: mergePhotos(scopePhotos, ex.scopePhotos || ex.photos || []),
         addonPhotos: mergePhotos(addonPhotos, ex.addonPhotos || []),

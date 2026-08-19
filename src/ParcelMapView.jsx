@@ -1,7 +1,59 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { loadMaps, geocode } from "./RouteMap";
 import { attachParcelOverlay, detachParcelOverlay, parcelFeatureToInfo } from "./parcelOverlay";
-import { IconX, IconCamera } from "./icons";
+import { IconX, IconCamera, IconMapPin, IconTrash, IconPlus } from "./icons";
+import { getCurrentGeo } from "./geoCapture";
+
+/* Build a small rounded "photo window" marker icon from a full-size photo.
+   Photos are 3200px — using one directly as a marker icon would pin a huge
+   bitmap in memory per pin, so each is drawn down to a ~56px framed tile. */
+function makePhotoIcon(dataUrl, size = 56) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const pad = 3, r = 9, w = size + pad * 2, h = size + pad * 2 + 6;
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        const x = c.getContext("2d");
+        // Pointer stem below the tile
+        x.beginPath();
+        x.moveTo(w / 2 - 5, h - 7); x.lineTo(w / 2, h); x.lineTo(w / 2 + 5, h - 7);
+        x.closePath();
+        x.fillStyle = "#fff"; x.fill();
+        // Rounded white frame
+        x.beginPath();
+        x.moveTo(pad + r, pad);
+        x.arcTo(w - pad, pad, w - pad, h - pad - 6, r);
+        x.arcTo(w - pad, h - pad - 6, pad, h - pad - 6, r);
+        x.arcTo(pad, h - pad - 6, pad, pad, r);
+        x.arcTo(pad, pad, w - pad, pad, r);
+        x.closePath();
+        x.fillStyle = "#fff"; x.fill();
+        x.save(); x.clip();
+        // Cover-fit the photo into the tile
+        const s = Math.max(size / img.width, size / img.height);
+        const dw = img.width * s, dh = img.height * s;
+        x.drawImage(img, pad + (size - dw) / 2, pad + (size - dh) / 2, dw, dh);
+        x.restore();
+        resolve({ url: c.toDataURL("image/jpeg", 0.8), w, h });
+      } catch { resolve(null); }
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
+/* Plain numbered pin for points with no photo attached. Drawn as SVG so it
+   stays crisp and costs nothing to generate. */
+function makeDotIcon(n, color = "#F6BF26") {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="44" viewBox="0 0 34 44">` +
+    `<path d="M17 43C17 43 32 26.5 32 16A15 15 0 1 0 2 16C2 26.5 17 43 17 43Z" fill="${color}" stroke="#fff" stroke-width="2.5"/>` +
+    `<text x="17" y="21" font-family="Oswald,sans-serif" font-size="15" font-weight="700" fill="#1a1400" text-anchor="middle">${n}</text>` +
+    `</svg>`;
+  return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Parcel Map View
@@ -14,10 +66,23 @@ import { IconX, IconCamera } from "./icons";
 
 const F = "'Oswald',sans-serif";
 
-export default function ParcelMapView({ stop, onClose, onSnapshot }) {
+export default function ParcelMapView({
+  stop, onClose, onSnapshot,
+  pins = [],            // [{ id, lat, lng, source, photoId, label, acc, ts, adjusted }]
+  photos = [],          // all photos on this card, for thumbnails + previews
+  onPinsChange,         // (nextPins) => void
+}) {
   const ref = useRef(null);
   const map = useRef(null);
   const parcelHandle = useRef(null);
+  const pinMarkers = useRef([]);        // live google.maps.Marker instances
+  const thumbCache = useRef(new Map()); // photoId -> {url,w,h}, so re-renders are cheap
+  const pinsRef = useRef(pins);         // current pins for use inside map listeners
+  const [addMode, setAddMode] = useState(false); // tap-map-to-drop armed
+  const [openPin, setOpenPin] = useState(null);  // pin shown in the detail sheet
+  const addModeRef = useRef(false);              // read inside map listeners
+  useEffect(() => { pinsRef.current = pins; }, [pins]);
+  useEffect(() => { addModeRef.current = addMode; }, [addMode]);
   const [ready, setReady] = useState(false);
   const [info, setInfo] = useState(null); // parcel info shown in bottom sheet
   const [snapping, setSnapping] = useState(false);
@@ -30,6 +95,7 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
   const locCircle = useRef(null);
   const watchId   = useRef(null);
   const [hasFix, setHasFix] = useState(false);
+  const [mapReady, setMapReady] = useState(false); // true once map.current exists
 
   useEffect(() => { loadMaps().then(() => setReady(true)).catch(() => {}); }, []);
 
@@ -77,6 +143,94 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
     );
   }, [updateLocation]);
 
+  // ── PIN MUTATIONS ────────────────────────────────────────────────────────
+  const commitPins = useCallback((next) => { onPinsChange?.(next); }, [onPinsChange]);
+
+  const addPin = useCallback((p) => {
+    const pin = {
+      id: `pin_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      ts: Date.now(), ...p,
+    };
+    commitPins([...(pinsRef.current || []), pin]);
+    return pin;
+  }, [commitPins]);
+
+  const addPinRef = useRef(addPin);
+  useEffect(() => { addPinRef.current = addPin; }, [addPin]);
+
+  const movePin = useCallback((id, lat, lng) => {
+    // `adjusted` records that a human placed this point, so a GPS-derived
+    // position is never silently trusted over a corrected one.
+    commitPins((pinsRef.current || []).map(p =>
+      p.id === id ? { ...p, lat, lng, adjusted: true } : p));
+  }, [commitPins]);
+
+  const deletePin = useCallback((id) => {
+    commitPins((pinsRef.current || []).filter(p => p.id !== id));
+    setOpenPin(null);
+  }, [commitPins]);
+
+  const labelPin = useCallback((id, label) => {
+    commitPins((pinsRef.current || []).map(p => p.id === id ? { ...p, label } : p));
+    setOpenPin(prev => prev && prev.id === id ? { ...prev, label } : prev);
+  }, [commitPins]);
+
+  // Drop a pin at the phone's current position. Uses the warm fix when we have
+  // one so this is instant; falls back to a one-shot lock otherwise.
+  const [dropping, setDropping] = useState(false);
+  const dropPinAtMe = useCallback(async () => {
+    setDropping(true);
+    try {
+      const g = await getCurrentGeo();
+      if (!g) { setSnapError("Couldn't get your location — try again in a moment."); return; }
+      addPin({ lat: g.lat, lng: g.lng, acc: g.acc, source: "gps" });
+      if (map.current) { map.current.panTo({ lat: g.lat, lng: g.lng }); if (map.current.getZoom() < 19) map.current.setZoom(19); }
+    } finally { setDropping(false); }
+  }, [addPin]);
+
+  // ── RENDER PINS AS MARKERS ───────────────────────────────────────────────
+  // Rebuilt whenever the pin list changes. Thumbnails are cached by photo id so
+  // a drag or a label edit doesn't re-decode any images.
+  useEffect(() => {
+    const g = window.google?.maps;
+    if (!g || !map.current) return;
+    let dead = false;
+    (async () => {
+      // Pre-build any thumbnails we don't have yet, one at a time (never all
+      // full-size photos in memory at once).
+      for (const p of pins) {
+        if (!p.photoId || thumbCache.current.has(p.photoId)) continue;
+        const photo = photos.find(ph => (ph.id || ph.ts) === p.photoId);
+        const src = photo?.dataUrl || photo?.url;
+        if (!src) continue;
+        const icon = await makePhotoIcon(src);
+        if (dead) return;
+        if (icon) thumbCache.current.set(p.photoId, icon);
+      }
+      if (dead) return;
+      pinMarkers.current.forEach(m => m.setMap(null));
+      pinMarkers.current = pins.map((p, i) => {
+        const thumb = p.photoId ? thumbCache.current.get(p.photoId) : null;
+        const icon = thumb
+          ? { url: thumb.url, scaledSize: new g.Size(thumb.w, thumb.h), anchor: new g.Point(thumb.w / 2, thumb.h) }
+          : { url: makeDotIcon(i + 1, p.source === "gps" ? "#4c9aff" : "#F6BF26"),
+              scaledSize: new g.Size(34, 44), anchor: new g.Point(17, 44) };
+        const marker = new g.Marker({
+          map: map.current, position: { lat: p.lat, lng: p.lng },
+          draggable: true, icon, zIndex: 500 + i,
+          title: p.label || (p.photoId ? "Photo location" : `Pin ${i + 1}`),
+        });
+        marker.addListener("dragend", (e) => movePin(p.id, e.latLng.lat(), e.latLng.lng()));
+        marker.addListener("click", () => setOpenPin(p));
+        return marker;
+      });
+    })();
+    return () => { dead = true; };
+  }, [pins, photos, movePin, mapReady]);
+
+  // Clear markers on unmount so nothing is left attached to a dead map.
+  useEffect(() => () => { pinMarkers.current.forEach(m => m.setMap(null)); pinMarkers.current = []; }, []);
+
   // Flip the base imagery between Google (hybrid, with labels) and Esri aerial.
   const toggleImagery = useCallback(() => {
     if (!map.current) return;
@@ -110,6 +264,7 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
         getTileUrl: (c, z) => `https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${c.y}/${c.x}`,
       });
       map.current.mapTypes.set("esri", esri);
+      setMapReady(true);
       // Wait for the map's first idle event before attaching — right after
       // construction, map.getBounds() can still return null, which would
       // make the overlay's first refresh() silently no-op.
@@ -117,8 +272,17 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
         onceIdle.remove();
         if (dead) return;
         parcelHandle.current = attachParcelOverlay(map.current, {
-          onParcelClick: (feature) => setInfo(parcelFeatureToInfo(feature)),
+          // While arming a pin, a tap means "put it here" — don't also pop the
+          // parcel info sheet over the spot the user just aimed at.
+          onParcelClick: (feature) => { if (!addModeRef.current) setInfo(parcelFeatureToInfo(feature)); },
           onStatus: (s) => setParcelStatus(s),
+        });
+        // Tap-to-place. One-shot: arming, tapping, then disarming prevents a
+        // stray tap while panning from scattering pins across the property.
+        map.current.addListener("click", (e) => {
+          if (!addModeRef.current || !e?.latLng) return;
+          addPinRef.current({ lat: e.latLng.lat(), lng: e.latLng.lng(), source: "map" });
+          setAddMode(false);
         });
       });
       // Start tracking the user's location (blue dot). watchPosition keeps it
@@ -259,6 +423,136 @@ export default function ParcelMapView({ stop, onClose, onSnapshot }) {
           <line x1="19.5" y1="12" x2="22.5" y2="12" />
         </svg>
       </button>
+
+      {/* ── PIN CONTROLS (left side: capture) ───────────────────────────── */}
+      {/* Tap-to-place. Arming first means a stray tap while panning can't
+          scatter pins across the property. */}
+      <button
+        onClick={() => { setAddMode(v => !v); setInfo(null); }}
+        aria-label="Add a pin by tapping the map"
+        style={{
+          position: "absolute",
+          left: "max(14px, env(safe-area-inset-left))",
+          bottom: "max(148px, calc(env(safe-area-inset-bottom) + 132px))",
+          display: "flex", alignItems: "center", gap: 6,
+          padding: "9px 13px", borderRadius: 999,
+          background: addMode ? "rgba(246,191,38,.95)" : "rgba(28,28,30,.85)",
+          border: `1px solid ${addMode ? "#F6BF26" : "rgba(255,255,255,.16)"}`,
+          color: addMode ? "#1a1400" : "#fff",
+          fontSize: 12, fontWeight: 800, fontFamily: F, letterSpacing: 0.5,
+          cursor: "pointer", boxShadow: "0 4px 16px rgba(0,0,0,.4)",
+        }}
+      >
+        <IconPlus size={15} color={addMode ? "#1a1400" : "#F6BF26"} />
+        {addMode ? "TAP A TREE" : "ADD PIN"}
+      </button>
+
+      {/* Drop at the phone's current position — for when you're standing at
+          the trunk and the canopy isn't identifiable from above. */}
+      <button
+        onClick={dropPinAtMe}
+        disabled={dropping}
+        aria-label="Drop a pin at my current location"
+        style={{
+          position: "absolute",
+          left: "max(14px, env(safe-area-inset-left))",
+          bottom: "max(92px, calc(env(safe-area-inset-bottom) + 76px))",
+          display: "flex", alignItems: "center", gap: 6,
+          padding: "9px 13px", borderRadius: 999,
+          background: "rgba(28,28,30,.85)", border: "1px solid rgba(255,255,255,.16)",
+          color: "#fff", fontSize: 12, fontWeight: 800, fontFamily: F, letterSpacing: 0.5,
+          cursor: dropping ? "default" : "pointer", opacity: dropping ? 0.6 : 1,
+          boxShadow: "0 4px 16px rgba(0,0,0,.4)",
+        }}
+      >
+        <IconMapPin size={15} color="#4c9aff" />
+        {dropping ? "LOCATING…" : "PIN AT ME"}
+      </button>
+
+      {/* Arming hint + accuracy honesty. Under canopy a GPS fix is often 10m+,
+          which matters when the points represent individual trees. */}
+      {(addMode || pins.length > 0) && (
+        <div style={{
+          position: "absolute",
+          top: "max(56px, calc(env(safe-area-inset-top) + 44px))",
+          left: "50%", transform: "translateX(-50%)",
+          padding: "7px 14px", borderRadius: 999, whiteSpace: "nowrap",
+          background: addMode ? "rgba(246,191,38,.95)" : "rgba(28,28,30,.82)",
+          border: `1px solid ${addMode ? "#F6BF26" : "rgba(255,255,255,.14)"}`,
+          color: addMode ? "#1a1400" : "#cfd8e6",
+          fontSize: 11.5, fontWeight: 700, fontFamily: F, letterSpacing: 0.4,
+          boxShadow: "0 4px 16px rgba(0,0,0,.4)", pointerEvents: "none",
+        }}>
+          {addMode
+            ? "TAP THE TREE ON THE MAP"
+            : `${pins.length} PIN${pins.length === 1 ? "" : "S"} · DRAG TO CORRECT`}
+        </div>
+      )}
+
+      {/* ── PIN DETAIL SHEET ────────────────────────────────────────────── */}
+      {openPin && (() => {
+        const live = pins.find(p => p.id === openPin.id) || openPin;
+        const photo = live.photoId ? photos.find(ph => (ph.id || ph.ts) === live.photoId) : null;
+        const src = photo?.dataUrl || photo?.url || null;
+        const idx = pins.findIndex(p => p.id === live.id);
+        return (
+          <div onClick={() => setOpenPin(null)} style={{
+            position: "absolute", inset: 0, zIndex: 20,
+            background: "rgba(0,0,0,.45)", display: "flex", alignItems: "flex-end",
+          }}>
+            <div onClick={e => e.stopPropagation()} style={{
+              width: "100%", background: "#0e1120", borderTop: "1px solid #253049",
+              borderTopLeftRadius: 16, borderTopRightRadius: 16,
+              padding: "14px 16px max(18px, env(safe-area-inset-bottom))",
+              boxShadow: "0 -12px 40px rgba(0,0,0,.6)",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <div style={{ flex: 1, fontSize: 12, fontWeight: 800, color: "#F6BF26", fontFamily: F, letterSpacing: 0.8, textTransform: "uppercase" }}>
+                  Pin {idx >= 0 ? idx + 1 : ""}
+                  <span style={{ color: "#5a6580", fontWeight: 600, marginLeft: 8, letterSpacing: 0.3 }}>
+                    {live.source === "photo" ? "from photo" : live.source === "gps" ? "from GPS" : "placed on map"}
+                    {live.adjusted ? " · adjusted" : live.acc ? ` · ±${live.acc}m` : ""}
+                  </span>
+                </div>
+                <button onClick={() => setOpenPin(null)} style={{
+                  width: 30, height: 30, borderRadius: 15, background: "transparent",
+                  border: "1px solid #253049", cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}><IconX size={14} color="#8aa0c0" /></button>
+              </div>
+              {src && (
+                <img src={src} alt="" style={{
+                  width: "100%", maxHeight: 190, objectFit: "cover",
+                  borderRadius: 10, marginBottom: 12, border: "1px solid #1a2540",
+                }} />
+              )}
+              <input
+                value={live.label || ""}
+                onChange={e => labelPin(live.id, e.target.value)}
+                placeholder="Label (e.g. Sugar maple — remove)"
+                style={{
+                  width: "100%", boxSizing: "border-box", padding: "10px 12px",
+                  borderRadius: 8, background: "#0a0c14", border: "1px solid #253049",
+                  color: "#e0e8f0", fontSize: 14, outline: "none", marginBottom: 12,
+                  fontFamily: "'DM Sans',system-ui,sans-serif",
+                }}
+              />
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ flex: 1, fontSize: 11, color: "#5a6580", lineHeight: 1.4, alignSelf: "center" }}>
+                  Drag the pin on the map to correct its position.
+                </div>
+                <button onClick={() => deletePin(live.id)} style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  padding: "9px 14px", borderRadius: 8,
+                  background: "rgba(200,60,60,.12)", border: "1px solid rgba(200,60,60,.3)",
+                  color: "#e06060", fontSize: 11.5, fontWeight: 800,
+                  cursor: "pointer", fontFamily: F, letterSpacing: 0.5, textTransform: "uppercase",
+                }}><IconTrash size={14} color="#e06060" /> Remove</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── SNAPSHOT BUTTON ─────────────────────────────────────────────── */}
       <div style={{
