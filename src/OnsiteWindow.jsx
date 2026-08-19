@@ -608,6 +608,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           videoUrls:   Array.from(new Set([...(cloud.videoUrls || []), ...(local.videoUrls || [])])),
           lineItems:   mergeByKey(cloud.lineItems, local.lineItems, li => li.id),
           jobTags:     Array.from(new Set([...(cloud.jobTags || []), ...(local.jobTags || [])])),
+          mapPins:     mergeByKey(cloud.mapPins, local.mapPins, p => p.id),
         };
         // Functional setState everywhere — preserves anything the user
         // captured/typed during the Drive fetch window (state takes
@@ -616,6 +617,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         if (cloud.addonNotes) setAddonNotes(prev => prev || cloud.addonNotes);
         if ((merged.scopePhotos || []).length) setScopePhotos(prev => mergeByKey(merged.scopePhotos, prev, photoKey));
         if ((merged.addonPhotos || []).length) setAddonPhotos(prev => mergeByKey(merged.addonPhotos, prev, photoKey));
+        if ((merged.mapPins || []).length) setMapPins(prev => mergeByKey(merged.mapPins, prev, p => p.id));
         if (merged.videoUrls?.length) setVideoUrls(prev => Array.from(new Set([...merged.videoUrls, ...prev])));
         else if (cloud.videoUrl) setVideoUrls(prev => prev.length === 0 ? [cloud.videoUrl] : prev);
         if (merged.audioClips?.length) setAudioClips(prev => mergeByKey(merged.audioClips, prev, a => a.ts || a.timestamp || a.url));

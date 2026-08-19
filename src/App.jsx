@@ -1094,6 +1094,20 @@ export default function App() {
             await updateField(id, (existing) => {
               const ex = existing || {};
               // Union-merge photo arrays by ts/url so neither side loses items.
+              // Union pins by id. On collision prefer whichever side the user
+              // actually dragged into place; otherwise defer to the newer side.
+              const unionPins = (a = [], b = [], preferB) => {
+                const m = new Map();
+                for (const p of (a || [])) if (p?.id) m.set(p.id, p);
+                for (const p of (b || [])) {
+                  if (!p?.id) continue;
+                  const prev = m.get(p.id);
+                  if (!prev) { m.set(p.id, p); continue; }
+                  if (!!p.adjusted !== !!prev.adjusted) m.set(p.id, p.adjusted ? p : prev);
+                  else m.set(p.id, preferB ? p : prev);
+                }
+                return [...m.values()].sort((x, y) => (x.ts || 0) - (y.ts || 0));
+              };
               const unionByKey = (a = [], b = [], getKey) => {
                 const map = new Map();
                 for (const item of a) { const k = getKey(item); if (k != null) map.set(k, item); }
@@ -1139,6 +1153,12 @@ export default function App() {
                 addonPhotos: unionByKey(localAddon, cloudAddon, photoKey),
                 audioClips:  unionByKey(localAudio, cloudAudio, a => a.ts || a.timestamp || a.url),
                 videoUrls:   Array.from(new Set([...localVids, ...cloudVids])),
+                // Map pins were missing from this list, so a device that had
+                // none of its own (a laptop) never received the ones captured
+                // on the phone — the pins reached Drive but the merge dropped
+                // them on the way back down. Union by pin id, and let a
+                // hand-corrected position win over a raw GPS one.
+                mapPins: unionPins(ex.mapPins, data.mapPins, cloudNewer),
               };
             }).catch(() => {});
             // Record the modifiedTime we just pulled so we don't re-download
