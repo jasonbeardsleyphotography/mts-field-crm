@@ -76,12 +76,30 @@ function roundRect(ctx, x, y, w, h, r) {
  * @returns {Promise<string|null>} JPEG dataUrl, or null if there's nothing to draw
  */
 export async function buildCalloutMap({ pins = [], photos = [], parcelPaths = [], meta = {} }) {
-  const located = pins.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+  const real = pins.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+  // A photo that carries its own position but has no pin of its own still
+  // belongs on the plan — e.g. it was captured before pins existed, or its pin
+  // was removed. Synthesise a point for it so no located photo is left out.
+  const pinnedPhotoIds = new Set(real.filter(p => p.photoId).map(p => p.photoId));
+  const orphans = (photos || [])
+    .filter(ph => ph?.geo && Number.isFinite(ph.geo.lat) && Number.isFinite(ph.geo.lng)
+                  && !pinnedPhotoIds.has(ph.id || ph.ts))
+    .map(ph => ({
+      id: `photo_${ph.id || ph.ts}`, lat: ph.geo.lat, lng: ph.geo.lng,
+      acc: ph.geo.acc, photoId: ph.id || ph.ts, source: "photo", ts: ph.ts || 0,
+    }));
+  const located = [...real, ...orphans];
   if (!located.length) return null;
 
   // ── Layout ────────────────────────────────────────────────────────────────
+  // Work out up front how many points actually have a photo, because the map
+  // only needs to leave room around itself for callouts that exist. A plan of
+  // bare pins gets a big map instead of a small one floating in dead space.
+  const photoFor = (p) => (p.photoId ? (photos || []).find(ph => (ph.id || ph.ts) === p.photoId) : null);
+  const calloutCount = located.filter(p => { const ph = photoFor(p); return !!(ph && (ph.dataUrl || ph.url)); }).length;
+
   const W = 2200, H = 2200;
-  const MAP = 1120;                                  // map square edge
+  const MAP = calloutCount ? 1120 : 1960;            // map square edge
   const MX = (W - MAP) / 2, MY = (H - MAP) / 2 + 40; // map origin (nudged for the title)
   const CW = 380, CH = 300;                          // callout card size
 
@@ -164,7 +182,7 @@ export async function buildCalloutMap({ pins = [], photos = [], parcelPaths = []
   const cx = MX + MAP / 2, cy = MY + MAP / 2;
   const withPhoto = [], noPhoto = [];
   located.forEach((p) => {
-    const photo = p.photoId ? photos.find(ph => (ph.id || ph.ts) === p.photoId) : null;
+    const photo = photoFor(p);
     const at = toCanvas(p.lat, p.lng);
     (photo && (photo.dataUrl || photo.url) ? withPhoto : noPhoto).push({ pin: p, photo, at });
   });

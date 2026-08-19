@@ -173,6 +173,15 @@ export default function ParcelMapView({
     setOpenPin(null);
   }, [commitPins]);
 
+  // Link a photo to a pin. This is what lets a map-tapped pin — placed exactly
+  // on the tree, rather than where you happened to be standing — carry the
+  // photo of that tree into the site plan.
+  const attachPhoto = useCallback((pinId, photoId) => {
+    commitPins((pinsRef.current || []).map(p =>
+      p.id === pinId ? { ...p, photoId: photoId || undefined } : p));
+    setOpenPin(prev => prev && prev.id === pinId ? { ...prev, photoId: photoId || undefined } : prev);
+  }, [commitPins]);
+
   const labelPin = useCallback((id, label) => {
     commitPins((pinsRef.current || []).map(p => p.id === id ? { ...p, label } : p));
     setOpenPin(prev => prev && prev.id === id ? { ...prev, label } : prev);
@@ -588,6 +597,36 @@ export default function ParcelMapView({
                   width: "100%", maxHeight: 190, objectFit: "cover",
                   borderRadius: 10, marginBottom: 12, border: "1px solid #1a2540",
                 }} />
+              )}
+              {/* Attach / swap the photo shown for this pin. */}
+              {photos.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 800, color: "#5a6580", fontFamily: F, letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 6 }}>
+                    {live.photoId ? "Photo — tap to change or remove" : "Attach a photo"}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
+                    {photos.map((ph) => {
+                      const pid = ph.id || ph.ts;
+                      const on = live.photoId === pid;
+                      const psrc = ph.dataUrl || ph.url;
+                      if (!psrc) return null;
+                      return (
+                        <button
+                          key={pid}
+                          onClick={() => attachPhoto(live.id, on ? null : pid)}
+                          style={{
+                            flexShrink: 0, width: 66, height: 66, padding: 0,
+                            borderRadius: 8, overflow: "hidden", cursor: "pointer",
+                            border: on ? "3px solid #F6BF26" : "1px solid #253049",
+                            background: "#0a0c14",
+                          }}
+                        >
+                          <img src={psrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               )}
               <input
                 value={live.label || ""}
