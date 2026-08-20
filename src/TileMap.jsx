@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import {
-  TILE, MAX_Z, MIN_Z, TILE_URL, project, unproject, metersPerPixel, clampLat,
+  TILE, MAX_Z, MAX_TILE_Z, MIN_Z, TILE_URL, project, unproject, metersPerPixel, clampLat,
 } from "./tileMath";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -196,7 +196,9 @@ export default function TileMap({
   };
 
   // Tiles exist only at integer zooms; draw the nearest level, scaled.
-  const tileZoom = clamp(Math.round(zoom), MIN_Z, MAX_Z);
+  // Cap the TILE level at what Esri has; zooming past it upscales those tiles
+  // rather than requesting a grey placeholder.
+  const tileZoom = clamp(Math.round(zoom), MIN_Z, MAX_TILE_Z);
   const scale = Math.pow(2, zoom - tileZoom);
   const tilePx = TILE * scale;
   const span = Math.pow(2, tileZoom);

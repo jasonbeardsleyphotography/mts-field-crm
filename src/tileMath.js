@@ -11,7 +11,14 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 export const TILE = 256;
-export const MAX_Z = 20;           // Esri imagery is reliable through ~20
+// Deepest zoom at which Esri actually HAS imagery. Past this it serves a grey
+// "Map data not yet available" placeholder as a normal 200 image — so nothing
+// errors, the map just goes blank-looking. Anything used directly as a TILE
+// zoom must therefore be capped here.
+export const MAX_TILE_Z = 19;
+// Deepest zoom the VIEW may reach. Beyond MAX_TILE_Z the map keeps using
+// MAX_TILE_Z tiles scaled up: slightly soft, but real imagery instead of grey.
+export const MAX_Z = 21;
 export const MIN_Z = 3;
 
 // Esri's path is /tile/{z}/{row}/{col} — row is y, col is x, hence the swap.
@@ -50,9 +57,12 @@ export function boundsOf(points) {
   };
 }
 
-/** Largest zoom at which `b` still fits inside a `w` x `h` pixel viewport. */
+/** Largest zoom at which `b` still fits inside a `w` x `h` pixel viewport.
+ *  Capped at MAX_TILE_Z, because callers use the result to pick tiles (the JPEG
+ *  export uses it as the tile zoom directly) and a deeper value would select
+ *  the "not yet available" placeholder. */
 export function fitZoom(b, w, h = w) {
-  for (let z = MAX_Z; z >= MIN_Z; z--) {
+  for (let z = MAX_TILE_Z; z >= MIN_Z; z--) {
     const a = project(b.north, b.west, z);
     const c = project(b.south, b.east, z);
     if (Math.abs(c.x - a.x) <= w && Math.abs(c.y - a.y) <= h) return z;
