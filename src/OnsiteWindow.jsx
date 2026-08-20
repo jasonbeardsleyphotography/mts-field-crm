@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import PhotoMarkup from "./PhotoMarkup";
 import CameraView from "./CameraView";
 import ParcelMapView from "./ParcelMapView";
+import SitePlanPanel from "./SitePlanPanel";
 import VideoRecorder from "./VideoRecorder";
 import { loadFieldFromDrive, queueFieldDriveSync } from "./driveSync";
 import { loadField, peekField, primeField, mergeField, updateField, saveFieldSync, getFieldSlim, getDirtyFieldIds } from "./fieldStore";
@@ -1674,6 +1675,11 @@ ${combined}`);
               Rendered after the photo grid per request. Null on Route. */}
           {belowScopePhotosSlot}
         </div>
+
+        {/* ── SITE PLAN ──────────────────────────────────────────────────
+            Live plan right under the photos: no navigation needed, and both
+            actions (JPEG, crew link) are here rather than behind the map. */}
+        <SitePlanPanel stop={s} pins={mapPins} photos={allPhotosForMap} token={token} />
 
         {/* ── VIDEO ─────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>

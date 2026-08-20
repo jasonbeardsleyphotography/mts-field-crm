@@ -37,6 +37,7 @@ export default function TileMap({
   onViewChange,           // ({ center, zoom }) => void
   pins = [],              // [{ n, lat, lng, label, photo }]
   showPhotos = false,     // true => float a photo callout beside each pin
+  interactive = true,     // false =>static preview: no gestures, page scrolls freely
   selectedIndex = null,
   onPinTap,
   parcel = [],            // [[{lat,lng}, ...], ...]
@@ -73,7 +74,7 @@ export default function TileMap({
   // preventDefault, otherwise the page scrolls/zooms underneath the drag.
   useEffect(() => {
     const el = boxRef.current;
-    if (!el) return;
+    if (!el || !interactive) return;
 
     let mode = null;            // "pan" | "pinch"
     let last = null;            // last single-touch point
@@ -180,7 +181,7 @@ export default function TileMap({
       window.removeEventListener("mouseup", onMouseUp);
       el.removeEventListener("wheel", onWheel);
     };
-  }, [emit]);
+  }, [emit, interactive]);
 
   // ── Projection for this frame ─────────────────────────────────────────────
   const { w, h } = size;
@@ -274,7 +275,9 @@ export default function TileMap({
       ref={boxRef}
       style={{
         position: "absolute", inset: 0, overflow: "hidden",
-        background: "#1b2430", touchAction: "none", cursor: "grab",
+        background: "#1b2430",
+        touchAction: interactive ? "none" : "auto",
+        cursor: interactive ? "grab" : "default",
         userSelect: "none", WebkitUserSelect: "none",
       }}
     >
@@ -362,6 +365,7 @@ export default function TileMap({
               background: "transparent", cursor: "pointer",
               transform: on ? "scale(1.18)" : "none", transformOrigin: "50% 100%",
               transition: "transform .12s",
+              pointerEvents: interactive ? "auto" : "none",
             }}
           >
             <svg width="32" height="40" viewBox="0 0 34 44">
@@ -391,6 +395,7 @@ export default function TileMap({
               border: on ? "2px solid #fff" : "1px solid rgba(0,0,0,.25)",
               boxShadow: "0 4px 14px rgba(0,0,0,.5)",
               display: "flex", flexDirection: "column", gap: 3,
+              pointerEvents: interactive ? "auto" : "none",
             }}
           >
             <div style={{ position: "relative", flex: 1, minHeight: 0, borderRadius: 7, overflow: "hidden", background: "#c8cfda" }}>

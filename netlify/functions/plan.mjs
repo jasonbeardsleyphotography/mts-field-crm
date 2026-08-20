@@ -28,19 +28,33 @@ const json = (obj, status = 200, extra = {}) =>
 // than our own session cookie so it works for BOTH sign-in paths — the server
 // session and the classic GIS popup (which sets no cookie).
 async function callerIsAuthed(req) {
+  // (a) A valid Google access token.
   const auth = req.headers.get("authorization") || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  if (!token) return false;
-  try {
-    const r = await fetch(
-      `https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${encodeURIComponent(token)}`
-    );
-    if (!r.ok) return false;
-    const info = await r.json();
-    return !!(info && (info.sub || info.email) && !info.error);
-  } catch {
-    return false;
+  if (token) {
+    try {
+      const r = await fetch(
+        `https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${encodeURIComponent(token)}`
+      );
+      if (r.ok) {
+        const info = await r.json();
+        if (info && (info.sub || info.email) && !info.error) return true;
+      }
+    } catch { /* fall through to the cookie */ }
   }
+
+  // (b) Fall back to the first-party session cookie. An access token can be
+  // minutes-expired at the moment of sharing, and refusing on that alone made
+  // the button fail with a confusing "sign in again" — the user IS signed in.
+  const cookie = req.headers.get("cookie") || "";
+  const m = cookie.match(/(?:^|;\s*)mts_sess=([^;]+)/);
+  if (m) {
+    try {
+      const sess = await getStore("mts-oauth").get(decodeURIComponent(m[1]));
+      if (sess) return true;
+    } catch { /* no session store access */ }
+  }
+  return false;
 }
 
 export default async (req) => {

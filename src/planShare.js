@@ -55,11 +55,22 @@ export function buildPlanPayload({ pins = [], photos = [], parcelPaths = [], sto
 
 /** POST the payload and return the public link. Throws with a friendly message. */
 export async function createPlanLink(token, payload) {
+  // Prefer the token currently in storage over whatever was captured in props:
+  // a background silent-reauth may have replaced it, and sending the stale one
+  // is what produced spurious "sign in again" failures.
+  let best = token;
+  try {
+    const saved = JSON.parse(localStorage.getItem("mts-token") || "null");
+    if (saved?.token && saved.expiry > Date.now()) best = saved.token;
+  } catch {}
   const res = await fetch("/api/plan", {
     method: "POST",
+    // Send the first-party session cookie too, so the server can fall back to
+    // it when the access token is expired or unverifiable.
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(best ? { Authorization: `Bearer ${best}` } : {}),
     },
     body: JSON.stringify(payload),
   });
