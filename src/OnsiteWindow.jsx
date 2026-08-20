@@ -706,6 +706,23 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     }
   };
   const handleAddonPhotos = (e) => { Array.from(e.target.files || []).forEach(f => processPhoto(f, "addon")); e.target.value = ""; };
+  // Choose whether a photo appears on the exported Site Plan. Stored as an
+  // opt-OUT (`planOff`) so photos already on a card stay included by default —
+  // an opt-in default would silently produce an empty plan.
+  const togglePhotoOnPlan = (section, i) => {
+    const arr = section === "addon" ? addonPhotos : scopePhotos;
+    const target = arr[i];
+    if (!target) return;
+    const key = photoKey(target);
+    const next = !target.planOff;
+    const apply = (list) => list.map(ph => photoKey(ph) === key ? { ...ph, planOff: next } : ph);
+    if (section === "addon") setAddonPhotos(apply); else setScopePhotos(apply);
+    const field = section === "addon" ? "addonPhotos" : "scopePhotos";
+    updateField(s.id, (existing) => ({
+      [field]: apply(existing[field] || existing.photos || []),
+    })).catch(() => {});
+  };
+
   const removeScopePhoto = (i) => {
     // Identify the photo by stable key (id/ts/url) so we never delete the
     // wrong one if state and IDB orderings drift.
@@ -1631,6 +1648,12 @@ ${combined}`);
                   <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
                     <div onClick={()=>{setMarkupIdx(i);setMarkupSection("scope");}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
                     <button onClick={e=>{e.stopPropagation();downloadPhoto(p,`scope_${i+1}.jpg`,`scope_${i}`);}} disabled={dlSet.has(`scope_${i}`)} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`scope_${i}`)?0.5:1}}><IconDownload size={13} color="#ccc"/></button>
+                    {/* On/off for the exported Site Plan */}
+                    <button onClick={e=>{e.stopPropagation();togglePhotoOnPlan("scope", i);}}
+                      title={p.planOff ? "Not on the site plan — tap to include" : "On the site plan — tap to leave it off"}
+                      style={{padding:"5px 10px",borderRadius:6,background:p.planOff?"rgba(0,0,0,.7)":"rgba(246,191,38,.9)",border:"none",cursor:"pointer",display:"flex",alignItems:"center"}}>
+                      <IconMapPin size={13} color={p.planOff?"#8b93a4":"#1a1400"}/>
+                    </button>
                   </div>
                 </div>
                 {/* Zone tag */}

@@ -261,6 +261,15 @@ export default function ParcelMapView({
     return out;
   }, []);
 
+  // Only photos marked for the plan (opt-out via `planOff` on the card), plus
+  // any pin that isn't tied to an excluded photo. Pins you placed with no photo
+  // are always kept — they're trees you marked.
+  const planPhotos = photos.filter(ph => !ph.planOff);
+  const planPhotoIds = new Set(planPhotos.map(ph => ph.id || ph.ts));
+  const planPins = pins.filter(p => !p.photoId || planPhotoIds.has(p.photoId));
+  const planCount = planPins.filter(p => p.photoId).length
+    + planPhotos.filter(ph => ph.geo && !pins.some(p => p.photoId === (ph.id || ph.ts))).length;
+
   // Build the callout site plan. Shown for review first rather than saved
   // straight away: the build takes a few seconds, and iOS only allows sharing
   // from a fresh tap — so the Save button in the preview is the gesture.
@@ -270,13 +279,13 @@ export default function ParcelMapView({
     setSnapError(null);
     try {
       const url = await buildCalloutMap({
-        pins, photos, parcelPaths: getParcelPaths(),
+        pins: planPins, photos: planPhotos, parcelPaths: getParcelPaths(),
         meta: {
           client: stop?.cn, address: stop?.addr,
           date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
         },
       });
-      if (!url) { setSnapError("Add at least one pin first."); return; }
+      if (!url) { setSnapError("Nothing to plot - add a pin, or switch a photo on for the plan."); return; }
       setPlanUrl(url);
     } catch (e) {
       console.warn("Site plan export failed:", e);
@@ -284,7 +293,7 @@ export default function ParcelMapView({
         ? "Couldn't load map imagery - check your signal and try again."
         : "Couldn't build the site plan - try again.");
     } finally { setExporting(false); }
-  }, [exporting, pins, photos, getParcelPaths, stop?.cn, stop?.addr]);
+  }, [exporting, planPins, planPhotos, getParcelPaths, stop?.cn, stop?.addr]);
 
   const savePlan = useCallback(async () => {
     if (!planUrl) return;
@@ -698,7 +707,7 @@ export default function ParcelMapView({
           }}
         >
           <IconMapPin size={16} color={pins.length ? "#1a1400" : "#8b93a4"} />
-          {exporting ? "Building..." : "Site Plan"}
+          {exporting ? "Building..." : planCount ? `Site Plan (${planCount})` : "Site Plan"}
         </button>
       </div>
 

@@ -187,47 +187,53 @@ export async function buildCalloutMap({ pins = [], photos = [], parcelPaths = []
     (photo && (photo.dataUrl || photo.url) ? withPhoto : noPhoto).push({ pin: p, photo, at });
   });
 
-  const CAP = { top: 3, bottom: 3, left: 4, right: 4 };
-  const sides = { top: [], bottom: [], left: [], right: [] };
-  const preferred = (at) => {
-    const dx = at.x - cx, dy = at.y - cy;
-    return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "bottom" : "top");
-  };
-  const order = ["left", "right", "top", "bottom"];
+  // Order callouts around the map as a RING. Sorting by angle and then spilling
+  // to the NEXT SIDE CLOCKWISE keeps the callouts in the same rotational order
+  // as their pins, which is what stops leader lines from crossing. (The old
+  // code sent overflow to whichever side had room — usually the left — so a pin
+  // on the right could end up with a card on the left, dragging its line across
+  // everything else.)
+  const SIDES = ["top", "right", "bottom", "left"];
+  const CAP = { top: 4, right: 5, bottom: 4, left: 5 };
+  const sides = { top: [], right: [], bottom: [], left: [] };
+  // Angle measured clockwise from straight up, so it matches the ring order.
+  const angleOf = (at) => (Math.atan2(at.x - cx, -(at.y - cy)) * 180 / Math.PI + 360) % 360;
+  const sideOfAngle = (t) => (t < 45 || t >= 315) ? "top" : t < 135 ? "right" : t < 225 ? "bottom" : "left";
+
   withPhoto
-    .sort((a, b2) => a.at.y - b2.at.y)
+    .map(it => ({ ...it, angle: angleOf(it.at) }))
+    .sort((a, b2) => a.angle - b2.angle)
     .forEach((item) => {
-      let side = preferred(item.at);
-      if (sides[side].length >= CAP[side]) {
-        side = order.find(s => sides[s].length < CAP[s]) || side; // spill to any free side
+      let side = sideOfAngle(item.angle);
+      for (let g = 0; sides[side].length >= CAP[side] && g < 4; g++) {
+        side = SIDES[(SIDES.indexOf(side) + 1) % 4]; // next side clockwise
       }
       sides[side].push(item);
     });
 
-  // Sort along each side so lines run roughly parallel instead of tangling.
-  sides.left.sort((a, b2) => a.at.y - b2.at.y);
-  sides.right.sort((a, b2) => a.at.y - b2.at.y);
-  sides.top.sort((a, b2) => a.at.x - b2.at.x);
-  sides.bottom.sort((a, b2) => a.at.x - b2.at.x);
-
-  // Slot geometry for each side
+  // Slots follow the same clockwise ring: top runs left->right, right top->
+  // bottom, bottom right->left, left bottom->top. Because the lists above are
+  // already in angular order, index 0 is simply the first slot along that path.
   const slotFor = (side, i, n) => {
-    if (side === "left" || side === "right") {
-      const x = side === "left" ? 40 : W - 40 - CW;
-      const span = H - 260, step = Math.min(CH + 26, span / Math.max(n, 1));
-      const startY = (H - (step * n - (step - CH))) / 2 + 20;
-      return { x, y: startY + i * step };
+    const M = 40;
+    if (side === "top" || side === "bottom") {
+      const y = side === "top" ? 128 : H - M - CH;
+      const step = Math.min(CW + 20, (W - 2 * M) / Math.max(n, 1));
+      const startX = (W - (step * (n - 1) + CW)) / 2;
+      const idx = side === "top" ? i : (n - 1 - i);   // bottom runs right->left
+      return { x: startX + idx * step, y };
     }
-    const y = side === "top" ? 132 : H - 40 - CH;
-    const span = MAP + 120, step = Math.min(CW + 24, span / Math.max(n, 1));
-    const startX = cx - (step * n - (step - CW)) / 2;
-    return { x: startX + i * step, y };
+    const x = side === "left" ? M : W - M - CW;
+    const step = Math.min(CH + 20, (H - 240) / Math.max(n, 1));
+    const startY = (H - (step * (n - 1) + CH)) / 2 + 30;
+    const idx = side === "right" ? i : (n - 1 - i);   // left runs bottom->top
+    return { x, y: startY + idx * step };
   };
 
   // ── Draw callouts (photo card + leader line + matching number) ────────────
   let num = 0;
   const drawn = [];
-  for (const side of order) {
+  for (const side of SIDES) {
     const list = sides[side];
     for (let i = 0; i < list.length; i++) {
       const item = list[i];
@@ -298,18 +304,17 @@ export async function buildCalloutMap({ pins = [], photos = [], parcelPaths = []
   }
 
   // ── Pins on the map (drawn last so they sit above the leader lines) ───────
-  const pinDot = (at, n, color) => {
-    ctx.beginPath(); ctx.arc(at.x, at.y, 20, 0, Math.PI * 2);
+  // Deliberately tiny: the point is to mark the spot precisely, not to cover
+  // it. The number lives on the callout card and the leader line does the
+  // matching, so repeating it here just obscured the tree underneath.
+  const pinDot = (at, color) => {
+    ctx.beginPath(); ctx.arc(at.x, at.y, 7.5, 0, Math.PI * 2);
     ctx.fillStyle = color; ctx.fill();
-    ctx.lineWidth = 3.5; ctx.strokeStyle = "#fff"; ctx.stroke();
-    ctx.fillStyle = "#1a1400";
-    ctx.font = "700 22px Oswald, Arial, sans-serif";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(String(n), at.x, at.y + 1);
+    ctx.lineWidth = 2.5; ctx.strokeStyle = "#fff"; ctx.stroke();
   };
-  drawn.forEach(d => pinDot(d.at, d.num, "#F6BF26"));
+  drawn.forEach(d => pinDot(d.at, "#F6BF26"));
   // Points with no photo still belong on the plan — they're trees you pinned.
-  noPhoto.forEach(d => pinDot(d.at, "\u2022", "#4c9aff"));
+  noPhoto.forEach(d => pinDot(d.at, "#4c9aff"));
 
   // ── Title block ───────────────────────────────────────────────────────────
   ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
