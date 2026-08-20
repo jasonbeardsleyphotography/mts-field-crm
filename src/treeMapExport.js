@@ -151,10 +151,14 @@ export async function buildCalloutMap({ pins = [], photos = [], parcelPaths = []
   // short and mostly avoid crossing each other.
   const cx = MX + MAP / 2, cy = MY + MAP / 2;
   const withPhoto = [], noPhoto = [];
-  located.forEach((p) => {
+  // Number by POSITION IN THE PIN LIST, not by the order cards happen to be
+  // drawn around the ring. The app and the crew viewer both number pins by
+  // list position, and a tree labelled "3" on screen must be "3" on the plan
+  // you hand the crew.
+  located.forEach((p, idx) => {
     const photo = photoFor(p);
     const at = toCanvas(p.lat, p.lng);
-    (photo && (photo.dataUrl || photo.url) ? withPhoto : noPhoto).push({ pin: p, photo, at });
+    (photo && (photo.dataUrl || photo.url) ? withPhoto : noPhoto).push({ pin: p, photo, at, num: idx + 1 });
   });
 
   // Order callouts around the map as a RING. Sorting by angle and then spilling
@@ -201,13 +205,12 @@ export async function buildCalloutMap({ pins = [], photos = [], parcelPaths = []
   };
 
   // ── Draw callouts (photo card + leader line + matching number) ────────────
-  let num = 0;
   const drawn = [];
   for (const side of SIDES) {
     const list = sides[side];
     for (let i = 0; i < list.length; i++) {
       const item = list[i];
-      num++;
+      const num = item.num;
       const { x, y } = slotFor(side, i, list.length);
       const imgH = CH - 46;
 
@@ -232,7 +235,7 @@ export async function buildCalloutMap({ pins = [], photos = [], parcelPaths = []
       ctx.stroke();
       ctx.globalCompositeOperation = "source-over";
 
-      drawn.push({ ...item, num });
+      drawn.push(item);
 
       // Card
       ctx.fillStyle = "#f4f6fa";

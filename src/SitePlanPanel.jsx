@@ -52,7 +52,11 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token }) {
     const ph = p.photoId ? photos.find(x => (x.id || x.ts) === p.photoId) : null;
     return {
       n: i + 1, lat: p.lat, lng: p.lng, label: p.label,
-      photo: ph ? (ph.dataUrl || ph.url) : null,
+      // Prefer the Drive URL: TileMap shrinks it to a w400 rendition for the
+      // card. A local dataUrl is the full 3200px capture, and decoding several
+      // of those for 132px thumbnails is real memory on a phone — fall back to
+      // it only for a photo that hasn't uploaded yet.
+      photo: ph ? (ph.url || ph.dataUrl) : null,
     };
   }), [located, photos]);
 
@@ -105,13 +109,22 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token }) {
 
   const parcelForExport = useMemo(() => parcel, [parcel]);
 
+  // Honour the per-photo "on the plan" toggle from the card. Without this the
+  // switch worked on the old parcel-map path but was silently ignored here,
+  // so photos you'd turned off still went into the JPEG and to the crew.
+  const planPhotos = useMemo(() => photos.filter(ph => !ph.planOff), [photos]);
+  const planPins = useMemo(() => {
+    const ok = new Set(planPhotos.map(ph => ph.id || ph.ts));
+    return located.filter(p => !p.photoId || ok.has(p.photoId));
+  }, [located, planPhotos]);
+
   // ── Save the JPEG ─────────────────────────────────────────────────────────
   const makeJpeg = useCallback(async () => {
     if (busy) return;
     setBusy("jpeg"); setErr(null);
     try {
       const url = await buildCalloutMap({
-        pins: located, photos, parcelPaths: parcelForExport,
+        pins: planPins, photos: planPhotos, parcelPaths: parcelForExport,
         meta: {
           client: stop?.cn, address: stop?.addr,
           date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
@@ -124,7 +137,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token }) {
         ? "Couldn't load map imagery — check your signal."
         : "Couldn't build the site plan.");
     } finally { setBusy(null); }
-  }, [busy, located, photos, parcelForExport, stop]);
+  }, [busy, planPins, planPhotos, parcelForExport, stop]);
 
   const savePlanImage = useCallback(async () => {
     if (!planUrl) return;
@@ -147,7 +160,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token }) {
   const makeLink = useCallback(async () => {
     if (busy) return;
     const { payload, pendingPhotos } = buildPlanPayload({
-      pins: located, photos, parcelPaths: parcelForExport, stop,
+      pins: planPins, photos: planPhotos, parcelPaths: parcelForExport, stop,
     });
     if (!payload.pins.length) { setErr("Add a pin first."); return; }
     if (pendingPhotos > 0 && !window.confirm(
@@ -171,7 +184,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token }) {
     } catch (e) {
       setErr(e?.message || "Couldn't create the link.");
     } finally { setBusy(null); }
-  }, [busy, located, photos, parcelForExport, stop, token]);
+  }, [busy, planPins, planPhotos, parcelForExport, stop, token]);
 
   if (!located.length) return null;
 
