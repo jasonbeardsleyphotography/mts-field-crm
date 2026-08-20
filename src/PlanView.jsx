@@ -30,6 +30,7 @@ export default function PlanView({ planId }) {
   const [sel, setSel] = useState(null);          // selected pin index
   const [userPos, setUserPos] = useState(null);  // { lat, lng, acc }
   const [locState, setLocState] = useState("idle"); // idle | asking | on | denied
+  const [showPhotos, setShowPhotos] = useState(false); // pins <-> floating photo callouts
   const watchId = useRef(null);
 
   // ── Load the plan ─────────────────────────────────────────────────────────
@@ -107,6 +108,7 @@ export default function PlanView({ planId }) {
   if (state === "missing") return shell("Site plan not found", "This link may be incorrect or the plan may have been removed.");
   if (state === "error") return shell("Couldn't load the site plan", "Check your connection and try again.");
 
+  const photoCount = plan.pins.filter(p => p.photo).length;
   const selPin = sel != null ? plan.pins[sel] : null;
   const selDist = selPin && userPos
     ? `${fmtDistance(distanceMeters(userPos, selPin))} ${compassFrom(userPos, selPin)}`
@@ -119,6 +121,7 @@ export default function PlanView({ planId }) {
         zoom={view.zoom}
         onViewChange={setView}
         pins={plan.pins}
+        showPhotos={showPhotos}
         selectedIndex={sel}
         onPinTap={setSel}
         parcel={plan.parcel || []}
@@ -142,7 +145,8 @@ export default function PlanView({ planId }) {
           </div>
         )}
         <div style={{ fontSize: 11, color: "#8fa0b6", marginTop: 3, textShadow: "0 1px 4px rgba(0,0,0,.7)" }}>
-          {plan.pins.length} marked {plan.pins.length === 1 ? "location" : "locations"} · tap a pin for its photo
+          {plan.pins.length} marked {plan.pins.length === 1 ? "location" : "locations"}
+          {" · "}{showPhotos ? "tap a photo for full size" : "tap a pin for its photo"}
         </div>
       </div>
 
@@ -201,6 +205,34 @@ export default function PlanView({ planId }) {
           </div>
         )}
       </div>
+
+      {/* ── Photos toggle ──────────────────────────────────────────────── */}
+      {photoCount > 0 && (
+        <button
+          onClick={() => setShowPhotos(v => !v)}
+          style={{
+            position: "absolute", left: "max(14px, env(safe-area-inset-left))",
+            bottom: selPin ? "calc(max(20px, env(safe-area-inset-bottom)) + 300px)" : "max(20px, env(safe-area-inset-bottom))",
+            display: "flex", alignItems: "center", gap: 7,
+            padding: "11px 16px", borderRadius: 999,
+            background: showPhotos ? "rgba(246,191,38,.95)" : "rgba(28,28,30,.9)",
+            border: `1px solid ${showPhotos ? "#F6BF26" : "rgba(255,255,255,.18)"}`,
+            color: showPhotos ? "#1a1400" : "#fff",
+            fontSize: 12.5, fontWeight: 800, fontFamily: F, letterSpacing: 0.5,
+            textTransform: "uppercase", cursor: "pointer",
+            boxShadow: "0 4px 16px rgba(0,0,0,.5)", transition: "bottom .2s",
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+               stroke={showPhotos ? "#1a1400" : "#F6BF26"} strokeWidth="2"
+               strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="5" width="18" height="14" rx="2" />
+            <circle cx="8.5" cy="10" r="1.6" />
+            <path d="m21 15-5-5L5 19" />
+          </svg>
+          Photos
+        </button>
+      )}
 
       {/* ── Pin sheet ──────────────────────────────────────────────────── */}
       {selPin && (
