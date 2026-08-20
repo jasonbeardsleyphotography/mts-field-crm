@@ -14,37 +14,7 @@
    already offers, so this export costs nothing per use.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const TILE = 256;
-const MAX_Z = 20;              // Esri imagery is reliable through ~20
-const TILE_URL = (z, x, y) =>
-  `https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
-
-// ── Web Mercator ────────────────────────────────────────────────────────────
-function project(lat, lng, z) {
-  const world = TILE * Math.pow(2, z);
-  const x = ((lng + 180) / 360) * world;
-  const s = Math.sin((lat * Math.PI) / 180);
-  const y = (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * world;
-  return { x, y };
-}
-
-function boundsOf(points) {
-  const lats = points.map(p => p.lat), lngs = points.map(p => p.lng);
-  return {
-    north: Math.max(...lats), south: Math.min(...lats),
-    east: Math.max(...lngs), west: Math.min(...lngs),
-  };
-}
-
-// Largest zoom at which the padded bounds still fit inside the map square.
-function fitZoom(b, mapPx) {
-  for (let z = MAX_Z; z >= 1; z--) {
-    const a = project(b.north, b.west, z);
-    const c = project(b.south, b.east, z);
-    if (Math.abs(c.x - a.x) <= mapPx && Math.abs(c.y - a.y) <= mapPx) return z;
-  }
-  return 1;
-}
+import { TILE, TILE_URL, project, boundsOf, fitZoom } from "./tileMath";
 
 function loadImg(src, cors = false) {
   return new Promise((resolve) => {

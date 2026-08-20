@@ -4,6 +4,7 @@ import { attachParcelOverlay, detachParcelOverlay, parcelFeatureToInfo } from ".
 import { IconX, IconCamera, IconMapPin, IconTrash, IconPlus } from "./icons";
 import { getCurrentGeo } from "./geoCapture";
 import { buildCalloutMap } from "./treeMapExport";
+import { buildPlanPayload, createPlanLink } from "./planShare";
 
 /* Build a small rounded "photo window" marker icon from a full-size photo.
    Photos are 3200px — using one directly as a marker icon would pin a huge
@@ -68,7 +69,7 @@ function makeDotIcon(n, color = "#F6BF26") {
 const F = "'Oswald',sans-serif";
 
 export default function ParcelMapView({
-  stop, onClose, onSnapshot,
+  stop, onClose, onSnapshot, token,
   pins = [],            // [{ id, lat, lng, source, photoId, label, acc, ts, adjusted }]
   photos = [],          // all photos on this card, for thumbnails + previews
   onPinsChange,         // (nextPins) => void
@@ -99,6 +100,8 @@ export default function ParcelMapView({
   const [mapReady, setMapReady] = useState(false); // true once map.current exists
   const [exporting, setExporting] = useState(false);
   const [planUrl, setPlanUrl] = useState(null);     // built site plan, shown for review
+  const [sharing, setSharing] = useState(false);
+  const [shareLink, setShareLink] = useState(null); // live crew link, once created
 
   useEffect(() => { loadMaps().then(() => setReady(true)).catch(() => {}); }, []);
 
@@ -311,6 +314,39 @@ export default function ParcelMapView({
       setTimeout(() => URL.revokeObjectURL(u), 20000);
     } catch { setSnapError("Couldn't save the plan."); }
   }, [planUrl, stop?.cn]);
+
+  // Create the public crew link: the same pins, but as a LIVE map the crew can
+  // open on their own phones and see themselves on. Runs from the preview's
+  // button so it's inside a user gesture (iOS requires that to share).
+  const shareWithCrew = useCallback(async () => {
+    if (sharing) return;
+    const { payload, pendingPhotos } = buildPlanPayload({
+      pins: planPins, photos: planPhotos, parcelPaths: getParcelPaths(), stop,
+    });
+    if (!payload.pins.length) { setSnapError("Add at least one pin first."); return; }
+    if (pendingPhotos > 0 && !window.confirm(
+      `${pendingPhotos} photo${pendingPhotos === 1 ? " hasn't" : "s haven't"} finished uploading yet, so ` +
+      `${pendingPhotos === 1 ? "it won't" : "they won't"} show for your crew. Share anyway?`
+    )) return;
+    setSharing(true);
+    setSnapError(null);
+    try {
+      const link = await createPlanLink(token, payload);
+      setShareLink(link);
+      try { await navigator.clipboard?.writeText(link); } catch {}
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: `Site plan — ${stop?.cn || "job"}`,
+            text: `Tree locations for ${stop?.addr || "this job"}. Open on your phone and allow location to see where you are.`,
+            url: link,
+          });
+        } catch { /* dismissed — the link is on the clipboard and shown below */ }
+      }
+    } catch (e) {
+      setSnapError(e?.message || "Couldn't create the share link.");
+    } finally { setSharing(false); }
+  }, [sharing, planPins, planPhotos, getParcelPaths, stop, token]);
 
   // Flip the base imagery between Google (hybrid, with labels) and Esri aerial.
   const toggleImagery = useCallback(() => {
@@ -747,6 +783,30 @@ export default function ParcelMapView({
                 letterSpacing: 0.5, textTransform: "uppercase", cursor: "pointer",
               }}>Add to Card</button>
           </div>
+          {/* Live link for the crew: same pins, but a map they can open on their
+              own phones and see themselves on. */}
+          <button
+            onClick={shareWithCrew}
+            disabled={sharing}
+            style={{
+              width: "100%", marginTop: 8, padding: "13px 0", borderRadius: 10,
+              background: "rgba(26,115,232,.95)", border: "none", color: "#fff",
+              fontSize: 13, fontWeight: 800, fontFamily: F, letterSpacing: 0.5,
+              textTransform: "uppercase", cursor: sharing ? "default" : "pointer",
+              opacity: sharing ? 0.7 : 1,
+            }}
+          >{sharing ? "Creating link..." : "Share Live Map with Crew"}</button>
+          {shareLink && (
+            <div style={{
+              marginTop: 8, padding: "10px 12px", borderRadius: 8,
+              background: "rgba(26,115,232,.12)", border: "1px solid rgba(26,115,232,.35)",
+            }}>
+              <div style={{ fontSize: 10.5, fontWeight: 800, color: "#7db4ff", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4 }}>
+                Link copied - crew can open this on any phone
+              </div>
+              <div style={{ fontSize: 12, color: "#cfe0f5", wordBreak: "break-all" }}>{shareLink}</div>
+            </div>
+          )}
         </div>
       )}
 

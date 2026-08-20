@@ -416,7 +416,7 @@ export async function getVideosFolderId(token) {
 // they're used by countless unrelated sites. A domain we own has its own
 // clean reputation. Same Netlify site serves both — this only changes
 // what hostname goes into the link clients receive.
-const SHARE_ORIGIN = "https://projectvideoreview.app";
+export const SHARE_ORIGIN = "https://projectvideoreview.app";
 
 /**
  * Build the canonical shareable URL we save to cards: our own /watch page,

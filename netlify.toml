@@ -26,6 +26,11 @@
   status = 200
 
 [[redirects]]
+  from = "/api/plan"
+  to = "/.netlify/functions/plan"
+  status = 200
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

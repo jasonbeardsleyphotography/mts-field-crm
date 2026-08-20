@@ -3,7 +3,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v28";
+const CACHE = "mts-field-v29";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

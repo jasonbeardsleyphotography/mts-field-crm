@@ -993,6 +993,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   if (showParcelMap) {
     return <ParcelMapView
       stop={s}
+      token={token}
       pins={mapPins}
       photos={allPhotosForMap}
       onPinsChange={handlePinsChange}

@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 import VideoWatch from './VideoWatch.jsx'
+import PlanView from './PlanView.jsx'
 import { vlogError } from './videoLog'
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -117,11 +118,18 @@ class AppErrorBoundary extends React.Component {
 // unauthenticated viewer never touches the sign-in flow.
 const watchMatch = window.location.pathname.match(/^\/watch\/([a-zA-Z0-9_-]+)\/?$/);
 
+// /plan/:id is a public link sent to the CREW — the job's tree pins on a map
+// with their own live position. Same deal as /watch: matched before App mounts
+// so nobody needs to sign in (or install anything) to open it.
+const planMatch = window.location.pathname.match(/^\/plan\/([a-zA-Z0-9_-]+)\/?$/);
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <AppErrorBoundary>
       {watchMatch
         ? <VideoWatch fileId={watchMatch[1]} title={new URLSearchParams(window.location.search).get("t") || ""} />
+        : planMatch
+        ? <PlanView planId={planMatch[1]} />
         : <App />}
     </AppErrorBoundary>
   </React.StrictMode>
