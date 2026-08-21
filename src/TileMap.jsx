@@ -221,55 +221,49 @@ export default function TileMap({
   }
 
   // ── Photo callouts ────────────────────────────────────────────────────────
-  // With photos on, each pin gets a floating preview card joined to it by a
-  // leader line — the same read as the exported site plan, but live. Cards are
-  // decluttered greedily: try a ring of candidate offsets around the pin and
-  // take the first that collides with nothing already placed (including OTHER
-  // pins, so a card never buries a marker). Placement is recomputed each frame,
-  // which is cheap at these counts and keeps cards sensible while panning.
-  const CW = 132, CH = 118;
-  const TOP_RESERVE = 78;   // leave the title overlay legible
+  // Cards sit in lanes down the LEFT and RIGHT edges with a leader line to a
+  // small pin — the same read as the exported site plan. They used to float
+  // next to their pins, which buried the property under photo blocks and made
+  // the small inline map unusable. Keeping them off the imagery is the point.
   const callouts = [];
+  let CW = 0, PH = 0, CH = 0;
   if (ready && showPhotos) {
-    const pad = 6;
-    const hit = (a, b) =>
-      !(a.x + a.w + pad < b.x || b.x + b.w + pad < a.x ||
-        a.y + a.h + pad < b.y || b.y + b.h + pad < a.y);
-    // Reserve every pin's marker so callouts don't sit on top of one.
-    const taken = pins.map(p => {
-      const s2 = toScreen(p.lat, p.lng);
-      return { x: s2.x - 16, y: s2.y - 40, w: 32, h: 42 };
-    });
-    // Card-centre offsets from the pin's ground point: straight above first,
-    // then fanning out to the sides and further afield.
-    const CAND = [
-      [0, -103], [-96, -94], [96, -94], [-120, -34], [120, -34],
-      [-112, 54], [112, 54], [0, 80], [0, -196], [-176, -152], [176, -152],
-      [-196, 24], [196, 24], [-176, 140], [176, 140],
-    ];
-    pins
-      .map((p, i) => ({ p, i, s: toScreen(p.lat, p.lng) }))
-      .filter(({ p, s: s2 }) => p.photo && s2.x > -240 && s2.y > -240 && s2.x < w + 240 && s2.y < h + 240)
-      .sort((a, b) => (a.s.y - b.s.y) || (a.s.x - b.s.x))   // stable, top-down
-      .forEach(({ p, i, s: s2 }) => {
-        let rect = null;
-        for (const [dx, dy] of CAND) {
-          const r = { x: s2.x + dx - CW / 2, y: s2.y + dy - CH / 2, w: CW, h: CH };
-          if (r.x < 4 || r.y < TOP_RESERVE || r.x + CW > w - 4 || r.y + CH > h - 4) continue;
-          if (!taken.some(q => hit(q, r))) { rect = r; break; }
-        }
-        if (!rect) {
-          // Everything collided (very tight cluster) — park it above the pin,
-          // clamped on-screen, and accept the overlap rather than hiding data.
-          rect = {
-            x: clamp(s2.x - CW / 2, 4, Math.max(4, w - CW - 4)),
-            y: clamp(s2.y - 103 - CH / 2, TOP_RESERVE, Math.max(TOP_RESERVE, h - CH - 4)),
-            w: CW, h: CH,
-          };
-        }
-        taken.push(rect);
-        callouts.push({ pin: p, i, at: s2, rect });
-      });
+    CW = clamp(Math.round(w / 4.2), 64, 104);   // keep the map between the lanes usable
+    PH = Math.round(CW * 0.68);          // photo height
+    CH = PH + 20;                        // + label strip
+    const GAP = 6, M = 6;
+    const perSide = Math.max(1, Math.floor((h - 2 * M + GAP) / (CH + GAP)));
+
+    const items = pins
+      .map((p, i) => ({ pin: p, i, at: toScreen(p.lat, p.lng) }))
+      .filter(x => x.pin.photo);
+
+    // Which edge each photo belongs to — the half its pin sits in, so lines
+    // stay short and point outward.
+    let L = [], R = [];
+    items.forEach(it => (it.at.x < w / 2 ? L : R).push(it));
+    // Spill the overflow to the other lane rather than dropping it.
+    while (L.length > perSide && R.length < perSide) {
+      L.sort((a, b) => a.at.x - b.at.x); R.push(L.pop());
+    }
+    while (R.length > perSide && L.length < perSide) {
+      R.sort((a, b) => a.at.x - b.at.x); L.push(R.shift());
+    }
+    // Order down each lane by pin height so leader lines run roughly parallel.
+    L = L.sort((a, b) => a.at.y - b.at.y).slice(0, perSide);
+    R = R.sort((a, b) => a.at.y - b.at.y).slice(0, perSide);
+
+    const lane = (arr, side) => {
+      if (!arr.length) return;
+      const total = arr.length * CH + (arr.length - 1) * GAP;
+      const startY = Math.max(M, (h - total) / 2);
+      arr.forEach((it, k) => callouts.push({
+        ...it, side,
+        rect: { x: side === "left" ? M : w - M - CW, y: startY + k * (CH + GAP), w: CW, h: CH },
+      }));
+    };
+    lane(L, "left");
+    lane(R, "right");
   }
 
   return (
@@ -317,16 +311,17 @@ export default function TileMap({
           under the card edge rather than crossing over it. */}
       {callouts.length > 0 && (
         <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
-          {callouts.map(c => (
-            <g key={`l${c.i}`}>
-              <line x1={c.rect.x + c.rect.w / 2} y1={c.rect.y + c.rect.h / 2}
-                    x2={c.at.x} y2={c.at.y}
-                    stroke="rgba(0,0,0,.5)" strokeWidth="4" />
-              <line x1={c.rect.x + c.rect.w / 2} y1={c.rect.y + c.rect.h / 2}
-                    x2={c.at.x} y2={c.at.y}
-                    stroke={selectedIndex === c.i ? "#F6BF26" : "rgba(255,255,255,.9)"} strokeWidth="2" />
-            </g>
-          ))}
+          {callouts.map(c => {
+            const ex = c.side === "left" ? c.rect.x + c.rect.w : c.rect.x;
+            const ey = c.rect.y + c.rect.h / 2;
+            return (
+              <g key={`l${c.i}`}>
+                <line x1={ex} y1={ey} x2={c.at.x} y2={c.at.y} stroke="rgba(0,0,0,.55)" strokeWidth="3.5" />
+                <line x1={ex} y1={ey} x2={c.at.x} y2={c.at.y}
+                      stroke={selectedIndex === c.i ? "#F6BF26" : "rgba(255,255,255,.92)"} strokeWidth="1.75" />
+              </g>
+            );
+          })}
         </svg>
       )}
 
@@ -354,15 +349,33 @@ export default function TileMap({
 
       {/* Pins — real DOM nodes, so tapping is an ordinary click handler. */}
       {ready && pins.map((p, i) => {
-        const s = toScreen(p.lat, p.lng);
-        if (s.x < -60 || s.y < -60 || s.x > w + 60 || s.y > h + 60) return null;
+        const s2 = toScreen(p.lat, p.lng);
+        if (s2.x < -60 || s2.y < -60 || s2.x > w + 60 || s2.y > h + 60) return null;
         const on = selectedIndex === i;
+        // With callouts on, the pin shrinks to a small dot — the card carries
+        // the detail and a full teardrop would cover the tree it points at.
+        if (showPhotos) {
+          return (
+            <button
+              key={i}
+              onClick={(e) => { e.stopPropagation(); onPinTap?.(i); }}
+              style={{
+                position: "absolute", left: s2.x - 9, top: s2.y - 9,
+                width: 18, height: 18, padding: 0, borderRadius: 9,
+                background: on ? "#fff" : "#F6BF26",
+                border: `2px solid ${on ? "#F6BF26" : "#fff"}`,
+                boxShadow: "0 1px 4px rgba(0,0,0,.6)", cursor: "pointer",
+                pointerEvents: interactive ? "auto" : "none",
+              }}
+            />
+          );
+        }
         return (
           <button
             key={i}
             onClick={(e) => { e.stopPropagation(); onPinTap?.(i); }}
             style={{
-              position: "absolute", left: s.x - 16, top: s.y - 38,
+              position: "absolute", left: s2.x - 16, top: s2.y - 38,
               width: 32, height: 40, padding: 0, border: "none",
               background: "transparent", cursor: "pointer",
               transform: on ? "scale(1.18)" : "none", transformOrigin: "50% 100%",
@@ -391,18 +404,16 @@ export default function TileMap({
             onClick={(e) => { e.stopPropagation(); onPinTap?.(c.i); }}
             style={{
               position: "absolute", left: c.rect.x, top: c.rect.y,
-              width: CW, height: CH, padding: 4, textAlign: "left",
-              borderRadius: 10, cursor: "pointer",
+              width: CW, height: CH, padding: 3, textAlign: "left",
+              borderRadius: 8, cursor: "pointer",
               background: on ? "#F6BF26" : "#f4f6fa",
-              border: on ? "2px solid #fff" : "1px solid rgba(0,0,0,.25)",
-              boxShadow: "0 4px 14px rgba(0,0,0,.5)",
-              display: "flex", flexDirection: "column", gap: 3,
+              border: on ? "2px solid #fff" : "1px solid rgba(0,0,0,.3)",
+              boxShadow: "0 3px 10px rgba(0,0,0,.55)",
+              display: "flex", flexDirection: "column", gap: 2,
               pointerEvents: interactive ? "auto" : "none",
             }}
           >
-            <div style={{ position: "relative", flex: 1, minHeight: 0, borderRadius: 7, overflow: "hidden", background: "#c8cfda" }}>
-              {/* Ask Drive for a small rendition — the stored URL is w1200,
-                  which is far more than a 132px card needs on a phone. */}
+            <div style={{ position: "relative", height: PH, borderRadius: 6, overflow: "hidden", background: "#c8cfda" }}>
               <img
                 src={smallThumb(c.pin.photo)}
                 alt=""
@@ -410,18 +421,16 @@ export default function TileMap({
                 style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
               />
               <span style={{
-                position: "absolute", top: 3, left: 3,
-                minWidth: 19, height: 19, padding: "0 4px", borderRadius: 10,
+                position: "absolute", top: 2, left: 2,
+                minWidth: 16, height: 16, padding: "0 3px", borderRadius: 8,
                 background: "#F6BF26", color: "#1a1400",
-                fontFamily: "Oswald, sans-serif", fontWeight: 700, fontSize: 12,
+                fontFamily: "Oswald, sans-serif", fontWeight: 700, fontSize: 10.5,
                 display: "flex", alignItems: "center", justifyContent: "center",
-                boxShadow: "0 1px 4px rgba(0,0,0,.4)",
               }}>{c.pin.n ?? c.i + 1}</span>
             </div>
             <div style={{
-              fontSize: 10.5, fontWeight: 700, color: "#1a2030", lineHeight: 1.25,
-              maxHeight: 26, overflow: "hidden",
-              display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+              fontSize: 9, fontWeight: 700, color: "#1a2030", lineHeight: 1.15,
+              overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
             }}>{c.pin.label || `Location ${c.pin.n ?? c.i + 1}`}</div>
           </button>
         );

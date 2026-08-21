@@ -1005,12 +1005,15 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         // clobbering on concurrent writes, no Drive sync loss.
         const dataUrl = await downscaleDataUrl(rawDataUrl);
         const photo = { dataUrl, ts: Date.now(), id: newPhotoId() };
+        // Into scopePhotos, NOT addonPhotos: the Add-On section was removed from
+        // the UI, so a photo filed there saved correctly but had nowhere to
+        // appear — which read as "Add to Card does nothing".
         try {
           await updateField(s.id, (existing) => ({
-            addonPhotos: sortPhotosByTs([...(existing.addonPhotos || []), photo]),
+            scopePhotos: sortPhotosByTs([...(existing.scopePhotos || existing.photos || []), photo]),
           }));
         } catch (e) { console.warn("Parcel snapshot IDB save failed:", e); }
-        setAddonPhotos(prev => sortPhotosByTs([...prev, photo]));
+        setScopePhotos(prev => sortPhotosByTs([...prev, photo]));
         markStopForPhotoSync(s.id);
         if (token) queueFieldDriveSync(token, s.id);
         setShowParcelMap(false);

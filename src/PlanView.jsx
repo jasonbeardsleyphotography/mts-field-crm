@@ -30,7 +30,9 @@ export default function PlanView({ planId }) {
   const [sel, setSel] = useState(null);          // selected pin index
   const [userPos, setUserPos] = useState(null);  // { lat, lng, acc }
   const [locState, setLocState] = useState("idle"); // idle | asking | on | denied
-  const [showPhotos, setShowPhotos] = useState(false); // pins <-> floating photo callouts
+  // On by default: the crew should land on the site-plan read (photos at the
+  // edges, lines to pins). The toggle drops back to bare pins for navigating.
+  const [showPhotos, setShowPhotos] = useState(true);
   const watchId = useRef(null);
 
   // ── Load the plan ─────────────────────────────────────────────────────────

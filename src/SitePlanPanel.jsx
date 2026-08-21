@@ -37,7 +37,6 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token }) {
   const [parcel, setParcel] = useState([]);
   const [full, setFull] = useState(false);      // fullscreen, interactive
   const [busy, setBusy] = useState(null);       // "jpeg" | "link" | null
-  const [planUrl, setPlanUrl] = useState(null); // JPEG preview
   const [link, setLink] = useState(null);
   const [err, setErr] = useState(null);
 
@@ -119,6 +118,19 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token }) {
   }, [located, planPhotos]);
 
   // ── Save the JPEG ─────────────────────────────────────────────────────────
+  // Download the JPEG directly — mirrors _saveBlobAsFile behind the photo
+  // download buttons, which is the behaviour that already works here.
+  const saveJpeg = useCallback(async (dataUrl) => {
+    const name = `${(stop?.cn || "site").replace(/[^\w]+/g, "_")}_site_plan.jpg`;
+    try {
+      const blob = await (await fetch(dataUrl)).blob();
+      const u = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = u; a.download = name;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(u), 20000);
+    } catch { setErr("Couldn't save the image."); }
+  }, [stop]);
   const makeJpeg = useCallback(async () => {
     if (busy) return;
     setBusy("jpeg"); setErr(null);
@@ -131,30 +143,16 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token }) {
         },
       });
       if (!url) { setErr("Nothing to plot yet."); return; }
-      setPlanUrl(url);
+      // Straight to the file, same as the per-photo download buttons — no
+      // preview step to tap through.
+      await saveJpeg(url);
     } catch (e) {
       setErr(e?.message === "map-imagery-unavailable"
         ? "Couldn't load map imagery — check your signal."
         : "Couldn't build the site plan.");
     } finally { setBusy(null); }
-  }, [busy, planPins, planPhotos, parcelForExport, stop]);
+  }, [busy, planPins, planPhotos, parcelForExport, stop, saveJpeg]);
 
-  const savePlanImage = useCallback(async () => {
-    if (!planUrl) return;
-    const name = `${(stop?.cn || "site").replace(/[^\w]+/g, "_")}_site_plan.jpg`;
-    try {
-      const blob = await (await fetch(planUrl)).blob();
-      const file = new File([blob], name, { type: "image/jpeg" });
-      if (navigator.canShare?.({ files: [file] })) {
-        try { await navigator.share({ files: [file] }); return; } catch { /* dismissed */ }
-      }
-      const u = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = u; a.download = name;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(u), 20000);
-    } catch { setErr("Couldn't save the image."); }
-  }, [planUrl, stop]);
 
   // ── Crew link ─────────────────────────────────────────────────────────────
   const makeLink = useCallback(async () => {
@@ -214,7 +212,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token }) {
           screen, where panning and pin taps are enabled. */}
       <div
         onClick={() => live && view && setFull(true)}
-        style={{ position: "relative", height: 300, borderRadius: 10, overflow: "hidden", border: "1px solid #1a2540", background: "#101722", cursor: "pointer" }}
+        style={{ position: "relative", height: 330, borderRadius: 10, overflow: "hidden", border: "1px solid #1a2540", background: "#101722", cursor: "pointer" }}
       >
         {live && view ? (
           <TileMap
@@ -330,35 +328,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token }) {
         </div>
       )}
 
-      {/* JPEG preview — also keeps Save inside a fresh tap, which iOS requires
-          to open the share sheet. */}
-      {planUrl && (
-        <div onClick={() => setPlanUrl(null)} style={{
-          position: "fixed", inset: 0, zIndex: 400, background: "rgba(0,0,0,.9)",
-          display: "flex", flexDirection: "column",
-          padding: "max(14px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom))",
-        }}>
-          <div onClick={e => e.stopPropagation()} style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-              <div style={{ flex: 1, fontSize: 13, fontWeight: 800, color: "#F6BF26", fontFamily: F, letterSpacing: 1, textTransform: "uppercase" }}>Site Plan</div>
-              <button onClick={() => setPlanUrl(null)} style={{
-                width: 34, height: 34, borderRadius: 17, background: "rgba(28,28,30,.8)",
-                border: "1px solid rgba(255,255,255,.16)", cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}><IconX size={16} color="#fff" /></button>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto", borderRadius: 10, background: "#0d1017" }}>
-              <img src={planUrl} alt="Site plan" style={{ width: "100%", display: "block" }} />
-            </div>
-            <button onClick={savePlanImage} style={{
-              marginTop: 12, padding: "13px 0", borderRadius: 10,
-              background: "#F6BF26", border: "none", color: "#1a1400",
-              fontSize: 13, fontWeight: 800, fontFamily: F, letterSpacing: 0.5,
-              textTransform: "uppercase", cursor: "pointer",
-            }}>Save / Share JPEG</button>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }
