@@ -80,3 +80,51 @@ export async function createPlanLink(token, payload) {
   if (!id) throw new Error("Couldn't create the share link — try again.");
   return `${SHARE_ORIGIN}/plan/${id}`;
 }
+
+/* ── One-tap copy ───────────────────────────────────────────────────────────
+   Copy the crew link so that pasting it reads "Live Map Site Plan" rather than
+   a wall of random URL characters.
+
+   Two formats go on the clipboard at once: text/html (a real hyperlink, which
+   Notes, Mail and most apps paste as the words "Live Map Site Plan") and
+   text/plain (the label followed by the URL, for anything that only takes
+   plain text — Messages included). Whichever the target app understands, the
+   crew sees the label.
+
+   The subtlety that makes this ONE tap: iOS only allows a clipboard write
+   during a live user gesture, and creating the link needs a round trip to the
+   server, which outlives that gesture. So the ClipboardItem is handed
+   *promises* rather than finished blobs — the write is registered immediately,
+   inside the tap, and resolves when the link comes back. Call this
+   SYNCHRONOUSLY from the click handler, before awaiting anything. */
+export const PLAN_LINK_LABEL = "Live Map Site Plan";
+
+export function copyPlanLink(linkPromise) {
+  const label = PLAN_LINK_LABEL;
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  const asHtml = linkPromise.then(u =>
+    new Blob([`<a href="${esc(u)}">${label}</a>`], { type: "text/html" }));
+  const asText = linkPromise.then(u =>
+    new Blob([`${label}\n${u}`], { type: "text/plain" }));
+
+  let registered = null;
+  try {
+    if (navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+      registered = navigator.clipboard.write([
+        new ClipboardItem({ "text/html": asHtml, "text/plain": asText }),
+      ]);
+    }
+  } catch { registered = null; }
+
+  // Whether the rich write was unavailable or failed (older Safari rejects
+  // promise-valued ClipboardItems), fall back to plain text once we have the
+  // URL. That path can lose the gesture, so it's the backup, not the plan.
+  return linkPromise.then(async (url) => {
+    let ok = false;
+    if (registered) { try { await registered; ok = true; } catch {} }
+    if (!ok) {
+      try { await navigator.clipboard.writeText(`${label}\n${url}`); ok = true; } catch {}
+    }
+    return { url, copied: ok };
+  });
+}

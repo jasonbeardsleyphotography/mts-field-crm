@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback, useMemo } from "react";
 import {
   TILE, MAX_Z, MAX_TILE_Z, MIN_Z, TILE_URL, project, unproject, metersPerPixel, clampLat,
 } from "./tileMath";
@@ -6,8 +6,8 @@ import {
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — TileMap
    ───────────────────────────────────────────────────────────────────────────
-   A small, dependency-free satellite map with drag-pan and pinch-zoom, drawn
-   from free Esri World Imagery tiles.
+   A small, dependency-free satellite map with drag-pan, pinch-zoom, and
+   draggable pins, drawn from free Esri World Imagery tiles.
 
    Why hand-rolled instead of Google Maps JS: the crew viewer is a public link
    that could be opened any number of times by any number of people, and the
@@ -19,6 +19,15 @@ import {
    level scaled by the fractional remainder — but their on-screen placement is
    still computed in fractional-zoom pixels, so a marker never drifts off its
    ground position the way it would with a CSS transform on a wrapper.
+
+   Three things here exist specifically to make it dependable in the field:
+     • every remote image retries on failure (§ RetryImg) — a truck's
+       connection drops single requests constantly, and one dropped tile used
+       to leave a permanent grey square;
+     • leader lines are guaranteed not to cross (§ untangle) rather than
+       merely usually not crossing;
+     • pins have finger-sized hit targets and lift ABOVE the fingertip while
+       dragging, so you can see what you are placing.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -31,15 +40,127 @@ const smallThumb = (url) =>
 const dist2 = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
 const mid2 = (a, b) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 });
 
+// How far above the fingertip a pin floats while being dragged. A pin sitting
+// under the finger is invisible at the exact moment you need to aim it.
+const DRAG_LIFT = 52;
+
+/* ── RetryImg ───────────────────────────────────────────────────────────────
+   Remote images that retry instead of failing silently.
+
+   Map tiles and Drive thumbnails both fail transiently in the field: a dropped
+   request on a weak connection, or Drive briefly throttling a burst of
+   thumbnail loads. A plain <img> renders that as blank grey forever. This
+   retries a few times with backoff, then optionally falls back to another
+   source (a local dataUrl for a photo that hasn't uploaded yet), and only then
+   reports failure.
+
+   The retry URL gets a cache-busting param because the browser will otherwise
+   serve its own cached failure straight back. */
+function RetryImg({ src, fallback, style, alt = "", onFail, tries = 3 }) {
+  const [attempt, setAttempt] = useState(0);
+  const [useFallback, setUseFallback] = useState(false);
+  const [dead, setDead] = useState(false);
+  const timer = useRef(null);
+
+  // A new src is a fresh start.
+  useEffect(() => {
+    setAttempt(0); setUseFallback(false); setDead(false);
+  }, [src, fallback]);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  const base = useFallback ? fallback : src;
+
+  const fail = () => {
+    if (attempt < tries) {
+      // Back off a little — an instant retry usually hits the same condition.
+      timer.current = setTimeout(() => setAttempt(a => a + 1), 400 * (attempt + 1));
+    } else if (fallback && !useFallback) {
+      setUseFallback(true); setAttempt(0);
+    } else {
+      setDead(true); onFail?.();
+    }
+  };
+
+  if (!base || dead) return null;
+
+  // Attempt 0 uses the plain URL so it can hit the browser cache normally;
+  // later attempts must bypass it to actually re-request.
+  const bust = attempt > 0 && /^https?:/.test(base)
+    ? base + (base.includes("?") ? "&" : "?") + "_r=" + attempt
+    : base;
+
+  return <img key={bust} src={bust} alt={alt} draggable={false} style={style} onError={fail} />;
+}
+
+/* ── untangle ───────────────────────────────────────────────────────────────
+   Guarantee that no two leader lines cross.
+
+   Sorting cards by their pin's height makes crossings *rare*, which is why
+   they kept turning up occasionally: rare is not never. Two lines drawn from
+   the same edge lane cross whenever the vertical order of the cards disagrees
+   with the angular order of the pins, and no single sort key fixes every case
+   (a pin far out to the side and a pin close in can invert the ordering).
+
+   So instead of sorting, this repairs. Any two segments that genuinely cross
+   are swapped between their card slots. By the triangle inequality that swap
+   ALWAYS makes the two lines shorter in total, so total length strictly
+   decreases with every swap; there are finitely many arrangements, so the loop
+   cannot cycle and must halt with zero crossings. It also considers swaps
+   between the left and right lanes, so it converges on a globally untangled
+   layout rather than a per-lane one.
+
+   Mutates the slot assignment on `items` in place. */
+function untangle(items) {
+  const anchor = (it) => ({
+    x: it.side === "left" ? it.rect.x + it.rect.w : it.rect.x,
+    y: it.rect.y + it.rect.h / 2,
+  });
+  // Proper segment intersection (shared endpoints / collinear don't count —
+  // those aren't visually a crossing worth fixing).
+  const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const crosses = (p1, p2, p3, p4) => {
+    const d1 = cross(p3, p4, p1), d2 = cross(p3, p4, p2);
+    const d3 = cross(p1, p2, p3), d4 = cross(p1, p2, p4);
+    return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+           ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+  };
+
+  const n = items.length;
+  // Generous cap: far past what any real layout needs, and it keeps a
+  // pathological case from ever stalling a render.
+  const LIMIT = Math.max(64, n * n * 2);
+  for (let guard = 0; guard < LIMIT; guard++) {
+    let swapped = false;
+    for (let i = 0; i < n && !swapped; i++) {
+      for (let j = i + 1; j < n; j++) {
+        if (!crosses(anchor(items[i]), items[i].at, anchor(items[j]), items[j].at)) continue;
+        // Trade slots. Strictly shortens the two lines, so this terminates.
+        const r = items[i].rect, s = items[i].side;
+        items[i].rect = items[j].rect; items[i].side = items[j].side;
+        items[j].rect = r; items[j].side = s;
+        swapped = true;
+        break;
+      }
+    }
+    if (!swapped) break;
+  }
+  return items;
+}
+
 export default function TileMap({
   center,                 // { lat, lng }
   zoom,                   // float
   onViewChange,           // ({ center, zoom }) => void
-  pins = [],              // [{ n, lat, lng, label, photo }]
+  pins = [],              // [{ n, lat, lng, label, photo, photoLocal }]
   showPhotos = false,     // true => float a photo callout beside each pin
-  interactive = true,     // false =>static preview: no gestures, page scrolls freely
+  interactive = true,     // false => static preview: no gestures, page scrolls freely
   selectedIndex = null,
   onPinTap,
+  editable = false,       // true => pins can be dragged
+  onPinMove,              // (index, { lat, lng }) => void
+  addMode = false,        // true => a tap on open map drops a new pin
+  onMapTap,               // ({ lat, lng }) => void
   parcel = [],            // [[{lat,lng}, ...], ...]
   userPos = null,         // { lat, lng, acc }
   children,
@@ -47,6 +168,10 @@ export default function TileMap({
   const boxRef = useRef(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [tileFail, setTileFail] = useState(0);
+  // Live drag, in container coordinates. Kept local so dragging stays smooth
+  // without re-rendering the whole card on every touchmove; the new position
+  // is committed to the parent once on release.
+  const [drag, setDrag] = useState(null);   // { i, x, y }
 
   // Track container size so the projection knows the viewport.
   useEffect(() => {
@@ -63,6 +188,10 @@ export default function TileMap({
   // centre/zoom mid-drag.
   const view = useRef({ center, zoom });
   useEffect(() => { view.current = { center, zoom }; }, [center, zoom]);
+  // Same for the interaction props, so the gesture effect doesn't need to be
+  // torn down and rebuilt every time edit mode toggles.
+  const cfg = useRef({});
+  cfg.current = { editable, addMode, onPinMove, onPinTap, onMapTap };
 
   const emit = useCallback((next) => {
     view.current = next;
@@ -76,10 +205,26 @@ export default function TileMap({
     const el = boxRef.current;
     if (!el || !interactive) return;
 
-    let mode = null;            // "pan" | "pinch"
+    let mode = null;            // "pan" | "pinch" | "pin"
     let last = null;            // last single-touch point
     let pinchStart = null;      // { dist, zoom, mid }
     let lastTap = 0;
+    let held = null;            // { i, moved } while dragging a pin
+    let startPt = null;         // where a single touch began (tap detection)
+
+    const rectOf = () => el.getBoundingClientRect();
+    // Screen (client) coords -> lat/lng, via the same fractional-zoom origin
+    // everything else on the map uses.
+    const atClient = (cx, cy) => {
+      const r = rectOf();
+      const { center: c, zoom: z } = view.current;
+      const p = project(c.lat, c.lng, z);
+      return unproject(
+        p.x + (cx - r.left) - r.width / 2,
+        p.y + (cy - r.top) - r.height / 2,
+        z
+      );
+    };
 
     const panBy = (dxPx, dyPx) => {
       const { center: c, zoom: z } = view.current;
@@ -93,7 +238,7 @@ export default function TileMap({
       const { center: c, zoom: z } = view.current;
       const nz = clamp(nextZoom, MIN_Z, MAX_Z);
       if (nz === z) return;
-      const rect = el.getBoundingClientRect();
+      const rect = rectOf();
       const ax = anchor.x - rect.left - rect.width / 2;   // anchor offset from centre
       const ay = anchor.y - rect.top - rect.height / 2;
       const pOld = project(c.lat, c.lng, z);
@@ -104,10 +249,33 @@ export default function TileMap({
       emit({ center: { lat: clampLat(nextCentre.lat), lng: nextCentre.lng }, zoom: nz });
     };
 
+    // Where the dragged pin's GROUND point is: lifted above the fingertip so
+    // the thing being placed is never hidden under the hand placing it.
+    const liftFrom = (cx, cy) => {
+      const r = rectOf();
+      return { x: cx - r.left, y: cy - r.top - DRAG_LIFT };
+    };
+
+    const pinIndexAt = (target) => {
+      const node = target?.closest?.("[data-pin-index]");
+      return node ? Number(node.dataset.pinIndex) : null;
+    };
+
     const onStart = (e) => {
       if (e.touches.length === 1) {
+        const t = e.touches[0];
+        startPt = { x: t.clientX, y: t.clientY };
+        const hit = pinIndexAt(e.target);
+        if (hit != null && cfg.current.editable) {
+          // Grabbing a pin: take over completely so the map can't pan under it.
+          mode = "pin";
+          held = { i: hit, moved: false };
+          setDrag({ i: hit, ...liftFrom(t.clientX, t.clientY) });
+          e.preventDefault();
+          return;
+        }
         mode = "pan";
-        last = { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY };
+        last = { clientX: t.clientX, clientY: t.clientY };
         // Double-tap to zoom in — the expected gesture on a phone map.
         const now = Date.now();
         if (now - lastTap < 300) {
@@ -116,6 +284,7 @@ export default function TileMap({
         } else lastTap = now;
       } else if (e.touches.length === 2) {
         mode = "pinch";
+        held = null; setDrag(null);
         pinchStart = {
           dist: dist2(e.touches[0], e.touches[1]),
           zoom: view.current.zoom,
@@ -125,7 +294,12 @@ export default function TileMap({
     };
 
     const onMove = (e) => {
-      if (mode === "pan" && e.touches.length === 1) {
+      if (mode === "pin" && e.touches.length === 1) {
+        e.preventDefault();
+        const t = e.touches[0];
+        if (Math.hypot(t.clientX - startPt.x, t.clientY - startPt.y) > 4) held.moved = true;
+        setDrag({ i: held.i, ...liftFrom(t.clientX, t.clientY) });
+      } else if (mode === "pan" && e.touches.length === 1) {
         e.preventDefault();
         const t = e.touches[0];
         panBy(t.clientX - last.clientX, t.clientY - last.clientY);
@@ -141,8 +315,28 @@ export default function TileMap({
     };
 
     const onEnd = (e) => {
-      if (e.touches.length === 0) { mode = null; last = null; pinchStart = null; }
-      else if (e.touches.length === 1) {
+      if (mode === "pin" && e.touches.length === 0) {
+        const t = e.changedTouches?.[0];
+        if (held.moved && t) {
+          // Commit the lifted ground point, not the fingertip.
+          cfg.current.onPinMove?.(held.i, atClient(t.clientX, t.clientY - DRAG_LIFT));
+        } else {
+          // A grab that never moved is a tap.
+          cfg.current.onPinTap?.(held.i);
+        }
+        held = null; setDrag(null); mode = null; startPt = null;
+        return;
+      }
+      if (e.touches.length === 0) {
+        // Tap on open map in add mode drops a pin exactly where you touched.
+        const t = e.changedTouches?.[0];
+        if (mode === "pan" && cfg.current.addMode && t && startPt &&
+            Math.hypot(t.clientX - startPt.x, t.clientY - startPt.y) < 8 &&
+            pinIndexAt(e.target) == null) {
+          cfg.current.onMapTap?.(atClient(t.clientX, t.clientY));
+        }
+        mode = null; last = null; pinchStart = null; startPt = null;
+      } else if (e.touches.length === 1) {
         mode = "pan";
         last = { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY };
       }
@@ -150,14 +344,38 @@ export default function TileMap({
 
     // Mouse + wheel so the link is usable on a laptop too.
     let down = null;
-    const onMouseDown = (e) => { down = { x: e.clientX, y: e.clientY }; };
+    const onMouseDown = (e) => {
+      const hit = pinIndexAt(e.target);
+      if (hit != null && cfg.current.editable) {
+        down = { x: e.clientX, y: e.clientY, pin: hit, moved: false };
+        setDrag({ i: hit, ...liftFrom(e.clientX, e.clientY) });
+        e.preventDefault();
+        return;
+      }
+      down = { x: e.clientX, y: e.clientY, start: { x: e.clientX, y: e.clientY } };
+    };
     const onMouseMove = (e) => {
       if (!down) return;
       e.preventDefault();
+      if (down.pin != null) {
+        down.moved = true;
+        setDrag({ i: down.pin, ...liftFrom(e.clientX, e.clientY) });
+        return;
+      }
       panBy(e.clientX - down.x, e.clientY - down.y);
-      down = { x: e.clientX, y: e.clientY };
+      down = { ...down, x: e.clientX, y: e.clientY };
     };
-    const onMouseUp = () => { down = null; };
+    const onMouseUp = (e) => {
+      if (down?.pin != null) {
+        if (down.moved) cfg.current.onPinMove?.(down.pin, atClient(e.clientX, e.clientY - DRAG_LIFT));
+        else cfg.current.onPinTap?.(down.pin);
+        setDrag(null);
+      } else if (down?.start && cfg.current.addMode &&
+                 Math.hypot(e.clientX - down.start.x, e.clientY - down.start.y) < 6) {
+        cfg.current.onMapTap?.(atClient(e.clientX, e.clientY));
+      }
+      down = null;
+    };
     const onWheel = (e) => {
       e.preventDefault();
       zoomAround(view.current.zoom - Math.sign(e.deltaY) * 0.5, { x: e.clientX, y: e.clientY });
@@ -190,10 +408,13 @@ export default function TileMap({
   const originX = cpx.x - w / 2, originY = cpx.y - h / 2;
   // Screen position of a lat/lng, in the SAME fractional-zoom space as the
   // tiles below — this is what keeps markers pinned to the ground.
-  const toScreen = (lat, lng) => {
+  const toScreen = useCallback((lat, lng) => {
     const p = project(lat, lng, zoom);
     return { x: p.x - originX, y: p.y - originY };
-  };
+  }, [zoom, originX, originY]);
+
+  // A pin's position on screen, honouring an in-progress drag.
+  const pinAt = (p, i) => (drag && drag.i === i ? { x: drag.x, y: drag.y } : toScreen(p.lat, p.lng));
 
   // Tiles exist only at integer zooms; draw the nearest level, scaled.
   // Cap the TILE level at what Esri has; zooming past it upscales those tiles
@@ -211,7 +432,10 @@ export default function TileMap({
         if (ty < 0 || ty >= span) continue;           // no tiles past the poles
         const wrapX = ((tx % span) + span) % span;    // wrap around the globe
         tiles.push({
-          key: `${tileZoom}/${wrapX}/${ty}`,
+          // Keyed by the DRAWN position, not the wrapped tile id: at low zoom
+          // the same tile can legitimately appear twice on screen, and a
+          // duplicate React key made one of the two vanish.
+          key: `${tileZoom}/${tx}/${ty}`,
           url: TILE_URL(tileZoom, wrapX, ty),
           left: tx * tilePx - originX,
           top: ty * tilePx - originY,
@@ -225,18 +449,17 @@ export default function TileMap({
   // small pin — the same read as the exported site plan. They used to float
   // next to their pins, which buried the property under photo blocks and made
   // the small inline map unusable. Keeping them off the imagery is the point.
-  const callouts = [];
-  let CW = 0, PH = 0, CH = 0;
-  if (ready && showPhotos) {
-    CW = clamp(Math.round(w / 4.2), 64, 104);   // keep the map between the lanes usable
-    PH = Math.round(CW * 0.68);          // photo height
-    CH = PH + 20;                        // + label strip
+  const layout = useMemo(() => {
+    if (!ready || !showPhotos) return { callouts: [], CW: 0, PH: 0, CH: 0 };
+    const CW = clamp(Math.round(w / 4.2), 64, 104);   // keep the map between the lanes usable
+    const PH = Math.round(CW * 0.68);          // photo height
+    const CH = PH + 20;                        // + label strip
     const GAP = 6, M = 6;
     const perSide = Math.max(1, Math.floor((h - 2 * M + GAP) / (CH + GAP)));
 
     const items = pins
       .map((p, i) => ({ pin: p, i, at: toScreen(p.lat, p.lng) }))
-      .filter(x => x.pin.photo);
+      .filter(x => x.pin.photo || x.pin.photoLocal);
 
     // Which edge each photo belongs to — the half its pin sits in, so lines
     // stay short and point outward.
@@ -249,10 +472,12 @@ export default function TileMap({
     while (R.length > perSide && L.length < perSide) {
       R.sort((a, b) => a.at.x - b.at.x); L.push(R.shift());
     }
-    // Order down each lane by pin height so leader lines run roughly parallel.
+    // Order down each lane by pin height — a good starting arrangement, which
+    // untangle() below then repairs into a provably crossing-free one.
     L = L.sort((a, b) => a.at.y - b.at.y).slice(0, perSide);
     R = R.sort((a, b) => a.at.y - b.at.y).slice(0, perSide);
 
+    const callouts = [];
     const lane = (arr, side) => {
       if (!arr.length) return;
       const total = arr.length * CH + (arr.length - 1) * GAP;
@@ -264,7 +489,10 @@ export default function TileMap({
     };
     lane(L, "left");
     lane(R, "right");
-  }
+    untangle(callouts);
+    return { callouts, CW, PH, CH };
+  }, [ready, showPhotos, w, h, pins, toScreen]);
+  const { callouts, CW, PH, CH } = layout;
 
   return (
     <div
@@ -273,25 +501,29 @@ export default function TileMap({
         position: "absolute", inset: 0, overflow: "hidden",
         background: "#1b2430",
         touchAction: interactive ? "none" : "auto",
-        cursor: interactive ? "grab" : "default",
+        cursor: interactive ? (addMode ? "crosshair" : "grab") : "default",
         userSelect: "none", WebkitUserSelect: "none",
       }}
     >
       {/* Satellite tiles. Plain <img> — we only display them, never read them
-          back into a canvas, so no crossOrigin and no CORS failure mode. */}
+          back into a canvas, so no crossOrigin and no CORS failure mode.
+          Wrapped in RetryImg because a single dropped request on a weak
+          connection used to leave a permanent grey square. */}
       {tiles.map(t => (
-        <img
+        <div
           key={t.key}
-          src={t.url}
-          alt=""
-          draggable={false}
-          onError={() => setTileFail(n => n + 1)}
           style={{
             position: "absolute", left: t.left, top: t.top,
             width: tilePx + 1, height: tilePx + 1,   // +1 hides hairline seams
             pointerEvents: "none",
           }}
-        />
+        >
+          <RetryImg
+            src={t.url}
+            onFail={() => setTileFail(n => n + 1)}
+            style={{ width: "100%", height: "100%", display: "block" }}
+          />
+        </div>
       ))}
 
       {/* Property boundary */}
@@ -308,16 +540,18 @@ export default function TileMap({
       )}
 
       {/* Leader lines, drawn beneath the pins and cards so they emerge from
-          under the card edge rather than crossing over it. */}
+          under the card edge rather than crossing over it. untangle() has
+          already guaranteed that none of these cross each other. */}
       {callouts.length > 0 && (
         <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
           {callouts.map(c => {
             const ex = c.side === "left" ? c.rect.x + c.rect.w : c.rect.x;
             const ey = c.rect.y + c.rect.h / 2;
+            const to = pinAt(c.pin, c.i);
             return (
               <g key={`l${c.i}`}>
-                <line x1={ex} y1={ey} x2={c.at.x} y2={c.at.y} stroke="rgba(0,0,0,.55)" strokeWidth="3.5" />
-                <line x1={ex} y1={ey} x2={c.at.x} y2={c.at.y}
+                <line x1={ex} y1={ey} x2={to.x} y2={to.y} stroke="rgba(0,0,0,.55)" strokeWidth="3.5" />
+                <line x1={ex} y1={ey} x2={to.x} y2={to.y}
                       stroke={selectedIndex === c.i ? "#F6BF26" : "rgba(255,255,255,.92)"} strokeWidth="1.75" />
               </g>
             );
@@ -347,53 +581,61 @@ export default function TileMap({
         );
       })()}
 
-      {/* Pins — real DOM nodes, so tapping is an ordinary click handler. */}
+      {/* Pins. Never photo thumbnails: a photo marker covers the very ground
+          it is marking, and your fingertip covers the rest. A numbered dot
+          with a finger-sized invisible hit area is what you can actually aim.
+          The hit box is 44px — Apple's minimum touch target — while the
+          visible dot stays small enough to see what it is pointing at. */}
       {ready && pins.map((p, i) => {
-        const s2 = toScreen(p.lat, p.lng);
-        if (s2.x < -60 || s2.y < -60 || s2.x > w + 60 || s2.y > h + 60) return null;
+        const s2 = pinAt(p, i);
+        if (s2.x < -80 || s2.y < -80 || s2.x > w + 80 || s2.y > h + 80) return null;
         const on = selectedIndex === i;
-        // With callouts on, the pin shrinks to a small dot — the card carries
-        // the detail and a full teardrop would cover the tree it points at.
-        if (showPhotos) {
-          return (
-            <button
-              key={i}
-              onClick={(e) => { e.stopPropagation(); onPinTap?.(i); }}
-              style={{
-                position: "absolute", left: s2.x - 9, top: s2.y - 9,
-                width: 18, height: 18, padding: 0, borderRadius: 9,
-                background: on ? "#fff" : "#F6BF26",
-                border: `2px solid ${on ? "#F6BF26" : "#fff"}`,
-                boxShadow: "0 1px 4px rgba(0,0,0,.6)", cursor: "pointer",
-                pointerEvents: interactive ? "auto" : "none",
-              }}
-            />
-          );
-        }
+        const isHeld = drag?.i === i;
+        const D = showPhotos ? 22 : 26;         // visible dot
+        const HIT = 44;
         return (
-          <button
+          <div
             key={i}
-            onClick={(e) => { e.stopPropagation(); onPinTap?.(i); }}
+            data-pin-index={i}
+            onClick={(e) => { e.stopPropagation(); if (!editable) onPinTap?.(i); }}
             style={{
-              position: "absolute", left: s2.x - 16, top: s2.y - 38,
-              width: 32, height: 40, padding: 0, border: "none",
-              background: "transparent", cursor: "pointer",
-              transform: on ? "scale(1.18)" : "none", transformOrigin: "50% 100%",
-              transition: "transform .12s",
+              position: "absolute", left: s2.x - HIT / 2, top: s2.y - HIT / 2,
+              width: HIT, height: HIT,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: editable ? "grab" : "pointer",
               pointerEvents: interactive ? "auto" : "none",
+              zIndex: isHeld ? 30 : 10,
+              transform: isHeld ? "scale(1.25)" : on ? "scale(1.12)" : "none",
+              transition: isHeld ? "none" : "transform .12s",
             }}
           >
-            <svg width="32" height="40" viewBox="0 0 34 44">
-              <path
-                d="M17 43C17 43 32 26.5 32 16A15 15 0 1 0 2 16C2 26.5 17 43 17 43Z"
-                fill={on ? "#fff" : "#F6BF26"} stroke={on ? "#F6BF26" : "#fff"} strokeWidth="2.5"
-              />
-              <text x="17" y="22" fontFamily="Oswald, sans-serif" fontSize="15"
-                    fontWeight="700" fill="#1a1400" textAnchor="middle">{p.n ?? i + 1}</text>
-            </svg>
-          </button>
+            <div style={{
+              width: D, height: D, borderRadius: D / 2,
+              background: on || isHeld ? "#fff" : "#F6BF26",
+              border: `2.5px solid ${on || isHeld ? "#F6BF26" : "#fff"}`,
+              boxShadow: isHeld ? "0 8px 16px rgba(0,0,0,.6)" : "0 1px 5px rgba(0,0,0,.6)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontFamily: "Oswald, sans-serif", fontWeight: 700,
+              fontSize: showPhotos ? 11 : 13, color: "#1a1400", lineHeight: 1,
+            }}>{p.n ?? i + 1}</div>
+          </div>
         );
       })}
+
+      {/* While dragging: a crosshair marking the exact ground point, with a
+          stem down to the fingertip so the link between hand and target is
+          obvious. The pin itself floats above the finger, not under it. */}
+      {drag && (
+        <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 25 }}>
+          <line x1={drag.x} y1={drag.y} x2={drag.x} y2={drag.y + DRAG_LIFT}
+                stroke="rgba(0,0,0,.5)" strokeWidth="4" />
+          <line x1={drag.x} y1={drag.y} x2={drag.x} y2={drag.y + DRAG_LIFT}
+                stroke="#F6BF26" strokeWidth="1.5" strokeDasharray="4,3" />
+          <circle cx={drag.x} cy={drag.y + DRAG_LIFT} r="11" fill="none" stroke="rgba(0,0,0,.5)" strokeWidth="4" />
+          <circle cx={drag.x} cy={drag.y + DRAG_LIFT} r="11" fill="none" stroke="#F6BF26" strokeWidth="2" />
+          <circle cx={drag.x} cy={drag.y + DRAG_LIFT} r="1.5" fill="#F6BF26" />
+        </svg>
+      )}
 
       {/* Photo callouts — tappable, opening the same detail sheet as the pin. */}
       {callouts.map(c => {
@@ -414,10 +656,12 @@ export default function TileMap({
             }}
           >
             <div style={{ position: "relative", height: PH, borderRadius: 6, overflow: "hidden", background: "#c8cfda" }}>
-              <img
-                src={smallThumb(c.pin.photo)}
-                alt=""
-                draggable={false}
+              {/* Retries, then falls back to the local capture if the Drive
+                  thumbnail won't load — Drive throttles bursts of thumbnail
+                  requests, which is why photos came and went. */}
+              <RetryImg
+                src={smallThumb(c.pin.photo) || c.pin.photoLocal}
+                fallback={c.pin.photo ? c.pin.photoLocal : null}
                 style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
               />
               <span style={{
@@ -437,8 +681,8 @@ export default function TileMap({
       })}
 
       {/* Imagery is a free courtesy service with no SLA — say so plainly rather
-          than leaving a blank blue rectangle. */}
-      {tileFail > 6 && tiles.length > 0 && (
+          than leaving a blank blue rectangle. Only after retries have failed. */}
+      {tileFail > 3 && tiles.length > 0 && (
         <div style={{
           position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)",
           padding: "7px 14px", borderRadius: 999, background: "rgba(0,0,0,.75)",

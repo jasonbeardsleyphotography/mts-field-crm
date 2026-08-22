@@ -1,9 +1,17 @@
+// v35: CRITICAL image fix. A cross-origin <img> produces a no-cors request, so
+// fetch() in the SW resolves to an OPAQUE response whose status is always 0 —
+// indistinguishable from success. The old rule `if (r.ok || r.type === "opaque")`
+// therefore CACHED FAILURES: one throttled Drive thumbnail (403) or one Esri tile
+// error got stored and replayed forever, which is exactly the "photos and maps
+// don't consistently show up / blank grey space" report. Map tiles and Drive
+// thumbnails now bypass the SW entirely, and opaque responses are never cached.
+//
 // v8: cache-name bump to force every client onto the empty-route recovery fix
 // (auth-aware reload, fresh-token load, Reconnect escalation, stable stops
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v34";
+const CACHE = "mts-field-v35";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
@@ -26,6 +34,14 @@ self.addEventListener("activate", (e) => {
 const BYPASS = ["googleapis.com", "generativelanguage", "accounts.google.com",
                 "maps.googleapis.com", "fonts.googleapis.com", "fonts.gstatic.com",
                 "router.project-osrm.org",
+                // Remote imagery: satellite tiles and Drive photo thumbnails.
+                // These MUST go straight to the network. They are fetched
+                // no-cors by <img>, so a failure is opaque and looks identical
+                // to a success — caching one poisons that exact tile/photo for
+                // good and it renders as permanent grey. The browser's own HTTP
+                // cache already handles them properly, headers and all.
+                "arcgisonline.com", "drive.google.com", "googleusercontent.com",
+                "drive.usercontent.google.com",
                 // Same-origin backend endpoints (token refresh, OAuth) must NEVER
                 // be cached: the stale-while-revalidate path below would otherwise
                 // serve a previous /api/token response — an already-expired access
@@ -61,7 +77,10 @@ self.addEventListener("fetch", (e) => {
     caches.open(CACHE).then(async cache => {
       const cached = await cache.match(e.request);
       const networkFetch = fetch(e.request).then(r => {
-        if (r.ok || r.type === "opaque") cache.put(e.request, r.clone());
+        // Only cache responses we can actually verify. An opaque response
+        // (any no-cors cross-origin fetch) reports status 0 whether it was a
+        // 200 or a 403, so storing one risks caching an error permanently.
+        if (r.ok && r.type !== "opaque") cache.put(e.request, r.clone());
         return r;
       }).catch(() => null);
       return cached ?? networkFetch;

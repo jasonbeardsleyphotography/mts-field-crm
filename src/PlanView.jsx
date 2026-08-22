@@ -34,6 +34,29 @@ export default function PlanView({ planId }) {
   // edges, lines to pins). The toggle drops back to bare pins for navigating.
   const [showPhotos, setShowPhotos] = useState(true);
   const watchId = useRef(null);
+  const wakeLock = useRef(null);
+
+  // Keep the screen on. A crew member walks the property with this open in one
+  // hand; a screen that blanks every thirty seconds makes it useless. Best
+  // effort — Wake Lock is unsupported on older iOS and simply won't engage.
+  useEffect(() => {
+    let released = false;
+    const acquire = async () => {
+      try {
+        if (document.visibilityState !== "visible") return;
+        wakeLock.current = await navigator.wakeLock?.request("screen");
+      } catch { /* unsupported or denied — not worth telling the crew about */ }
+    };
+    acquire();
+    // iOS drops the lock whenever the tab is backgrounded; take it again.
+    const onVis = () => { if (!released && document.visibilityState === "visible") acquire(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      released = true;
+      document.removeEventListener("visibilitychange", onVis);
+      try { wakeLock.current?.release(); } catch {}
+    };
+  }, []);
 
   // ── Load the plan ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -111,6 +134,14 @@ export default function PlanView({ planId }) {
   if (state === "error") return shell("Couldn't load the site plan", "Check your connection and try again.");
 
   const photoCount = plan.pins.filter(p => p.photo).length;
+  // Every pin ranked by how far away it is. Standing on a property, "which of
+  // these is nearest me" is the question you actually have, and scanning a map
+  // for the closest dot is slower than reading it off a row of chips.
+  const ranked = userPos
+    ? plan.pins
+        .map((p, i) => ({ p, i, m: distanceMeters(userPos, p) }))
+        .sort((a, b) => a.m - b.m)
+    : [];
   const selPin = sel != null ? plan.pins[sel] : null;
   const selDist = selPin && userPos
     ? `${fmtDistance(distanceMeters(userPos, selPin))} ${compassFrom(userPos, selPin)}`
@@ -148,9 +179,48 @@ export default function PlanView({ planId }) {
         )}
         <div style={{ fontSize: 11, color: "#8fa0b6", marginTop: 3, textShadow: "0 1px 4px rgba(0,0,0,.7)" }}>
           {plan.pins.length} marked {plan.pins.length === 1 ? "location" : "locations"}
-          {" · "}{showPhotos ? "tap a photo for full size" : "tap a pin for its photo"}
+          {" · "}{locState === "on"
+            ? "nearest first along the bottom"
+            : showPhotos ? "tap a photo for full size" : "tap a pin for its photo"}
         </div>
       </div>
+
+      {/* ── Nearest locations ──────────────────────────────────────────── */}
+      {ranked.length > 0 && !selPin && (
+        <div style={{
+          position: "absolute", left: 0, right: 0,
+          bottom: "calc(max(20px, env(safe-area-inset-bottom)) + 58px)",
+          display: "flex", gap: 8, overflowX: "auto",
+          padding: "0 max(14px, env(safe-area-inset-left)) 4px",
+          WebkitOverflowScrolling: "touch",
+        }}>
+          {ranked.map(({ p, i, m }, rank) => (
+            <button
+              key={i}
+              onClick={() => {
+                setSel(i);
+                setView(v => ({ center: { lat: p.lat, lng: p.lng }, zoom: Math.max(v.zoom, 18.5) }));
+              }}
+              style={{
+                flexShrink: 0, display: "flex", alignItems: "center", gap: 7,
+                padding: "9px 13px", borderRadius: 999,
+                background: rank === 0 ? "rgba(26,115,232,.95)" : "rgba(28,28,30,.9)",
+                border: `1px solid ${rank === 0 ? "#4c9aff" : "rgba(255,255,255,.18)"}`,
+                cursor: "pointer", boxShadow: "0 4px 16px rgba(0,0,0,.5)",
+              }}
+            >
+              <span style={{
+                width: 20, height: 20, borderRadius: 10, background: "#F6BF26",
+                color: "#1a1400", fontFamily: F, fontWeight: 700, fontSize: 11.5,
+                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+              }}>{p.n ?? i + 1}</span>
+              <span style={{ color: "#fff", fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap" }}>
+                {fmtDistance(m)} {compassFrom(userPos, p)}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ── Location controls ──────────────────────────────────────────── */}
       <div style={{

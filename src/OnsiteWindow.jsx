@@ -996,8 +996,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       stop={s}
       token={token}
       pins={mapPins}
-      photos={allPhotosForMap}
-      onPinsChange={handlePinsChange}
       onClose={() => setShowParcelMap(false)}
       onSnapshot={async (rawDataUrl) => {
         // Same downscale-then-store flow as camera photos (see showCamera
@@ -1682,7 +1680,7 @@ ${combined}`);
         {/* ── SITE PLAN ──────────────────────────────────────────────────
             Live plan right under the photos: no navigation needed, and both
             actions (JPEG, crew link) are here rather than behind the map. */}
-        <SitePlanPanel stop={s} pins={mapPins} photos={allPhotosForMap} token={token} />
+        <SitePlanPanel stop={s} pins={mapPins} photos={allPhotosForMap} token={token} onPinsChange={handlePinsChange} />
 
         {/* ── VIDEO ─────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>

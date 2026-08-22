@@ -1,53 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { loadMaps, geocode } from "./RouteMap";
 import { attachParcelOverlay, detachParcelOverlay, parcelFeatureToInfo } from "./parcelOverlay";
-import { IconX, IconCamera, IconMapPin, IconTrash, IconPlus } from "./icons";
-import { getCurrentGeo } from "./geoCapture";
-import { buildCalloutMap } from "./treeMapExport";
-import { buildPlanPayload, createPlanLink } from "./planShare";
+import { IconX, IconCamera } from "./icons";
 
-/* Build a small rounded "photo window" marker icon from a full-size photo.
-   Photos are 3200px — using one directly as a marker icon would pin a huge
-   bitmap in memory per pin, so each is drawn down to a ~56px framed tile. */
-function makePhotoIcon(dataUrl, size = 56) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const pad = 3, r = 9, w = size + pad * 2, h = size + pad * 2 + 6;
-        const c = document.createElement("canvas");
-        c.width = w; c.height = h;
-        const x = c.getContext("2d");
-        // Pointer stem below the tile
-        x.beginPath();
-        x.moveTo(w / 2 - 5, h - 7); x.lineTo(w / 2, h); x.lineTo(w / 2 + 5, h - 7);
-        x.closePath();
-        x.fillStyle = "#fff"; x.fill();
-        // Rounded white frame
-        x.beginPath();
-        x.moveTo(pad + r, pad);
-        x.arcTo(w - pad, pad, w - pad, h - pad - 6, r);
-        x.arcTo(w - pad, h - pad - 6, pad, h - pad - 6, r);
-        x.arcTo(pad, h - pad - 6, pad, pad, r);
-        x.arcTo(pad, pad, w - pad, pad, r);
-        x.closePath();
-        x.fillStyle = "#fff"; x.fill();
-        x.save(); x.clip();
-        // Cover-fit the photo into the tile
-        const s = Math.max(size / img.width, size / img.height);
-        const dw = img.width * s, dh = img.height * s;
-        x.drawImage(img, pad + (size - dw) / 2, pad + (size - dh) / 2, dw, dh);
-        x.restore();
-        resolve({ url: c.toDataURL("image/jpeg", 0.8), w, h });
-      } catch { resolve(null); }
-    };
-    img.onerror = () => resolve(null);
-    img.src = dataUrl;
-  });
-}
-
-/* Plain numbered pin for points with no photo attached. Drawn as SVG so it
-   stays crisp and costs nothing to generate. */
 function makeDotIcon(n, color = "#F6BF26") {
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="44" viewBox="0 0 34 44">` +
@@ -64,6 +19,10 @@ function makeDotIcon(n, color = "#F6BF26") {
    a bottom sheet. "Snapshot" captures the current view (including whatever
    parcel lines are drawn) and hands the image back to the caller, which
    stores it the same way a camera photo is stored.
+
+   Tree pins are READ-ONLY here — plain numbered dots for reference. Placing,
+   dragging, labelling and sharing them all live on the on-site screen's Site
+   Plan panel, which is where the photos they belong to already are.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const F = "'Oswald',sans-serif";
@@ -71,20 +30,11 @@ const F = "'Oswald',sans-serif";
 export default function ParcelMapView({
   stop, onClose, onSnapshot, token,
   pins = [],            // [{ id, lat, lng, source, photoId, label, acc, ts, adjusted }]
-  photos = [],          // all photos on this card, for thumbnails + previews
-  onPinsChange,         // (nextPins) => void
 }) {
   const ref = useRef(null);
   const map = useRef(null);
   const parcelHandle = useRef(null);
   const pinMarkers = useRef([]);        // live google.maps.Marker instances
-  const thumbCache = useRef(new Map()); // photoId -> {url,w,h}, so re-renders are cheap
-  const pinsRef = useRef(pins);         // current pins for use inside map listeners
-  const [addMode, setAddMode] = useState(false); // tap-map-to-drop armed
-  const [openPin, setOpenPin] = useState(null);  // pin shown in the detail sheet
-  const addModeRef = useRef(false);              // read inside map listeners
-  useEffect(() => { pinsRef.current = pins; }, [pins]);
-  useEffect(() => { addModeRef.current = addMode; }, [addMode]);
   const [ready, setReady] = useState(false);
   const [info, setInfo] = useState(null); // parcel info shown in bottom sheet
   const [snapping, setSnapping] = useState(false);
@@ -98,10 +48,6 @@ export default function ParcelMapView({
   const watchId   = useRef(null);
   const [hasFix, setHasFix] = useState(false);
   const [mapReady, setMapReady] = useState(false); // true once map.current exists
-  const [exporting, setExporting] = useState(false);
-  const [planUrl, setPlanUrl] = useState(null);     // built site plan, shown for review
-  const [sharing, setSharing] = useState(false);
-  const [shareLink, setShareLink] = useState(null); // live crew link, once created
 
   useEffect(() => { loadMaps().then(() => setReady(true)).catch(() => {}); }, []);
 
@@ -149,204 +95,35 @@ export default function ParcelMapView({
     );
   }, [updateLocation]);
 
-  // ── PIN MUTATIONS ────────────────────────────────────────────────────────
-  const commitPins = useCallback((next) => { onPinsChange?.(next); }, [onPinsChange]);
-
-  const addPin = useCallback((p) => {
-    const pin = {
-      id: `pin_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      ts: Date.now(), ...p,
-    };
-    commitPins([...(pinsRef.current || []), pin]);
-    return pin;
-  }, [commitPins]);
-
-  const addPinRef = useRef(addPin);
-  useEffect(() => { addPinRef.current = addPin; }, [addPin]);
-
-  const movePin = useCallback((id, lat, lng) => {
-    // `adjusted` records that a human placed this point, so a GPS-derived
-    // position is never silently trusted over a corrected one.
-    commitPins((pinsRef.current || []).map(p =>
-      p.id === id ? { ...p, lat, lng, adjusted: true } : p));
-  }, [commitPins]);
-
-  const deletePin = useCallback((id) => {
-    commitPins((pinsRef.current || []).filter(p => p.id !== id));
-    setOpenPin(null);
-  }, [commitPins]);
-
-  // Link a photo to a pin. This is what lets a map-tapped pin — placed exactly
-  // on the tree, rather than where you happened to be standing — carry the
-  // photo of that tree into the site plan.
-  const attachPhoto = useCallback((pinId, photoId) => {
-    commitPins((pinsRef.current || []).map(p =>
-      p.id === pinId ? { ...p, photoId: photoId || undefined } : p));
-    setOpenPin(prev => prev && prev.id === pinId ? { ...prev, photoId: photoId || undefined } : prev);
-  }, [commitPins]);
-
-  const labelPin = useCallback((id, label) => {
-    commitPins((pinsRef.current || []).map(p => p.id === id ? { ...p, label } : p));
-    setOpenPin(prev => prev && prev.id === id ? { ...prev, label } : prev);
-  }, [commitPins]);
-
-  // Drop a pin at the phone's current position. Uses the warm fix when we have
-  // one so this is instant; falls back to a one-shot lock otherwise.
-  const [dropping, setDropping] = useState(false);
-  const dropPinAtMe = useCallback(async () => {
-    setDropping(true);
-    try {
-      const g = await getCurrentGeo();
-      if (!g) { setSnapError("Couldn't get your location — try again in a moment."); return; }
-      addPin({ lat: g.lat, lng: g.lng, acc: g.acc, source: "gps" });
-      if (map.current) { map.current.panTo({ lat: g.lat, lng: g.lng }); if (map.current.getZoom() < 19) map.current.setZoom(19); }
-    } finally { setDropping(false); }
-  }, [addPin]);
-
-  // ── RENDER PINS AS MARKERS ───────────────────────────────────────────────
-  // Rebuilt whenever the pin list changes. Thumbnails are cached by photo id so
-  // a drag or a label edit doesn't re-decode any images.
+  // ── RENDER PINS (READ-ONLY) ──────────────────────────────────────────────
+  // Pin editing lives on the on-site screen's Site Plan panel now, not buried
+  // in here. What's left is a reference layer: numbered dots showing where the
+  // trees are while you read the property lines.
+  //
+  // Deliberately NOT photo thumbnails. A photo marker covers the exact ground
+  // it is marking, and on a phone your fingertip covers whatever is left — the
+  // marker hid the very thing it was pointing at.
   useEffect(() => {
     const g = window.google?.maps;
     if (!g || !map.current) return;
-    let dead = false;
-    (async () => {
-      // Pre-build any thumbnails we don't have yet, one at a time (never all
-      // full-size photos in memory at once).
-      for (const p of pins) {
-        if (!p.photoId || thumbCache.current.has(p.photoId)) continue;
-        const photo = photos.find(ph => (ph.id || ph.ts) === p.photoId);
-        const src = photo?.dataUrl || photo?.url;
-        if (!src) continue;
-        const icon = await makePhotoIcon(src);
-        if (dead) return;
-        if (icon) thumbCache.current.set(p.photoId, icon);
-      }
-      if (dead) return;
-      pinMarkers.current.forEach(m => m.setMap(null));
-      pinMarkers.current = pins.map((p, i) => {
-        const thumb = p.photoId ? thumbCache.current.get(p.photoId) : null;
-        const icon = thumb
-          ? { url: thumb.url, scaledSize: new g.Size(thumb.w, thumb.h), anchor: new g.Point(thumb.w / 2, thumb.h) }
-          : { url: makeDotIcon(i + 1, p.source === "gps" ? "#4c9aff" : "#F6BF26"),
-              scaledSize: new g.Size(34, 44), anchor: new g.Point(17, 44) };
-        const marker = new g.Marker({
-          map: map.current, position: { lat: p.lat, lng: p.lng },
-          draggable: true, icon, zIndex: 500 + i,
-          title: p.label || (p.photoId ? "Photo location" : `Pin ${i + 1}`),
-        });
-        marker.addListener("dragend", (e) => movePin(p.id, e.latLng.lat(), e.latLng.lng()));
-        marker.addListener("click", () => setOpenPin(p));
-        return marker;
-      });
-    })();
-    return () => { dead = true; };
-  }, [pins, photos, movePin, mapReady]);
+    pinMarkers.current.forEach(m => m.setMap(null));
+    pinMarkers.current = pins
+      .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+      .map((p, i) => new g.Marker({
+        map: map.current,
+        position: { lat: p.lat, lng: p.lng },
+        clickable: false,
+        icon: {
+          url: makeDotIcon(i + 1, p.source === "gps" ? "#4c9aff" : "#F6BF26"),
+          scaledSize: new g.Size(34, 44), anchor: new g.Point(17, 44),
+        },
+        zIndex: 500 + i,
+        title: p.label || `Pin ${i + 1}`,
+      }));
+  }, [pins, mapReady]);
 
   // Clear markers on unmount so nothing is left attached to a dead map.
   useEffect(() => () => { pinMarkers.current.forEach(m => m.setMap(null)); pinMarkers.current = []; }, []);
-
-  // Pull the drawn parcel boundary out of the map's data layer so the exported
-  // plan carries the property lines, not just the pins.
-  const getParcelPaths = useCallback(() => {
-    const out = [];
-    try {
-      map.current?.data?.forEach((feature) => {
-        const geo = feature.getGeometry?.();
-        if (!geo) return;
-        const pushPoly = (poly) => poly.getArray().forEach(ring =>
-          out.push(ring.getArray().map(ll => ({ lat: ll.lat(), lng: ll.lng() }))));
-        const t = geo.getType?.();
-        if (t === "Polygon") pushPoly(geo);
-        else if (t === "MultiPolygon") geo.getArray().forEach(pushPoly);
-      });
-    } catch { /* boundary is a bonus — never block the export on it */ }
-    return out;
-  }, []);
-
-  // Only photos marked for the plan (opt-out via `planOff` on the card), plus
-  // any pin that isn't tied to an excluded photo. Pins you placed with no photo
-  // are always kept — they're trees you marked.
-  const planPhotos = photos.filter(ph => !ph.planOff);
-  const planPhotoIds = new Set(planPhotos.map(ph => ph.id || ph.ts));
-  const planPins = pins.filter(p => !p.photoId || planPhotoIds.has(p.photoId));
-  const planCount = planPins.filter(p => p.photoId).length
-    + planPhotos.filter(ph => ph.geo && !pins.some(p => p.photoId === (ph.id || ph.ts))).length;
-
-  // Build the callout site plan. Shown for review first rather than saved
-  // straight away: the build takes a few seconds, and iOS only allows sharing
-  // from a fresh tap — so the Save button in the preview is the gesture.
-  const exportPlan = useCallback(async () => {
-    if (exporting) return;
-    setExporting(true);
-    setSnapError(null);
-    try {
-      const url = await buildCalloutMap({
-        pins: planPins, photos: planPhotos, parcelPaths: getParcelPaths(),
-        meta: {
-          client: stop?.cn, address: stop?.addr,
-          date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-        },
-      });
-      if (!url) { setSnapError("Nothing to plot - add a pin, or switch a photo on for the plan."); return; }
-      setPlanUrl(url);
-    } catch (e) {
-      console.warn("Site plan export failed:", e);
-      setSnapError(e?.message === "map-imagery-unavailable"
-        ? "Couldn't load map imagery - check your signal and try again."
-        : "Couldn't build the site plan - try again.");
-    } finally { setExporting(false); }
-  }, [exporting, planPins, planPhotos, getParcelPaths, stop?.cn, stop?.addr]);
-
-  const savePlan = useCallback(async () => {
-    if (!planUrl) return;
-    const name = `${(stop?.cn || "site").replace(/[^\w]+/g, "_")}_site_plan.jpg`;
-    try {
-      const blob = await (await fetch(planUrl)).blob();
-      const file = new File([blob], name, { type: "image/jpeg" });
-      if (navigator.canShare?.({ files: [file] })) {
-        try { await navigator.share({ files: [file] }); return; } catch { /* dismissed */ }
-      }
-      const u = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = u; a.download = name;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(u), 20000);
-    } catch { setSnapError("Couldn't save the plan."); }
-  }, [planUrl, stop?.cn]);
-
-  // Create the public crew link: the same pins, but as a LIVE map the crew can
-  // open on their own phones and see themselves on. Runs from the preview's
-  // button so it's inside a user gesture (iOS requires that to share).
-  const shareWithCrew = useCallback(async () => {
-    if (sharing) return;
-    const { payload, pendingPhotos } = buildPlanPayload({
-      pins: planPins, photos: planPhotos, parcelPaths: getParcelPaths(), stop,
-    });
-    if (!payload.pins.length) { setSnapError("Add at least one pin first."); return; }
-    if (pendingPhotos > 0 && !window.confirm(
-      `${pendingPhotos} photo${pendingPhotos === 1 ? " hasn't" : "s haven't"} finished uploading yet, so ` +
-      `${pendingPhotos === 1 ? "it won't" : "they won't"} show for your crew. Share anyway?`
-    )) return;
-    setSharing(true);
-    setSnapError(null);
-    try {
-      const link = await createPlanLink(token, payload);
-      setShareLink(link);
-      try { await navigator.clipboard?.writeText(link); } catch {}
-      if (navigator.share) {
-        try {
-          await navigator.share({
-            title: `Site plan — ${stop?.cn || "job"}`,
-            text: `Tree locations for ${stop?.addr || "this job"}. Open on your phone and allow location to see where you are.`,
-            url: link,
-          });
-        } catch { /* dismissed — the link is on the clipboard and shown below */ }
-      }
-    } catch (e) {
-      setSnapError(e?.message || "Couldn't create the share link.");
-    } finally { setSharing(false); }
-  }, [sharing, planPins, planPhotos, getParcelPaths, stop, token]);
 
   // Flip the base imagery between Google (hybrid, with labels) and Esri aerial.
   const toggleImagery = useCallback(() => {
@@ -389,17 +166,8 @@ export default function ParcelMapView({
         onceIdle.remove();
         if (dead) return;
         parcelHandle.current = attachParcelOverlay(map.current, {
-          // While arming a pin, a tap means "put it here" — don't also pop the
-          // parcel info sheet over the spot the user just aimed at.
-          onParcelClick: (feature) => { if (!addModeRef.current) setInfo(parcelFeatureToInfo(feature)); },
+          onParcelClick: (feature) => setInfo(parcelFeatureToInfo(feature)),
           onStatus: (s) => setParcelStatus(s),
-        });
-        // Tap-to-place. One-shot: arming, tapping, then disarming prevents a
-        // stray tap while panning from scattering pins across the property.
-        map.current.addListener("click", (e) => {
-          if (!addModeRef.current || !e?.latLng) return;
-          addPinRef.current({ lat: e.latLng.lat(), lng: e.latLng.lng(), source: "map" });
-          setAddMode(false);
         });
       });
       // Start tracking the user's location (blue dot). watchPosition keeps it
@@ -541,165 +309,20 @@ export default function ParcelMapView({
         </svg>
       </button>
 
-      {/* ── PIN CONTROLS (left side: capture) ───────────────────────────── */}
-      {/* Tap-to-place. Arming first means a stray tap while panning can't
-          scatter pins across the property. */}
-      <button
-        onClick={() => { setAddMode(v => !v); setInfo(null); }}
-        aria-label="Add a pin by tapping the map"
-        style={{
-          position: "absolute",
-          left: "max(14px, env(safe-area-inset-left))",
-          bottom: "max(148px, calc(env(safe-area-inset-bottom) + 132px))",
-          display: "flex", alignItems: "center", gap: 6,
-          padding: "9px 13px", borderRadius: 999,
-          background: addMode ? "rgba(246,191,38,.95)" : "rgba(28,28,30,.85)",
-          border: `1px solid ${addMode ? "#F6BF26" : "rgba(255,255,255,.16)"}`,
-          color: addMode ? "#1a1400" : "#fff",
-          fontSize: 12, fontWeight: 800, fontFamily: F, letterSpacing: 0.5,
-          cursor: "pointer", boxShadow: "0 4px 16px rgba(0,0,0,.4)",
-        }}
-      >
-        <IconPlus size={15} color={addMode ? "#1a1400" : "#F6BF26"} />
-        {addMode ? "TAP A TREE" : "ADD PIN"}
-      </button>
-
-      {/* Drop at the phone's current position — for when you're standing at
-          the trunk and the canopy isn't identifiable from above. */}
-      <button
-        onClick={dropPinAtMe}
-        disabled={dropping}
-        aria-label="Drop a pin at my current location"
-        style={{
-          position: "absolute",
-          left: "max(14px, env(safe-area-inset-left))",
-          bottom: "max(92px, calc(env(safe-area-inset-bottom) + 76px))",
-          display: "flex", alignItems: "center", gap: 6,
-          padding: "9px 13px", borderRadius: 999,
-          background: "rgba(28,28,30,.85)", border: "1px solid rgba(255,255,255,.16)",
-          color: "#fff", fontSize: 12, fontWeight: 800, fontFamily: F, letterSpacing: 0.5,
-          cursor: dropping ? "default" : "pointer", opacity: dropping ? 0.6 : 1,
-          boxShadow: "0 4px 16px rgba(0,0,0,.4)",
-        }}
-      >
-        <IconMapPin size={15} color="#4c9aff" />
-        {dropping ? "LOCATING…" : "PIN AT ME"}
-      </button>
-
-      {/* Arming hint + accuracy honesty. Under canopy a GPS fix is often 10m+,
-          which matters when the points represent individual trees. */}
-      {(addMode || pins.length > 0) && (
+      {/* Read-only reminder of where the pins are edited. */}
+      {pins.length > 0 && (
         <div style={{
           position: "absolute",
           top: "max(56px, calc(env(safe-area-inset-top) + 44px))",
           left: "50%", transform: "translateX(-50%)",
           padding: "7px 14px", borderRadius: 999, whiteSpace: "nowrap",
-          background: addMode ? "rgba(246,191,38,.95)" : "rgba(28,28,30,.82)",
-          border: `1px solid ${addMode ? "#F6BF26" : "rgba(255,255,255,.14)"}`,
-          color: addMode ? "#1a1400" : "#cfd8e6",
-          fontSize: 11.5, fontWeight: 700, fontFamily: F, letterSpacing: 0.4,
-          boxShadow: "0 4px 16px rgba(0,0,0,.4)", pointerEvents: "none",
+          background: "rgba(28,28,30,.82)", border: "1px solid rgba(255,255,255,.14)",
+          color: "#cfd8e6", fontSize: 11.5, fontWeight: 700, fontFamily: F,
+          letterSpacing: 0.4, boxShadow: "0 4px 16px rgba(0,0,0,.4)", pointerEvents: "none",
         }}>
-          {addMode
-            ? "TAP THE TREE ON THE MAP"
-            : `${pins.length} PIN${pins.length === 1 ? "" : "S"} · DRAG TO CORRECT`}
+          {`${pins.length} PIN${pins.length === 1 ? "" : "S"} · EDIT ON THE SITE PLAN`}
         </div>
       )}
-
-      {/* ── PIN DETAIL SHEET ────────────────────────────────────────────── */}
-      {openPin && (() => {
-        const live = pins.find(p => p.id === openPin.id) || openPin;
-        const photo = live.photoId ? photos.find(ph => (ph.id || ph.ts) === live.photoId) : null;
-        const src = photo?.dataUrl || photo?.url || null;
-        const idx = pins.findIndex(p => p.id === live.id);
-        return (
-          <div onClick={() => setOpenPin(null)} style={{
-            position: "absolute", inset: 0, zIndex: 20,
-            background: "rgba(0,0,0,.45)", display: "flex", alignItems: "flex-end",
-          }}>
-            <div onClick={e => e.stopPropagation()} style={{
-              width: "100%", background: "#0e1120", borderTop: "1px solid #253049",
-              borderTopLeftRadius: 16, borderTopRightRadius: 16,
-              padding: "14px 16px max(18px, env(safe-area-inset-bottom))",
-              boxShadow: "0 -12px 40px rgba(0,0,0,.6)",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                <div style={{ flex: 1, fontSize: 12, fontWeight: 800, color: "#F6BF26", fontFamily: F, letterSpacing: 0.8, textTransform: "uppercase" }}>
-                  Pin {idx >= 0 ? idx + 1 : ""}
-                  <span style={{ color: "#5a6580", fontWeight: 600, marginLeft: 8, letterSpacing: 0.3 }}>
-                    {live.source === "photo" ? "from photo" : live.source === "gps" ? "from GPS" : "placed on map"}
-                    {live.adjusted ? " · adjusted" : live.acc ? ` · ±${live.acc}m` : ""}
-                  </span>
-                </div>
-                <button onClick={() => setOpenPin(null)} style={{
-                  width: 30, height: 30, borderRadius: 15, background: "transparent",
-                  border: "1px solid #253049", cursor: "pointer",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}><IconX size={14} color="#8aa0c0" /></button>
-              </div>
-              {src && (
-                <img src={src} alt="" style={{
-                  width: "100%", maxHeight: 190, objectFit: "cover",
-                  borderRadius: 10, marginBottom: 12, border: "1px solid #1a2540",
-                }} />
-              )}
-              {/* Attach / swap the photo shown for this pin. */}
-              {photos.length > 0 && (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 800, color: "#5a6580", fontFamily: F, letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 6 }}>
-                    {live.photoId ? "Photo — tap to change or remove" : "Attach a photo"}
-                  </div>
-                  <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
-                    {photos.map((ph) => {
-                      const pid = ph.id || ph.ts;
-                      const on = live.photoId === pid;
-                      const psrc = ph.dataUrl || ph.url;
-                      if (!psrc) return null;
-                      return (
-                        <button
-                          key={pid}
-                          onClick={() => attachPhoto(live.id, on ? null : pid)}
-                          style={{
-                            flexShrink: 0, width: 66, height: 66, padding: 0,
-                            borderRadius: 8, overflow: "hidden", cursor: "pointer",
-                            border: on ? "3px solid #F6BF26" : "1px solid #253049",
-                            background: "#0a0c14",
-                          }}
-                        >
-                          <img src={psrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-              <input
-                value={live.label || ""}
-                onChange={e => labelPin(live.id, e.target.value)}
-                placeholder="Label (e.g. Sugar maple — remove)"
-                style={{
-                  width: "100%", boxSizing: "border-box", padding: "10px 12px",
-                  borderRadius: 8, background: "#0a0c14", border: "1px solid #253049",
-                  color: "#e0e8f0", fontSize: 14, outline: "none", marginBottom: 12,
-                  fontFamily: "'DM Sans',system-ui,sans-serif",
-                }}
-              />
-              <div style={{ display: "flex", gap: 8 }}>
-                <div style={{ flex: 1, fontSize: 11, color: "#5a6580", lineHeight: 1.4, alignSelf: "center" }}>
-                  Drag the pin on the map to correct its position.
-                </div>
-                <button onClick={() => deletePin(live.id)} style={{
-                  display: "flex", alignItems: "center", gap: 6,
-                  padding: "9px 14px", borderRadius: 8,
-                  background: "rgba(200,60,60,.12)", border: "1px solid rgba(200,60,60,.3)",
-                  color: "#e06060", fontSize: 11.5, fontWeight: 800,
-                  cursor: "pointer", fontFamily: F, letterSpacing: 0.5, textTransform: "uppercase",
-                }}><IconTrash size={14} color="#e06060" /> Remove</button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
 
       {/* ── SNAPSHOT BUTTON ─────────────────────────────────────────────── */}
       <div style={{
@@ -724,91 +347,7 @@ export default function ParcelMapView({
           {snapping ? "Saving..." : "Snapshot"}
         </button>
 
-        {/* Callout site plan — photos arranged AROUND the map with leader lines
-            to their pin, so the map itself stays readable. */}
-        <button
-          onClick={exportPlan}
-          disabled={!ready || exporting || pins.length === 0}
-          style={{
-            pointerEvents: "auto", marginLeft: 10,
-            display: "flex", alignItems: "center", gap: 8,
-            padding: "12px 22px", borderRadius: 999,
-            background: pins.length ? "rgba(246,191,38,.92)" : "rgba(28,28,30,.85)",
-            border: `1px solid ${pins.length ? "#F6BF26" : "rgba(255,255,255,.16)"}`,
-            color: pins.length ? "#1a1400" : "#8b93a4",
-            fontSize: 13, fontWeight: 800, fontFamily: F, letterSpacing: 0.5,
-            cursor: ready && !exporting && pins.length ? "pointer" : "default",
-            opacity: exporting ? 0.7 : 1,
-            boxShadow: "0 4px 16px rgba(0,0,0,.4)",
-          }}
-        >
-          <IconMapPin size={16} color={pins.length ? "#1a1400" : "#8b93a4"} />
-          {exporting ? "Building..." : planCount ? `Site Plan (${planCount})` : "Site Plan"}
-        </button>
       </div>
-
-      {/* ── SITE PLAN PREVIEW ───────────────────────────────────────────── */}
-      {planUrl && (
-        <div style={{
-          position: "absolute", inset: 0, zIndex: 40, background: "rgba(0,0,0,.88)",
-          display: "flex", flexDirection: "column",
-          padding: "max(14px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom))",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-            <div style={{ flex: 1, fontSize: 13, fontWeight: 800, color: "#F6BF26", fontFamily: F, letterSpacing: 1, textTransform: "uppercase" }}>
-              Site Plan
-            </div>
-            <button onClick={() => setPlanUrl(null)} aria-label="Close preview" style={{
-              width: 34, height: 34, borderRadius: 17, background: "rgba(28,28,30,.8)",
-              border: "1px solid rgba(255,255,255,.16)", cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}><IconX size={16} color="#fff" /></button>
-          </div>
-          <div style={{ flex: 1, minHeight: 0, overflow: "auto", borderRadius: 10, background: "#0d1017" }}>
-            <img src={planUrl} alt="Site plan" style={{ width: "100%", display: "block" }} />
-          </div>
-          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-            <button onClick={savePlan} style={{
-              flex: 1, padding: "13px 0", borderRadius: 10,
-              background: "#F6BF26", border: "none", color: "#1a1400",
-              fontSize: 13, fontWeight: 800, fontFamily: F, letterSpacing: 0.5,
-              textTransform: "uppercase", cursor: "pointer",
-            }}>Save / Share</button>
-            <button
-              onClick={async () => { const u = planUrl; setPlanUrl(null); await onSnapshot?.(u); }}
-              style={{
-                flex: 1, padding: "13px 0", borderRadius: 10,
-                background: "rgba(255,255,255,.08)", border: "1px solid rgba(255,255,255,.2)",
-                color: "#e6ecf5", fontSize: 13, fontWeight: 800, fontFamily: F,
-                letterSpacing: 0.5, textTransform: "uppercase", cursor: "pointer",
-              }}>Add to Card</button>
-          </div>
-          {/* Live link for the crew: same pins, but a map they can open on their
-              own phones and see themselves on. */}
-          <button
-            onClick={shareWithCrew}
-            disabled={sharing}
-            style={{
-              width: "100%", marginTop: 8, padding: "13px 0", borderRadius: 10,
-              background: "rgba(26,115,232,.95)", border: "none", color: "#fff",
-              fontSize: 13, fontWeight: 800, fontFamily: F, letterSpacing: 0.5,
-              textTransform: "uppercase", cursor: sharing ? "default" : "pointer",
-              opacity: sharing ? 0.7 : 1,
-            }}
-          >{sharing ? "Creating link..." : "Share Live Map with Crew"}</button>
-          {shareLink && (
-            <div style={{
-              marginTop: 8, padding: "10px 12px", borderRadius: 8,
-              background: "rgba(26,115,232,.12)", border: "1px solid rgba(26,115,232,.35)",
-            }}>
-              <div style={{ fontSize: 10.5, fontWeight: 800, color: "#7db4ff", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4 }}>
-                Link copied - crew can open this on any phone
-              </div>
-              <div style={{ fontSize: 12, color: "#cfe0f5", wordBreak: "break-all" }}>{shareLink}</div>
-            </div>
-          )}
-        </div>
-      )}
 
       {snapError && (
         <div style={{
