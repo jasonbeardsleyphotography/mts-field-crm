@@ -834,6 +834,20 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // When the user enters markup mode, pick the right image source. If the
   // photo has been promoted (no local dataUrl), fetch it from its Drive URL
   // into a blob URL we can pass to PhotoMarkup.
+  //
+  // The effect is keyed on the IMAGE SOURCE, not on the photo arrays. Any edit
+  // to a photo record replaces those arrays — including flipping the site-plan
+  // toggle from inside markup — and re-running this for a Drive-hosted photo
+  // revokes the blob URL out from under the open editor and reloads the
+  // canvas mid-annotation.
+  const markupSourceKey = (() => {
+    if (markupIdx === null) return null;
+    const arr = markupSection === "addon" ? addonPhotos : scopePhotos;
+    const ph = arr[markupIdx];
+    if (!ph) return null;
+    return ph.dataUrl ? `local:${photoKey(ph)}` : `url:${ph.url || ""}`;
+  })();
+
   useEffect(() => {
     if (markupIdx === null) {
       // Cleanup any previous blob URL
@@ -899,7 +913,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         try { URL.revokeObjectURL(createdBlobUrl); } catch {}
       }
     };
-  }, [markupIdx, markupSection, scopePhotos, addonPhotos]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markupIdx, markupSection, markupSourceKey, token]);
 
   // ── VIDEO QUEUE STATE — must stay above early returns (Rules of Hooks) ──
   // These power the queue panel UI shown in the VIDEO section. The actual
@@ -1123,6 +1138,10 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           hasNext={markupIdx < photos.length - 1}
           onPrev={(dataUrl, hasEdits) => { if (hasEdits) saveMarkupOnly(dataUrl); setMarkupIdx(i => i - 1); }}
           onNext={(dataUrl, hasEdits) => { if (hasEdits) saveMarkupOnly(dataUrl); setMarkupIdx(i => i + 1); }}
+          // Same opt-out flag the card's pin button writes, so flipping it here
+          // and flipping it there are the one setting.
+          onPlan={!photos[markupIdx]?.planOff}
+          onTogglePlan={() => togglePhotoOnPlan(markupSection, markupIdx)}
         />
       );
     }

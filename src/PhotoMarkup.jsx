@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
-import { IconArrowUpRight, IconArrowLeft, IconArrowRight, IconEraser, IconUndo, IconX, IconDownload, IconRotateCcw } from "./icons";
+import { IconArrowUpRight, IconArrowLeft, IconArrowRight, IconEraser, IconUndo, IconX, IconDownload, IconRotateCcw, IconMapPin } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Photo Markup (Rebuild)
@@ -152,7 +152,13 @@ function distToSegment(px, py, x1, y1, x2, y2) {
 
 // ═════════════════════════════════════════════════════════════════════════════
 
-export default function PhotoMarkup({ photoDataUrl, originalDataUrl = null, onSave, onCancel, hasPrev = false, hasNext = false, onPrev, onNext }) {
+export default function PhotoMarkup({
+  photoDataUrl, originalDataUrl = null, onSave, onCancel,
+  hasPrev = false, hasNext = false, onPrev, onNext,
+  // Whether this photo is on the site plan, and how to flip it. Null hides the
+  // control entirely (for callers with no plan concept).
+  onPlan = null, onTogglePlan,
+}) {
   const baseCanvasRef    = useRef(null);  // image + committed strokes (static)
   const overlayCanvasRef = useRef(null);  // current stroke / arrow preview (dynamic)
   const imgRef           = useRef(null);
@@ -879,27 +885,60 @@ export default function PhotoMarkup({ photoDataUrl, originalDataUrl = null, onSa
         </div>
       )}
 
-      {/* ── TOP-LEFT: Cancel + Revert-to-original ──────────────────────── */}
+      {/* ── TOP BAR ────────────────────────────────────────────────────
+          One row, pinned to both edges: leave/undo on the left, commit on the
+          right. Everything else moved to the bottom tool rail.
+
+          It used to be two clusters — and the right-hand one held EIGHT
+          44px buttons in a non-wrapping flex row. That is 440px of controls
+          before the "Done" pill, on a 390px phone: they overlapped the
+          left-hand cluster and ran off the edge of the screen, which is what
+          made this screen unusable on mobile. Nothing here can overflow now,
+          because nothing here grows with the tool count. */}
       <div data-pm-ctl style={{
         position: "absolute",
         top: "max(12px, env(safe-area-inset-top))",
         left: "max(12px, env(safe-area-inset-left))",
-        display: "flex", gap: 8, alignItems: "center",
+        right: "max(12px, env(safe-area-inset-right))",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        gap: 8, pointerEvents: "none",
       }}>
-        <button onClick={onCancel} style={fab()} title="Cancel">
-          <IconX size={22} color="#fff" />
-        </button>
-        {canRevert && (
-          <button
-            onClick={handleRevert}
-            onPointerDown={e => e.stopPropagation()}
-            style={{ ...fab(), width: "auto", padding: "0 14px", gap: 6, fontSize: 13, fontWeight: 600 }}
-            title={hasBaked ? "Revert to the original, un-edited photo" : "Erase all markup on this photo"}
-          >
-            <IconRotateCcw size={16} color="#fff" />
-            {hasBaked ? "Original" : "Clear"}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", pointerEvents: "auto" }}>
+          <button onClick={onCancel} style={fab()} title="Cancel">
+            <IconX size={22} color="#fff" />
           </button>
-        )}
+          {canRevert && (
+            <button
+              onClick={handleRevert}
+              onPointerDown={e => e.stopPropagation()}
+              style={{ ...fab(), width: "auto", padding: "0 14px", gap: 6, fontSize: 13, fontWeight: 600 }}
+              title={hasBaked ? "Revert to the original, un-edited photo" : "Erase all markup on this photo"}
+            >
+              <IconRotateCcw size={16} color="#fff" />
+              {hasBaked ? "Original" : "Clear"}
+            </button>
+          )}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center", pointerEvents: "auto" }}>
+          <button
+            onClick={undo}
+            disabled={!strokes.length}
+            style={{ ...fab(), opacity: strokes.length ? 1 : 0.4 }}
+            title="Undo"
+          >
+            <IconUndo size={20} color="#fff" />
+          </button>
+          <button
+            onClick={handleSave}
+            style={{
+              ...fab(), width: "auto", padding: "0 16px",
+              background: "rgba(0,122,255,.95)",
+              fontWeight: 700, fontSize: 15,
+            }}
+            title="Save markup"
+          >Done</button>
+        </div>
       </div>
 
       {/* ── PREV / NEXT photo navigation ───────────────────────────────── */}
@@ -938,86 +977,7 @@ export default function PhotoMarkup({ photoDataUrl, originalDataUrl = null, onSa
         </div>
       )}
 
-      {/* ── TOP-RIGHT: Tools + Done ────────────────────────────────────── */}
-      <div data-pm-ctl style={{
-        position: "absolute",
-        top: "max(12px, env(safe-area-inset-top))",
-        right: "max(12px, env(safe-area-inset-right))",
-        display: "flex", gap: 8, alignItems: "center",
-      }}>
-        <button
-          onClick={() => setTool("x")}
-          style={fab(xMode)}
-          title="Stamp an X mark"
-        >
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-            <line x1="3" y1="3" x2="17" y2="17" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"/>
-            <line x1="17" y1="3" x2="3" y2="17" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"/>
-          </svg>
-        </button>
-        <button
-          onClick={() => setTool("freehand")}
-          style={fab(freehandMode)}
-          title="Freehand draw"
-        >
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-            <path d="M3 16c2-1 3-4 5-4s2 3 4 2 2-7 5-9" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
-        <button
-          onClick={() => setTool("line")}
-          style={fab(lineMode)}
-          title="Line / arrow"
-        >
-          {arrowEnd
-            ? <IconArrowUpRight size={20} color="#fff" />
-            : (
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <line x1="3" y1="17" x2="17" y2="3" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"/>
-              </svg>
-            )}
-        </button>
-        <button
-          onClick={() => setTool("eraser")}
-          style={fab(eraserMode, true)}
-          title="Eraser"
-        >
-          <IconEraser size={20} color="#fff" />
-        </button>
-        <button
-          onClick={handleRotate}
-          style={fab()}
-          title="Rotate 90°"
-        >
-          <IconRotateCcw size={20} color="#fff" />
-        </button>
-        <button
-          onClick={undo}
-          disabled={!strokes.length}
-          style={{ ...fab(), opacity: strokes.length ? 1 : 0.4 }}
-          title="Undo"
-        >
-          <IconUndo size={20} color="#fff" />
-        </button>
-        <button
-          onClick={handleDownload}
-          style={fab()}
-          title="Download photo with annotations"
-        >
-          <IconDownload size={20} color="#fff" />
-        </button>
-        <button
-          onClick={handleSave}
-          style={{
-            ...fab(), width: "auto", padding: "0 16px",
-            background: "rgba(0,122,255,.95)",
-            fontWeight: 700, fontSize: 15,
-          }}
-          title="Save markup"
-        >Done</button>
-      </div>
-
-      {/* ── BOTTOM: Color + Brush sizes ────────────────────────────────── */}
+      {/* ── BOTTOM RAIL: line options + colors + brushes + tools ───────── */}
       <div data-pm-ctl style={{
         position: "absolute",
         left: 0, right: 0,
@@ -1199,6 +1159,78 @@ export default function PhotoMarkup({ photoDataUrl, originalDataUrl = null, onSa
               </button>
             );
           })}
+        </div>
+
+        {/* Tools. Down here rather than in the top bar: this is the row you
+            reach for constantly, and the bottom of the screen is where a thumb
+            already is. Scrolls horizontally so adding a tool can never push
+            another one off the screen again. */}
+        <div style={{
+          display: "flex", gap: 6, padding: "6px 8px",
+          maxWidth: "calc(100vw - 20px)", overflowX: "auto",
+          background: "rgba(28,28,30,.72)",
+          WebkitBackdropFilter: "blur(20px) saturate(180%)",
+          backdropFilter: "blur(20px) saturate(180%)",
+          borderRadius: 999,
+          border: "1px solid rgba(255,255,255,.12)",
+          boxShadow: "0 2px 10px rgba(0,0,0,.35)",
+          pointerEvents: "auto",
+          alignItems: "center",
+          WebkitOverflowScrolling: "touch",
+          scrollbarWidth: "none",
+        }}>
+          <button onClick={() => setTool("x")} style={{ ...fab(xMode), flexShrink: 0 }} title="Stamp an X mark">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <line x1="3" y1="3" x2="17" y2="17" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"/>
+              <line x1="17" y1="3" x2="3" y2="17" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"/>
+            </svg>
+          </button>
+          <button onClick={() => setTool("freehand")} style={{ ...fab(freehandMode), flexShrink: 0 }} title="Freehand draw">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path d="M3 16c2-1 3-4 5-4s2 3 4 2 2-7 5-9" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+          <button onClick={() => setTool("line")} style={{ ...fab(lineMode), flexShrink: 0 }} title="Line / arrow">
+            {arrowEnd
+              ? <IconArrowUpRight size={20} color="#fff" />
+              : (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                  <line x1="3" y1="17" x2="17" y2="3" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"/>
+                </svg>
+              )}
+          </button>
+          <button onClick={() => setTool("eraser")} style={{ ...fab(eraserMode, true), flexShrink: 0 }} title="Eraser">
+            <IconEraser size={20} color="#fff" />
+          </button>
+          <button onClick={handleRotate} style={{ ...fab(), flexShrink: 0 }} title="Rotate 90°">
+            <IconRotateCcw size={20} color="#fff" />
+          </button>
+          <button onClick={handleDownload} style={{ ...fab(), flexShrink: 0 }} title="Download photo with annotations">
+            <IconDownload size={20} color="#fff" />
+          </button>
+
+          {/* Site-plan toggle. The moment you're looking at a photo full size
+              is the moment you know whether it belongs on the plan, so the
+              switch belongs here and not only back on the card. */}
+          {onPlan !== null && (
+            <button
+              onClick={onTogglePlan}
+              onPointerDown={e => e.stopPropagation()}
+              style={{
+                ...fab(),
+                width: "auto", padding: "0 14px", gap: 6, flexShrink: 0,
+                fontSize: 13, fontWeight: 700, whiteSpace: "nowrap",
+                background: onPlan ? "rgba(246,191,38,.92)" : "rgba(28,28,30,.72)",
+                color: onPlan ? "#1a1400" : "#8b93a4",
+              }}
+              title={onPlan
+                ? "On the site plan — tap to leave it off"
+                : "Not on the site plan — tap to include it"}
+            >
+              <IconMapPin size={16} color={onPlan ? "#1a1400" : "#8b93a4"} />
+              {onPlan ? "On Plan" : "Off Plan"}
+            </button>
+          )}
         </div>
       </div>
 

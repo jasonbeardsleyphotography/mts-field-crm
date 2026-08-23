@@ -1,3 +1,7 @@
+// v36: markup screen rebuilt for phone width — the top-right cluster held
+// eight 44px buttons in a non-wrapping row (440px before the Done pill) on a
+// 390px screen. Tools moved to a scrolling bottom rail, plus a site-plan
+// toggle on the open photo.
 // v35: CRITICAL image fix. A cross-origin <img> produces a no-cors request, so
 // fetch() in the SW resolves to an OPAQUE response whose status is always 0 —
 // indistinguishable from success. The old rule `if (r.ok || r.type === "opaque")`
@@ -11,7 +15,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v35";
+const CACHE = "mts-field-v36";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
