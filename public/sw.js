@@ -1,3 +1,5 @@
+// v37: markup rail collapses to one row on desktop and dims until pointed
+// at; arrow keys step through photos.
 // v36: markup screen rebuilt for phone width — the top-right cluster held
 // eight 44px buttons in a non-wrapping row (440px before the Done pill) on a
 // 390px screen. Tools moved to a scrolling bottom rail, plus a site-plan
@@ -15,7 +17,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v36";
+const CACHE = "mts-field-v37";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

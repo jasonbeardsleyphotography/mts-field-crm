@@ -771,6 +771,26 @@ export default function PhotoMarkup({
     if (direction === "next" && onNext) onNext(dataUrl, hasEdits);
   };
 
+  // Keyboard: arrow keys step through the photos, Escape backs out. On a
+  // laptop, reaching for the on-screen chevrons for every photo is the slow
+  // way to review a card's worth of pictures.
+  useEffect(() => {
+    const onKey = (e) => {
+      // Never steal a keystroke from a text field.
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "ArrowLeft" && hasPrev) { e.preventDefault(); handleNav("prev"); }
+      else if (e.key === "ArrowRight" && hasNext) { e.preventDefault(); handleNav("next"); }
+      else if (e.key === "Escape") { e.preventDefault(); onCancel?.(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // handleNav closes over the current strokes, so it must be re-bound as
+    // they change or a nav would save a stale annotation set.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasPrev, hasNext, onPrev, onNext, onCancel, strokes]);
+
   // Download the current canvas (image + all annotations) without saving back.
   const handleDownload = () => {
     const img = imgRef.current;
@@ -798,6 +818,27 @@ export default function PhotoMarkup({
   };
 
   // ── RENDER ─────────────────────────────────────────────────────────────────
+
+  // On a laptop the rail can be one compact row instead of a stack: there is
+  // width to spare, and three stacked pills climbed a third of the way up the
+  // picture. Narrow screens keep the stack, which is the only thing that fits.
+  const [wide, setWide] = useState(() => typeof window !== "undefined" && window.innerWidth >= 820);
+  useEffect(() => {
+    const onResize = () => setWide(window.innerWidth >= 820);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  // Dimmed until pointed at, so the controls stop competing with the photo.
+  const [railHot, setRailHot] = useState(false);
+
+  const railChrome = {
+    background: "rgba(28,28,30,.72)",
+    WebkitBackdropFilter: "blur(20px) saturate(180%)",
+    backdropFilter: "blur(20px) saturate(180%)",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,.12)",
+    boxShadow: "0 2px 10px rgba(0,0,0,.35)",
+  };
 
   // iOS-style floating "FAB" button base.
   const fab = (active = false, danger = false) => ({
@@ -977,14 +1018,27 @@ export default function PhotoMarkup({
         </div>
       )}
 
-      {/* ── BOTTOM RAIL: line options + colors + brushes + tools ───────── */}
-      <div data-pm-ctl style={{
-        position: "absolute",
-        left: 0, right: 0,
-        bottom: "max(16px, env(safe-area-inset-bottom))",
-        display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
-        pointerEvents: "none", // outer wrapper lets touches pass through; pills opt in
-      }}>
+      {/* ── BOTTOM RAIL: line options + colors + brushes + tools ─────────
+          On a laptop this collapses to a single row so it occupies one strip
+          at the bottom edge instead of a stack climbing up the photo, and it
+          sits at reduced opacity until the pointer comes near. Touch screens
+          keep the stack — it's the only arrangement that fits — and stay at
+          full opacity, since there is no pointer to detect. */}
+      <div
+        data-pm-ctl
+        onMouseEnter={() => setRailHot(true)}
+        onMouseLeave={() => setRailHot(false)}
+        style={{
+          position: "absolute",
+          left: 0, right: 0,
+          bottom: "max(16px, env(safe-area-inset-bottom))",
+          display: "flex", flexDirection: "column", alignItems: "center",
+          gap: wide ? 8 : 10,
+          opacity: wide && !railHot ? 0.45 : 1,
+          transition: "opacity .18s",
+          pointerEvents: "none", // outer wrapper lets touches pass through; pills opt in
+        }}
+      >
         {/* Line tool: arrow-end toggle + (when on) arrowhead size (3 sizes) */}
         {lineMode && (
           <div style={{
@@ -1088,15 +1142,23 @@ export default function PhotoMarkup({
           </div>
         )}
 
+        {/* Colours, brushes and tools. One pill on a wide screen, three
+            stacked pills on a narrow one — same markup either way, so there
+            is no second layout to keep in sync. */}
+        <div style={{
+          display: "flex", alignItems: "center",
+          flexDirection: wide ? "row" : "column",
+          gap: wide ? 0 : 10,
+          maxWidth: "calc(100vw - 20px)",
+          pointerEvents: wide ? "auto" : "none",
+          ...(wide ? { ...railChrome, padding: "4px 6px" } : {}),
+        }}>
+
         {/* Colors */}
         <div style={{
-          display: "flex", gap: 10, padding: "8px 14px",
-          background: "rgba(28,28,30,.72)",
-          WebkitBackdropFilter: "blur(20px) saturate(180%)",
-          backdropFilter: "blur(20px) saturate(180%)",
-          borderRadius: 999,
-          border: "1px solid rgba(255,255,255,.12)",
-          boxShadow: "0 2px 10px rgba(0,0,0,.35)",
+          display: "flex", gap: 10, alignItems: "center",
+          padding: wide ? "0 12px" : "8px 14px",
+          ...(wide ? {} : railChrome),
           pointerEvents: "auto",
         }}>
           {COLORS.map(c => {
@@ -1124,17 +1186,14 @@ export default function PhotoMarkup({
           })}
         </div>
 
-        {/* Brush sizes + clear */}
+        {/* Brush sizes */}
         <div style={{
-          display: "flex", gap: 6, padding: "6px 8px",
-          background: "rgba(28,28,30,.72)",
-          WebkitBackdropFilter: "blur(20px) saturate(180%)",
-          backdropFilter: "blur(20px) saturate(180%)",
-          borderRadius: 999,
-          border: "1px solid rgba(255,255,255,.12)",
-          boxShadow: "0 2px 10px rgba(0,0,0,.35)",
+          display: "flex", gap: 6, alignItems: "center",
+          padding: wide ? "0 8px" : "6px 8px",
+          ...(wide
+            ? { borderLeft: "1px solid rgba(255,255,255,.14)" }
+            : railChrome),
           pointerEvents: "auto",
-          alignItems: "center",
         }}>
           {SIZES.map(s => {
             const active = brushSize === s;
@@ -1166,16 +1225,15 @@ export default function PhotoMarkup({
             already is. Scrolls horizontally so adding a tool can never push
             another one off the screen again. */}
         <div style={{
-          display: "flex", gap: 6, padding: "6px 8px",
-          maxWidth: "calc(100vw - 20px)", overflowX: "auto",
-          background: "rgba(28,28,30,.72)",
-          WebkitBackdropFilter: "blur(20px) saturate(180%)",
-          backdropFilter: "blur(20px) saturate(180%)",
-          borderRadius: 999,
-          border: "1px solid rgba(255,255,255,.12)",
-          boxShadow: "0 2px 10px rgba(0,0,0,.35)",
+          display: "flex", gap: 6, alignItems: "center",
+          padding: wide ? "0 4px 0 8px" : "6px 8px",
+          // minWidth:0 lets this shrink inside the merged row so the scroll
+          // actually engages instead of pushing the pill past the window.
+          minWidth: 0, maxWidth: "calc(100vw - 20px)", overflowX: "auto",
+          ...(wide
+            ? { borderLeft: "1px solid rgba(255,255,255,.14)" }
+            : railChrome),
           pointerEvents: "auto",
-          alignItems: "center",
           WebkitOverflowScrolling: "touch",
           scrollbarWidth: "none",
         }}>
@@ -1231,6 +1289,8 @@ export default function PhotoMarkup({
               {onPlan ? "On Plan" : "Off Plan"}
             </button>
           )}
+        </div>
+
         </div>
       </div>
 
