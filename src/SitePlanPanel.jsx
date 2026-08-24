@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import TileMap from "./TileMap";
 import { boundsOf, fitZoom, MAX_Z } from "./tileMath";
-import { fetchParcelsForBounds } from "./parcelOverlay";
+import { fetchParcelsForBounds, parcelAtPoint, parcelPropsToInfo } from "./parcelOverlay";
 import { buildCalloutMap } from "./treeMapExport";
 import { buildPlanPayload, createPlanLink, copyPlanLink } from "./planShare";
 import { getCurrentGeo, peekGeo } from "./geoCapture";
 import { geocode } from "./RouteMap";
-import { IconDownload, IconMapPin, IconX, IconPlus, IconTrash, IconImage } from "./icons";
+import { IconDownload, IconMapPin, IconX, IconPlus, IconTrash, IconImage,
+         IconChevronUp, IconChevronDown, IconReorder } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Site Map
@@ -50,14 +51,16 @@ const boundsShim = (b) => ({
 const photoKey = (ph) => ph.id || ph.ts;
 const newPinId = () => `pin_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-export default function SitePlanPanel({ stop, pins = [], photos = [], token, onPinsChange }) {
+export default function SitePlanPanel({ stop, pins = [], photos = [], token, onPinsChange, onAddToCard }) {
   const hostRef = useRef(null);
   const [live, setLive] = useState(false);      // mounted once scrolled into view
   const [view, setView] = useState(null);
   const [sel, setSel] = useState(null);
-  const [parcel, setParcel] = useState([]);
+  const [parcelFeatures, setParcelFeatures] = useState([]);
+  const [propInfo, setPropInfo] = useState(null);   // tapped parcel's details
   const [full, setFull] = useState(false);      // the Site Map, full screen
   const [showPhotos, setShowPhotos] = useState(true);
+  const [listOpen, setListOpen] = useState(false);   // the pin list sheet
   const [busy, setBusy] = useState(null);       // "jpeg" | "link" | null
   const [link, setLink] = useState(null);
   const [err, setErr] = useState(null);
@@ -91,6 +94,21 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
       photoLocal: ph?.dataUrl || null,
     };
   }), [located, photos]);
+
+  // Boundary rings for drawing, derived from the same features the tap
+  // hit-test uses — one fetch, one source of truth.
+  const parcel = useMemo(() => {
+    const rings = [];
+    for (const f of parcelFeatures) {
+      const g = f?.geometry;
+      const polys = g?.type === "Polygon" ? [g.coordinates]
+                  : g?.type === "MultiPolygon" ? g.coordinates : null;
+      for (const coords of polys || []) {
+        for (const ring of coords) rings.push(ring.map(([lng, lat]) => ({ lat, lng })));
+      }
+    }
+    return rings;
+  }, [parcelFeatures]);
 
   // Lazy-mount: don't fetch a single map tile until the panel is on screen.
   useEffect(() => {
@@ -143,7 +161,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
 
   // Property lines, fetched once. Best-effort: the plan is useful without them.
   useEffect(() => {
-    if (!live || !view || parcel.length) return;
+    if (!live || !view || parcelFeatures.length) return;
     let dead = false;
     (async () => {
       try {
@@ -157,18 +175,11 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
           east: b.east + pad, west: b.west - pad,
         }));
         if (dead) return;
-        const rings = [];
-        for (const f of res.features || []) {
-          const g = f.geometry;
-          if (g?.type === "Polygon") {
-            for (const ring of g.coordinates) rings.push(ring.map(([lng, lat]) => ({ lat, lng })));
-          }
-        }
-        setParcel(rings);
+        setParcelFeatures(res.features || []);
       } catch { /* boundary is a bonus */ }
     })();
     return () => { dead = true; };
-  }, [live, view, located, parcel.length]);
+  }, [live, view, located, parcelFeatures.length]);
 
   // ── Pin edits ─────────────────────────────────────────────────────────────
   // Edits are expressed against the full pin list, but the map only shows
@@ -208,31 +219,80 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
     setNote(null);
   }, [pins, commit]);
 
+  // Move a pin up or down the list. The numbers on the plan come from list
+  // position, so this is how you control which tree is #1 — and on a job with
+  // a dozen trees, ordering them the way you'll walk the property is what
+  // makes the exported plan readable.
+  //
+  // The list shows `located`, but order lives on the full `pins` array, so the
+  // swap is done by id against the real positions. Swapping the two entries
+  // (rather than splicing) keeps any filtered-out pins exactly where they are.
+  const reorderPin = useCallback((idx, dir) => {
+    const a = viewPins[idx]?.id, b = viewPins[idx + dir]?.id;
+    if (!a || !b) return;
+    const ia = pins.findIndex(p => p.id === a), ib = pins.findIndex(p => p.id === b);
+    if (ia < 0 || ib < 0) return;
+    const next = pins.slice();
+    next[ia] = pins[ib]; next[ib] = pins[ia];
+    commit(next);
+  }, [viewPins, pins, commit]);
+
+  // Tap a row: put that pin in the middle of the screen at a working zoom.
+  const flyTo = useCallback((idx) => {
+    const p = viewPins[idx];
+    if (!p) return;
+    setView(v => ({ center: { lat: p.lat, lng: p.lng }, zoom: Math.max(v?.zoom || 19, 19.5) }));
+    setSel(idx);
+    setListOpen(false);
+  }, [viewPins]);
+
+  const deletePin = useCallback((idx) => {
+    const id = viewPins[idx]?.id;
+    if (!id) return;
+    commit(pins.filter(p => p.id !== id));
+    setSel(cur => (cur === idx ? null : cur));
+  }, [viewPins, pins, commit]);
+
+  // A clean tap on open imagery identifies the parcel under it — the whole
+  // reason the separate parcel screen existed. Answered locally against the
+  // boundaries already on screen, so it costs nothing and works offline once
+  // the parcels are loaded.
+  const identifyAt = useCallback((ll) => {
+    if (!parcelFeatures.length) return;
+    const f = parcelAtPoint(parcelFeatures, ll.lat, ll.lng);
+    // Tapping off every parcel dismisses the sheet, so the same gesture that
+    // opens it closes it.
+    setSel(null);
+    setPropInfo(f ? parcelPropsToInfo(f.properties) : null);
+  }, [parcelFeatures]);
+
   const patchSel = useCallback((patch) => {
     const id = viewPins[sel]?.id;
     if (!id) return;
     commit(pins.map(p => (p.id === id ? { ...p, ...patch } : p)));
   }, [viewPins, sel, pins, commit]);
 
-  const deleteSel = useCallback(() => {
-    const id = viewPins[sel]?.id;
-    if (!id) return;
-    commit(pins.filter(p => p.id !== id));
-    setSel(null);
-  }, [viewPins, sel, pins, commit]);
+  const deleteSel = useCallback(() => { if (sel != null) deletePin(sel); }, [sel, deletePin]);
 
-  // ── Save the JPEG (one tap) ───────────────────────────────────────────────
+  // ── The exported plan ─────────────────────────────────────────────────────
+  // One builder, two destinations: the phone's files, or the card itself.
+  const buildPlan = useCallback(() => buildCalloutMap({
+    pins: located, photos: onPlanPhotos, parcelPaths: parcel,
+    meta: {
+      client: stop?.cn, address: stop?.addr,
+      date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+    },
+  }), [located, onPlanPhotos, parcel, stop]);
+
+  const planError = (e) => setErr(e?.message === "map-imagery-unavailable"
+    ? "Couldn't load map imagery — check your signal."
+    : "Couldn't build the site plan.");
+
   const makeJpeg = useCallback(async () => {
     if (busy) return;
     setBusy("jpeg"); setErr(null); setNote(null);
     try {
-      const url = await buildCalloutMap({
-        pins: located, photos: onPlanPhotos, parcelPaths: parcel,
-        meta: {
-          client: stop?.cn, address: stop?.addr,
-          date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-        },
-      });
+      const url = await buildPlan();
       if (!url) { setErr("Nothing to plot yet."); return; }
       const name = `${(stop?.cn || "site").replace(/[^\w]+/g, "_")}_site_plan.jpg`;
       const blob = await (await fetch(url)).blob();
@@ -242,12 +302,20 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(u), 20000);
       setNote("Site plan saved.");
-    } catch (e) {
-      setErr(e?.message === "map-imagery-unavailable"
-        ? "Couldn't load map imagery — check your signal."
-        : "Couldn't build the site plan.");
-    } finally { setBusy(null); }
-  }, [busy, located, onPlanPhotos, parcel, stop]);
+    } catch (e) { planError(e); } finally { setBusy(null); }
+  }, [busy, buildPlan, stop]);
+
+  // File the plan on this card as a photo, so it travels with the proposal.
+  const addPlanToCard = useCallback(async () => {
+    if (busy || !onAddToCard) return;
+    setBusy("card"); setErr(null); setNote(null);
+    try {
+      const url = await buildPlan();
+      if (!url) { setErr("Nothing to plot yet."); return; }
+      await onAddToCard(url);
+      setNote("Site plan added to this card's photos.");
+    } catch (e) { planError(e); } finally { setBusy(null); }
+  }, [busy, buildPlan, onAddToCard]);
 
   // ── Crew link (one tap) ───────────────────────────────────────────────────
   // Not async: the clipboard write has to be registered inside the tap itself
@@ -287,14 +355,22 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
     display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
   });
 
+  // Compact square control used down the right of each pin-list row.
+  const rowBtn = (off) => ({
+    width: 34, height: 34, borderRadius: 8, flexShrink: 0,
+    background: "rgba(255,255,255,.05)", border: "1px solid #253049",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    cursor: off ? "default" : "pointer", opacity: off ? 0.3 : 1, padding: 0,
+  });
+
   // Bottom-bar button on the full-screen map.
   const barBtn = (active = false, accent = "#F6BF26") => ({
     flex: 1, minWidth: 0, padding: "12px 4px", borderRadius: 12,
     background: active ? accent : "rgba(28,28,30,.92)",
     border: `1px solid ${active ? accent : "rgba(255,255,255,.16)"}`,
     color: active ? "#1a1400" : accent,
-    fontSize: 10.5, fontWeight: 800, fontFamily: F,
-    letterSpacing: 0.4, textTransform: "uppercase", cursor: "pointer",
+    fontSize: 10, fontWeight: 800, fontFamily: F,
+    letterSpacing: 0.3, textTransform: "uppercase", cursor: "pointer",
     display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
   });
 
@@ -405,6 +481,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
             // behaviour on this screen.
             editable
             onPinMove={movePin}
+            onMapTap={identifyAt}
             parcel={parcel}
           />
 
@@ -420,22 +497,40 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
             }}
           ><IconX size={18} color="#fff" /></button>
 
-          <div style={{
-            position: "absolute", top: "max(12px, env(safe-area-inset-top))",
-            left: "max(12px, env(safe-area-inset-left))",
-            padding: "9px 14px", borderRadius: 999,
-            background: "rgba(0,0,0,.66)", color: "#cfd8e6",
-            fontSize: 11.5, fontWeight: 700, fontFamily: F, letterSpacing: 0.4,
-            textTransform: "uppercase", pointerEvents: "none",
-          }}>
+          {/* The pin count doubles as the way into the list. On a job with a
+              dozen trees, hunting for #7 among the dots is slower than reading
+              a row — and the list is also where the numbering is set. */}
+          <button
+            onClick={() => located.length && setListOpen(true)}
+            style={{
+              position: "absolute", top: "max(12px, env(safe-area-inset-top))",
+              left: "max(12px, env(safe-area-inset-left))",
+              padding: "9px 14px", borderRadius: 999,
+              background: "rgba(0,0,0,.66)", border: "1px solid rgba(255,255,255,.16)",
+              color: "#cfd8e6", fontSize: 11.5, fontWeight: 700, fontFamily: F,
+              letterSpacing: 0.4, textTransform: "uppercase",
+              cursor: located.length ? "pointer" : "default",
+              display: "flex", alignItems: "center", gap: 7,
+            }}
+          >
+            {located.length ? <IconReorder size={14} color="#cfd8e6" /> : null}
             {located.length
-              ? `${located.length} ${located.length === 1 ? "pin" : "pins"} · drag to move`
+              ? `${located.length} ${located.length === 1 ? "pin" : "pins"} · list`
               : "Tap + Pin to start"}
-          </div>
+          </button>
+
+          {parcel.length > 0 && !selPin && !propInfo && !listOpen && (
+            <div style={{
+              position: "absolute", top: "calc(max(12px, env(safe-area-inset-top)) + 46px)",
+              left: "max(12px, env(safe-area-inset-left))",
+              fontSize: 10.5, color: "#9fb0c6", pointerEvents: "none",
+              textShadow: "0 1px 4px rgba(0,0,0,.9)",
+            }}>Tap the ground for property info</div>
+          )}
 
           {/* Centre crosshair — where "+ Pin" will land. Shown only with the
               sheet closed, so it never argues with what you're reading. */}
-          {!selPin && (
+          {!selPin && !propInfo && (
             <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
               <circle cx="50%" cy="50%" r="15" fill="none" stroke="rgba(0,0,0,.45)" strokeWidth="4" />
               <circle cx="50%" cy="50%" r="15" fill="none" stroke="rgba(255,255,255,.75)" strokeWidth="1.5" strokeDasharray="4,4" />
@@ -443,12 +538,12 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
           )}
 
           {/* ── One bar, every action ─────────────────────────────────────── */}
-          {!selPin && (
+          {!selPin && !propInfo && (
             <div style={{
               position: "absolute", left: "max(10px, env(safe-area-inset-left))",
               right: "max(10px, env(safe-area-inset-right))",
               bottom: "max(14px, env(safe-area-inset-bottom))",
-              display: "flex", gap: 7,
+              display: "flex", gap: 5,
             }}>
               <button onClick={addPinHere} style={barBtn()}>
                 <IconPlus size={17} color="#F6BF26" />+ Pin
@@ -464,6 +559,13 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
                 <IconDownload size={17} color="#F6BF26" />
                 {busy === "jpeg" ? "…" : "JPEG"}
               </button>
+              {onAddToCard && (
+                <button onClick={addPlanToCard} disabled={!!busy || !located.length}
+                        style={{ ...barBtn(), opacity: located.length ? 1 : 0.4 }}>
+                  <IconPlus size={17} color="#F6BF26" />
+                  {busy === "card" ? "…" : "Card"}
+                </button>
+              )}
               <button onClick={makeLink} disabled={!!busy || !located.length}
                       style={{ ...barBtn(false, "#7db4ff"), opacity: located.length ? 1 : 0.4 }}>
                 <IconMapPin size={17} color="#7db4ff" />
@@ -483,6 +585,123 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
                 background: "rgba(0,0,0,.8)", color: err ? "#ff9a9a" : "#a8dca0",
                 fontSize: 11.5, fontWeight: 600, textAlign: "center",
               }}>{err || note}</div>
+            </div>
+          )}
+
+          {/* ── Property info ─────────────────────────────────────────────
+              Owner, parcel and assessment for whatever you tapped. This used
+              to be a separate full-screen map on Google's metered API; it is
+              a hit-test against boundaries already drawn here. */}
+          {propInfo && (
+            <div style={{
+              position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 6,
+              background: "#0e1120", borderTop: "1px solid #253049",
+              borderTopLeftRadius: 16, borderTopRightRadius: 16,
+              padding: "14px 16px max(16px, env(safe-area-inset-bottom))",
+              boxShadow: "0 -12px 40px rgba(0,0,0,.65)", maxHeight: "62vh", overflowY: "auto",
+            }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#fff", fontFamily: F, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    {propInfo.owner}
+                  </div>
+                  {propInfo.parcelAddr && (
+                    <div style={{ fontSize: 12.5, color: "#8aa0c0", marginTop: 2 }}>{propInfo.parcelAddr}</div>
+                  )}
+                </div>
+                <button onClick={() => setPropInfo(null)} aria-label="Close" style={{
+                  width: 34, height: 34, borderRadius: 17, background: "transparent",
+                  border: "1px solid #253049", cursor: "pointer", flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}><IconX size={15} color="#8aa0c0" /></button>
+              </div>
+              {[
+                ["Acres", propInfo.acres != null ? Number(propInfo.acres).toFixed(2) : null],
+                ["Assessed", propInfo.assessedValue != null ? `$${Number(propInfo.assessedValue).toLocaleString()}` : null],
+                ["SBL", propInfo.sbl],
+                ["Class", propInfo.propClass],
+                ["Municipality", [propInfo.muni, propInfo.county].filter(Boolean).join(", ") || null],
+                ["Owner mailing", propInfo.mailAddr],
+              ].filter(([, v]) => v).map(([k, v]) => (
+                <div key={k} style={{ display: "flex", gap: 10, padding: "6px 0", borderTop: "1px solid #161c2b" }}>
+                  <span style={{ width: 118, flexShrink: 0, fontSize: 10, fontWeight: 800, color: "#4a5a70", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", paddingTop: 2 }}>{k}</span>
+                  <span style={{ flex: 1, fontSize: 13, color: "#e6ecf5" }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── Pin list ──────────────────────────────────────────────────
+              Numbered in plan order. Tap a row to fly to that pin; the arrows
+              set the numbering that ends up on the exported plan and the crew
+              link. */}
+          {listOpen && (
+            <div style={{ position: "absolute", inset: 0, zIndex: 5, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+              <div onClick={() => setListOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.55)" }} />
+              <div style={{
+                position: "relative",
+                background: "#0e1120", borderTop: "1px solid #253049",
+                borderTopLeftRadius: 16, borderTopRightRadius: 16,
+                padding: "14px 12px max(16px, env(safe-area-inset-bottom))",
+                boxShadow: "0 -12px 40px rgba(0,0,0,.65)",
+                maxHeight: "76vh", overflowY: "auto",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, padding: "0 4px" }}>
+                  <div style={{ flex: 1, fontSize: 11, fontWeight: 800, color: "#4a5a70", fontFamily: F, letterSpacing: 1, textTransform: "uppercase" }}>
+                    Pins · plan order
+                  </div>
+                  <button onClick={() => setListOpen(false)} aria-label="Close list" style={{
+                    width: 34, height: 34, borderRadius: 17, background: "transparent",
+                    border: "1px solid #253049", cursor: "pointer", flexShrink: 0,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}><IconX size={15} color="#8aa0c0" /></button>
+                </div>
+
+                {viewPins.map((p, i) => (
+                  <div key={p.id} style={{
+                    display: "flex", alignItems: "center", gap: 9,
+                    padding: "7px 4px",
+                    borderTop: i ? "1px solid #161c2b" : "none",
+                  }}>
+                    <button onClick={() => flyTo(i)} style={{
+                      flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10,
+                      background: "transparent", border: "none", padding: 0,
+                      cursor: "pointer", textAlign: "left",
+                    }}>
+                      <span style={{
+                        width: 26, height: 26, borderRadius: 13, background: "#F6BF26",
+                        color: "#1a1400", fontFamily: F, fontWeight: 700, fontSize: 13,
+                        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                      }}>{p.n}</span>
+                      <span style={{
+                        width: 40, height: 40, borderRadius: 7, flexShrink: 0,
+                        background: "#141a29", overflow: "hidden",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>
+                        {(p.photo || p.photoLocal)
+                          ? <img src={p.photo || p.photoLocal} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          : <IconMapPin size={16} color="#3a4a60" />}
+                      </span>
+                      <span style={{
+                        flex: 1, minWidth: 0, fontSize: 13, color: "#e6ecf5", fontWeight: 600,
+                        overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
+                      }}>{p.label || `Location ${p.n}`}</span>
+                    </button>
+
+                    <button onClick={() => reorderPin(i, -1)} disabled={i === 0}
+                            aria-label="Move up" style={rowBtn(i === 0)}>
+                      <IconChevronUp size={15} color="#8aa0c0" />
+                    </button>
+                    <button onClick={() => reorderPin(i, 1)} disabled={i === viewPins.length - 1}
+                            aria-label="Move down" style={rowBtn(i === viewPins.length - 1)}>
+                      <IconChevronDown size={15} color="#8aa0c0" />
+                    </button>
+                    <button onClick={() => deletePin(i)} aria-label="Delete pin" style={rowBtn(false)}>
+                      <IconTrash size={14} color="#ff8080" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

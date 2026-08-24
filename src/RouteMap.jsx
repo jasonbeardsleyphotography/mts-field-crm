@@ -242,7 +242,7 @@ export default function RouteMap({ stops, selectedId }) {
 
   // ── PARCEL BOUNDARY OVERLAY ─────────────────────────────────────────────
   // No info panel here by design — this toggle is just "am I on the right
-  // property" while driving, not a lookup tool (that's ParcelMapView).
+  // property" while driving, not a lookup tool (that's the Site Map on the on-site card).
   useEffect(() => {
     if (!map.current) return;
     if (parcelsOn) {

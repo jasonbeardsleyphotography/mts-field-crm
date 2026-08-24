@@ -3,7 +3,8 @@
    ───────────────────────────────────────────────────────────────────────────
    Draws NY State tax-parcel boundary lines over the satellite map using
    google.maps.Data, fed by free public ArcGIS REST FeatureServers. Shared by
-   RouteMap.jsx (driving toggle) and ParcelMapView.jsx (on-site detail view)
+   RouteMap.jsx (driving toggle, via the Google overlay) and SitePlanPanel.jsx
+   (the Site Map, which draws and hit-tests the raw GeoJSON itself)
    so both consume one fetch/render/cleanup implementation.
 
    Source coverage (confirmed): NYS_Tax_Parcels_Public covers Wayne, Ontario,
@@ -259,6 +260,19 @@ export function parcelFeatureToInfo(feature) {
   const get = (key) => {
     try { return feature.getProperty(key); } catch { return undefined; }
   };
+  return infoFrom(get);
+}
+
+// Same fields, read off a plain GeoJSON feature's `properties` — which is what
+// fetchParcelsForBounds returns. The Google Data.Feature version above is only
+// needed while a google.maps overlay still exists; this is the form the
+// in-app Site Map uses, and it needs no maps library at all.
+export function parcelPropsToInfo(props) {
+  const p = props || {};
+  return infoFrom((key) => p[key]);
+}
+
+function infoFrom(get) {
   const mailParts = [get("MAIL_ADDR"), get("MAIL_CITY"), get("MAIL_STATE"), get("MAIL_ZIP")]
     .filter(Boolean);
   return {
@@ -272,4 +286,65 @@ export function parcelFeatureToInfo(feature) {
     county: get("COUNTY_NAME") || null,
     muni: get("MUNI_NAME") || null,
   };
+}
+
+
+/* ── Hit-testing without a maps library ─────────────────────────────────────
+   Which parcel did that tap land in? Google's data layer answered this for
+   us; drawing the boundaries ourselves means answering it ourselves. Standard
+   ray casting, run against every ring of every polygon.
+
+   Parcel rings can carry hundreds of vertices, so each feature is rejected on
+   its bounding box first — that turns almost every candidate into four number
+   comparisons. */
+function ringContains(ring, lat, lng) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];   // GeoJSON order: [lng, lat]
+    if ((yi > lat) !== (yj > lat) &&
+        lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function polygonContains(coords, lat, lng) {
+  if (!coords?.length) return false;
+  // First ring is the outline; any further rings are holes.
+  if (!ringContains(coords[0], lat, lng)) return false;
+  for (let i = 1; i < coords.length; i++) {
+    if (ringContains(coords[i], lat, lng)) return false;
+  }
+  return true;
+}
+
+/** The smallest parcel containing this point, or null. Smallest wins because
+ *  overlapping sources (a county layer on top of the statewide one) otherwise
+ *  answer with whichever happened to be fetched first. */
+export function parcelAtPoint(features, lat, lng) {
+  let best = null, bestArea = Infinity;
+  for (const f of features || []) {
+    const g = f?.geometry;
+    if (!g) continue;
+    const polys = g.type === "Polygon" ? [g.coordinates]
+                : g.type === "MultiPolygon" ? g.coordinates
+                : null;
+    if (!polys) continue;
+    for (const coords of polys) {
+      const outer = coords[0];
+      if (!outer?.length) continue;
+      // Bounding-box reject before the expensive per-vertex walk.
+      let n = -Infinity, s = Infinity, e = -Infinity, w = Infinity;
+      for (const [x, y] of outer) {
+        if (y > n) n = y; if (y < s) s = y;
+        if (x > e) e = x; if (x < w) w = x;
+      }
+      if (lat > n || lat < s || lng > e || lng < w) continue;
+      if (!polygonContains(coords, lat, lng)) continue;
+      const area = (n - s) * (e - w);
+      if (area < bestArea) { bestArea = area; best = f; }
+    }
+  }
+  return best;
 }

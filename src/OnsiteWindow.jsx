@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import PhotoMarkup from "./PhotoMarkup";
 import CameraView from "./CameraView";
-import ParcelMapView from "./ParcelMapView";
 import SitePlanPanel from "./SitePlanPanel";
 import VideoRecorder from "./VideoRecorder";
 import { loadFieldFromDrive, queueFieldDriveSync } from "./driveSync";
@@ -197,7 +196,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [markupSection, setMarkupSection] = useState("scope"); // which photo array to edit
   const [showCamera, setShowCamera] = useState(false);
   const [cameraSection, setCameraSection] = useState("scope");
-  const [showParcelMap, setShowParcelMap] = useState(false);
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const [saveSafetyPrompt, setSaveSafetyPrompt] = useState(null); // { id, file } just-recorded video awaiting a durable save
   const [videoSavedToast, setVideoSavedToast] = useState(false);
@@ -372,6 +370,23 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
     () => [...scopePhotos, ...addonPhotos],
     [scopePhotos, addonPhotos]
   );
+  // Put a generated image (the site plan) on the card as a photo. Same
+  // downscale-then-store flow as a camera capture, so it inherits every
+  // existing guarantee: no clobbering on concurrent writes, no Drive sync
+  // loss. This is what the retired parcel screen's "Add to Card" did.
+  const addImageToCard = useCallback(async (rawDataUrl) => {
+    const dataUrl = await downscaleDataUrl(rawDataUrl);
+    const photo = { dataUrl, ts: Date.now(), id: newPhotoId() };
+    try {
+      await updateField(s.id, (existing) => ({
+        scopePhotos: sortPhotosByTs([...(existing.scopePhotos || existing.photos || []), photo]),
+      }));
+    } catch (e) { console.warn("Site plan IDB save failed:", e); }
+    setScopePhotos(prev => sortPhotosByTs([...prev, photo]));
+    markStopForPhotoSync(s.id);
+    if (token) queueFieldDriveSync(token, s.id);
+  }, [s.id, token]);
+
   const handlePinsChange = useCallback((next) => {
     setMapPins(next);
     // Queued per-stop write, so this composes safely with photo/text saves.
@@ -1005,35 +1020,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const F = "'Oswald',sans-serif";
   const B = "'DM Sans',system-ui,sans-serif";
 
-  // Parcel map — satellite + tax-parcel overlay, scoped to this stop
-  if (showParcelMap) {
-    return <ParcelMapView
-      stop={s}
-      token={token}
-      pins={mapPins}
-      onClose={() => setShowParcelMap(false)}
-      onSnapshot={async (rawDataUrl) => {
-        // Same downscale-then-store flow as camera photos (see showCamera
-        // below) so snapshot photos get every existing guarantee — no
-        // clobbering on concurrent writes, no Drive sync loss.
-        const dataUrl = await downscaleDataUrl(rawDataUrl);
-        const photo = { dataUrl, ts: Date.now(), id: newPhotoId() };
-        // Into scopePhotos, NOT addonPhotos: the Add-On section was removed from
-        // the UI, so a photo filed there saved correctly but had nowhere to
-        // appear — which read as "Add to Card does nothing".
-        try {
-          await updateField(s.id, (existing) => ({
-            scopePhotos: sortPhotosByTs([...(existing.scopePhotos || existing.photos || []), photo]),
-          }));
-        } catch (e) { console.warn("Parcel snapshot IDB save failed:", e); }
-        setScopePhotos(prev => sortPhotosByTs([...prev, photo]));
-        markStopForPhotoSync(s.id);
-        if (token) queueFieldDriveSync(token, s.id);
-        setShowParcelMap(false);
-      }}
-    />;
-  }
-
   // Camera view — rapid capture mode
   if (showCamera) {
     return <CameraView
@@ -1604,9 +1590,9 @@ ${combined}`);
             </div>
           </div>
 
-          {/* Job # — edit — Property Info, all on one row. Named for what it
-              actually does now: owner/tax lookup and boundary lines. Tree pins
-              and the site plan all live on the Site Map panel below. */}
+          {/* Job # and edit. The parcel screen that used to sit here is gone:
+              tree pins, property lines and the owner/tax lookup are all on the
+              Site Map panel below, on one map instead of two. */}
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginTop:10}}>
             {s.jn ? (
               <button onClick={() => { navigator.clipboard?.writeText(s.jn).catch(() => {}); window.open(SINGLEOPS_URL, "_blank"); }} title="Copy job # and open SingleOps" style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(96,181,255,.12)",border:"1px solid rgba(96,181,255,.4)",color:"#7ec4ff",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer",flexShrink:0,boxShadow:"0 0 12px rgba(96,181,255,.35)"}}>
@@ -1618,9 +1604,6 @@ ${combined}`);
                 <IconPen size={13} color="#90a8c0"/>
               </button>
             )}
-            <button onClick={() => setShowParcelMap(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(255,214,0,.08)",border:"1px solid rgba(255,214,0,.25)",color:"#FFD600",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer",flexShrink:0}}>
-              <IconMapPin size={13} color="#FFD600"/>Property Info
-            </button>
           </div>
           </>
           )}
@@ -1701,7 +1684,8 @@ ${combined}`);
         {/* ── SITE PLAN ──────────────────────────────────────────────────
             Live plan right under the photos: no navigation needed, and both
             actions (JPEG, crew link) are here rather than behind the map. */}
-        <SitePlanPanel stop={s} pins={mapPins} photos={allPhotosForMap} token={token} onPinsChange={handlePinsChange} />
+        <SitePlanPanel stop={s} pins={mapPins} photos={allPhotosForMap} token={token}
+                       onPinsChange={handlePinsChange} onAddToCard={addImageToCard} />
 
         {/* ── VIDEO ─────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>

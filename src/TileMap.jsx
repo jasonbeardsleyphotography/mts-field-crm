@@ -159,8 +159,7 @@ export default function TileMap({
   onPinTap,
   editable = false,       // true => pins can be dragged
   onPinMove,              // (index, { lat, lng }) => void
-  addMode = false,        // true => a tap on open map drops a new pin
-  onMapTap,               // ({ lat, lng }) => void
+  onMapTap,               // ({ lat, lng }) => void — a clean tap on open map
   parcel = [],            // [[{lat,lng}, ...], ...]
   userPos = null,         // { lat, lng, acc }
   children,
@@ -191,7 +190,7 @@ export default function TileMap({
   // Same for the interaction props, so the gesture effect doesn't need to be
   // torn down and rebuilt every time edit mode toggles.
   const cfg = useRef({});
-  cfg.current = { editable, addMode, onPinMove, onPinTap, onMapTap };
+  cfg.current = { editable, onPinMove, onPinTap, onMapTap };
 
   const emit = useCallback((next) => {
     view.current = next;
@@ -328,9 +327,10 @@ export default function TileMap({
         return;
       }
       if (e.touches.length === 0) {
-        // Tap on open map in add mode drops a pin exactly where you touched.
+        // A clean tap on open imagery — no drag, no pin under it. The parent
+        // decides what that means (drop a pin, identify the parcel, nothing).
         const t = e.changedTouches?.[0];
-        if (mode === "pan" && cfg.current.addMode && t && startPt &&
+        if (mode === "pan" && t && startPt &&
             Math.hypot(t.clientX - startPt.x, t.clientY - startPt.y) < 8 &&
             pinIndexAt(e.target) == null) {
           cfg.current.onMapTap?.(atClient(t.clientX, t.clientY));
@@ -370,7 +370,7 @@ export default function TileMap({
         if (down.moved) cfg.current.onPinMove?.(down.pin, atClient(e.clientX, e.clientY - DRAG_LIFT));
         else cfg.current.onPinTap?.(down.pin);
         setDrag(null);
-      } else if (down?.start && cfg.current.addMode &&
+      } else if (down?.start &&
                  Math.hypot(e.clientX - down.start.x, e.clientY - down.start.y) < 6) {
         cfg.current.onMapTap?.(atClient(e.clientX, e.clientY));
       }
@@ -501,7 +501,7 @@ export default function TileMap({
         position: "absolute", inset: 0, overflow: "hidden",
         background: "#1b2430",
         touchAction: interactive ? "none" : "auto",
-        cursor: interactive ? (addMode ? "crosshair" : "grab") : "default",
+        cursor: interactive ? "grab" : "default",
         userSelect: "none", WebkitUserSelect: "none",
       }}
     >
