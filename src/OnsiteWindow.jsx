@@ -1604,7 +1604,9 @@ ${combined}`);
             </div>
           </div>
 
-          {/* Job # — edit — Parcel Map, all on one row */}
+          {/* Job # — edit — Property Info, all on one row. Named for what it
+              actually does now: owner/tax lookup and boundary lines. Tree pins
+              and the site plan all live on the Site Map panel below. */}
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginTop:10}}>
             {s.jn ? (
               <button onClick={() => { navigator.clipboard?.writeText(s.jn).catch(() => {}); window.open(SINGLEOPS_URL, "_blank"); }} title="Copy job # and open SingleOps" style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(96,181,255,.12)",border:"1px solid rgba(96,181,255,.4)",color:"#7ec4ff",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer",flexShrink:0,boxShadow:"0 0 12px rgba(96,181,255,.35)"}}>
@@ -1617,7 +1619,7 @@ ${combined}`);
               </button>
             )}
             <button onClick={() => setShowParcelMap(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(255,214,0,.08)",border:"1px solid rgba(255,214,0,.25)",color:"#FFD600",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer",flexShrink:0}}>
-              <IconMapPin size={13} color="#FFD600"/>Parcel Map
+              <IconMapPin size={13} color="#FFD600"/>Property Info
             </button>
           </div>
           </>

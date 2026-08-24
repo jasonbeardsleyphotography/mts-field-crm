@@ -1,3 +1,6 @@
+// v38: pins consolidated onto one Site Map screen with no edit mode — pins
+// are always draggable, "+ Pin" drops one at the crosshair, and the panel now
+// renders with zero pins so the first one can actually be created.
 // v37: markup rail collapses to one row on desktop and dims until pointed
 // at; arrow keys step through photos.
 // v36: markup screen rebuilt for phone width — the top-right cluster held
@@ -17,7 +20,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v37";
+const CACHE = "mts-field-v38";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
