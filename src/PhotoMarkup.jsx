@@ -158,6 +158,9 @@ export default function PhotoMarkup({
   // Whether this photo is on the site plan, and how to flip it. Null hides the
   // control entirely (for callers with no plan concept).
   onPlan = null, onTogglePlan,
+  // Every photo on the card, for the jump-to strip: [{ key, src }]. `index` is
+  // which one is open; onJump(dataUrl, hasEdits, i) switches to another.
+  strip = [], index = 0, onJump,
 }) {
   const baseCanvasRef    = useRef(null);  // image + committed strokes (static)
   const overlayCanvasRef = useRef(null);  // current stroke / arrow preview (dynamic)
@@ -782,14 +785,17 @@ export default function PhotoMarkup({
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === "ArrowLeft" && hasPrev) { e.preventDefault(); handleNav("prev"); }
       else if (e.key === "ArrowRight" && hasNext) { e.preventDefault(); handleNav("next"); }
+      // Down = save a copy. Left/right walk the photos, down takes the one
+      // you're looking at — the whole keyboard shape of reviewing a card.
+      else if (e.key === "ArrowDown") { e.preventDefault(); handleDownload(); }
       else if (e.key === "Escape") { e.preventDefault(); onCancel?.(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // handleNav closes over the current strokes, so it must be re-bound as
-    // they change or a nav would save a stale annotation set.
+    // handleNav and handleDownload close over the current strokes, so this is
+    // re-bound as they change or a keypress would act on a stale set.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasPrev, hasNext, onPrev, onNext, onCancel, strokes]);
+  }, [hasPrev, hasNext, onPrev, onNext, onCancel, strokes, imgDims, fit]);
 
   // Download the current canvas (image + all annotations) without saving back.
   const handleDownload = () => {
@@ -830,6 +836,16 @@ export default function PhotoMarkup({
   }, []);
   // Dimmed until pointed at, so the controls stop competing with the photo.
   const [railHot, setRailHot] = useState(false);
+  // The jump-to strip is closed by default and overlays nothing when it is —
+  // this screen is for looking at a photo, so a permanent filmstrip would be
+  // in the way every second you are not using it.
+  const [stripOpen, setStripOpen] = useState(false);
+
+  const jumpTo = (i) => {
+    if (i === index) { setStripOpen(false); return; }
+    onJump?.(getAnnotatedDataUrl(), strokes.length > 0, i);
+    setStripOpen(false);
+  };
 
   const railChrome = {
     background: "rgba(28,28,30,.72)",
@@ -1039,6 +1055,42 @@ export default function PhotoMarkup({
           pointerEvents: "none", // outer wrapper lets touches pass through; pills opt in
         }}
       >
+        {/* Jump-to strip. Closed by default and gone from the screen entirely
+            when closed, so marking up a photo is never done around a filmstrip.
+            Open it from the grid button in the tool rail. */}
+        {stripOpen && strip.length > 1 && (
+          <div style={{
+            display: "flex", gap: 6, padding: "6px 8px", alignItems: "center",
+            maxWidth: "calc(100vw - 20px)", overflowX: "auto",
+            background: "rgba(28,28,30,.82)",
+            WebkitBackdropFilter: "blur(20px) saturate(180%)",
+            backdropFilter: "blur(20px) saturate(180%)",
+            borderRadius: 14,
+            border: "1px solid rgba(255,255,255,.12)",
+            boxShadow: "0 2px 10px rgba(0,0,0,.35)",
+            pointerEvents: "auto",
+            WebkitOverflowScrolling: "touch", scrollbarWidth: "none",
+          }}>
+            {strip.map((ph, i) => (
+              <button
+                key={ph.key ?? i}
+                onClick={() => jumpTo(i)}
+                onPointerDown={e => e.stopPropagation()}
+                title={`Photo ${i + 1} of ${strip.length}`}
+                style={{
+                  flexShrink: 0, width: 52, height: 52, padding: 0, borderRadius: 8,
+                  overflow: "hidden", cursor: "pointer", background: "#1a1f2b",
+                  border: i === index ? "2.5px solid #0a84ff" : "1px solid rgba(255,255,255,.18)",
+                  opacity: i === index ? 1 : 0.72,
+                }}
+              >
+                {ph.src && <img src={ph.src} alt="" draggable={false}
+                                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Line tool: arrow-end toggle + (when on) arrowhead size (3 sizes) */}
         {lineMode && (
           <div style={{
@@ -1266,6 +1318,24 @@ export default function PhotoMarkup({
           <button onClick={handleDownload} style={{ ...fab(), flexShrink: 0 }} title="Download photo with annotations">
             <IconDownload size={20} color="#fff" />
           </button>
+
+          {/* Jump to any photo on the card. */}
+          {strip.length > 1 && (
+            <button
+              onClick={() => setStripOpen(v => !v)}
+              onPointerDown={e => e.stopPropagation()}
+              style={{ ...fab(stripOpen), flexShrink: 0 }}
+              title="Jump to another photo"
+            >
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none"
+                   stroke={stripOpen ? "#fff" : "#fff"} strokeWidth="1.9" strokeLinejoin="round">
+                <rect x="3" y="4" width="7" height="7" rx="1.5" />
+                <rect x="14" y="4" width="7" height="7" rx="1.5" />
+                <rect x="3" y="15" width="7" height="5" rx="1.5" />
+                <rect x="14" y="15" width="7" height="5" rx="1.5" />
+              </svg>
+            </button>
+          )}
 
           {/* Site-plan toggle. The moment you're looking at a photo full size
               is the moment you know whether it belongs on the plan, so the

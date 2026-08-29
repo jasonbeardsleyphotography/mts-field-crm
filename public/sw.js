@@ -1,3 +1,6 @@
+// v40: the Site Map is live on the on-site screen (two-finger pan, pins
+// one-finger draggable), smaller unnumbered pins, drag no longer jumps on
+// touch, and the markup screen gains a jump-to strip + down-arrow download.
 // v39: one map. The parcel screen is retired — its owner/tax lookup is now
 // a local hit-test on the Site Map. Plus a reorderable pin list and Add to Card.
 // v38: pins consolidated onto one Site Map screen with no edit mode — pins
@@ -22,7 +25,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v39";
+const CACHE = "mts-field-v40";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

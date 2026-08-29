@@ -1128,6 +1128,13 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           // and flipping it there are the one setting.
           onPlan={!photos[markupIdx]?.planOff}
           onTogglePlan={() => togglePhotoOnPlan(markupSection, markupIdx)}
+          // Every photo in this section, so you can jump to the fourth one
+          // instead of stepping through three. Prefer the Drive rendition:
+          // decoding a dozen full-size local captures for 52px thumbnails is
+          // real memory on a phone.
+          strip={photos.map(ph => ({ key: photoKey(ph), src: ph.url || ph.dataUrl }))}
+          index={markupIdx}
+          onJump={(dataUrl, hasEdits, i) => { if (hasEdits) saveMarkupOnly(dataUrl); setMarkupIdx(i); }}
         />
       );
     }

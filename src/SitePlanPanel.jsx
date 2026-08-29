@@ -126,14 +126,14 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
   // the property, so that is the right answer and it costs nothing. Only if
   // there's no fix do we spend a geocode on the address.
   const frameKey = located.map(p => p.id).join(",");
-  const fullRef = useRef(false);
-  useEffect(() => { fullRef.current = full; }, [full]);
+  // Once the map has been moved by hand, it is the user's view and nothing
+  // re-frames it. Now that the map is live inline, dropping a pin would
+  // otherwise jump the ground out from under the drag that comes next.
+  const movedRef = useRef(false);
+  const onViewChange = useCallback((v) => { movedRef.current = true; setView(v); }, []);
 
   useEffect(() => {
-    if (!located.length) return;
-    // Never re-frame under the user's hands: adding a pin while the map is open
-    // must not yank the view out from under the next drag.
-    if (fullRef.current) return;
+    if (!located.length || movedRef.current) return;
     const b = boundsOf(located);
     setView({
       center: { lat: (b.north + b.south) / 2, lng: (b.east + b.west) / 2 },
@@ -344,17 +344,6 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
   const selPin = sel != null ? viewPins[sel] : null;
   const selRaw = selPin ? pins.find(p => p.id === selPin.id) : null;
 
-  const cardBtn = (tone, on = true) => ({
-    flex: 1, padding: "11px 0", borderRadius: 8,
-    background: tone === "gold" ? "rgba(246,191,38,.12)" : "rgba(26,115,232,.15)",
-    border: `1px solid ${tone === "gold" ? "rgba(246,191,38,.35)" : "rgba(26,115,232,.4)"}`,
-    color: tone === "gold" ? "#F6BF26" : "#7db4ff",
-    fontSize: 11, fontWeight: 800, fontFamily: F,
-    letterSpacing: 0.5, textTransform: "uppercase",
-    cursor: busy ? "default" : "pointer", opacity: on ? 1 : 0.45,
-    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-  });
-
   // Compact square control used down the right of each pin-list row.
   const rowBtn = (off) => ({
     width: 34, height: 34, borderRadius: 8, flexShrink: 0,
@@ -363,22 +352,142 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
     cursor: off ? "default" : "pointer", opacity: off ? 0.3 : 1, padding: 0,
   });
 
-  // Bottom-bar button on the full-screen map.
-  const barBtn = (active = false, accent = "#F6BF26") => ({
-    flex: 1, minWidth: 0, padding: "12px 4px", borderRadius: 12,
+  // The action bar's buttons. Same set inline and full screen — only the
+  // padding differs, because inline they sit in the card's flow rather than
+  // floating over imagery.
+  const barBtn = (active = false, accent = "#F6BF26", big = true) => ({
+    flex: 1, minWidth: 0, padding: big ? "12px 4px" : "9px 3px", borderRadius: big ? 12 : 9,
     background: active ? accent : "rgba(28,28,30,.92)",
     border: `1px solid ${active ? accent : "rgba(255,255,255,.16)"}`,
     color: active ? "#1a1400" : accent,
-    fontSize: 10, fontWeight: 800, fontFamily: F,
+    fontSize: big ? 10 : 9, fontWeight: 800, fontFamily: F,
     letterSpacing: 0.3, textTransform: "uppercase", cursor: "pointer",
     display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
   });
+
+  // ── Shared pieces ─────────────────────────────────────────────────────────
+  // The map and its controls are identical inline and full screen. Rendering
+  // them from one place is the only way they stay that way: the old split had
+  // an interactive map in one and a picture of a map in the other, which is
+  // how the feature ended up with two personalities.
+
+  const mapChrome = (inFull) => (
+    <>
+      {/* Centre crosshair — exactly where "+ Pin" will land. */}
+      {!selPin && !propInfo && (
+        <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
+          <circle cx="50%" cy="50%" r="13" fill="none" stroke="rgba(0,0,0,.45)" strokeWidth="4" />
+          <circle cx="50%" cy="50%" r="13" fill="none" stroke="rgba(255,255,255,.7)" strokeWidth="1.4" strokeDasharray="4,4" />
+        </svg>
+      )}
+
+      {/* Pin count doubles as the way into the list. */}
+      <button
+        onClick={(e) => { e.stopPropagation(); located.length && setListOpen(true); }}
+        style={{
+          position: "absolute", top: inFull ? "max(12px, env(safe-area-inset-top))" : 8,
+          left: inFull ? "max(12px, env(safe-area-inset-left))" : 8,
+          padding: inFull ? "9px 14px" : "6px 10px", borderRadius: 999,
+          background: "rgba(0,0,0,.66)", border: "1px solid rgba(255,255,255,.16)",
+          color: "#cfd8e6", fontSize: inFull ? 11.5 : 10, fontWeight: 700, fontFamily: F,
+          letterSpacing: 0.4, textTransform: "uppercase",
+          cursor: located.length ? "pointer" : "default",
+          display: "flex", alignItems: "center", gap: 6,
+        }}
+      >
+        {located.length ? <IconReorder size={inFull ? 14 : 12} color="#cfd8e6" /> : null}
+        {located.length
+          ? `${located.length} ${located.length === 1 ? "pin" : "pins"}`
+          : "Tap + Pin to start"}
+      </button>
+
+      {/* Enlarge / close, top right. */}
+      <button
+        onClick={(e) => { e.stopPropagation(); setFull(!inFull); }}
+        aria-label={inFull ? "Close full screen" : "Enlarge the map"}
+        style={{
+          position: "absolute", top: inFull ? "max(12px, env(safe-area-inset-top))" : 8,
+          right: inFull ? "max(12px, env(safe-area-inset-right))" : 8,
+          width: inFull ? 44 : 34, height: inFull ? 44 : 34, borderRadius: 22,
+          background: "rgba(0,0,0,.7)", border: "1px solid rgba(255,255,255,.18)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          cursor: "pointer", padding: 0,
+        }}
+      >
+        {inFull
+          ? <IconX size={18} color="#fff" />
+          : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff"
+                 strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 3h6v6M9 21H3v-6M21 3l-7.5 7.5M3 21l7.5-7.5" />
+            </svg>
+          )}
+      </button>
+    </>
+  );
+
+  const actionBar = (inFull) => (
+    <div style={inFull ? {
+      position: "absolute", left: "max(10px, env(safe-area-inset-left))",
+      right: "max(10px, env(safe-area-inset-right))",
+      bottom: "max(14px, env(safe-area-inset-bottom))",
+      display: "flex", gap: 5,
+    } : { display: "flex", gap: 5, marginTop: 8 }}>
+      <button onClick={addPinHere} style={barBtn(false, "#F6BF26", inFull)}>
+        <IconPlus size={inFull ? 17 : 15} color="#F6BF26" />+ Pin
+      </button>
+      <button onClick={dropPinAtMe} style={barBtn(false, "#7db4ff", inFull)}>
+        <IconMapPin size={inFull ? 17 : 15} color="#7db4ff" />At Me
+      </button>
+      <button onClick={() => setShowPhotos(v => !v)} style={barBtn(showPhotos, "#F6BF26", inFull)}>
+        <IconImage size={inFull ? 17 : 15} color={showPhotos ? "#1a1400" : "#F6BF26"} />Photos
+      </button>
+      <button onClick={makeJpeg} disabled={!!busy || !located.length}
+              style={{ ...barBtn(false, "#F6BF26", inFull), opacity: located.length ? 1 : 0.4 }}>
+        <IconDownload size={inFull ? 17 : 15} color="#F6BF26" />
+        {busy === "jpeg" ? "…" : "JPEG"}
+      </button>
+      {onAddToCard && (
+        <button onClick={addPlanToCard} disabled={!!busy || !located.length}
+                style={{ ...barBtn(false, "#F6BF26", inFull), opacity: located.length ? 1 : 0.4 }}>
+          <IconPlus size={inFull ? 17 : 15} color="#F6BF26" />
+          {busy === "card" ? "…" : "Card"}
+        </button>
+      )}
+      <button onClick={makeLink} disabled={!!busy || !located.length}
+              style={{ ...barBtn(false, "#7db4ff", inFull), opacity: located.length ? 1 : 0.4 }}>
+        <IconMapPin size={inFull ? 17 : 15} color="#7db4ff" />
+        {busy === "link" ? "…" : "Link"}
+      </button>
+    </div>
+  );
+
+  const theMap = (inFull) => (
+    <TileMap
+      center={view.center}
+      zoom={view.zoom}
+      onViewChange={onViewChange}
+      pins={viewPins}
+      showPhotos={showPhotos}
+      selectedIndex={sel}
+      onPinTap={setSel}
+      // Always draggable, inline as well as full screen. A pin you can't move
+      // is the thing that made this feature useless.
+      editable
+      onPinMove={movePin}
+      onMapTap={identifyAt}
+      parcel={parcel}
+      // Inline, one finger belongs to the page so the card still scrolls —
+      // two fingers move the map. Pins stay one-finger draggable either way.
+      gestures={inFull ? "full" : "cooperative"}
+    />
+  );
 
   return (
     <div
       ref={hostRef}
       // Keep touches here from reaching OnsiteWindow's swipe-to-Pipeline
-      // handler — panning the map must not fling the card away.
+      // handler — dragging a pin must not fling the card away.
       onTouchStart={e => e.stopPropagation()}
       onTouchMove={e => e.stopPropagation()}
       onTouchEnd={e => e.stopPropagation()}
@@ -389,28 +498,20 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
           Site Map
         </span>
         <span style={{ fontSize: 10, color: "#3a4a60" }}>
-          {located.length
-            ? `${located.length} ${located.length === 1 ? "pin" : "pins"} · open to move or add`
-            : "no pins yet"}
+          drag pins · two fingers to move the map
         </span>
       </div>
 
-      {/* Preview. Static on purpose: a gesture-capturing map inside a scrolling
-          card is a scroll trap on a phone. Everything interactive happens in
-          the full-screen map below. */}
-      <div
-        onClick={() => live && view && setFull(true)}
-        style={{ position: "relative", height: 330, borderRadius: 10, overflow: "hidden", border: "1px solid #1a2540", background: "#101722", cursor: "pointer" }}
-      >
+      {/* The live map, right here. Not a preview of one. */}
+      <div style={{
+        position: "relative", height: 360, borderRadius: 10, overflow: "hidden",
+        border: "1px solid #1a2540", background: "#101722",
+      }}>
         {live && view ? (
-          <TileMap
-            center={view.center}
-            zoom={view.zoom}
-            pins={viewPins}
-            showPhotos={showPhotos}
-            parcel={parcel}
-            interactive={false}
-          />
+          <>
+            {theMap(false)}
+            {mapChrome(false)}
+          </>
         ) : (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#4a5a70", fontSize: 12, textAlign: "center", padding: 20 }}>
             {live ? "Finding this property…" : "Loading map…"}
@@ -418,35 +519,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
         )}
       </div>
 
-      {/* One primary action on the card. Everything else is inside. */}
-      <button
-        onClick={() => live && view && setFull(true)}
-        disabled={!live || !view}
-        style={{
-          width: "100%", marginTop: 8, padding: "13px 0", borderRadius: 10,
-          background: "rgba(246,191,38,.95)", border: "none", color: "#1a1400",
-          fontSize: 13, fontWeight: 800, fontFamily: F, letterSpacing: 0.5,
-          textTransform: "uppercase", cursor: view ? "pointer" : "default",
-          opacity: view ? 1 : 0.45,
-          display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
-        }}
-      >
-        <IconMapPin size={15} color="#1a1400" />
-        {located.length ? "Open Site Map" : "Open Site Map — add pins"}
-      </button>
-
-      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-        <button onClick={makeJpeg} disabled={!!busy || !located.length}
-                style={cardBtn("gold", !!located.length)}>
-          <IconDownload size={14} color="#F6BF26" />
-          {busy === "jpeg" ? "Saving…" : "Save JPEG"}
-        </button>
-        <button onClick={makeLink} disabled={!!busy || !located.length}
-                style={cardBtn("blue", !!located.length)}>
-          <IconMapPin size={14} color="#7db4ff" />
-          {busy === "link" ? "Copying…" : "Copy Crew Link"}
-        </button>
-      </div>
+      {live && view && actionBar(false)}
 
       {err && <div style={{ marginTop: 6, fontSize: 11, color: "#ff8080" }}>{err}</div>}
       {note && !err && <div style={{ marginTop: 6, fontSize: 11, color: "#8fbf80" }}>{note}</div>}
@@ -463,62 +536,14 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
         </div>
       )}
 
-      {/* ══ THE SITE MAP ═════════════════════════════════════════════════════
-          Pan, zoom, drag pins, add pins, tap a pin to edit it, export, share.
-          No modes: what your finger lands on decides what the gesture does. */}
+      {/* ══ FULL SCREEN ══════════════════════════════════════════════════════
+          The same map with the whole screen to work in — past whatever the
+          card's layout allows — for reading the property and placing pins
+          precisely. One finger pans here, since there is no page to scroll. */}
       {full && view && (
         <div style={{ position: "fixed", inset: 0, zIndex: 400, background: "#0a0b10" }}>
-          <TileMap
-            center={view.center}
-            zoom={view.zoom}
-            onViewChange={setView}
-            pins={viewPins}
-            showPhotos={showPhotos}
-            selectedIndex={sel}
-            onPinTap={setSel}
-            // Always on. A pin you can't move is the thing that made this
-            // feature useless; there is no state in which that is the right
-            // behaviour on this screen.
-            editable
-            onPinMove={movePin}
-            onMapTap={identifyAt}
-            parcel={parcel}
-          />
-
-          <button
-            onClick={() => { setSel(null); setFull(false); }}
-            aria-label="Close site map"
-            style={{
-              position: "absolute", top: "max(12px, env(safe-area-inset-top))",
-              right: "max(12px, env(safe-area-inset-right))",
-              width: 44, height: 44, borderRadius: 22,
-              background: "rgba(28,28,30,.85)", border: "1px solid rgba(255,255,255,.18)",
-              display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
-            }}
-          ><IconX size={18} color="#fff" /></button>
-
-          {/* The pin count doubles as the way into the list. On a job with a
-              dozen trees, hunting for #7 among the dots is slower than reading
-              a row — and the list is also where the numbering is set. */}
-          <button
-            onClick={() => located.length && setListOpen(true)}
-            style={{
-              position: "absolute", top: "max(12px, env(safe-area-inset-top))",
-              left: "max(12px, env(safe-area-inset-left))",
-              padding: "9px 14px", borderRadius: 999,
-              background: "rgba(0,0,0,.66)", border: "1px solid rgba(255,255,255,.16)",
-              color: "#cfd8e6", fontSize: 11.5, fontWeight: 700, fontFamily: F,
-              letterSpacing: 0.4, textTransform: "uppercase",
-              cursor: located.length ? "pointer" : "default",
-              display: "flex", alignItems: "center", gap: 7,
-            }}
-          >
-            {located.length ? <IconReorder size={14} color="#cfd8e6" /> : null}
-            {located.length
-              ? `${located.length} ${located.length === 1 ? "pin" : "pins"} · list`
-              : "Tap + Pin to start"}
-          </button>
-
+          {theMap(true)}
+          {mapChrome(true)}
           {parcel.length > 0 && !selPin && !propInfo && !listOpen && (
             <div style={{
               position: "absolute", top: "calc(max(12px, env(safe-area-inset-top)) + 46px)",
@@ -527,53 +552,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
               textShadow: "0 1px 4px rgba(0,0,0,.9)",
             }}>Tap the ground for property info</div>
           )}
-
-          {/* Centre crosshair — where "+ Pin" will land. Shown only with the
-              sheet closed, so it never argues with what you're reading. */}
-          {!selPin && !propInfo && (
-            <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
-              <circle cx="50%" cy="50%" r="15" fill="none" stroke="rgba(0,0,0,.45)" strokeWidth="4" />
-              <circle cx="50%" cy="50%" r="15" fill="none" stroke="rgba(255,255,255,.75)" strokeWidth="1.5" strokeDasharray="4,4" />
-            </svg>
-          )}
-
-          {/* ── One bar, every action ─────────────────────────────────────── */}
-          {!selPin && !propInfo && (
-            <div style={{
-              position: "absolute", left: "max(10px, env(safe-area-inset-left))",
-              right: "max(10px, env(safe-area-inset-right))",
-              bottom: "max(14px, env(safe-area-inset-bottom))",
-              display: "flex", gap: 5,
-            }}>
-              <button onClick={addPinHere} style={barBtn()}>
-                <IconPlus size={17} color="#F6BF26" />+ Pin
-              </button>
-              <button onClick={dropPinAtMe} style={barBtn(false, "#7db4ff")}>
-                <IconMapPin size={17} color="#7db4ff" />At Me
-              </button>
-              <button onClick={() => setShowPhotos(v => !v)} style={barBtn(showPhotos)}>
-                <IconImage size={17} color={showPhotos ? "#1a1400" : "#F6BF26"} />Photos
-              </button>
-              <button onClick={makeJpeg} disabled={!!busy || !located.length}
-                      style={{ ...barBtn(), opacity: located.length ? 1 : 0.4 }}>
-                <IconDownload size={17} color="#F6BF26" />
-                {busy === "jpeg" ? "…" : "JPEG"}
-              </button>
-              {onAddToCard && (
-                <button onClick={addPlanToCard} disabled={!!busy || !located.length}
-                        style={{ ...barBtn(), opacity: located.length ? 1 : 0.4 }}>
-                  <IconPlus size={17} color="#F6BF26" />
-                  {busy === "card" ? "…" : "Card"}
-                </button>
-              )}
-              <button onClick={makeLink} disabled={!!busy || !located.length}
-                      style={{ ...barBtn(false, "#7db4ff"), opacity: located.length ? 1 : 0.4 }}>
-                <IconMapPin size={17} color="#7db4ff" />
-                {busy === "link" ? "…" : "Link"}
-              </button>
-            </div>
-          )}
-
+          {!selPin && !propInfo && actionBar(true)}
           {(err || note) && (
             <div style={{
               position: "absolute", left: 0, right: 0,
@@ -587,204 +566,195 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
               }}>{err || note}</div>
             </div>
           )}
+        </div>
+      )}
 
-          {/* ── Property info ─────────────────────────────────────────────
-              Owner, parcel and assessment for whatever you tapped. This used
-              to be a separate full-screen map on Google's metered API; it is
-              a hit-test against boundaries already drawn here. */}
-          {propInfo && (
-            <div style={{
-              position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 6,
-              background: "#0e1120", borderTop: "1px solid #253049",
-              borderTopLeftRadius: 16, borderTopRightRadius: 16,
-              padding: "14px 16px max(16px, env(safe-area-inset-bottom))",
-              boxShadow: "0 -12px 40px rgba(0,0,0,.65)", maxHeight: "62vh", overflowY: "auto",
-            }}>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "#fff", fontFamily: F, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                    {propInfo.owner}
-                  </div>
-                  {propInfo.parcelAddr && (
-                    <div style={{ fontSize: 12.5, color: "#8aa0c0", marginTop: 2 }}>{propInfo.parcelAddr}</div>
-                  )}
+      {/* ══ SHEETS ═══════════════════════════════════════════════════════════
+          Fixed to the viewport and rendered once, so they work over the inline
+          map and the full-screen one without a second copy of each. */}
+
+      {/* Property info for a tapped parcel. */}
+      {propInfo && (
+        <div style={{ ...sheetWrap, zIndex: 460 }}>
+          <div onClick={() => setPropInfo(null)} style={scrim} />
+          <div style={sheet}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: "#fff", fontFamily: F, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  {propInfo.owner}
                 </div>
-                <button onClick={() => setPropInfo(null)} aria-label="Close" style={{
-                  width: 34, height: 34, borderRadius: 17, background: "transparent",
-                  border: "1px solid #253049", cursor: "pointer", flexShrink: 0,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}><IconX size={15} color="#8aa0c0" /></button>
+                {propInfo.parcelAddr && (
+                  <div style={{ fontSize: 12.5, color: "#8aa0c0", marginTop: 2 }}>{propInfo.parcelAddr}</div>
+                )}
               </div>
-              {[
-                ["Acres", propInfo.acres != null ? Number(propInfo.acres).toFixed(2) : null],
-                ["Assessed", propInfo.assessedValue != null ? `$${Number(propInfo.assessedValue).toLocaleString()}` : null],
-                ["SBL", propInfo.sbl],
-                ["Class", propInfo.propClass],
-                ["Municipality", [propInfo.muni, propInfo.county].filter(Boolean).join(", ") || null],
-                ["Owner mailing", propInfo.mailAddr],
-              ].filter(([, v]) => v).map(([k, v]) => (
-                <div key={k} style={{ display: "flex", gap: 10, padding: "6px 0", borderTop: "1px solid #161c2b" }}>
-                  <span style={{ width: 118, flexShrink: 0, fontSize: 10, fontWeight: 800, color: "#4a5a70", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", paddingTop: 2 }}>{k}</span>
-                  <span style={{ flex: 1, fontSize: 13, color: "#e6ecf5" }}>{v}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* ── Pin list ──────────────────────────────────────────────────
-              Numbered in plan order. Tap a row to fly to that pin; the arrows
-              set the numbering that ends up on the exported plan and the crew
-              link. */}
-          {listOpen && (
-            <div style={{ position: "absolute", inset: 0, zIndex: 5, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
-              <div onClick={() => setListOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.55)" }} />
-              <div style={{
-                position: "relative",
-                background: "#0e1120", borderTop: "1px solid #253049",
-                borderTopLeftRadius: 16, borderTopRightRadius: 16,
-                padding: "14px 12px max(16px, env(safe-area-inset-bottom))",
-                boxShadow: "0 -12px 40px rgba(0,0,0,.65)",
-                maxHeight: "76vh", overflowY: "auto",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, padding: "0 4px" }}>
-                  <div style={{ flex: 1, fontSize: 11, fontWeight: 800, color: "#4a5a70", fontFamily: F, letterSpacing: 1, textTransform: "uppercase" }}>
-                    Pins · plan order
-                  </div>
-                  <button onClick={() => setListOpen(false)} aria-label="Close list" style={{
-                    width: 34, height: 34, borderRadius: 17, background: "transparent",
-                    border: "1px solid #253049", cursor: "pointer", flexShrink: 0,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                  }}><IconX size={15} color="#8aa0c0" /></button>
-                </div>
-
-                {viewPins.map((p, i) => (
-                  <div key={p.id} style={{
-                    display: "flex", alignItems: "center", gap: 9,
-                    padding: "7px 4px",
-                    borderTop: i ? "1px solid #161c2b" : "none",
-                  }}>
-                    <button onClick={() => flyTo(i)} style={{
-                      flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10,
-                      background: "transparent", border: "none", padding: 0,
-                      cursor: "pointer", textAlign: "left",
-                    }}>
-                      <span style={{
-                        width: 26, height: 26, borderRadius: 13, background: "#F6BF26",
-                        color: "#1a1400", fontFamily: F, fontWeight: 700, fontSize: 13,
-                        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-                      }}>{p.n}</span>
-                      <span style={{
-                        width: 40, height: 40, borderRadius: 7, flexShrink: 0,
-                        background: "#141a29", overflow: "hidden",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                      }}>
-                        {(p.photo || p.photoLocal)
-                          ? <img src={p.photo || p.photoLocal} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                          : <IconMapPin size={16} color="#3a4a60" />}
-                      </span>
-                      <span style={{
-                        flex: 1, minWidth: 0, fontSize: 13, color: "#e6ecf5", fontWeight: 600,
-                        overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
-                      }}>{p.label || `Location ${p.n}`}</span>
-                    </button>
-
-                    <button onClick={() => reorderPin(i, -1)} disabled={i === 0}
-                            aria-label="Move up" style={rowBtn(i === 0)}>
-                      <IconChevronUp size={15} color="#8aa0c0" />
-                    </button>
-                    <button onClick={() => reorderPin(i, 1)} disabled={i === viewPins.length - 1}
-                            aria-label="Move down" style={rowBtn(i === viewPins.length - 1)}>
-                      <IconChevronDown size={15} color="#8aa0c0" />
-                    </button>
-                    <button onClick={() => deletePin(i)} aria-label="Delete pin" style={rowBtn(false)}>
-                      <IconTrash size={14} color="#ff8080" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ── Pin sheet: label, photo, delete ───────────────────────────── */}
-          {selPin && (
-            <div style={{
-              position: "absolute", left: 0, right: 0, bottom: 0,
-              background: "#0e1120", borderTop: "1px solid #253049",
-              borderTopLeftRadius: 16, borderTopRightRadius: 16,
-              padding: "14px 16px max(16px, env(safe-area-inset-bottom))",
-              boxShadow: "0 -12px 40px rgba(0,0,0,.65)", maxHeight: "72vh", overflowY: "auto",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                <div style={{
-                  width: 30, height: 30, borderRadius: 15, background: "#F6BF26",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontFamily: F, fontWeight: 700, color: "#1a1400", fontSize: 15, flexShrink: 0,
-                }}>{selPin.n}</div>
-                <div style={{ flex: 1, fontSize: 12, color: "#5a6580" }}>
-                  Close this to drag the pin.
-                </div>
-                <button onClick={() => setSel(null)} aria-label="Close" style={{
-                  width: 34, height: 34, borderRadius: 17, background: "transparent",
-                  border: "1px solid #253049", cursor: "pointer", flexShrink: 0,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}><IconX size={15} color="#8aa0c0" /></button>
-              </div>
-
-              {(selPin.photo || selPin.photoLocal) && (
-                <img src={selPin.photo || selPin.photoLocal} alt="" style={{
-                  width: "100%", maxHeight: "30vh", objectFit: "contain",
-                  borderRadius: 10, background: "#0a0c14", display: "block", marginBottom: 10,
-                }} />
-              )}
-
-              <input
-                value={selRaw?.label || ""}
-                onChange={e => patchSel({ label: e.target.value })}
-                placeholder="Label (e.g. Big maple, back left)"
-                style={{
-                  width: "100%", boxSizing: "border-box", padding: "10px 12px",
-                  borderRadius: 8, background: "#141a29", border: "1px solid #253049",
-                  color: "#e6ecf5", fontSize: 13.5, marginBottom: 10,
-                }}
-              />
-
-              {photos.length > 0 && (
-                <>
-                  <div style={{ fontSize: 9.5, fontWeight: 800, color: "#4a5a70", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 5, display: "flex", alignItems: "center", gap: 5 }}>
-                    <IconImage size={11} color="#4a5a70" /> Photo on this pin
-                  </div>
-                  <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 6, marginBottom: 10 }}>
-                    {photos.map((ph) => {
-                      const k = photoKey(ph);
-                      const on = selRaw?.photoId === k;
-                      return (
-                        <button key={k} onClick={() => patchSel({ photoId: on ? null : k })} style={{
-                          flexShrink: 0, width: 58, height: 58, padding: 0, borderRadius: 8,
-                          overflow: "hidden", cursor: "pointer", background: "#141a29",
-                          border: on ? "2.5px solid #F6BF26" : "1px solid #253049",
-                          opacity: ph.planOff ? 0.35 : 1,
-                        }}>
-                          <img src={ph.url || ph.dataUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                        </button>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-
-              <button onClick={deleteSel} style={{
-                width: "100%", padding: "11px 0", borderRadius: 8,
-                background: "rgba(255,90,90,.12)", border: "1px solid rgba(255,90,90,.35)",
-                color: "#ff8080", fontSize: 12, fontWeight: 800, fontFamily: F,
-                letterSpacing: 0.5, textTransform: "uppercase", cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-              }}>
-                <IconTrash size={14} color="#ff8080" /> Delete this pin
+              <button onClick={() => setPropInfo(null)} aria-label="Close" style={closeBtn}>
+                <IconX size={15} color="#8aa0c0" />
               </button>
             </div>
-          )}
+            {[
+              ["Acres", propInfo.acres != null ? Number(propInfo.acres).toFixed(2) : null],
+              ["Assessed", propInfo.assessedValue != null ? `$${Number(propInfo.assessedValue).toLocaleString()}` : null],
+              ["SBL", propInfo.sbl],
+              ["Class", propInfo.propClass],
+              ["Municipality", [propInfo.muni, propInfo.county].filter(Boolean).join(", ") || null],
+              ["Owner mailing", propInfo.mailAddr],
+            ].filter(([, v]) => v).map(([k, v]) => (
+              <div key={k} style={{ display: "flex", gap: 10, padding: "6px 0", borderTop: "1px solid #161c2b" }}>
+                <span style={{ width: 118, flexShrink: 0, fontSize: 10, fontWeight: 800, color: "#4a5a70", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", paddingTop: 2 }}>{k}</span>
+                <span style={{ flex: 1, fontSize: 13, color: "#e6ecf5" }}>{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Pin list — plan order. Tap a row to fly to it; arrows set the order
+          the pins are numbered in on the exported plan and the crew link. */}
+      {listOpen && (
+        <div style={{ ...sheetWrap, zIndex: 460 }}>
+          <div onClick={() => setListOpen(false)} style={scrim} />
+          <div style={{ ...sheet, padding: "14px 12px max(16px, env(safe-area-inset-bottom))" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, padding: "0 4px" }}>
+              <div style={{ flex: 1, fontSize: 11, fontWeight: 800, color: "#4a5a70", fontFamily: F, letterSpacing: 1, textTransform: "uppercase" }}>
+                Pins · plan order
+              </div>
+              <button onClick={() => setListOpen(false)} aria-label="Close list" style={closeBtn}>
+                <IconX size={15} color="#8aa0c0" />
+              </button>
+            </div>
+            {viewPins.map((p, i) => (
+              <div key={p.id} style={{
+                display: "flex", alignItems: "center", gap: 9,
+                padding: "7px 4px", borderTop: i ? "1px solid #161c2b" : "none",
+              }}>
+                <button onClick={() => flyTo(i)} style={{
+                  flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10,
+                  background: "transparent", border: "none", padding: 0,
+                  cursor: "pointer", textAlign: "left",
+                }}>
+                  <span style={{
+                    width: 24, height: 24, borderRadius: 12, background: "#F6BF26",
+                    color: "#1a1400", fontFamily: F, fontWeight: 700, fontSize: 12,
+                    display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                  }}>{p.n}</span>
+                  <span style={{
+                    width: 40, height: 40, borderRadius: 7, flexShrink: 0,
+                    background: "#141a29", overflow: "hidden",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    {(p.photo || p.photoLocal)
+                      ? <img src={p.photo || p.photoLocal} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      : <IconMapPin size={16} color="#3a4a60" />}
+                  </span>
+                  <span style={{
+                    flex: 1, minWidth: 0, fontSize: 13, color: "#e6ecf5", fontWeight: 600,
+                    overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
+                  }}>{p.label || `Location ${p.n}`}</span>
+                </button>
+                <button onClick={() => reorderPin(i, -1)} disabled={i === 0}
+                        aria-label="Move up" style={rowBtn(i === 0)}>
+                  <IconChevronUp size={15} color="#8aa0c0" />
+                </button>
+                <button onClick={() => reorderPin(i, 1)} disabled={i === viewPins.length - 1}
+                        aria-label="Move down" style={rowBtn(i === viewPins.length - 1)}>
+                  <IconChevronDown size={15} color="#8aa0c0" />
+                </button>
+                <button onClick={() => deletePin(i)} aria-label="Delete pin" style={rowBtn(false)}>
+                  <IconTrash size={14} color="#ff8080" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* One tapped pin: label, photo, delete. */}
+      {selPin && (
+        <div style={{ ...sheetWrap, zIndex: 460 }}>
+          <div onClick={() => setSel(null)} style={scrim} />
+          <div style={sheet}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <div style={{ flex: 1, fontSize: 12, color: "#5a6580" }}>
+                Close this to drag the pin.
+              </div>
+              <button onClick={() => setSel(null)} aria-label="Close" style={closeBtn}>
+                <IconX size={15} color="#8aa0c0" />
+              </button>
+            </div>
+
+            {(selPin.photo || selPin.photoLocal) && (
+              <img src={selPin.photo || selPin.photoLocal} alt="" style={{
+                width: "100%", maxHeight: "30vh", objectFit: "contain",
+                borderRadius: 10, background: "#0a0c14", display: "block", marginBottom: 10,
+              }} />
+            )}
+
+            <input
+              value={selRaw?.label || ""}
+              onChange={e => patchSel({ label: e.target.value })}
+              placeholder="Label (e.g. Big maple, back left)"
+              style={{
+                width: "100%", boxSizing: "border-box", padding: "10px 12px",
+                borderRadius: 8, background: "#141a29", border: "1px solid #253049",
+                color: "#e6ecf5", fontSize: 13.5, marginBottom: 10,
+              }}
+            />
+
+            {photos.length > 0 && (
+              <>
+                <div style={{ fontSize: 9.5, fontWeight: 800, color: "#4a5a70", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 5, display: "flex", alignItems: "center", gap: 5 }}>
+                  <IconImage size={11} color="#4a5a70" /> Photo on this pin
+                </div>
+                <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 6, marginBottom: 10 }}>
+                  {photos.map((ph) => {
+                    const k = photoKey(ph);
+                    const on = selRaw?.photoId === k;
+                    return (
+                      <button key={k} onClick={() => patchSel({ photoId: on ? null : k })} style={{
+                        flexShrink: 0, width: 58, height: 58, padding: 0, borderRadius: 8,
+                        overflow: "hidden", cursor: "pointer", background: "#141a29",
+                        border: on ? "2.5px solid #F6BF26" : "1px solid #253049",
+                        opacity: ph.planOff ? 0.35 : 1,
+                      }}>
+                        <img src={ph.url || ph.dataUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            <button onClick={deleteSel} style={{
+              width: "100%", padding: "11px 0", borderRadius: 8,
+              background: "rgba(255,90,90,.12)", border: "1px solid rgba(255,90,90,.35)",
+              color: "#ff8080", fontSize: 12, fontWeight: 800, fontFamily: F,
+              letterSpacing: 0.5, textTransform: "uppercase", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            }}>
+              <IconTrash size={14} color="#ff8080" /> Delete this pin
+            </button>
+          </div>
         </div>
       )}
     </div>
   );
 }
+
+const sheetWrap = {
+  position: "fixed", inset: 0,
+  display: "flex", flexDirection: "column", justifyContent: "flex-end",
+};
+const scrim = { position: "absolute", inset: 0, background: "rgba(0,0,0,.55)" };
+const sheet = {
+  position: "relative",
+  background: "#0e1120", borderTop: "1px solid #253049",
+  borderTopLeftRadius: 16, borderTopRightRadius: 16,
+  padding: "14px 16px max(16px, env(safe-area-inset-bottom))",
+  boxShadow: "0 -12px 40px rgba(0,0,0,.65)",
+  maxHeight: "76vh", overflowY: "auto",
+};
+const closeBtn = {
+  width: 34, height: 34, borderRadius: 17, background: "transparent",
+  border: "1px solid #253049", cursor: "pointer", flexShrink: 0,
+  display: "flex", alignItems: "center", justifyContent: "center",
+};

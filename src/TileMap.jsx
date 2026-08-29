@@ -43,6 +43,11 @@ const mid2 = (a, b) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clie
 // How far above the fingertip a pin floats while being dragged. A pin sitting
 // under the finger is invisible at the exact moment you need to aim it.
 const DRAG_LIFT = 52;
+// How far the touch must travel before a grab counts as a drag at all, and
+// over how much further travel the lift eases in. Below the slop a pin does
+// not move a pixel, so tapping one to open its details never nudges it.
+const DRAG_SLOP = 8;
+const DRAG_RAMP = 46;
 
 /* ── RetryImg ───────────────────────────────────────────────────────────────
    Remote images that retry instead of failing silently.
@@ -155,6 +160,12 @@ export default function TileMap({
   pins = [],              // [{ n, lat, lng, label, photo, photoLocal }]
   showPhotos = false,     // true => float a photo callout beside each pin
   interactive = true,     // false => static preview: no gestures, page scrolls freely
+  // "full"        — one finger pans the map (a full-screen map)
+  // "cooperative" — one finger scrolls the PAGE, two fingers move the map.
+  //                 Pins are still one-finger draggable. This is what lets a
+  //                 live map sit inside a scrolling card without becoming a
+  //                 scroll trap.
+  gestures = "full",
   selectedIndex = null,
   onPinTap,
   editable = false,       // true => pins can be dragged
@@ -190,7 +201,7 @@ export default function TileMap({
   // Same for the interaction props, so the gesture effect doesn't need to be
   // torn down and rebuilt every time edit mode toggles.
   const cfg = useRef({});
-  cfg.current = { editable, onPinMove, onPinTap, onMapTap };
+  cfg.current = { editable, onPinMove, onPinTap, onMapTap, gestures };
 
   const emit = useCallback((next) => {
     view.current = next;
@@ -208,8 +219,9 @@ export default function TileMap({
     let last = null;            // last single-touch point
     let pinchStart = null;      // { dist, zoom, mid }
     let lastTap = 0;
-    let held = null;            // { i, moved } while dragging a pin
+    let held = null;            // { i, moved, from } while dragging a pin
     let startPt = null;         // where a single touch began (tap detection)
+    let lastMid = null;         // previous two-finger midpoint, for panning
 
     const rectOf = () => el.getBoundingClientRect();
     // Screen (client) coords -> lat/lng, via the same fractional-zoom origin
@@ -248,11 +260,19 @@ export default function TileMap({
       emit({ center: { lat: clampLat(nextCentre.lat), lng: nextCentre.lng }, zoom: nz });
     };
 
-    // Where the dragged pin's GROUND point is: lifted above the fingertip so
-    // the thing being placed is never hidden under the hand placing it.
-    const liftFrom = (cx, cy) => {
-      const r = rectOf();
-      return { x: cx - r.left, y: cy - r.top - DRAG_LIFT };
+    // Where a dragged pin's GROUND point goes.
+    //
+    // Two things matter here. The pin tracks the DELTA of your finger from
+    // where the grab started, not your fingertip — so it never jumps to meet
+    // your finger, it just moves as much as your finger moved, wherever on the
+    // pin you happened to grab it. And the lift above the fingertip eases in
+    // over the first stretch of movement rather than snapping on, so a pin you
+    // touch and barely move stays exactly where it was.
+    const groundAt = (cx, cy) => {
+      const dx = cx - startPt.x, dy = cy - startPt.y;
+      const travelled = Math.hypot(dx, dy);
+      const lift = DRAG_LIFT * Math.min(1, Math.max(0, (travelled - DRAG_SLOP) / DRAG_RAMP));
+      return { x: held.from.x + dx, y: held.from.y + dy - lift, lift };
     };
 
     const pinIndexAt = (target) => {
@@ -266,13 +286,23 @@ export default function TileMap({
         startPt = { x: t.clientX, y: t.clientY };
         const hit = pinIndexAt(e.target);
         if (hit != null && cfg.current.editable) {
-          // Grabbing a pin: take over completely so the map can't pan under it.
+          // Grabbing a pin: take over so the map can't pan under it. Nothing
+          // moves yet — the pin only starts following once the touch has
+          // travelled past the slop, which keeps a tap from nudging it.
           mode = "pin";
-          held = { i: hit, moved: false };
-          setDrag({ i: hit, ...liftFrom(t.clientX, t.clientY) });
+          const node = e.target.closest("[data-pin-index]");
+          const r = rectOf(), b = node.getBoundingClientRect();
+          held = {
+            i: hit, moved: false,
+            from: { x: b.left + b.width / 2 - r.left, y: b.top + b.height / 2 - r.top },
+          };
           e.preventDefault();
           return;
         }
+        // Cooperative mode leaves one finger to the page: no preventDefault
+        // anywhere below, so the card scrolls exactly as it would without a
+        // map in it.
+        if (cfg.current.gestures === "cooperative") { mode = "scroll"; return; }
         mode = "pan";
         last = { clientX: t.clientX, clientY: t.clientY };
         // Double-tap to zoom in — the expected gesture on a phone map.
@@ -289,6 +319,9 @@ export default function TileMap({
           zoom: view.current.zoom,
           mid: mid2(e.touches[0], e.touches[1]),
         };
+        // Two fingers also PAN, tracked from their midpoint. In cooperative
+        // mode that is the only way to move the map, so it can't be optional.
+        lastMid = pinchStart.mid;
       }
     };
 
@@ -296,8 +329,10 @@ export default function TileMap({
       if (mode === "pin" && e.touches.length === 1) {
         e.preventDefault();
         const t = e.touches[0];
-        if (Math.hypot(t.clientX - startPt.x, t.clientY - startPt.y) > 4) held.moved = true;
-        setDrag({ i: held.i, ...liftFrom(t.clientX, t.clientY) });
+        if (Math.hypot(t.clientX - startPt.x, t.clientY - startPt.y) <= DRAG_SLOP) return;
+        held.moved = true;
+        const g = groundAt(t.clientX, t.clientY);
+        setDrag({ i: held.i, x: g.x, y: g.y, lift: g.lift });
       } else if (mode === "pan" && e.touches.length === 1) {
         e.preventDefault();
         const t = e.touches[0];
@@ -305,10 +340,13 @@ export default function TileMap({
         last = { clientX: t.clientX, clientY: t.clientY };
       } else if (mode === "pinch" && e.touches.length === 2) {
         e.preventDefault();
+        const mid = mid2(e.touches[0], e.touches[1]);
+        if (lastMid) panBy(mid.x - lastMid.x, mid.y - lastMid.y);
+        lastMid = mid;
         const d = dist2(e.touches[0], e.touches[1]);
         if (pinchStart.dist > 0) {
           // Continuous fractional zoom — no stepping, no snap-back.
-          zoomAround(pinchStart.zoom + Math.log2(d / pinchStart.dist), pinchStart.mid);
+          zoomAround(pinchStart.zoom + Math.log2(d / pinchStart.dist), mid);
         }
       }
     };
@@ -317,8 +355,11 @@ export default function TileMap({
       if (mode === "pin" && e.touches.length === 0) {
         const t = e.changedTouches?.[0];
         if (held.moved && t) {
-          // Commit the lifted ground point, not the fingertip.
-          cfg.current.onPinMove?.(held.i, atClient(t.clientX, t.clientY - DRAG_LIFT));
+          // Commit exactly what was drawn — same delta maths, so the pin lands
+          // where the crosshair said it would.
+          const g = groundAt(t.clientX, t.clientY);
+          const r = rectOf();
+          cfg.current.onPinMove?.(held.i, atClient(g.x + r.left, g.y + r.top));
         } else {
           // A grab that never moved is a tap.
           cfg.current.onPinTap?.(held.i);
@@ -327,17 +368,19 @@ export default function TileMap({
         return;
       }
       if (e.touches.length === 0) {
+        lastMid = null;
         // A clean tap on open imagery — no drag, no pin under it. The parent
         // decides what that means (drop a pin, identify the parcel, nothing).
         const t = e.changedTouches?.[0];
-        if (mode === "pan" && t && startPt &&
+        if ((mode === "pan" || mode === "scroll") && t && startPt &&
             Math.hypot(t.clientX - startPt.x, t.clientY - startPt.y) < 8 &&
             pinIndexAt(e.target) == null) {
           cfg.current.onMapTap?.(atClient(t.clientX, t.clientY));
         }
         mode = null; last = null; pinchStart = null; startPt = null;
       } else if (e.touches.length === 1) {
-        mode = "pan";
+        lastMid = null;
+        mode = cfg.current.gestures === "cooperative" ? "scroll" : "pan";
         last = { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY };
       }
     };
@@ -377,6 +420,8 @@ export default function TileMap({
       down = null;
     };
     const onWheel = (e) => {
+      // Cooperative: the wheel belongs to the page, same as one finger does.
+      if (cfg.current.gestures === "cooperative") return;
       e.preventDefault();
       zoomAround(view.current.zoom - Math.sign(e.deltaY) * 0.5, { x: e.clientX, y: e.clientY });
     };
@@ -500,7 +545,9 @@ export default function TileMap({
       style={{
         position: "absolute", inset: 0, overflow: "hidden",
         background: "#1b2430",
-        touchAction: interactive ? "none" : "auto",
+        // Cooperative mode must leave vertical scrolling to the browser, or
+        // the card can't be scrolled past the map.
+        touchAction: !interactive ? "auto" : gestures === "cooperative" ? "pan-y" : "none",
         cursor: interactive ? "grab" : "default",
         userSelect: "none", WebkitUserSelect: "none",
       }}
@@ -581,17 +628,18 @@ export default function TileMap({
         );
       })()}
 
-      {/* Pins. Never photo thumbnails: a photo marker covers the very ground
-          it is marking, and your fingertip covers the rest. A numbered dot
-          with a finger-sized invisible hit area is what you can actually aim.
-          The hit box is 44px — Apple's minimum touch target — while the
-          visible dot stays small enough to see what it is pointing at. */}
+      {/* Pins. A small teardrop, the shape everyone already reads as "a pin",
+          with its point ON the spot. No number: on a live map the leader line
+          already says which photo belongs to which pin, and a digit forces the
+          head wide enough to cover the tree it is marking. The hit box stays
+          44px — Apple's minimum touch target — so a small pin is still an easy
+          one to grab. */}
       {ready && pins.map((p, i) => {
         const s2 = pinAt(p, i);
         if (s2.x < -80 || s2.y < -80 || s2.x > w + 80 || s2.y > h + 80) return null;
         const on = selectedIndex === i;
         const isHeld = drag?.i === i;
-        const D = showPhotos ? 22 : 26;         // visible dot
+        const PW = 15, PH2 = 21;                // pin: width, height (point at bottom)
         const HIT = 44;
         return (
           <div
@@ -599,25 +647,28 @@ export default function TileMap({
             data-pin-index={i}
             onClick={(e) => { e.stopPropagation(); if (!editable) onPinTap?.(i); }}
             style={{
-              position: "absolute", left: s2.x - HIT / 2, top: s2.y - HIT / 2,
+              position: "absolute",
+              left: s2.x - HIT / 2,
+              // The pin's POINT is the location, so the graphic hangs above it.
+              top: s2.y - HIT / 2,
               width: HIT, height: HIT,
               display: "flex", alignItems: "center", justifyContent: "center",
               cursor: editable ? "grab" : "pointer",
               pointerEvents: interactive ? "auto" : "none",
               zIndex: isHeld ? 30 : 10,
-              transform: isHeld ? "scale(1.25)" : on ? "scale(1.12)" : "none",
+              transform: isHeld ? "scale(1.3)" : on ? "scale(1.15)" : "none",
+              transformOrigin: "50% 50%",
               transition: isHeld ? "none" : "transform .12s",
             }}
           >
-            <div style={{
-              width: D, height: D, borderRadius: D / 2,
-              background: on || isHeld ? "#fff" : "#F6BF26",
-              border: `2.5px solid ${on || isHeld ? "#F6BF26" : "#fff"}`,
-              boxShadow: isHeld ? "0 8px 16px rgba(0,0,0,.6)" : "0 1px 5px rgba(0,0,0,.6)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontFamily: "Oswald, sans-serif", fontWeight: 700,
-              fontSize: showPhotos ? 11 : 13, color: "#1a1400", lineHeight: 1,
-            }}>{p.n ?? i + 1}</div>
+            <svg width={PW} height={PH2} viewBox="0 0 15 21"
+                 style={{ display: "block", transform: `translateY(${-PH2 / 2}px)`,
+                          filter: "drop-shadow(0 1px 2px rgba(0,0,0,.7))" }}>
+              <path d="M7.5 20.4C7.5 20.4 14 11.6 14 7.1A6.5 6.5 0 1 0 1 7.1C1 11.6 7.5 20.4 7.5 20.4Z"
+                    fill={on || isHeld ? "#fff" : "#F6BF26"}
+                    stroke={on || isHeld ? "#F6BF26" : "#1a1400"} strokeWidth="1.4" />
+              <circle cx="7.5" cy="7.1" r="2.3" fill={on || isHeld ? "#F6BF26" : "#1a1400"} />
+            </svg>
           </div>
         );
       })}
@@ -625,15 +676,15 @@ export default function TileMap({
       {/* While dragging: a crosshair marking the exact ground point, with a
           stem down to the fingertip so the link between hand and target is
           obvious. The pin itself floats above the finger, not under it. */}
-      {drag && (
+      {drag && drag.lift > 1 && (
         <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 25 }}>
-          <line x1={drag.x} y1={drag.y} x2={drag.x} y2={drag.y + DRAG_LIFT}
+          <line x1={drag.x} y1={drag.y} x2={drag.x} y2={drag.y + drag.lift}
                 stroke="rgba(0,0,0,.5)" strokeWidth="4" />
-          <line x1={drag.x} y1={drag.y} x2={drag.x} y2={drag.y + DRAG_LIFT}
+          <line x1={drag.x} y1={drag.y} x2={drag.x} y2={drag.y + drag.lift}
                 stroke="#F6BF26" strokeWidth="1.5" strokeDasharray="4,3" />
-          <circle cx={drag.x} cy={drag.y + DRAG_LIFT} r="11" fill="none" stroke="rgba(0,0,0,.5)" strokeWidth="4" />
-          <circle cx={drag.x} cy={drag.y + DRAG_LIFT} r="11" fill="none" stroke="#F6BF26" strokeWidth="2" />
-          <circle cx={drag.x} cy={drag.y + DRAG_LIFT} r="1.5" fill="#F6BF26" />
+          <circle cx={drag.x} cy={drag.y + drag.lift} r="11" fill="none" stroke="rgba(0,0,0,.5)" strokeWidth="4" />
+          <circle cx={drag.x} cy={drag.y + drag.lift} r="11" fill="none" stroke="#F6BF26" strokeWidth="2" />
+          <circle cx={drag.x} cy={drag.y + drag.lift} r="1.5" fill="#F6BF26" />
         </svg>
       )}
 
@@ -664,18 +715,16 @@ export default function TileMap({
                 fallback={c.pin.photo ? c.pin.photoLocal : null}
                 style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
               />
-              <span style={{
-                position: "absolute", top: 2, left: 2,
-                minWidth: 16, height: 16, padding: "0 3px", borderRadius: 8,
-                background: "#F6BF26", color: "#1a1400",
-                fontFamily: "Oswald, sans-serif", fontWeight: 700, fontSize: 10.5,
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>{c.pin.n ?? c.i + 1}</span>
             </div>
-            <div style={{
-              fontSize: 9, fontWeight: 700, color: "#1a2030", lineHeight: 1.15,
-              overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
-            }}>{c.pin.label || `Location ${c.pin.n ?? c.i + 1}`}</div>
+            {/* Only a real label earns the strip. An auto-generated
+                "Location 3" is a number in disguise, and the leader line
+                already answers which pin this is. */}
+            {c.pin.label && (
+              <div style={{
+                fontSize: 9, fontWeight: 700, color: "#1a2030", lineHeight: 1.15,
+                overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
+              }}>{c.pin.label}</div>
+            )}
           </button>
         );
       })}
