@@ -296,7 +296,16 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
       client: stop?.cn, address: stop?.addr,
       date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
     },
-  }), [located, onPlanPhotos, parcel, stop]);
+    // Lets the export fall back to an authenticated Drive download when a
+    // photo's public thumbnail is being throttled.
+    token,
+  }), [located, onPlanPhotos, parcel, stop, token]);
+
+  // A photo that wouldn't load is drawn as a grey box. Say so — shipping a
+  // plan with a blank card on it without a word is how it went unnoticed.
+  const missingNote = (missing) => missing > 0
+    ? ` ${missing} photo${missing === 1 ? "" : "s"} couldn't be loaded and ${missing === 1 ? "is" : "are"} blank — check your signal and rebuild.`
+    : "";
 
   const planError = (e) => setErr(e?.message === "map-imagery-unavailable"
     ? "Couldn't load map imagery — check your signal."
@@ -306,16 +315,17 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
     if (busy) return;
     setBusy("jpeg"); setErr(null); setNote(null);
     try {
-      const url = await buildPlan();
-      if (!url) { setErr("Nothing to plot yet."); return; }
+      const built = await buildPlan();
+      if (!built) { setErr("Nothing to plot yet."); return; }
       const name = `${(stop?.cn || "site").replace(/[^\w]+/g, "_")}_site_plan.jpg`;
-      const blob = await (await fetch(url)).blob();
+      const blob = await (await fetch(built.dataUrl)).blob();
       const u = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = u; a.download = name;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(u), 20000);
-      setNote("Site plan saved.");
+      if (built.missing > 0) setErr("Site plan saved." + missingNote(built.missing));
+      else setNote("Site plan saved.");
     } catch (e) { planError(e); } finally { setBusy(null); }
   }, [busy, buildPlan, stop]);
 
@@ -324,10 +334,11 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
     if (busy || !onAddToCard) return;
     setBusy("card"); setErr(null); setNote(null);
     try {
-      const url = await buildPlan();
-      if (!url) { setErr("Nothing to plot yet."); return; }
-      await onAddToCard(url);
-      setNote("Site plan added to this card's photos.");
+      const built = await buildPlan();
+      if (!built) { setErr("Nothing to plot yet."); return; }
+      await onAddToCard(built.dataUrl);
+      if (built.missing > 0) setErr("Added to this card." + missingNote(built.missing));
+      else setNote("Site plan added to this card's photos.");
     } catch (e) { planError(e); } finally { setBusy(null); }
   }, [busy, buildPlan, onAddToCard]);
 

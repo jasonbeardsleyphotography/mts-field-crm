@@ -1,3 +1,5 @@
+// v43: site-plan photos no longer come out grey — the export retries, then
+// falls back to an authenticated Drive download that cannot fail on CORS.
 // v42: restore DRAG_LIFT (its removal broke pin dragging outright) and damp
 // the pinch/wheel zoom, which was 1:1 with fingers and far too hot.
 // v41: expand now really fills the screen (the overlay was trapped inside a
@@ -29,7 +31,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v42";
+const CACHE = "mts-field-v43";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

@@ -16,14 +16,99 @@
 
 import { TILE, TILE_URL, project, boundsOf, fitZoom } from "./tileMath";
 
-function loadImg(src, cors = false) {
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+function loadImg(src, cors = false, timeoutMs = 12000) {
   return new Promise((resolve) => {
     const img = new Image();
+    // A request that never settles would hang the whole export, since photos
+    // and tiles are loaded sequentially. Give up and let the retry decide.
+    const timer = setTimeout(() => { img.src = ""; resolve(null); }, timeoutMs);
+    const done = (v) => { clearTimeout(timer); resolve(v); };
     if (cors) img.crossOrigin = "anonymous";
-    img.onload = () => resolve(img);
-    img.onerror = () => resolve(null);
+    img.onload = () => done(img);
+    img.onerror = () => done(null);
     img.src = src;
   });
+}
+
+/* ── loadPhoto ──────────────────────────────────────────────────────────────
+   Get a photo onto the canvas, or admit it couldn't.
+
+   Grey boxes on roughly half of exports came from this being a single
+   attempt at one URL. Two things go wrong with a Drive thumbnail:
+
+     • Drive throttles a burst of thumbnail requests and answers 403. One
+       `onerror` and the photo was grey forever, with no retry.
+     • The canvas needs crossOrigin="anonymous", so the export depends on
+       Drive returning CORS headers on that redirect chain — which it does
+       not do reliably. (It has to be anonymous: drawing a non-CORS image
+       taints the canvas and makes toDataURL throw, which would lose the
+       ENTIRE plan rather than one photo.)
+
+   So: the local copy if there is one, then the thumbnail with retries and a
+   cache-buster, and finally an authenticated Drive download turned into a
+   blob URL — which is same-origin as far as the canvas is concerned and so
+   cannot fail on CORS at all. Cheapest path first; the guaranteed one last. */
+async function loadPhoto(photo, token) {
+  // 1. The local capture. No network, so nothing to fail.
+  if (photo.dataUrl) {
+    const img = await loadImg(photo.dataUrl);
+    if (img) return img;
+  }
+  const url = photo.url;
+  if (!url) return null;
+
+  // 2. The public thumbnail, retried. The cache-buster matters: without it the
+  //    browser re-serves its own cached failure instead of re-requesting.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const src = attempt === 0
+      ? url
+      : url + (url.includes("?") ? "&" : "?") + "_r=" + attempt;
+    const img = await loadImg(src, true);
+    if (img) return img;
+    await sleep(400 * (attempt + 1));
+  }
+
+  // 3. Authenticated download. Slower and heavier — it fetches the original,
+  //    not a rendition — but it is the path that cannot be refused for CORS,
+  //    so it is what turns "sometimes grey" into "always there".
+  const fileId = (url.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
+                  url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/))?.[1];
+  if (!fileId || !token) return null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let blobUrl = null;
+    try {
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (res.ok) {
+        blobUrl = URL.createObjectURL(await res.blob());
+        const img = await loadImg(blobUrl);
+        // Held until well after the draw; revoking immediately can race the
+        // decode on Safari.
+        setTimeout(() => { try { URL.revokeObjectURL(blobUrl); } catch {} }, 60000);
+        if (img) return img;
+      } else if (res.status === 401 || res.status === 404) {
+        return null;   // a dead token or a deleted file won't get better
+      }
+      // A 403 here is usually Drive rate-limiting, not a permission problem —
+      // that is precisely the case worth retrying.
+    } catch { /* network — worth one more go */ }
+    await sleep(600 * (attempt + 1));
+  }
+  return null;
+}
+
+/** The freshest access token available: a silent reauth may have replaced the
+ *  one captured in props while the card sat open. Same rule planShare uses. */
+function freshToken(token) {
+  try {
+    const saved = JSON.parse(localStorage.getItem("mts-token") || "null");
+    if (saved?.token && saved.expiry > Date.now()) return saved.token;
+  } catch {}
+  return token;
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -43,9 +128,15 @@ function roundRect(ctx, x, y, w, h, r) {
  * @param {Array}  photos      [{ id, ts, dataUrl, url }]
  * @param {Array}  parcelPaths [[{lat,lng}, ...], ...] property boundary rings
  * @param {Object} meta        { client, address, date }
- * @returns {Promise<string|null>} JPEG dataUrl, or null if there's nothing to draw
+ * @param {string} token       Google access token, for the authenticated photo
+ *                             fallback. Optional, but without it a photo whose
+ *                             thumbnail is being throttled has no way through.
+ * @returns {Promise<{dataUrl: string, missing: number}|null>} the JPEG and how
+ *          many photos could not be loaded, or null if there's nothing to draw
  */
-export async function buildCalloutMap({ pins = [], photos = [], parcelPaths = [], meta = {} }) {
+export async function buildCalloutMap({ pins = [], photos = [], parcelPaths = [], meta = {}, token = null }) {
+  const auth = freshToken(token);
+  let missing = 0;
   const real = pins.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
   // A photo that carries its own position but has no pin of its own still
   // belongs on the plan — e.g. it was captured before pins existed, or its pin
@@ -242,8 +333,8 @@ export async function buildCalloutMap({ pins = [], photos = [], parcelPaths = []
       roundRect(ctx, x, y, CW, CH, 12); ctx.fill();
 
       // Photo (loaded one at a time — never all full-size photos at once)
-      const src = item.photo.dataUrl || item.photo.url;
-      const img = await loadImg(src, !item.photo.dataUrl);
+      const img = await loadPhoto(item.photo, auth);
+      if (!img) missing++;
       ctx.save();
       roundRect(ctx, x + 10, y + 10, CW - 20, imgH, 8); ctx.clip();
       if (img) {
@@ -303,5 +394,5 @@ export async function buildCalloutMap({ pins = [], photos = [], parcelPaths = []
   ctx.fillText("Monster Tree Service of Rochester", W - 40, 72);
   ctx.fillText("Imagery © Esri", W - 40, 104);
 
-  return canvas.toDataURL("image/jpeg", 0.92);
+  return { dataUrl: canvas.toDataURL("image/jpeg", 0.92), missing };
 }
