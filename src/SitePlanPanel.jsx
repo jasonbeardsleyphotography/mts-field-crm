@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { createPortal } from "react-dom";
 import TileMap from "./TileMap";
 import { boundsOf, fitZoom, MAX_Z } from "./tileMath";
 import { fetchParcelsForBounds, parcelAtPoint, parcelPropsToInfo } from "./parcelOverlay";
@@ -47,6 +48,19 @@ const boundsShim = (b) => ({
   getNorthEast: () => ({ lat: () => b.north, lng: () => b.east }),
   getSouthWest: () => ({ lat: () => b.south, lng: () => b.west }),
 });
+
+/* Anything that must cover the SCREEN has to leave this subtree.
+
+   OnsiteWindow's scroller carries transform: translateX(<swipe>px) at all
+   times — even at 0px — and a transformed ancestor becomes the containing
+   block for its `position: fixed` descendants. So a "full screen" overlay
+   rendered in place was sized and positioned against that scrolling box
+   instead of the viewport: it grew a little, and it sat wherever the box
+   happened to be rather than over everything. A portal to <body> is the only
+   thing that escapes it. React events still bubble through the portal to this
+   component, so nothing else about the wiring changes. */
+const overlay = (node) =>
+  typeof document === "undefined" ? node : createPortal(node, document.body);
 
 const photoKey = (ph) => ph.id || ph.ts;
 const newPinId = () => `pin_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -498,13 +512,14 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
           Site Map
         </span>
         <span style={{ fontSize: 10, color: "#3a4a60" }}>
-          drag pins · two fingers to move the map
+          drag pins · two fingers to move the map · ⤢ for full screen
         </span>
       </div>
 
       {/* The live map, right here. Not a preview of one. */}
       <div style={{
-        position: "relative", height: 360, borderRadius: 10, overflow: "hidden",
+        position: "relative", height: "min(58vh, 460px)", minHeight: 300,
+        borderRadius: 10, overflow: "hidden",
         border: "1px solid #1a2540", background: "#101722",
       }}>
         {live && view ? (
@@ -540,8 +555,15 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
           The same map with the whole screen to work in — past whatever the
           card's layout allows — for reading the property and placing pins
           precisely. One finger pans here, since there is no page to scroll. */}
-      {full && view && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 400, background: "#0a0b10" }}>
+      {full && view && overlay(
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 400, background: "#0a0b10",
+          // 100dvh, not 100%: on iOS Safari the dynamic viewport unit is what
+          // actually accounts for the collapsing address bar.
+          width: "100vw", height: "100dvh",
+          animation: "sm-grow .18s ease-out",
+        }}>
+          <style>{`@keyframes sm-grow{from{opacity:.4;transform:scale(.94)}to{opacity:1;transform:scale(1)}}`}</style>
           {theMap(true)}
           {mapChrome(true)}
           {parcel.length > 0 && !selPin && !propInfo && !listOpen && (
@@ -574,7 +596,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
           map and the full-screen one without a second copy of each. */}
 
       {/* Property info for a tapped parcel. */}
-      {propInfo && (
+      {propInfo && overlay(
         <div style={{ ...sheetWrap, zIndex: 460 }}>
           <div onClick={() => setPropInfo(null)} style={scrim} />
           <div style={sheet}>
@@ -610,7 +632,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
 
       {/* Pin list — plan order. Tap a row to fly to it; arrows set the order
           the pins are numbered in on the exported plan and the crew link. */}
-      {listOpen && (
+      {listOpen && overlay(
         <div style={{ ...sheetWrap, zIndex: 460 }}>
           <div onClick={() => setListOpen(false)} style={scrim} />
           <div style={{ ...sheet, padding: "14px 12px max(16px, env(safe-area-inset-bottom))" }}>
@@ -669,7 +691,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
       )}
 
       {/* One tapped pin: label, photo, delete. */}
-      {selPin && (
+      {selPin && overlay(
         <div style={{ ...sheetWrap, zIndex: 460 }}>
           <div onClick={() => setSel(null)} style={scrim} />
           <div style={sheet}>

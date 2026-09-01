@@ -1,3 +1,5 @@
+// v41: expand now really fills the screen (the overlay was trapped inside a
+// transformed ancestor), and pin dragging is back to the version that worked.
 // v40: the Site Map is live on the on-site screen (two-finger pan, pins
 // one-finger draggable), smaller unnumbered pins, drag no longer jumps on
 // touch, and the markup screen gains a jump-to strip + down-arrow download.
@@ -25,7 +27,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v40";
+const CACHE = "mts-field-v41";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

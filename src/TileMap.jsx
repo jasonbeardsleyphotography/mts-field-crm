@@ -42,12 +42,12 @@ const mid2 = (a, b) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clie
 
 // How far above the fingertip a pin floats while being dragged. A pin sitting
 // under the finger is invisible at the exact moment you need to aim it.
-const DRAG_LIFT = 52;
-// How far the touch must travel before a grab counts as a drag at all, and
-// over how much further travel the lift eases in. Below the slop a pin does
-// not move a pixel, so tapping one to open its details never nudges it.
-const DRAG_SLOP = 8;
-const DRAG_RAMP = 46;
+//
+// The pin lifts the moment you touch it and tracks your fingertip from there.
+// A version that held the pin still until the touch had travelled, then eased
+// the lift in, read as "the pin is fighting me" — you could no longer aim by
+// putting the crosshair on the tree, because where the pin would end up kept
+// changing as you moved. Immediate and constant is the one that works.
 
 /* ── RetryImg ───────────────────────────────────────────────────────────────
    Remote images that retry instead of failing silently.
@@ -219,7 +219,7 @@ export default function TileMap({
     let last = null;            // last single-touch point
     let pinchStart = null;      // { dist, zoom, mid }
     let lastTap = 0;
-    let held = null;            // { i, moved, from } while dragging a pin
+    let held = null;            // { i, moved } while dragging a pin
     let startPt = null;         // where a single touch began (tap detection)
     let lastMid = null;         // previous two-finger midpoint, for panning
 
@@ -260,19 +260,12 @@ export default function TileMap({
       emit({ center: { lat: clampLat(nextCentre.lat), lng: nextCentre.lng }, zoom: nz });
     };
 
-    // Where a dragged pin's GROUND point goes.
-    //
-    // Two things matter here. The pin tracks the DELTA of your finger from
-    // where the grab started, not your fingertip — so it never jumps to meet
-    // your finger, it just moves as much as your finger moved, wherever on the
-    // pin you happened to grab it. And the lift above the fingertip eases in
-    // over the first stretch of movement rather than snapping on, so a pin you
-    // touch and barely move stays exactly where it was.
-    const groundAt = (cx, cy) => {
-      const dx = cx - startPt.x, dy = cy - startPt.y;
-      const travelled = Math.hypot(dx, dy);
-      const lift = DRAG_LIFT * Math.min(1, Math.max(0, (travelled - DRAG_SLOP) / DRAG_RAMP));
-      return { x: held.from.x + dx, y: held.from.y + dy - lift, lift };
+    // Where the dragged pin's GROUND point is: a fixed distance above the
+    // fingertip, so the thing being placed is never hidden under the hand
+    // placing it, and the offset never changes while you aim.
+    const liftFrom = (cx, cy) => {
+      const r = rectOf();
+      return { x: cx - r.left, y: cy - r.top - DRAG_LIFT };
     };
 
     const pinIndexAt = (target) => {
@@ -286,16 +279,10 @@ export default function TileMap({
         startPt = { x: t.clientX, y: t.clientY };
         const hit = pinIndexAt(e.target);
         if (hit != null && cfg.current.editable) {
-          // Grabbing a pin: take over so the map can't pan under it. Nothing
-          // moves yet — the pin only starts following once the touch has
-          // travelled past the slop, which keeps a tap from nudging it.
+          // Grabbing a pin: take over completely so the map can't pan under it.
           mode = "pin";
-          const node = e.target.closest("[data-pin-index]");
-          const r = rectOf(), b = node.getBoundingClientRect();
-          held = {
-            i: hit, moved: false,
-            from: { x: b.left + b.width / 2 - r.left, y: b.top + b.height / 2 - r.top },
-          };
+          held = { i: hit, moved: false };
+          setDrag({ i: hit, ...liftFrom(t.clientX, t.clientY) });
           e.preventDefault();
           return;
         }
@@ -329,10 +316,8 @@ export default function TileMap({
       if (mode === "pin" && e.touches.length === 1) {
         e.preventDefault();
         const t = e.touches[0];
-        if (Math.hypot(t.clientX - startPt.x, t.clientY - startPt.y) <= DRAG_SLOP) return;
-        held.moved = true;
-        const g = groundAt(t.clientX, t.clientY);
-        setDrag({ i: held.i, x: g.x, y: g.y, lift: g.lift });
+        if (Math.hypot(t.clientX - startPt.x, t.clientY - startPt.y) > 4) held.moved = true;
+        setDrag({ i: held.i, ...liftFrom(t.clientX, t.clientY) });
       } else if (mode === "pan" && e.touches.length === 1) {
         e.preventDefault();
         const t = e.touches[0];
@@ -355,11 +340,8 @@ export default function TileMap({
       if (mode === "pin" && e.touches.length === 0) {
         const t = e.changedTouches?.[0];
         if (held.moved && t) {
-          // Commit exactly what was drawn — same delta maths, so the pin lands
-          // where the crosshair said it would.
-          const g = groundAt(t.clientX, t.clientY);
-          const r = rectOf();
-          cfg.current.onPinMove?.(held.i, atClient(g.x + r.left, g.y + r.top));
+          // Commit the lifted ground point, not the fingertip.
+          cfg.current.onPinMove?.(held.i, atClient(t.clientX, t.clientY - DRAG_LIFT));
         } else {
           // A grab that never moved is a tap.
           cfg.current.onPinTap?.(held.i);
@@ -655,6 +637,13 @@ export default function TileMap({
               display: "flex", alignItems: "center", justifyContent: "center",
               cursor: editable ? "grab" : "pointer",
               pointerEvents: interactive ? "auto" : "none",
+              // THE fix for "the pin barely moves" inline: touch-action is
+              // resolved from the element the touch STARTS on, and the map
+              // container is pan-y so the card can still be scrolled. Without
+              // this the browser claimed every vertical drag for scrolling and
+              // ignored our preventDefault, so a pin could only be moved
+              // sideways. The pin opts out; the map around it does not.
+              touchAction: "none",
               zIndex: isHeld ? 30 : 10,
               transform: isHeld ? "scale(1.3)" : on ? "scale(1.15)" : "none",
               transformOrigin: "50% 50%",
@@ -676,15 +665,15 @@ export default function TileMap({
       {/* While dragging: a crosshair marking the exact ground point, with a
           stem down to the fingertip so the link between hand and target is
           obvious. The pin itself floats above the finger, not under it. */}
-      {drag && drag.lift > 1 && (
+      {drag && (
         <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 25 }}>
-          <line x1={drag.x} y1={drag.y} x2={drag.x} y2={drag.y + drag.lift}
+          <line x1={drag.x} y1={drag.y} x2={drag.x} y2={drag.y + DRAG_LIFT}
                 stroke="rgba(0,0,0,.5)" strokeWidth="4" />
-          <line x1={drag.x} y1={drag.y} x2={drag.x} y2={drag.y + drag.lift}
+          <line x1={drag.x} y1={drag.y} x2={drag.x} y2={drag.y + DRAG_LIFT}
                 stroke="#F6BF26" strokeWidth="1.5" strokeDasharray="4,3" />
-          <circle cx={drag.x} cy={drag.y + drag.lift} r="11" fill="none" stroke="rgba(0,0,0,.5)" strokeWidth="4" />
-          <circle cx={drag.x} cy={drag.y + drag.lift} r="11" fill="none" stroke="#F6BF26" strokeWidth="2" />
-          <circle cx={drag.x} cy={drag.y + drag.lift} r="1.5" fill="#F6BF26" />
+          <circle cx={drag.x} cy={drag.y + DRAG_LIFT} r="11" fill="none" stroke="rgba(0,0,0,.5)" strokeWidth="4" />
+          <circle cx={drag.x} cy={drag.y + DRAG_LIFT} r="11" fill="none" stroke="#F6BF26" strokeWidth="2" />
+          <circle cx={drag.x} cy={drag.y + DRAG_LIFT} r="1.5" fill="#F6BF26" />
         </svg>
       )}
 
