@@ -48,6 +48,18 @@ const mid2 = (a, b) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clie
 // the lift in, read as "the pin is fighting me" — you could no longer aim by
 // putting the crosshair on the tree, because where the pin would end up kept
 // changing as you moved. Immediate and constant is the one that works.
+const DRAG_LIFT = 52;
+
+// Pinch damping. A raw log2(distance ratio) is 1:1 with your fingers, which on
+// a small map means a normal two-finger adjustment blows through several zoom
+// levels — and now that two fingers also PAN, every pan came with an unwanted
+// zoom. Scaling the response down, and ignoring the first few pixels of finger
+// separation entirely, makes two fingers mean "move the map" until you clearly
+// ask for zoom.
+const PINCH_GAIN = 0.55;
+const PINCH_DEADZONE = 14;   // px of finger-distance change before zoom starts
+const WHEEL_GAIN = 0.0022;   // per wheel unit; trackpads emit a torrent of these
+const WHEEL_MAX_STEP = 0.25; // ...so cap what any single event can do
 
 /* ── RetryImg ───────────────────────────────────────────────────────────────
    Remote images that retry instead of failing silently.
@@ -329,9 +341,16 @@ export default function TileMap({
         if (lastMid) panBy(mid.x - lastMid.x, mid.y - lastMid.y);
         lastMid = mid;
         const d = dist2(e.touches[0], e.touches[1]);
-        if (pinchStart.dist > 0) {
-          // Continuous fractional zoom — no stepping, no snap-back.
-          zoomAround(pinchStart.zoom + Math.log2(d / pinchStart.dist), mid);
+        // Past the dead zone, measure from the edge of it rather than from the
+        // start — otherwise zoom jumps by the whole dead zone the instant it
+        // engages.
+        const spread = d - pinchStart.dist;
+        if (pinchStart.dist > 0 && Math.abs(spread) > PINCH_DEADZONE) {
+          const eff = pinchStart.dist + (spread - Math.sign(spread) * PINCH_DEADZONE);
+          if (eff > 0) {
+            // Continuous fractional zoom — no stepping, no snap-back.
+            zoomAround(pinchStart.zoom + Math.log2(eff / pinchStart.dist) * PINCH_GAIN, mid);
+          }
         }
       }
     };
@@ -405,7 +424,10 @@ export default function TileMap({
       // Cooperative: the wheel belongs to the page, same as one finger does.
       if (cfg.current.gestures === "cooperative") return;
       e.preventDefault();
-      zoomAround(view.current.zoom - Math.sign(e.deltaY) * 0.5, { x: e.clientX, y: e.clientY });
+      // Proportional to how hard you scrolled, but capped: a trackpad fires
+      // dozens of events per flick, and a fixed half-level each was a rocket.
+      const step = clamp(e.deltaY * WHEEL_GAIN, -WHEEL_MAX_STEP, WHEEL_MAX_STEP);
+      zoomAround(view.current.zoom - step, { x: e.clientX, y: e.clientY });
     };
 
     el.addEventListener("touchstart", onStart, { passive: false });
