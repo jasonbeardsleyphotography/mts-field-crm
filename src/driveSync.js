@@ -50,9 +50,46 @@ function setSyncStatus(s) {
 
 export function getSyncStatus() { return syncStatus; }
 
-/** Register a callback to be invoked when Drive returns 401/403.
- *  App.jsx wires this to silentReauth() so token is refreshed automatically. */
+/** Register a callback to be invoked when Drive rejects the TOKEN.
+ *  App.jsx wires this to silentReauth() so the token is refreshed. */
 export function onAuthError(fn) { authErrorCallback = fn; }
+
+/* ── Is this really an auth failure? ────────────────────────────────────────
+   A 401 always is. A 403 usually is NOT: Drive answers 403 for rate limiting
+   as well as for permission problems, and they are completely different
+   situations. Treating every 403 as "the token is bad" is what turned a burst
+   of throttled uploads into a burst of silent re-auths — and each of those can
+   surface a Google sign-in popup, which is why they arrived several a minute
+   on a desktop while photos were syncing.
+
+   Google puts the distinction in the body, as error.errors[].reason. Read it,
+   and only call the token bad when Drive actually says so. */
+const AUTH_REASONS = new Set([
+  "authError", "invalidCredentials", "insufficientPermissions",
+  "insufficientFilePermissions", "unauthorized",
+]);
+
+async function isTokenRejected(res) {
+  if (res.status === 401) return true;
+  if (res.status !== 403) return false;
+  try {
+    // clone(): the caller may still want the body, and a response can only be
+    // read once.
+    const body = await res.clone().json();
+    const reasons = (body?.error?.errors || []).map(e => e?.reason);
+    if (reasons.some(r => AUTH_REASONS.has(r))) return true;
+    // A recognised throttle is definitively not an auth problem.
+    if (reasons.some(r => /rateLimit|quotaExceeded|userRateLimit|backendError/i.test(r || ""))) return false;
+    const msg = body?.error?.message || "";
+    if (/rate limit|quota|too many/i.test(msg)) return false;
+    // 403 with nothing recognisable: assume permissions, since a genuinely
+    // dead grant has to be recoverable.
+    return true;
+  } catch {
+    // Body unreadable — fall back to the old behaviour for a 403.
+    return true;
+  }
+}
 
 /** Fire the already-registered auth-error callback without overwriting it.
  *  Lets other modules (e.g. videoQueue.js) trigger the app's one silent-reauth
@@ -72,9 +109,11 @@ async function driveReq(token, url, opts = {}) {
   if (!res.ok) {
     const err = new Error(`Drive ${res.status}`);
     err.status = res.status;
-    if (res.status === 401 || res.status === 403) {
+    if (await isTokenRejected(res)) {
       err.isAuthError = true;
       if (authErrorCallback) authErrorCallback();
+    } else if (res.status === 403 || res.status === 429) {
+      err.isRateLimited = true;
     }
     throw err;
   }
@@ -163,9 +202,11 @@ async function _saveJsonResumable(token, body, fileName, folderId, existingId) {
   if (!sessionRes.ok) {
     const err = new Error(`Drive resumable init ${sessionRes.status}`);
     err.status = sessionRes.status;
-    if (sessionRes.status === 401 || sessionRes.status === 403) {
+    if (await isTokenRejected(sessionRes)) {
       err.isAuthError = true;
       if (authErrorCallback) authErrorCallback();
+    } else if (sessionRes.status === 403 || sessionRes.status === 429) {
+      err.isRateLimited = true;
     }
     throw err;
   }
@@ -192,9 +233,11 @@ async function _saveJsonResumable(token, body, fileName, folderId, existingId) {
   if (!uploadRes.ok) {
     const err = new Error(`Drive resumable upload ${uploadRes.status}`);
     err.status = uploadRes.status;
-    if (uploadRes.status === 401 || uploadRes.status === 403) {
+    if (await isTokenRejected(uploadRes)) {
       err.isAuthError = true;
       if (authErrorCallback) authErrorCallback();
+    } else if (uploadRes.status === 403 || uploadRes.status === 429) {
+      err.isRateLimited = true;
     }
     throw err;
   }

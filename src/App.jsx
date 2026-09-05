@@ -196,7 +196,28 @@ export default function App() {
   }), []);
 
   const _reauthInFlight = useRef(null);
-  const silentReauth = useCallback(() => {
+  /* Pacing for silent re-auth.
+     okAt   — when one last SUCCEEDED. A 401 arriving seconds after a refresh
+              is not a stale token, so refreshing again cannot help.
+     failAt/fails — exponential backoff after failures, so a service that keeps
+              rejecting us is asked once a minute, not once a request.
+     gisAt  — when the GIS fallback last ran. THAT is the path that puts a
+              Google window on screen; /api/token is silent. Rationing it is
+              what stops the popup flicker.
+     The singleton below only ever deduped CONCURRENT calls, which is why a
+     stream of sequential 401/403s could still produce a popup each. */
+  const _reauthGate = useRef({ okAt: 0, failAt: 0, fails: 0, gisAt: 0 });
+  const GIS_POPUP_MIN_GAP = 5 * 60 * 1000;
+
+  const silentReauth = useCallback((opts = {}) => {
+    const { force = false, ignoreCooldown = false } = opts;
+    const g = _reauthGate.current;
+    const now = Date.now();
+    if (!force && !ignoreCooldown) {
+      if (now - g.okAt < 30_000) return Promise.resolve(true);
+      const backoff = Math.min(10 * 60_000, 30_000 * Math.pow(2, Math.max(0, g.fails - 1)));
+      if (g.fails > 0 && now - g.failAt < backoff) return Promise.resolve(false);
+    }
     if (_reauthInFlight.current) return _reauthInFlight.current;
     _reauthInFlight.current = (async () => {
       // 1) SERVER SESSION (refresh-token flow). Silent, and immune to Safari
@@ -211,9 +232,29 @@ export default function App() {
           if (d?.access_token) { saveToken(d.access_token, d.expires_in); return true; }
         }
       } catch { /* network — fall through to GIS */ }
-      // 2) Fall back to the original GIS silent token.
+      // 2) Fall back to the original GIS silent token. This is the visible one:
+      //    GIS opens (and usually instantly closes) a Google window, so it is
+      //    rationed. Skipping it is not a loss — the app still has whatever
+      //    token it holds, and the Reconnect banner is the honest way to ask
+      //    for a real sign-in.
+      if (!force && Date.now() - g.gisAt < GIS_POPUP_MIN_GAP) return false;
+      g.gisAt = Date.now();
       return await _gisSilentReauth();
     })();
+    _reauthInFlight.current.then(
+      (ok) => {
+        const t = Date.now();
+        if (ok) { g.okAt = t; g.fails = 0; }
+        else {
+          g.failAt = t; g.fails++;
+          // Silent recovery has genuinely stopped working. Say so once, so the
+          // Reconnect banner can offer a real sign-in — that is the honest
+          // alternative to retrying forever behind the user's back.
+          if (g.fails >= 3) setNeedsReconnect(true);
+        }
+      },
+      () => { g.failAt = Date.now(); g.fails++; }
+    );
     _reauthInFlight.current.finally(() => { _reauthInFlight.current = null; });
     return _reauthInFlight.current;
   }, [_gisSilentReauth]);
@@ -243,7 +284,7 @@ export default function App() {
       // Note: no longer gated on GIS being loaded — silentReauth tries the
       // server session (/api/token) first, which needs no Google script. GIS is
       // only used as a fallback inside silentReauth.
-      const ok = await silentReauth();
+      const ok = await silentReauth({ ignoreCooldown: true });
       if (cancelled) return;
       if (ok) { setAuthBootChecked(true); return; }
       if (attempt < BACKOFFS.length) {
@@ -299,6 +340,8 @@ export default function App() {
   // When any Drive API call returns 401/403, automatically attempt a silent
   // token refresh so the next sync attempt uses a fresh token.
   useEffect(() => {
+    // Deliberately NOT forced: this fires from every rejected Drive call, and
+    // a burst of them must collapse into at most one refresh attempt.
     onAuthError(() => { silentReauth(); });
   }, [silentReauth]);
 
@@ -2050,7 +2093,7 @@ export default function App() {
           <button onClick={async () => {
             // Fast path first: a silent reauth often succeeds without the full
             // sign-in redirect. Only if that fails do we bounce to serverSignIn.
-            const ok = await silentReauth();
+            const ok = await silentReauth({ force: true });
             if (ok) { setNeedsReconnect(false); await new Promise(r=>setTimeout(r,200)); load(true); }
             else { serverSignIn(); }
           }} style={{padding:"8px 16px",borderRadius:8,background:"rgba(246,191,38,.28)",border:"1px solid rgba(246,191,38,.6)",color:"#F6BF26",fontSize:12.5,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>Reconnect</button>
@@ -2063,7 +2106,7 @@ export default function App() {
       {error && !loading && Object.keys(rawEvents).length === 0 && !needsReconnect && (
         <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:"rgba(255,85,85,.1)",borderBottom:"1px solid rgba(255,85,85,.3)"}}>
           <span style={{flex:1,fontSize:12,color:"#ff8080",fontWeight:600}}>Couldn't load today's stops — retrying automatically…</span>
-          <button onClick={async () => { const ok = await silentReauth(); await new Promise(r=>setTimeout(r,200)); load(true); if(!ok) setNeedsReconnect(true); }} style={{padding:"6px 14px",borderRadius:8,background:"rgba(255,85,85,.2)",border:"1px solid rgba(255,85,85,.5)",color:"#ff8080",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>Retry Now</button>
+          <button onClick={async () => { const ok = await silentReauth({ force: true }); await new Promise(r=>setTimeout(r,200)); load(true); if(!ok) setNeedsReconnect(true); }} style={{padding:"6px 14px",borderRadius:8,background:"rgba(255,85,85,.2)",border:"1px solid rgba(255,85,85,.5)",color:"#ff8080",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>Retry Now</button>
         </div>
       )}
       <style>{`
@@ -2112,7 +2155,7 @@ export default function App() {
             // recover: a stops-load, not just a Drive field sync.
             const routeEmpty = Object.keys(rawEvents).length === 0;
             if (syncIndicator === "error" || syncIndicator === "auth-error" || routeEmpty) {
-              await silentReauth();
+              await silentReauth({ force: true });
               // Give the new token a moment to settle in localStorage
               await new Promise(r => setTimeout(r, 300));
             }
