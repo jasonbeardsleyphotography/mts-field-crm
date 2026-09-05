@@ -1,3 +1,5 @@
+// v44: the markup editor resolves its photo once per open, so a background
+// sync can no longer drop it to the loading screen mid-edit.
 // v43: site-plan photos no longer come out grey — the export retries, then
 // falls back to an authenticated Drive download that cannot fail on CORS.
 // v42: restore DRAG_LIFT (its removal broke pin dragging outright) and damp
@@ -31,7 +33,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v43";
+const CACHE = "mts-field-v44";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

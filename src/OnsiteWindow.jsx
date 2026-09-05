@@ -850,18 +850,19 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // photo has been promoted (no local dataUrl), fetch it from its Drive URL
   // into a blob URL we can pass to PhotoMarkup.
   //
-  // The effect is keyed on the IMAGE SOURCE, not on the photo arrays. Any edit
-  // to a photo record replaces those arrays — including flipping the site-plan
-  // toggle from inside markup — and re-running this for a Drive-hosted photo
-  // revokes the blob URL out from under the open editor and reloads the
-  // canvas mid-annotation.
-  const markupSourceKey = (() => {
-    if (markupIdx === null) return null;
-    const arr = markupSection === "addon" ? addonPhotos : scopePhotos;
-    const ph = arr[markupIdx];
-    if (!ph) return null;
-    return ph.dataUrl ? `local:${photoKey(ph)}` : `url:${ph.url || ""}`;
-  })();
+  // THE SOURCE IS RESOLVED ONCE PER OPEN, and nothing re-resolves it while the
+  // editor is up. Keying this on the photo record — even on just its source
+  // URL — meant any background write that replaced the photos array could
+  // re-run it: for a Drive-hosted photo that revokes the blob URL under the
+  // open editor, refetches, and hands PhotoMarkup a new src, which reloads the
+  // image and repaints the canvas. That is the whole-screen flash on a slow
+  // connection: the branch below drops to the black "Loading photo from
+  // Drive…" view for the length of the refetch, every time a sync landed.
+  //
+  // While you are marking up ONE photo, that photo's bytes cannot meaningfully
+  // change. So the arrays are read through a ref and are NOT dependencies.
+  const photosRef = useRef({ scope: scopePhotos, addon: addonPhotos });
+  photosRef.current = { scope: scopePhotos, addon: addonPhotos };
 
   useEffect(() => {
     if (markupIdx === null) {
@@ -873,9 +874,13 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       setMarkupLoading(false);
       return;
     }
-    const photos = markupSection === "addon" ? addonPhotos : scopePhotos;
+    const photos = markupSection === "addon"
+      ? photosRef.current.addon : photosRef.current.scope;
     const photo = photos[markupIdx];
     if (!photo) return;
+    // If the markup screen ever flashes again, this is the line to look for in
+    // DevTools: it should appear ONCE per photo you open, never on a timer.
+    console.debug("[Markup] resolving source for", markupSection, markupIdx);
     // Local copy available: use it directly
     if (photo.dataUrl) {
       setMarkupSrc(photo.dataUrl);
@@ -928,8 +933,9 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         try { URL.revokeObjectURL(createdBlobUrl); } catch {}
       }
     };
+    // Intentionally only the identity of WHICH photo is open. See above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [markupIdx, markupSection, markupSourceKey, token]);
+  }, [markupIdx, markupSection]);
 
   // ── VIDEO QUEUE STATE — must stay above early returns (Rules of Hooks) ──
   // These power the queue panel UI shown in the VIDEO section. The actual
@@ -1075,10 +1081,15 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   if (markupIdx !== null) {
     const photos = markupSection === "addon" ? addonPhotos : scopePhotos;
     if (photos[markupIdx]) {
-      // null = effect not yet run — always show spinner (resolves in one tick for local photos)
+      // null = effect not yet run — show the spinner (resolves in one tick for
+      //        local photos)
       // ""   = effect settled with no usable source — show error
       // url  = ready
-      if (markupLoading || markupSrc === null) {
+      //
+      // Deliberately NOT `markupLoading || ...`: once there is a source on
+      // screen, nothing may replace the editor with a loading screen. Doing so
+      // was a full-screen flash, and it threw away whatever had been drawn.
+      if (markupSrc === null) {
         return (
           <div style={{ position:"fixed", inset:0, background:"#000", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", color:"#a0b0c0", fontFamily:F, letterSpacing:1, textTransform:"uppercase", fontSize:11 }}>
             {markupLoading ? "Loading photo from Drive…" : "Preparing…"}
