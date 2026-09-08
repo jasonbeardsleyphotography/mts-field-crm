@@ -98,10 +98,37 @@ function unmarkStopForPromotion(stopId) {
 function sanitizePhotoName(s) {
   return (s || "").replace(/[\/\\:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim();
 }
+
+/* The client's LAST name, which is what a tree crew and an office actually
+   sort by. Handles the shapes a calendar title really produces:
+     "Deborah Wood"        -> Wood
+     "Wood, Deborah"       -> Wood        (comma means last name first)
+     "Bob & Sue Wood"      -> Wood
+     "Robert Wood Jr."     -> Wood        (suffixes are not surnames)
+     "Mainstreet Dental"   -> Dental      (a business has no surname; the last
+                                           word is still a stable, useful key)
+   Falls back to the whole name if there is nothing better. */
+const NAME_SUFFIXES = new Set(["jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "v", "md", "dds", "esq"]);
+function lastNameOf(full) {
+  const clean = sanitizePhotoName(full).replace(/[.,]+$/, "");
+  if (!clean) return "";
+  if (clean.includes(",")) {
+    const head = clean.split(",")[0].trim();
+    if (head) return head;
+  }
+  const parts = clean.split(" ").filter(Boolean);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (!NAME_SUFFIXES.has(parts[i].toLowerCase())) return parts[i];
+  }
+  return clean;
+}
 function buildPhotoFilename(data, p, seq, ext) {
-  const name = sanitizePhotoName(data?.cn);
+  // Last name + the date the photo was taken, e.g. "Wood 06-30-2026 01.jpg".
+  // Naming happens at UPLOAD time, and an already-uploaded photo is skipped
+  // because it has a url — so this only ever names photos that haven't gone
+  // to Drive yet. Nothing already in Drive is renamed.
+  const name = lastNameOf(data?.cn);
   if (!name) return null;
-  const jobPart = data?.jn ? ` #${data.jn}` : "";
   let datePart = "";
   try {
     datePart = " " + new Date(p?.ts || Date.now())
@@ -109,7 +136,7 @@ function buildPhotoFilename(data, p, seq, ext) {
       .replace(/\//g, "-");
   } catch {}
   const seqPart = " " + String((seq ?? 0) + 1).padStart(2, "0");
-  return `${name}${jobPart}${datePart}${seqPart}.${ext}`;
+  return `${name}${datePart}${seqPart}.${ext}`;
 }
 
 /* ── Queue health ───────────────────────────────────────────────────────────
@@ -209,15 +236,23 @@ async function syncStop(stopId, token) {
   const uploadsBySection = {};
   let anyNewlySynced = false;
   let lastError = null;
+  let rateLimited = false;
 
   for (const key of sections) {
     const photos = data[key];
     if (!Array.isArray(photos)) continue;
     uploadsBySection[key] = new Map();
 
-    await Promise.all(photos.map(async (p, i) => {
-      if (p.url) return;           // Already uploaded
-      if (!p.dataUrl) return;      // Nothing to upload
+    // ONE AT A TIME. This used to be Promise.all, which fired every photo on
+    // a stop at Drive simultaneously — ten photos meant thirty-odd concurrent
+    // requests once folder lookups and permission calls are counted. That is
+    // exactly the burst Drive answers with 403 rate limits, and a rate-limited
+    // upload used to be indistinguishable from a broken one. Sequential is
+    // barely slower in practice and it stops the app throttling itself.
+    for (const [i, p] of photos.entries()) {
+      if (p.url) continue;           // Already uploaded
+      if (!p.dataUrl) continue;      // Nothing to upload
+      if (rateLimited) break;        // Drive said slow down — believe it
       try {
         const ext = p.dataUrl.startsWith("data:image/png") ? "png" : "jpg";
         const seq = seqByKey.get(photoKey(p)) ?? i;
@@ -228,11 +263,14 @@ async function syncStop(stopId, token) {
           uploadsBySection[key].set(photoKey(p), { url, syncedAt: Date.now() });
         }
       } catch(e) {
-        lastError = e?.message || String(e);
+        lastError = e?.isRateLimited
+          ? "Google Drive is rate-limiting uploads — this will retry on its own."
+          : (e?.message || String(e));
+        if (e?.isRateLimited) rateLimited = true;
         console.warn("Photo upload failed for", stopId, e);
         logError("photoSync", `Photo upload failed for stop ${stopId}: ${e.message}`, { key, status: e.status });
       }
-    }));
+    }
   }
 
   // Write all upload results through updateField — queued, atomic, and

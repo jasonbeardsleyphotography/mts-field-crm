@@ -173,6 +173,11 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // Tree/location pins plotted on the parcel map. Sources: a photo capture
   // (stamped with the phone's position), a tap on the map, or the GPS button.
   const [mapPins, setMapPins] = useState(fd.mapPins || []);
+  // Set when a photo cannot be written to this device's storage — almost
+  // always because storage is full (a wedged video upload holding a large blob
+  // is the usual reason). This used to be a console.warn: the photo vanished
+  // on the next reload and nothing ever said why.
+  const [storageError, setStorageError] = useState(null);
   const [suggestedTags, setSuggestedTags] = useState([]);
   const [tagSuggestLoading, setTagSuggestLoading] = useState(false);
   // sortPhotosByTs on initial load too, so any photo array already saved
@@ -1062,7 +1067,14 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
             if (pin) patch.mapPins = [...(existing.mapPins || []), pin];
             return patch;
           });
-        } catch (e) { console.warn("Camera photo IDB save failed:", e); }
+        } catch (e) {
+          console.warn("Camera photo IDB save failed:", e);
+          setStorageError(
+            /quota|storage|full/i.test(e?.name + " " + e?.message)
+              ? "This device is out of storage — that photo could not be saved. Clear space in Settings → Storage usage, then take it again."
+              : "That photo could not be saved to this device. Take it again."
+          );
+        }
         // Now reflect in component state so the UI updates
         if (cameraSection === "addon") setAddonPhotos(prev => sortPhotosByTs([...prev, photo]));
         else setScopePhotos(prev => sortPhotosByTs([...prev, photo]));
@@ -1497,6 +1509,16 @@ ${combined}`);
               ⚠ If you skip and the upload fails, this video could be lost.
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Storage failure. Sticky, not a toast: a photo that could not be saved
+          is worth interrupting for, and it needs a tap to dismiss so it can't
+          be missed while the camera is still up. */}
+      {storageError && (
+        <div style={{position:"fixed",top:"max(70px, calc(env(safe-area-inset-top) + 60px))",left:12,right:12,zIndex:420,display:"flex",alignItems:"flex-start",gap:10,padding:"12px 14px",borderRadius:12,background:"#7f1d1d",border:"1px solid #ef4444",color:"#ffe4e4",fontSize:12.5,lineHeight:1.45,boxShadow:"0 8px 24px rgba(0,0,0,.5)"}}>
+          <span style={{flex:1}}>{storageError}</span>
+          <button onClick={()=>setStorageError(null)} aria-label="Dismiss" style={{flexShrink:0,width:26,height:26,borderRadius:13,background:"rgba(0,0,0,.25)",border:"1px solid rgba(255,255,255,.3)",color:"#ffe4e4",cursor:"pointer",fontSize:13,lineHeight:1,padding:0}}>✕</button>
         </div>
       )}
 
