@@ -195,6 +195,23 @@ export function dropPhotoStop(stopId) {
   clearState(stopId);
 }
 
+/* Turn a Drive failure into something worth reading on a phone. The point is
+   that each of these implies a DIFFERENT action, and "3 failed attempts" with
+   no reason implies none of them. */
+function describeUploadError(e) {
+  if (!e) return "Upload failed for an unknown reason.";
+  if (e.badData) return "This photo's saved data is damaged — it can't be uploaded. It was most likely cut short when the device ran out of storage.";
+  if (e.isRateLimited) return "Google Drive is rate-limiting uploads — this will retry on its own.";
+  const msg = String(e.message || e);
+  if (e.status === 401) return "Google sign-in has expired — reconnect from the route screen, then retry.";
+  if (e.status === 403) return "Google denied access to Drive. Reconnect from the route screen, then retry.";
+  if (e.status === 404) return "The app's Drive folder could not be found.";
+  if (/storageQuota|quota.*exceed/i.test(msg)) return "Your Google Drive is full — free up space in Drive, then retry.";
+  if (e.name === "AbortError" || /abort|timeout/i.test(msg)) return "Timed out uploading — the connection was too slow. It will retry.";
+  if (/Failed to fetch|NetworkError|Load failed/i.test(msg)) return "Couldn't reach Google Drive — check your signal.";
+  return msg;
+}
+
 // ── Upload one stop's pending photos ────────────────────────────────────
 
 async function syncStop(stopId, token) {
@@ -237,6 +254,7 @@ async function syncStop(stopId, token) {
   let anyNewlySynced = false;
   let lastError = null;
   let rateLimited = false;
+  const badData = new Map();   // photoKey -> true, for permanently unusable data
 
   for (const key of sections) {
     const photos = data[key];
@@ -252,6 +270,7 @@ async function syncStop(stopId, token) {
     for (const [i, p] of photos.entries()) {
       if (p.url) continue;           // Already uploaded
       if (!p.dataUrl) continue;      // Nothing to upload
+      if (p.badData) continue;       // Known-damaged; retrying cannot help
       if (rateLimited) break;        // Drive said slow down — believe it
       try {
         const ext = p.dataUrl.startsWith("data:image/png") ? "png" : "jpg";
@@ -263,10 +282,12 @@ async function syncStop(stopId, token) {
           uploadsBySection[key].set(photoKey(p), { url, syncedAt: Date.now() });
         }
       } catch(e) {
-        lastError = e?.isRateLimited
-          ? "Google Drive is rate-limiting uploads — this will retry on its own."
-          : (e?.message || String(e));
+        lastError = describeUploadError(e);
         if (e?.isRateLimited) rateLimited = true;
+        // A photo whose stored bytes are damaged will never upload. Mark it so
+        // it stops holding the whole stop in the queue — the record and every
+        // other photo on the card are untouched.
+        if (e?.badData) badData.set(photoKey(p), true);
         console.warn("Photo upload failed for", stopId, e);
         logError("photoSync", `Photo upload failed for stop ${stopId}: ${e.message}`, { key, status: e.status });
       }
@@ -275,16 +296,19 @@ async function syncStop(stopId, token) {
 
   // Write all upload results through updateField — queued, atomic, and
   // composes safely with concurrent text saves / photo adds / removes.
-  if (anyNewlySynced) {
+  if (anyNewlySynced || badData.size > 0) {
     await updateField(stopId, (existing) => {
       const updates = {};
       for (const key of sections) {
         const uploads = uploadsBySection[key];
-        if (!uploads || uploads.size === 0) continue;
+        if ((!uploads || uploads.size === 0) && badData.size === 0) continue;
         const current = existing[key] || (key === "scopePhotos" ? existing.photos : null) || [];
         updates[key] = current.map(p => {
-          const result = uploads.get(photoKey(p));
-          return result ? { ...p, ...result } : p;
+          const k = photoKey(p);
+          const result = uploads?.get(k);
+          if (result) return { ...p, ...result };
+          if (badData.has(k)) return { ...p, badData: true };
+          return p;
         });
       }
       return updates;
@@ -304,10 +328,24 @@ async function syncStop(stopId, token) {
     const fresh = await loadField(stopId);
     // A record that vanished mid-pass is the same dead entry as above.
     if (!fresh) { dropPhotoStop(stopId); return; }
-    let pending = 0;
+    let pending = 0, damaged = 0;
     for (const key of sections) {
       const arr = fresh[key];
-      if (Array.isArray(arr)) pending += arr.filter(p => !p.url && p.dataUrl).length;
+      if (!Array.isArray(arr)) continue;
+      for (const p of arr) {
+        if (p.url || !p.dataUrl) continue;
+        // Damaged data will never upload; counting it as pending would keep
+        // the stop in the queue forever.
+        if (p.badData) { damaged++; continue; }
+        pending++;
+      }
+    }
+    if (pending === 0 && damaged > 0) {
+      // Nothing left that CAN be uploaded. Leave the queue, but say why.
+      unmarkStop(stopId);
+      noteAttempt(stopId, { pending: 0, lastError:
+        `${damaged} photo${damaged === 1 ? "" : "s"} could not be uploaded — the saved data is damaged. Everything else on this stop is uploaded.` });
+      return;
     }
     if (pending === 0) {
       unmarkStop(stopId);

@@ -3,7 +3,7 @@ import {
   getPhotoQueueDetail, retryPhotoQueueNow, dropPhotoStop, processPhotoQueue,
   resetPhotoQueueLock,
 } from "./photoSync";
-import { getFieldSlim } from "./fieldStore";
+import { getFieldSlim, loadField } from "./fieldStore";
 import { IconX, IconRefresh, IconImage } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -33,8 +33,19 @@ export default function PhotoUploads({ onClose, token }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
 
-  const refresh = useCallback(() => {
-    setRows(getPhotoQueueDetail().map(q => ({ ...q, slim: getFieldSlim(q.stopId) })));
+  const refresh = useCallback(async () => {
+    const detail = getPhotoQueueDetail();
+    // The slim mirror often has no entry for these stops, which is why every
+    // row read as a raw calendar id. The full record does have the name, so
+    // fall back to it — this screen is only ever showing a handful of rows.
+    const named = await Promise.all(detail.map(async (q) => {
+      let cn = getFieldSlim(q.stopId)?.cn || null;
+      if (!cn) {
+        try { cn = (await loadField(q.stopId))?.cn || null; } catch {}
+      }
+      return { ...q, cn };
+    }));
+    setRows(named);
   }, []);
 
   useEffect(() => {
@@ -142,8 +153,15 @@ export default function PhotoUploads({ onClose, token }) {
             display: "flex", alignItems: "flex-start", gap: 10,
           }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "#e6ecf5" }}>
-                {r.slim?.cn || r.stopId}
+              {/* overflowWrap:anywhere — a calendar id is one unbroken 40-char
+                  token, which pushed the Stop button off the row and under the
+                  text when there was no client name to show. */}
+              <div style={{
+                fontSize: 14, fontWeight: 700, color: "#e6ecf5",
+                overflowWrap: "anywhere",
+                ...(r.cn ? {} : { fontSize: 11.5, color: "#8aa0c0", fontWeight: 600 }),
+              }}>
+                {r.cn || r.stopId}
               </div>
               <div style={{ fontSize: 11.5, color: "#7a8aaa", marginTop: 3, lineHeight: 1.45 }}>
                 {r.pending == null

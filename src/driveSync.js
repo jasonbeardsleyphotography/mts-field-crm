@@ -294,10 +294,25 @@ export async function loadAppState(token) {
 export async function uploadPhotoToDrive(token, dataUrl, filename) {
   try {
     // Convert base64 dataUrl → binary Blob
-    const [header, b64] = dataUrl.split(",");
+    const [header, b64] = String(dataUrl || "").split(",");
+    if (!header || !b64) {
+      const err = new Error("The saved image data is incomplete");
+      err.badData = true;
+      throw err;
+    }
     const mimeMatch = header.match(/data:([^;]+)/);
     const mime = mimeMatch?.[1] || "image/jpeg";
-    const binary = atob(b64);
+    let binary;
+    try {
+      binary = atob(b64);
+    } catch {
+      // A truncated or corrupted base64 payload — typically a photo that was
+      // half-written when the device ran out of storage. Retrying can never
+      // fix it, so it must be reported as permanent rather than looped on.
+      const err = new Error("The saved image data is corrupted");
+      err.badData = true;
+      throw err;
+    }
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     const blob = new Blob([bytes], { type: mime });
@@ -362,7 +377,12 @@ export async function uploadPhotoToDrive(token, dataUrl, filename) {
   } catch(e) {
     console.warn("Photo Drive upload failed:", e);
     logError("driveSync", `uploadPhotoToDrive failed: ${e.message}`, { filename, status: e.status });
-    return null;
+    // RETHROW. This used to `return null`, which the caller could only read as
+    // "didn't work" — so a stop could show three failed attempts with no
+    // reason beside it, because the reason had been swallowed here and written
+    // only to a log nobody opens. The caller needs the cause to decide whether
+    // to retry, to back off, or to stop.
+    throw e;
   }
 }
 
