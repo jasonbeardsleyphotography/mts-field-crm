@@ -69,26 +69,60 @@ const AUTH_REASONS = new Set([
   "insufficientFilePermissions", "unauthorized",
 ]);
 
-async function isTokenRejected(res) {
-  if (res.status === 401) return true;
-  if (res.status !== 403) return false;
+/* Read Drive's own explanation off the response.
+   Returns { reason, message, kind } where kind is one of:
+     "auth"      — the token or the grant is the problem
+     "full"      — the Drive account is OUT OF SPACE (storageQuotaExceeded).
+                   NOT a throttle: it will never clear by waiting, and calling
+                   it rate limiting — which an earlier version of this did,
+                   because "storageQuotaExceeded" contains "quotaExceeded" —
+                   tells the user to sit and wait for something that cannot
+                   happen.
+     "daily"     — a per-day API quota; clears at midnight Pacific
+     "rate"      — a genuine throttle; retrying later works
+     "unknown"   — treated as auth, since a dead grant must stay recoverable */
+async function classifyDriveError(res) {
+  const out = { reason: null, message: "", kind: "unknown" };
+  if (res.status === 401) { out.kind = "auth"; return out; }
+  if (res.status === 429) { out.kind = "rate"; return out; }
+  if (res.status !== 403) { out.kind = "other"; return out; }
   try {
     // clone(): the caller may still want the body, and a response can only be
     // read once.
     const body = await res.clone().json();
-    const reasons = (body?.error?.errors || []).map(e => e?.reason);
-    if (reasons.some(r => AUTH_REASONS.has(r))) return true;
-    // A recognised throttle is definitively not an auth problem.
-    if (reasons.some(r => /rateLimit|quotaExceeded|userRateLimit|backendError/i.test(r || ""))) return false;
-    const msg = body?.error?.message || "";
-    if (/rate limit|quota|too many/i.test(msg)) return false;
-    // 403 with nothing recognisable: assume permissions, since a genuinely
-    // dead grant has to be recoverable.
-    return true;
+    const errs = body?.error?.errors || [];
+    out.reason = errs.map(e => e?.reason).filter(Boolean)[0] || null;
+    out.message = body?.error?.message || "";
+    const reasons = errs.map(e => String(e?.reason || ""));
+    const has = (re) => reasons.some(r => re.test(r));
+
+    if (reasons.some(r => AUTH_REASONS.has(r))) { out.kind = "auth"; return out; }
+    // Order matters: storageQuotaExceeded must be tested BEFORE the generic
+    // quota patterns it would otherwise be swallowed by.
+    if (has(/^storageQuotaExceeded$/i) || /storage quota|out of space|not enough (free )?space/i.test(out.message)) {
+      out.kind = "full"; return out;
+    }
+    if (has(/^dailyLimitExceeded/i)) { out.kind = "daily"; return out; }
+    if (has(/rateLimitExceeded|userRateLimitExceeded|sharingRateLimitExceeded|backendError/i) ||
+        /rate limit|too many requests/i.test(out.message)) {
+      out.kind = "rate"; return out;
+    }
+    out.kind = "auth";     // unrecognised 403 — assume the grant
+    return out;
   } catch {
-    // Body unreadable — fall back to the old behaviour for a 403.
-    return true;
+    out.kind = "auth";     // body unreadable — old behaviour for a 403
+    return out;
   }
+}
+
+function applyDriveError(err, info) {
+  err.driveReason = info.reason;
+  err.driveMessage = info.message;
+  err.driveKind = info.kind;
+  if (info.kind === "auth") err.isAuthError = true;
+  if (info.kind === "rate" || info.kind === "daily") err.isRateLimited = true;
+  if (info.kind === "full") err.isDriveFull = true;
+  return err;
 }
 
 /** Fire the already-registered auth-error callback without overwriting it.
@@ -109,12 +143,8 @@ async function driveReq(token, url, opts = {}) {
   if (!res.ok) {
     const err = new Error(`Drive ${res.status}`);
     err.status = res.status;
-    if (await isTokenRejected(res)) {
-      err.isAuthError = true;
-      if (authErrorCallback) authErrorCallback();
-    } else if (res.status === 403 || res.status === 429) {
-      err.isRateLimited = true;
-    }
+    applyDriveError(err, await classifyDriveError(res));
+    if (err.isAuthError && authErrorCallback) authErrorCallback();
     throw err;
   }
   return res;
@@ -202,12 +232,8 @@ async function _saveJsonResumable(token, body, fileName, folderId, existingId) {
   if (!sessionRes.ok) {
     const err = new Error(`Drive resumable init ${sessionRes.status}`);
     err.status = sessionRes.status;
-    if (await isTokenRejected(sessionRes)) {
-      err.isAuthError = true;
-      if (authErrorCallback) authErrorCallback();
-    } else if (sessionRes.status === 403 || sessionRes.status === 429) {
-      err.isRateLimited = true;
-    }
+    applyDriveError(err, await classifyDriveError(sessionRes));
+    if (err.isAuthError && authErrorCallback) authErrorCallback();
     throw err;
   }
   const sessionUrl = sessionRes.headers.get("Location");
@@ -233,12 +259,8 @@ async function _saveJsonResumable(token, body, fileName, folderId, existingId) {
   if (!uploadRes.ok) {
     const err = new Error(`Drive resumable upload ${uploadRes.status}`);
     err.status = uploadRes.status;
-    if (await isTokenRejected(uploadRes)) {
-      err.isAuthError = true;
-      if (authErrorCallback) authErrorCallback();
-    } else if (uploadRes.status === 403 || uploadRes.status === 429) {
-      err.isRateLimited = true;
-    }
+    applyDriveError(err, await classifyDriveError(uploadRes));
+    if (err.isAuthError && authErrorCallback) authErrorCallback();
     throw err;
   }
 }
@@ -485,4 +507,22 @@ export async function loadFieldFromDrive(token, eventId) {
     const fid = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
     return await loadJson(token, `${eventId}.json`, fid);
   } catch(e) { return null; }
+}
+
+
+/* ── Drive storage ──────────────────────────────────────────────────────────
+   One cheap call that turns "uploads keep failing" into a number. Worth having
+   because a full Drive and a throttled Drive both surface as a 403 and only
+   one of them ever clears by waiting. */
+export async function getDriveStorage(token) {
+  const res = await driveReq(token, `${DRIVE_API}/about?fields=storageQuota`);
+  const d = await res.json();
+  const q = d?.storageQuota || {};
+  const used = Number(q.usage || 0);
+  const limit = q.limit != null ? Number(q.limit) : null;   // null = unlimited
+  return {
+    used, limit,
+    usedPct: limit ? Math.min(100, (used / limit) * 100) : null,
+    full: limit != null && used >= limit * 0.999,
+  };
 }

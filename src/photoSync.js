@@ -201,12 +201,15 @@ export function dropPhotoStop(stopId) {
 function describeUploadError(e) {
   if (!e) return "Upload failed for an unknown reason.";
   if (e.badData) return "This photo's saved data is damaged — it can't be uploaded. It was most likely cut short when the device ran out of storage.";
+  // Drive's own reason, where it gave one. These are deliberately distinct:
+  // only one of them ever clears by waiting.
+  if (e.isDriveFull) return "YOUR GOOGLE DRIVE IS FULL — Drive has no room for this photo. Free up space in Google Drive (or empty its Trash), then tap Retry all. Waiting will not fix this.";
+  if (e.driveKind === "daily") return "Google's daily upload limit for this account has been reached. It resets around 3am Eastern — uploads will resume on their own.";
   if (e.isRateLimited) return "Google Drive is rate-limiting uploads — this will retry on its own.";
-  const msg = String(e.message || e);
+  const msg = String(e.driveMessage || e.message || e);
   if (e.status === 401) return "Google sign-in has expired — reconnect from the route screen, then retry.";
-  if (e.status === 403) return "Google denied access to Drive. Reconnect from the route screen, then retry.";
+  if (e.status === 403) return `Google denied access to Drive${e.driveReason ? ` (${e.driveReason})` : ""}. Reconnect from the route screen, then retry.`;
   if (e.status === 404) return "The app's Drive folder could not be found.";
-  if (/storageQuota|quota.*exceed/i.test(msg)) return "Your Google Drive is full — free up space in Drive, then retry.";
   if (e.name === "AbortError" || /abort|timeout/i.test(msg)) return "Timed out uploading — the connection was too slow. It will retry.";
   if (/Failed to fetch|NetworkError|Load failed/i.test(msg)) return "Couldn't reach Google Drive — check your signal.";
   return msg;
@@ -283,7 +286,7 @@ async function syncStop(stopId, token) {
         }
       } catch(e) {
         lastError = describeUploadError(e);
-        if (e?.isRateLimited) rateLimited = true;
+        if (e?.isRateLimited || e?.isDriveFull) rateLimited = true;
         // A photo whose stored bytes are damaged will never upload. Mark it so
         // it stops holding the whole stop in the queue — the record and every
         // other photo on the card are untouched.

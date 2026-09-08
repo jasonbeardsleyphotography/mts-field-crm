@@ -4,6 +4,7 @@ import {
   resetPhotoQueueLock,
 } from "./photoSync";
 import { getFieldSlim, loadField } from "./fieldStore";
+import { getDriveStorage } from "./driveSync";
 import { IconX, IconRefresh, IconImage } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -19,6 +20,13 @@ import { IconX, IconRefresh, IconImage } from "./icons";
 
 const F = "'Oswald',sans-serif";
 
+function fmtBytes(n) {
+  if (n == null) return "—";
+  const gb = n / 1024 ** 3;
+  if (gb >= 1) return `${gb.toFixed(gb >= 10 ? 0 : 1)} GB`;
+  return `${Math.round(n / 1024 ** 2)} MB`;
+}
+
 function ago(ts) {
   if (!ts) return "never";
   const s = Math.round((Date.now() - ts) / 1000);
@@ -32,6 +40,10 @@ export default function PhotoUploads({ onClose, token }) {
   const [rows, setRows] = useState([]);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
+  // The definitive answer to "is Drive actually full?". A full Drive and a
+  // throttled Drive both arrive as a 403 and only one of them clears by
+  // waiting, so it is worth one call to say which.
+  const [storage, setStorage] = useState(null);
 
   const refresh = useCallback(async () => {
     const detail = getPhotoQueueDetail();
@@ -47,6 +59,23 @@ export default function PhotoUploads({ onClose, token }) {
     }));
     setRows(named);
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        let tok = token;
+        try {
+          const saved = JSON.parse(localStorage.getItem("mts-token") || "null");
+          if (saved?.token && saved.expiry > Date.now()) tok = saved.token;
+        } catch {}
+        if (!tok) return;
+        const s = await getDriveStorage(tok);
+        if (alive) setStorage(s);
+      } catch { /* not worth surfacing on its own */ }
+    })();
+    return () => { alive = false; };
+  }, [token]);
 
   useEffect(() => {
     refresh();
@@ -128,6 +157,25 @@ export default function PhotoUploads({ onClose, token }) {
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 16px max(20px, env(safe-area-inset-bottom))" }}>
+        {storage && storage.limit != null && (
+          <div style={{
+            margin: "6px 0 10px", padding: "10px 12px", borderRadius: 9,
+            background: storage.full ? "rgba(239,68,68,.12)" : "rgba(255,255,255,.04)",
+            border: `1px solid ${storage.full ? "#ef4444" : "#1e2740"}`,
+            color: storage.full ? "#ffc9c9" : "#8aa0c0", fontSize: 12, lineHeight: 1.45,
+          }}>
+            <b style={{ color: storage.full ? "#ff8080" : "#cfe0f5" }}>
+              Google Drive: {fmtBytes(storage.used)} of {fmtBytes(storage.limit)} used
+              {storage.usedPct != null ? ` (${storage.usedPct.toFixed(1)}%)` : ""}
+            </b>
+            {storage.full && (
+              <div style={{ marginTop: 4 }}>
+                Drive has no room left, so nothing can upload until you free space.
+                Empty Drive's Trash first — deleted files still count against this.
+              </div>
+            )}
+          </div>
+        )}
         {result && (
           <div style={{
             margin: "6px 0 10px", padding: "10px 12px", borderRadius: 9,

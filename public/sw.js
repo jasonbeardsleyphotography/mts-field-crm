@@ -1,3 +1,5 @@
+// v51: distinguish a FULL Drive from a throttled one — my own classifier was
+// calling storageQuotaExceeded "rate limiting", which never clears by waiting.
 // v50: the upload error is no longer swallowed — the Photo uploads screen now
 // says WHY each stop failed, and permanently damaged photo data stops looping.
 // v49: the photo queue can no longer freeze silently — one hung await used to
@@ -46,7 +48,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v50";
+const CACHE = "mts-field-v51";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
