@@ -1,3 +1,5 @@
+// v49: the photo queue can no longer freeze silently — one hung await used to
+// leave the pass lock stuck true, so every later run (Retry included) no-opped.
 // v48: photos upload one at a time (a parallel burst was inviting the very
 // rate limits that jammed the queue), are named "Lastname MM-DD-YYYY NN.jpg",
 // and a storage failure while capturing now says so instead of going quiet.
@@ -42,7 +44,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v48";
+const CACHE = "mts-field-v49";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

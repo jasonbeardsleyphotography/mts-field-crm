@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   getPhotoQueueDetail, retryPhotoQueueNow, dropPhotoStop, processPhotoQueue,
+  resetPhotoQueueLock,
 } from "./photoSync";
 import { getFieldSlim } from "./fieldStore";
 import { IconX, IconRefresh, IconImage } from "./icons";
@@ -30,6 +31,7 @@ function ago(ts) {
 export default function PhotoUploads({ onClose, token }) {
   const [rows, setRows] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
 
   const refresh = useCallback(() => {
     setRows(getPhotoQueueDetail().map(q => ({ ...q, slim: getFieldSlim(q.stopId) })));
@@ -45,14 +47,29 @@ export default function PhotoUploads({ onClose, token }) {
   const retryAll = async () => {
     if (busy) return;
     setBusy(true);
+    setResult(null);
+    const before = getPhotoQueueDetail().length;
     try {
       retryPhotoQueueNow();          // clear every backoff
+      // And clear a wedged pass lock, so a tap is guaranteed to actually run
+      // something rather than returning at a guard.
+      resetPhotoQueueLock();
       let tok = token;
       try {
         const saved = JSON.parse(localStorage.getItem("mts-token") || "null");
         if (saved?.token && saved.expiry > Date.now()) tok = saved.token;
       } catch {}
-      if (tok) await processPhotoQueue(tok);
+      if (!tok) {
+        setResult("Not signed in to Google right now, so nothing could be uploaded. Reconnect from the route screen and try again.");
+        return;
+      }
+      await processPhotoQueue(tok);
+      const after = getPhotoQueueDetail().length;
+      setResult(before === after
+        ? "Tried every stop. Nothing finished — the reason for each is below."
+        : `${before - after} stop${before - after === 1 ? "" : "s"} finished uploading.`);
+    } catch (e) {
+      setResult(`The retry itself failed: ${e?.message || e}`);
     } finally {
       setBusy(false);
       refresh();
@@ -100,6 +117,13 @@ export default function PhotoUploads({ onClose, token }) {
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 16px max(20px, env(safe-area-inset-bottom))" }}>
+        {result && (
+          <div style={{
+            margin: "6px 0 10px", padding: "10px 12px", borderRadius: 9,
+            background: "rgba(26,115,232,.1)", border: "1px solid rgba(26,115,232,.3)",
+            color: "#cfe0f5", fontSize: 12, lineHeight: 1.45,
+          }}>{result}</div>
+        )}
         {rows.length === 0 && (
           <div style={{
             display: "flex", flexDirection: "column", alignItems: "center",

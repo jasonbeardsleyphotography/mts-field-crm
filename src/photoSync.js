@@ -406,22 +406,75 @@ export async function promoteStop(stopId) {
 // ── Process the entire queue ─────────────────────────────────────────────
 
 let _processing = false;
+let _processingStartMs = 0;
+
+// A single pass, and a single stop within it, are both bounded.
+//
+// This is the fix for a queue that stopped moving entirely — no uploads, no
+// errors, not even a rising attempt count. `_processing` is a plain module
+// flag cleared in a `finally`, so it is only ever cleared if the await inside
+// actually SETTLES. An IndexedDB read or a queued write that never resolves
+// (a blocked upgrade, a transaction lost when the tab was suspended) leaves
+// the flag true for the life of the page, and from then on every call —
+// including the Retry button — returns at the guard on the first line and does
+// nothing at all. Silently.
+//
+// So: a stop that takes too long is abandoned and recorded, and a pass that
+// somehow still overruns has its lock treated as stale by the next caller.
+const STOP_TIMEOUT_MS = 180_000;
+const PASS_LOCK_STALE_MS = 5 * 60_000;
+
+function withTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(label)), ms);
+    }),
+  ]);
+}
+
+/** Clear a wedged pass lock. Exposed so the Retry button can guarantee that a
+ *  tap actually runs something. */
+export function resetPhotoQueueLock() {
+  _processing = false;
+  _processingStartMs = 0;
+}
 
 export async function processPhotoQueue(token) {
-  if (!token || _processing) return;
+  if (!token) return;
+  if (_processing) {
+    // Take the lock back if the holder has plainly stopped making progress.
+    if (!_processingStartMs || Date.now() - _processingStartMs < PASS_LOCK_STALE_MS) return;
+    logWarn("photoSync", "Photo queue lock was stale — taking it over");
+    _processing = false;
+  }
   if (!navigator.onLine) return;
 
   // First: upload pending photos
   const queue = getQueue();
   if (queue.size > 0) {
     _processing = true;
+    _processingStartMs = Date.now();
     await _wakeLockHandle.acquire();
     try {
       for (const stopId of queue) {
-        await syncStop(stopId, token);
+        try {
+          await withTimeout(syncStop(stopId, token), STOP_TIMEOUT_MS, "timed-out");
+        } catch (e) {
+          // One wedged stop must not stop the others, and it must leave a
+          // trace — this used to be the thing nobody could see.
+          const msg = e?.message === "timed-out"
+            ? "Timed out — this stop's photos couldn't be read or uploaded in three minutes."
+            : (e?.message || String(e));
+          const st = getState()[stopId] || {};
+          noteAttempt(stopId, { tries: (st.tries || 0) + 1, lastError: msg });
+          logError("photoSync", `Photo pass failed for ${stopId}: ${msg}`);
+        }
       }
     } finally {
       _processing = false;
+      _processingStartMs = 0;
       _wakeLockHandle.release();
     }
   }

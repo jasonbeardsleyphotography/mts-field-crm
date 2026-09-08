@@ -51,7 +51,12 @@ export function downscaleDataUrl(dataUrl, max = PHOTO_MAX_DIM, quality = PHOTO_Q
       return;
     }
     const img = new Image();
+    // A decode that never fires either handler would hang whatever is awaiting
+    // this — and this runs inside the photo upload pass, where one hung await
+    // used to freeze the whole queue. Give up and hand back the original.
+    const timer = setTimeout(() => { try { img.src = ""; } catch {} resolve(dataUrl); }, 15000);
     img.onload = () => {
+      clearTimeout(timer);
       let w = img.width, h = img.height;
       if (w <= max && h <= max) { resolve(dataUrl); return; } // already small enough
       if (w > max) { h = h * max / w; w = max; }
@@ -65,7 +70,7 @@ export function downscaleDataUrl(dataUrl, max = PHOTO_MAX_DIM, quality = PHOTO_Q
         resolve(dataUrl);
       }
     };
-    img.onerror = () => resolve(dataUrl);
+    img.onerror = () => { clearTimeout(timer); resolve(dataUrl); };
     img.src = dataUrl;
   });
 }
