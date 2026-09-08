@@ -14,6 +14,7 @@ import { pruneLog as pruneVideoLog } from "./videoLog";
 import UploadTracker from "./UploadTracker";
 import DebugPanel from "./DebugPanel";
 import PhotoUploads from "./PhotoUploads";
+import DriveCleanup from "./DriveCleanup";
 import NextStopCard from "./NextStopCard";
 import VideoUploads from "./VideoUploads";
 import StoragePanel from "./StoragePanel";
@@ -1495,6 +1496,7 @@ export default function App() {
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false); // route "hamburger" settings sheet
   const [photoUploadsOpen, setPhotoUploadsOpen] = useState(false);
+  const [driveCleanupOpen, setDriveCleanupOpen] = useState(false);
   // How many stops still have photos waiting for Drive. Surfaced on the
   // settings button itself: the previous answer lived only in a debug panel
   // behind a five-tap gesture, which is how four stops sat wedged for days
@@ -2509,6 +2511,11 @@ export default function App() {
                   ? `${photoQueueCount} stop${photoQueueCount===1?"":"s"} still waiting — tap to see why`
                   : "All photos on this device have reached Drive"}
                 onClick={()=>{ setPhotoUploadsOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#F6BF26"
+                icon={<IconTrash size={17} color="#F6BF26"/>}
+                label="Free up Drive space"
+                sub="Remove duplicate photos this app left in Drive"
+                onClick={()=>{ setDriveCleanupOpen(true); setSettingsOpen(false); }} />
               <Row accent="#818cf8"
                 icon={<IconClock size={17} color="#818cf8"/>}
                 label="Find old job photos" sub="Search past visits by name or date"
@@ -2771,7 +2778,12 @@ export default function App() {
       )}
 
       {photoUploadsOpen && (
-        <PhotoUploads token={token} onClose={() => setPhotoUploadsOpen(false)} />
+        <PhotoUploads token={token} onClose={() => setPhotoUploadsOpen(false)}
+                      onFreeSpace={() => { setPhotoUploadsOpen(false); setDriveCleanupOpen(true); }} />
+      )}
+
+      {driveCleanupOpen && (
+        <DriveCleanup token={token} onClose={() => setDriveCleanupOpen(false)} />
       )}
 
       {/* ── DEBUG PANEL (5-tap on header spacer) ─────────────────── */}

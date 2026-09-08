@@ -1,3 +1,5 @@
+// v52: a Drive cleanup tool that removes the duplicate photo files the
+// re-upload bug created, so the quota it filled can be reclaimed.
 // v51: distinguish a FULL Drive from a throttled one — my own classifier was
 // calling storageQuotaExceeded "rate limiting", which never clears by waiting.
 // v50: the upload error is no longer swallowed — the Photo uploads screen now
@@ -48,7 +50,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v51";
+const CACHE = "mts-field-v52";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

@@ -36,7 +36,7 @@ function ago(ts) {
   return `${Math.round(s / 86400)}d ago`;
 }
 
-export default function PhotoUploads({ onClose, token }) {
+export default function PhotoUploads({ onClose, token, onFreeSpace }) {
   const [rows, setRows] = useState([]);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
@@ -169,10 +169,20 @@ export default function PhotoUploads({ onClose, token }) {
               {storage.usedPct != null ? ` (${storage.usedPct.toFixed(1)}%)` : ""}
             </b>
             {storage.full && (
-              <div style={{ marginTop: 4 }}>
-                Drive has no room left, so nothing can upload until you free space.
-                Empty Drive's Trash first — deleted files still count against this.
-              </div>
+              <>
+                <div style={{ marginTop: 4 }}>
+                  Drive has no room left, so nothing can upload until you free space.
+                  Empty Drive's Trash first — deleted files still count against this.
+                </div>
+                {onFreeSpace && (
+                  <button onClick={onFreeSpace} style={{
+                    marginTop: 9, padding: "9px 14px", borderRadius: 8,
+                    background: "rgba(246,191,38,.16)", border: "1px solid rgba(246,191,38,.5)",
+                    color: "#F6BF26", fontSize: 11.5, fontWeight: 800, fontFamily: F,
+                    letterSpacing: 0.5, textTransform: "uppercase", cursor: "pointer",
+                  }}>Free up Drive space</button>
+                )}
+              </>
             )}
           </div>
         )}

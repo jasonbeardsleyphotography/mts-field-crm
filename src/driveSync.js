@@ -526,3 +526,96 @@ export async function getDriveStorage(token) {
     full: limit != null && used >= limit * 0.999,
   };
 }
+
+/* ── Drive cleanup ──────────────────────────────────────────────────────────
+   Find and remove duplicate photo files this app created.
+
+   These exist because of a real bug: uploadPhotoToDrive put the file in Drive
+   and then made it publicly readable, with both steps inside one try/catch. A
+   failure on the sharing step returned null, which the caller read as "the
+   upload failed" — so it uploaded the whole photo again, every sixty seconds,
+   for as long as the app was open. Every one of those attempts left a file
+   behind. That is fixed, but the files it already made are still occupying the
+   Drive quota that is now blocking all uploads.
+
+   Nothing here deletes a file that a card still points at. The referenced set
+   is built from the app's own records first, and only unreferenced copies of a
+   name that has a surviving file are ever offered up. */
+
+async function listAllInFolder(token, folderId) {
+  const out = [];
+  let pageToken = null;
+  do {
+    const params = new URLSearchParams({
+      q: `'${folderId}' in parents and trashed=false`,
+      fields: "nextPageToken,files(id,name,size,createdTime)",
+      pageSize: "1000",
+      spaces: "drive",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const res = await driveReq(token, `${DRIVE_API}/files?${params}`);
+    const d = await res.json();
+    for (const f of d.files || []) out.push(f);
+    pageToken = d.nextPageToken || null;
+  } while (pageToken);
+  return out;
+}
+
+/** Every photo file this app has in Drive. */
+export async function listAppPhotoFiles(token) {
+  const rootId = await findOrCreateFolder(token, FOLDER_NAME);
+  const fieldId = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
+  const photoId = await findOrCreateFolder(token, "photos", fieldId);
+  return listAllInFolder(token, photoId);
+}
+
+/**
+ * Group the file list into duplicates.
+ *
+ * `referencedIds` is the set of Drive ids some card still points at — those are
+ * never offered for deletion. Within each name group one file is always KEPT:
+ * a referenced one if there is one, otherwise the newest.
+ *
+ * Returns { groups, deletable, bytes } where deletable is a flat list of files
+ * that are safe to remove.
+ */
+export function findDuplicatePhotos(files, referencedIds = new Set()) {
+  const byName = new Map();
+  for (const f of files) {
+    if (!byName.has(f.name)) byName.set(f.name, []);
+    byName.get(f.name).push(f);
+  }
+  const groups = [];
+  const deletable = [];
+  let bytes = 0;
+  for (const [name, list] of byName) {
+    if (list.length < 2) continue;
+    const sorted = [...list].sort(
+      (a, b) => new Date(b.createdTime || 0) - new Date(a.createdTime || 0)
+    );
+    const keep = sorted.find(f => referencedIds.has(f.id)) || sorted[0];
+    const drop = sorted.filter(f => f.id !== keep.id && !referencedIds.has(f.id));
+    if (!drop.length) continue;
+    for (const f of drop) bytes += Number(f.size || 0);
+    deletable.push(...drop);
+    groups.push({ name, keep, drop });
+  }
+  return { groups, deletable, bytes };
+}
+
+/** Delete files one at a time, reporting progress. Never parallel: a burst of
+ *  deletes is the same rate-limit trap as a burst of uploads. */
+export async function deleteDriveFiles(token, ids, onProgress) {
+  let done = 0, failed = 0;
+  for (const id of ids) {
+    try {
+      await driveReq(token, `${DRIVE_API}/files/${id}`, { method: "DELETE" });
+      done++;
+    } catch (e) {
+      failed++;
+      logWarn("driveSync", `Could not delete ${id}: ${e.message}`);
+    }
+    onProgress?.({ done, failed, total: ids.length });
+  }
+  return { done, failed };
+}
