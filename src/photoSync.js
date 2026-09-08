@@ -112,13 +112,80 @@ function buildPhotoFilename(data, p, seq, ext) {
   return `${name}${jobPart}${datePart}${seqPart}.${ext}`;
 }
 
+/* ── Queue health ───────────────────────────────────────────────────────────
+   The upload queue had no terminal state. A stop that could not finish was
+   retried every 60s for as long as the app was open, forever, and the only
+   evidence was a count in the debug panel. This records what happened on each
+   pass so a wedged stop can be seen, backed off, and reported.
+
+   Backing off matters for more than tidiness: a stop failing on Drive
+   throttling that is retried every minute keeps the throttle alive. */
+const STATE_KEY = "mts-photo-queue-state";
+const MAX_BACKOFF_MS = 30 * 60 * 1000;
+
+function getState() {
+  try { return JSON.parse(localStorage.getItem(STATE_KEY) || "{}"); } catch { return {}; }
+}
+function setState(next) {
+  try { localStorage.setItem(STATE_KEY, JSON.stringify(next)); } catch {}
+}
+function noteAttempt(stopId, patch) {
+  const st = getState();
+  st[stopId] = { ...(st[stopId] || {}), ...patch, lastTry: Date.now() };
+  setState(st);
+}
+function clearState(stopId) {
+  const st = getState();
+  if (st[stopId]) { delete st[stopId]; setState(st); }
+}
+function backoffFor(tries) {
+  return Math.min(MAX_BACKOFF_MS, 60_000 * Math.pow(2, Math.max(0, tries - 1)));
+}
+
+/** Everything the UI needs to explain a stuck upload. */
+export function getPhotoQueueDetail() {
+  const st = getState();
+  return [...getQueue()].map(stopId => ({
+    stopId,
+    tries: st[stopId]?.tries || 0,
+    pending: st[stopId]?.pending ?? null,
+    lastError: st[stopId]?.lastError || null,
+    lastTry: st[stopId]?.lastTry || 0,
+  }));
+}
+
+/** Clear the backoff on every queued stop so the next pass runs immediately. */
+export function retryPhotoQueueNow() {
+  const st = getState();
+  for (const id of Object.keys(st)) st[id] = { ...st[id], tries: 0, lastTry: 0 };
+  setState(st);
+}
+
+/** Stop retrying one stop. The photos stay on the device untouched — this
+ *  only takes it out of the upload queue. */
+export function dropPhotoStop(stopId) {
+  unmarkStop(stopId);
+  clearState(stopId);
+}
+
 // ── Upload one stop's pending photos ────────────────────────────────────
 
 async function syncStop(stopId, token) {
+  const state = getState()[stopId] || {};
+  // Respect the backoff. Without this a permanently-failing stop is retried
+  // every 60 seconds for days.
+  if (state.tries > 0 && Date.now() - (state.lastTry || 0) < backoffFor(state.tries)) return;
+
   let data;
   try { data = await loadField(stopId); }
-  catch { return; }
-  if (!data) return;
+  catch (e) {
+    noteAttempt(stopId, { tries: (state.tries || 0) + 1, lastError: `Couldn't read the saved record: ${e.message}` });
+    return;
+  }
+  // No record at all: the card was deleted, or its storage was cleared. There
+  // is nothing here to upload and never will be, so the queue entry is dead
+  // weight — it used to sit there forever, counted as a pending upload.
+  if (!data) { dropPhotoStop(stopId); return; }
 
   // Recovery: shrink any legacy 4K photos before upload. Keeps the Drive
   // payload small (so sync actually succeeds) and shrinks IDB. One photo at a
@@ -141,6 +208,7 @@ async function syncStop(stopId, token) {
   // photo adds/removes/edits.
   const uploadsBySection = {};
   let anyNewlySynced = false;
+  let lastError = null;
 
   for (const key of sections) {
     const photos = data[key];
@@ -160,6 +228,7 @@ async function syncStop(stopId, token) {
           uploadsBySection[key].set(photoKey(p), { url, syncedAt: Date.now() });
         }
       } catch(e) {
+        lastError = e?.message || String(e);
         console.warn("Photo upload failed for", stopId, e);
         logError("photoSync", `Photo upload failed for stop ${stopId}: ${e.message}`, { key, status: e.status });
       }
@@ -195,11 +264,28 @@ async function syncStop(stopId, token) {
   // since updateField may have changed the photo records.
   try {
     const fresh = await loadField(stopId);
-    const allUploaded = sections.every(key =>
-      !Array.isArray(fresh[key]) || fresh[key].every(p => p.url || !p.dataUrl)
-    );
-    if (allUploaded) unmarkStop(stopId);
-  } catch {}
+    // A record that vanished mid-pass is the same dead entry as above.
+    if (!fresh) { dropPhotoStop(stopId); return; }
+    let pending = 0;
+    for (const key of sections) {
+      const arr = fresh[key];
+      if (Array.isArray(arr)) pending += arr.filter(p => !p.url && p.dataUrl).length;
+    }
+    if (pending === 0) {
+      unmarkStop(stopId);
+      clearState(stopId);
+      return;
+    }
+    // Still pending. If this pass uploaded something we are making progress,
+    // so reset the backoff; otherwise escalate it.
+    noteAttempt(stopId, {
+      pending,
+      lastError,
+      tries: anyNewlySynced ? 0 : (state.tries || 0) + 1,
+    });
+  } catch (e) {
+    noteAttempt(stopId, { tries: (state.tries || 0) + 1, lastError: e?.message || String(e) });
+  }
 }
 
 // ── Downscale oversized (legacy 4K) photos in place ──────────────────────

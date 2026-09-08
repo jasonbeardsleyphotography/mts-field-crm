@@ -321,19 +321,44 @@ export async function uploadPhotoToDrive(token, dataUrl, filename) {
     const data = await res.json();
     if (!data.id) return null;
 
-    // Make publicly readable so IMG tags can load it without auth headers
-    await driveReq(
-      token,
-      `${DRIVE_API}/files/${data.id}/permissions`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: "reader", type: "anyone" }),
+    // ── The file is now IN DRIVE. Nothing below may throw away that fact. ──
+    //
+    // Making it publicly readable used to sit inside the same try/catch as the
+    // upload, so a failure there — a 403 from rate limiting being the common
+    // one — returned null. The caller reads null as "upload failed" and
+    // retries, which uploads the WHOLE PHOTO AGAIN, fails on sharing again,
+    // and repeats every 60 seconds forever: a stop wedged on "pending photo
+    // upload" for days, a pile of duplicate files in Drive, and enough request
+    // volume to keep Drive throttling everything else.
+    //
+    // So: retry the share a few times, and if it still won't take, hand back
+    // the URL anyway. The photo is safe, the queue drains, and the only thing
+    // lost is that the crew link can't display it until sharing succeeds —
+    // which a later pass can fix.
+    const url = `https://drive.google.com/thumbnail?id=${data.id}&sz=w1200`;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await driveReq(
+          token,
+          `${DRIVE_API}/files/${data.id}/permissions`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ role: "reader", type: "anyone" }),
+          }
+        );
+        return url;
+      } catch (e) {
+        if (attempt === 2) {
+          logWarn("driveSync",
+            `Photo uploaded but could not be shared publicly: ${e.message}`,
+            { filename, fileId: data.id, status: e.status });
+          break;
+        }
+        await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
       }
-    );
-
-    // webContentLink works for direct download; use thumbnail URL for display
-    return `https://drive.google.com/thumbnail?id=${data.id}&sz=w1200`;
+    }
+    return url;
   } catch(e) {
     console.warn("Photo Drive upload failed:", e);
     logError("driveSync", `uploadPhotoToDrive failed: ${e.message}`, { filename, status: e.status });

@@ -4,6 +4,7 @@ import { listAll as listVideoQueue } from "./videoQueue";
 import { listFieldIds } from "./fieldStore";
 import { getDirtyFieldIds, getFieldSlim } from "./fieldStore";
 import { getSyncStatus } from "./driveSync";
+import { getPhotoQueueDetail, retryPhotoQueueNow, dropPhotoStop, processPhotoQueue } from "./photoSync";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS Debug Panel
@@ -90,6 +91,7 @@ export default function DebugPanel({ onClose, token, lastSyncTime }) {
   const photoQueueRaw = (() => {
     try { return JSON.parse(localStorage.getItem("mts-photo-queue") || "[]"); } catch { return []; }
   })();
+  const photoQueue = getPhotoQueueDetail();
 
   const health = [];
   if (dirtyCount > 0) health.push({ label: `${dirtyCount} field(s) pending Drive push`, color: "#F6BF26" });
@@ -198,12 +200,64 @@ export default function DebugPanel({ onClose, token, lastSyncTime }) {
             );
           })}
 
-          <div style={SECTION_HEAD}>Photo Upload Queue</div>
-          {photoQueueRaw.length === 0
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, paddingBottom: 4 }}>
+            <span style={SECTION_HEAD}>Photo Upload Queue ({photoQueue.length})</span>
+            {photoQueue.length > 0 && (
+              <button
+                onClick={() => {
+                  // Clear every backoff and run a pass right now.
+                  retryPhotoQueueNow();
+                  let tok = null;
+                  try {
+                    const saved = JSON.parse(localStorage.getItem("mts-token") || "null");
+                    if (saved?.token) tok = saved.token;
+                  } catch {}
+                  if (tok) processPhotoQueue(tok);
+                  refresh();
+                }}
+                style={{ background: "none", border: "1px solid #2a3560", borderRadius: 6, color: "#7a8aaa", cursor: "pointer", padding: "3px 8px", fontSize: 10, fontWeight: 700 }}
+              >Retry all now</button>
+            )}
+          </div>
+          {photoQueue.length === 0
             ? <div style={{ fontSize: 12, color: "#4a5a70", padding: "8px 0" }}>No pending photo uploads</div>
-            : photoQueueRaw.map(id => (
-                <div key={id} style={{ fontSize: 12, color: "#b0c0e0", padding: "5px 0", borderBottom: "1px solid #1a2035" }}>{id}</div>
-              ))
+            : photoQueue.map(q => {
+                const slim = getFieldSlim(q.stopId);
+                return (
+                  <div key={q.stopId} style={{ padding: "7px 0", borderBottom: "1px solid #1a2035" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, color: "#e0e8f5", fontWeight: 700 }}>
+                          {slim?.cn || q.stopId}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#7a8aaa", marginTop: 2 }}>
+                          {q.pending == null ? "not attempted yet" : `${q.pending} photo${q.pending === 1 ? "" : "s"} left`}
+                          {q.tries > 0 ? ` · ${q.tries} failed ${q.tries === 1 ? "attempt" : "attempts"}` : ""}
+                          {q.lastTry ? ` · last tried ${ago(q.lastTry)}` : ""}
+                        </div>
+                        {q.lastError && (
+                          <div style={{ fontSize: 11, color: "#ff9a9a", marginTop: 3, wordBreak: "break-word" }}>
+                            {q.lastError}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => {
+                          // Only removes it from the QUEUE. The photos stay on
+                          // the device exactly as they are.
+                          if (!window.confirm(
+                            "Stop trying to upload this stop's photos?\n\n" +
+                            "The photos stay on this device — this only stops the retries."
+                          )) return;
+                          dropPhotoStop(q.stopId);
+                          refresh();
+                        }}
+                        style={{ flexShrink: 0, background: "none", border: "1px solid #3a2540", borderRadius: 6, color: "#c08090", cursor: "pointer", padding: "4px 8px", fontSize: 10, fontWeight: 700 }}
+                      >Stop retrying</button>
+                    </div>
+                  </div>
+                );
+              })
           }
         </>}
 

@@ -1,3 +1,5 @@
+// v46: photo uploads can finish. A successful upload is no longer discarded
+// when the sharing call fails, and the queue has a terminal state.
 // v45: stop the Google sign-in popup storm — Drive rate-limit 403s are no
 // longer treated as auth failures, and the popup path is rationed.
 // v44: the markup editor resolves its photo once per open, so a background
@@ -35,7 +37,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v45";
+const CACHE = "mts-field-v46";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
