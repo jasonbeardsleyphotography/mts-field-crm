@@ -13,6 +13,7 @@ import { startVideoQueueWatcher, pendingCount as videoPendingCount, onQueueChang
 import { pruneLog as pruneVideoLog } from "./videoLog";
 import UploadTracker from "./UploadTracker";
 import DebugPanel from "./DebugPanel";
+import PhotoUploads from "./PhotoUploads";
 import NextStopCard from "./NextStopCard";
 import VideoUploads from "./VideoUploads";
 import StoragePanel from "./StoragePanel";
@@ -25,7 +26,7 @@ import {
   IconClipboard, IconX, IconRotateCcw, IconRefresh, IconReorder, IconUndo,
   IconPlus, IconSearch, IconTrash, IconChevronDown, IconChevronRight,
   IconCloud, IconCloudOff, IconCheckCircle, IconEdit, IconPhone, IconMail, IconClock, IconCalendar,
-  IconNoSymbol, IconDatabase, IconVideo
+  IconNoSymbol, IconDatabase, IconVideo, IconImage
 } from "./icons";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1493,6 +1494,22 @@ export default function App() {
   const [storageOpen, setStorageOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false); // route "hamburger" settings sheet
+  const [photoUploadsOpen, setPhotoUploadsOpen] = useState(false);
+  // How many stops still have photos waiting for Drive. Surfaced on the
+  // settings button itself: the previous answer lived only in a debug panel
+  // behind a five-tap gesture, which is how four stops sat wedged for days
+  // without anything ever saying so.
+  const [photoQueueCount, setPhotoQueueCount] = useState(0);
+  useEffect(() => {
+    const read = () => {
+      try { setPhotoQueueCount(JSON.parse(localStorage.getItem("mts-photo-queue") || "[]").length); }
+      catch { setPhotoQueueCount(0); }
+    };
+    read();
+    const iv = setInterval(read, 15000);
+    window.addEventListener("mts-field-synced", read);
+    return () => { clearInterval(iv); window.removeEventListener("mts-field-synced", read); };
+  }, []);
   const [debugOpen, setDebugOpen] = useState(false);
   const [nextStopCard, setNextStopCard] = useState(null); // { stop, stopNumber, totalStops }
   const _debugTapCount = useRef(0);
@@ -2409,9 +2426,10 @@ export default function App() {
         {/* Settings — hamburger menu holding sync, weekend toggle, video
             uploads, data recovery, storage, and sign out (previously all loose
             on this bar). Bottom-left. */}
-        <button onClick={()=>setSettingsOpen(true)} title="Settings & tools"
-          style={{width:34,height:34,borderRadius:8,background:"#1a2035",border:"1px solid #252d47",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+        <button onClick={()=>setSettingsOpen(true)} title={photoQueueCount>0?`Settings — ${photoQueueCount} stop(s) with photos still uploading`:"Settings & tools"}
+          style={{position:"relative",width:34,height:34,borderRadius:8,background:"#1a2035",border:"1px solid #252d47",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
           <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#8aa0c0" strokeWidth={2} strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          {photoQueueCount>0 && <span style={{position:"absolute",top:-3,right:-3,minWidth:15,height:15,padding:"0 3px",borderRadius:8,background:"#F6BF26",color:"#1a1400",fontSize:9.5,fontWeight:800,fontFamily:"'Oswald',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",border:"1.5px solid #080a10"}}>{photoQueueCount}</span>}
         </button>
         {/* Undo */}
         <button onClick={undo} disabled={!undoStack.length} title="Undo"
@@ -2484,6 +2502,13 @@ export default function App() {
                 icon={<IconVideo size={17} color="#FF6B5E"/>}
                 label="Video uploads" sub="Queued, uploading, or failed videos"
                 onClick={()=>{ setUploadsOpen(true); setSettingsOpen(false); }} />
+              <Row accent={photoQueueCount>0?"#F6BF26":"#5a8ab0"}
+                icon={<IconImage size={17} color={photoQueueCount>0?"#F6BF26":"#8aa0c0"}/>}
+                label="Photo uploads"
+                sub={photoQueueCount>0
+                  ? `${photoQueueCount} stop${photoQueueCount===1?"":"s"} still waiting — tap to see why`
+                  : "All photos on this device have reached Drive"}
+                onClick={()=>{ setPhotoUploadsOpen(true); setSettingsOpen(false); }} />
               <Row accent="#818cf8"
                 icon={<IconClock size={17} color="#818cf8"/>}
                 label="Find old job photos" sub="Search past visits by name or date"
@@ -2743,6 +2768,10 @@ export default function App() {
         <div style={{ position: "fixed", inset: 0, zIndex: 300 }}>
           <RecoveryScreen token={token} onBack={() => setRecoveryOpen(false)} />
         </div>
+      )}
+
+      {photoUploadsOpen && (
+        <PhotoUploads token={token} onClose={() => setPhotoUploadsOpen(false)} />
       )}
 
       {/* ── DEBUG PANEL (5-tap on header spacer) ─────────────────── */}
