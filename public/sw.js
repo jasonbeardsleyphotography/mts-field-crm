@@ -1,3 +1,5 @@
+// v53: stepping between photos in markup actually changes the photo — the
+// source is now tied to the photo it belongs to, so a stale one cannot show.
 // v52: a Drive cleanup tool that removes the duplicate photo files the
 // re-upload bug created, so the quota it filled can be reclaimed.
 // v51: distinguish a FULL Drive from a throttled one — my own classifier was
@@ -50,7 +52,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v52";
+const CACHE = "mts-field-v53";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

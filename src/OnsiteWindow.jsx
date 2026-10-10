@@ -196,8 +196,18 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // (uploaded to Drive and dataUrl evicted to save space), we fetch it back
   // from Drive into a blob URL on demand. The blob URL is revoked when
   // markup closes.
+  // { key, src } — NOT a bare string. The key is `${section}:${index}`, so the
+  // render below can tell whether the source on hand belongs to the photo
+  // currently open. Without that, stepping to the next photo remounted the
+  // editor (a flash) and then re-rendered THE SAME PICTURE, because the new
+  // one hadn't been fetched yet — and tapping again cancelled the in-flight
+  // fetch, so only the last tap's photo ever arrived. That is the "it scrolls
+  // but doesn't change, then jumps several away" bug.
   const [markupSrc, setMarkupSrc] = useState(null);
   const [markupLoading, setMarkupLoading] = useState(false);
+  // Resolved blob URLs, keyed the same way, so stepping back and forth doesn't
+  // re-download a photo. Revoked together when markup closes.
+  const markupCache = useRef(new Map());
   const [markupSection, setMarkupSection] = useState("scope"); // which photo array to edit
   const [showCamera, setShowCamera] = useState(false);
   const [cameraSection, setCameraSection] = useState("scope");
@@ -871,30 +881,42 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
 
   useEffect(() => {
     if (markupIdx === null) {
-      // Cleanup any previous blob URL
-      if (markupSrc && markupSrc.startsWith("blob:")) {
-        try { URL.revokeObjectURL(markupSrc); } catch {}
+      // Markup closed — drop every blob URL we created this session.
+      for (const url of markupCache.current.values()) {
+        if (typeof url === "string" && url.startsWith("blob:")) {
+          try { URL.revokeObjectURL(url); } catch {}
+        }
       }
+      markupCache.current.clear();
       setMarkupSrc(null);
       setMarkupLoading(false);
       return;
     }
+    const key = `${markupSection}:${markupIdx}`;
     const photos = markupSection === "addon"
       ? photosRef.current.addon : photosRef.current.scope;
     const photo = photos[markupIdx];
     if (!photo) return;
-    // If the markup screen ever flashes again, this is the line to look for in
-    // DevTools: it should appear ONCE per photo you open, never on a timer.
-    console.debug("[Markup] resolving source for", markupSection, markupIdx);
-    // Local copy available: use it directly
+
+    // A local copy always wins. It is either the original capture or — after
+    // you've marked this photo up — the edited version, and a cached download
+    // from earlier in the session would be the pre-edit picture.
     if (photo.dataUrl) {
-      setMarkupSrc(photo.dataUrl);
+      setMarkupSrc({ key, src: photo.dataUrl });
+      setMarkupLoading(false);
+      return;
+    }
+    // Downloaded once already this session — show it without re-fetching.
+    const cached = markupCache.current.get(key);
+    if (cached !== undefined) {
+      setMarkupSrc({ key, src: cached });
       setMarkupLoading(false);
       return;
     }
     // No local copy — fetch from Drive
     if (!photo.url) {
-      setMarkupSrc(""); // "" = settled with no usable source (not null = still pending)
+      // "" = settled with no usable source (vs. no entry = still pending)
+      setMarkupSrc({ key, src: "" });
       setMarkupLoading(false);
       return;
     }
@@ -922,21 +944,23 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
         const blob = await res.blob();
         if (cancelled) return;
         createdBlobUrl = URL.createObjectURL(blob);
-        setMarkupSrc(createdBlobUrl);
+        markupCache.current.set(key, createdBlobUrl);
+        setMarkupSrc({ key, src: createdBlobUrl });
         setMarkupLoading(false);
       } catch (e) {
         console.warn("[Markup] failed to load photo from URL:", e);
         if (!cancelled) {
-          setMarkupSrc(""); // "" = failed, not null = still pending
+          setMarkupSrc({ key, src: "" });
           setMarkupLoading(false);
         }
       }
     })();
     return () => {
       cancelled = true;
-      if (createdBlobUrl) {
-        try { URL.revokeObjectURL(createdBlobUrl); } catch {}
-      }
+      // Do NOT revoke here any more: the url is in the cache and is what the
+      // editor is displaying. Revoking it on the next navigation is what used
+      // to leave a dead blob behind when you stepped back. They are all
+      // revoked together when markup closes.
     };
     // Intentionally only the identity of WHICH photo is open. See above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1093,22 +1117,35 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   if (markupIdx !== null) {
     const photos = markupSection === "addon" ? addonPhotos : scopePhotos;
     if (photos[markupIdx]) {
-      // null = effect not yet run — show the spinner (resolves in one tick for
-      //        local photos)
-      // ""   = effect settled with no usable source — show error
-      // url  = ready
+      // The source must belong to the photo that is open. A mismatch means
+      // this one hasn't resolved yet, and showing the editor anyway would
+      // display the PREVIOUS photo — which is exactly what made stepping
+      // through them look like it did nothing.
       //
-      // Deliberately NOT `markupLoading || ...`: once there is a source on
-      // screen, nothing may replace the editor with a loading screen. Doing so
-      // was a full-screen flash, and it threw away whatever had been drawn.
-      if (markupSrc === null) {
+      // Note this is keyed on the photo, not on markupLoading: a re-resolve of
+      // the SAME photo keeps the editor up, which is what stops the
+      // whole-screen flash a background sync used to cause.
+      const wantKey = `${markupSection}:${markupIdx}`;
+      let ready = markupSrc && markupSrc.key === wantKey ? markupSrc.src : null;
+      if (ready === null) {
+        // Resolve during render where we can, rather than waiting a frame for
+        // the effect. Otherwise every step between two LOCAL photos would
+        // blink through the black loading screen on its way, which is its own
+        // kind of "it flashed and didn't change".
+        if (photos[markupIdx]?.dataUrl) ready = photos[markupIdx].dataUrl;
+        else {
+          const cached = markupCache.current.get(wantKey);
+          if (cached !== undefined) ready = cached;
+        }
+      }
+      if (ready === null) {
         return (
           <div style={{ position:"fixed", inset:0, background:"#000", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", color:"#a0b0c0", fontFamily:F, letterSpacing:1, textTransform:"uppercase", fontSize:11 }}>
             {markupLoading ? "Loading photo from Drive…" : "Preparing…"}
           </div>
         );
       }
-      if (markupSrc === "") {
+      if (ready === "") {
         return (
           <div style={{ position:"fixed", inset:0, background:"#000", zIndex:1000, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", color:"#FF8888", fontFamily:F, padding:20 }}>
             <div style={{ fontSize:14, fontWeight:700, marginBottom:8, letterSpacing:1, textTransform:"uppercase" }}>Could not load photo</div>
@@ -1134,12 +1171,14 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
             ),
           })).catch(() => {});
         }
+        // The cached download for this photo is now the pre-edit picture.
+        markupCache.current.delete(wantKey);
         markStopForPhotoSync(s.id);
       };
       return (
         <PhotoMarkup
-          key={markupIdx}
-          photoDataUrl={markupSrc}
+          key={wantKey}
+          photoDataUrl={ready}
           originalDataUrl={photos[markupIdx]?.originalDataUrl || null}
           onSave={handleMarkupSave}
           onCancel={() => setMarkupIdx(null)}
