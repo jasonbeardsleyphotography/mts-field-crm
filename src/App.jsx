@@ -15,6 +15,7 @@ import UploadTracker from "./UploadTracker";
 import DebugPanel from "./DebugPanel";
 import PhotoUploads from "./PhotoUploads";
 import DriveCleanup from "./DriveCleanup";
+import ContactCleanup from "./ContactCleanup";
 import NextStopCard from "./NextStopCard";
 import VideoUploads from "./VideoUploads";
 import StoragePanel from "./StoragePanel";
@@ -516,19 +517,57 @@ export default function App() {
   // -v2: the previous cache could be poisoned by Other-Contacts false matches
   // (clients that never got a real, caller-ID-capable contact). Bumping the key
   // forces a one-time re-evaluation with the fixed dedup so those get created.
-  const phoneContactCache = useRef(lsGet("mts-phone-contact-cache-v2", {}));
+  const phoneContactCache = useRef((() => {
+    // Migrate the old key format (a bare digit string) to the prefixed one.
+    // Without this, every client with a phone would look uncached on the first
+    // run after the update and be re-evaluated through searchContacts — which
+    // does not reliably return contacts it has not indexed, so some would be
+    // created a second time. The whole point of this change is to stop making
+    // duplicates, so it must not make a parting batch of them.
+    const raw = lsGet("mts-phone-contact-cache-v2", {}) || {};
+    const out = { ...raw };
+    for (const [k, v] of Object.entries(raw)) {
+      if (/^\d+$/.test(k) && !out[`p:${k}`]) out[`p:${k}`] = v;
+    }
+    return out;
+  })());
   const persistPhoneCache = useCallback(() => {
     try { lsSet("mts-phone-contact-cache-v2", phoneContactCache.current); } catch {}
   }, []);
+
+  /* A key that identifies this client even when there is no phone number.
+     THE phone-only key is what produced the screen full of identical
+     "CLIENT Shawn Beldue" entries: the cache was only ever written when
+     phoneDigits was non-empty, so a client with just an email had nothing
+     stopping a re-run from creating them again, and again. */
+  const contactKeyFor = (card) => {
+    const digits = (card.phone || "").replace(/\D/g, "");
+    if (digits) return `p:${digits}`;
+    const email = (card.email || "").trim().toLowerCase();
+    if (email) return `e:${email}`;
+    const name = (card.cn || "").trim().toLowerCase();
+    const addr = (card.addr || "").trim().toLowerCase();
+    return name ? `n:${name}|${addr}` : null;
+  };
 
   const autoPushContact = useCallback(async (card) => {
     if (!token || !card) return false;
     if (!card.phone && !card.email) return false;
     const phoneDigits = (card.phone || "").replace(/\D/g, "");
+    const cacheKey = contactKeyFor(card);
 
-    // Cache hit — already pushed (or already known to exist). Skip entirely.
-    if (phoneDigits && phoneContactCache.current[phoneDigits]) {
+    // Cache hit — already pushed, already known to exist, or a push for this
+    // same client is in flight right now. Skip entirely.
+    if (cacheKey && phoneContactCache.current[cacheKey]) {
       return true;
+    }
+    // CLAIM THE KEY BEFORE THE NETWORK CALL, and persist it immediately. Two
+    // overlapping runs of the push loop — which is exactly what happens when
+    // the calendar reloads mid-loop — would otherwise both see "not cached"
+    // and both create a contact.
+    if (cacheKey) {
+      phoneContactCache.current[cacheKey] = "pending";
+      persistPhoneCache();
     }
 
     const [givenName, ...rest] = (card.cn || "Unknown").split(" ");
@@ -575,8 +614,10 @@ export default function App() {
         }
         if (existing?.resourceName) {
           // Already a real (synced) contact — record in cache so we don't re-create.
-          phoneContactCache.current[phoneDigits] = existing.resourceName;
-          persistPhoneCache();
+          if (cacheKey) {
+            phoneContactCache.current[cacheKey] = existing.resourceName;
+            persistPhoneCache();
+          }
           return true;
         }
       }
@@ -586,26 +627,43 @@ export default function App() {
         method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (res.ok && phoneDigits) {
-        // Stash the new resourceName so subsequent runs skip even the
-        // search step. Belt-and-suspenders against any future warmup race.
-        try {
-          const created = await res.json();
-          phoneContactCache.current[phoneDigits] = created.resourceName || "created";
-          persistPhoneCache();
-        } catch {
-          phoneContactCache.current[phoneDigits] = "created";
-          persistPhoneCache();
+      if (cacheKey) {
+        if (res.ok) {
+          // Stash the new resourceName so subsequent runs skip even the search
+          // step — searchContacts does not return a contact created seconds
+          // ago, so our own record is the only reliable guard.
+          let rn = "created";
+          try { rn = (await res.json())?.resourceName || "created"; } catch {}
+          phoneContactCache.current[cacheKey] = rn;
+        } else {
+          // Release the claim so a genuine failure can be retried later.
+          delete phoneContactCache.current[cacheKey];
         }
+        persistPhoneCache();
       }
       return res.ok;
-    } catch { return false; }
+    } catch {
+      if (cacheKey && phoneContactCache.current[cacheKey] === "pending") {
+        delete phoneContactCache.current[cacheKey];
+        persistPhoneCache();
+      }
+      return false;
+    }
   }, [token, persistPhoneCache]);
 
   // Track which stops have already been auto-pushed so we don't re-push on
   // every calendar reload. Stored by event id to survive app restarts.
   const [contactsPushed, setContactsPushed] = useState(() => lsGet("mts-contacts-pushed-v2", {}));
   useEffect(() => { lsSet("mts-contacts-pushed-v2", contactsPushed); }, [contactsPushed]);
+  // A ref mirror, so the push loop reads what has been pushed AS OF NOW rather
+  // than what React state held when its closure was created.
+  const contactsPushedRef = useRef(contactsPushed);
+  contactsPushedRef.current = contactsPushed;
+  // Only one push loop may run. The effect below re-fires whenever the loaded
+  // events change, which happens on every calendar reload — and a second loop
+  // starting while the first was still working was the other half of the
+  // duplicate-contact bug.
+  const contactPushRunning = useRef(false);
 
   // (Auto-contact-push effect is defined below, after allParsed is declared.)
 
@@ -1357,24 +1415,36 @@ export default function App() {
     if (!token || !allEventsAcrossDays.length) return;
     const seen = new Set();
     const unpushed = allEventsAcrossDays.filter(s => {
-      if (!s.isTask || contactsPushed[s.id] || !(s.phone || s.email)) return false;
+      if (!s.isTask || contactsPushedRef.current[s.id] || !(s.phone || s.email)) return false;
       if (seen.has(s.id)) return false; // same event can appear across day buckets
       seen.add(s.id);
       return true;
     });
     if (unpushed.length === 0) return;
+    if (contactPushRunning.current) return;
+    contactPushRunning.current = true;
     let dead = false;
     (async () => {
-      const now = Date.now();
-      const updates = {};
-      for (const stop of unpushed) {
-        if (dead) return;
-        const ok = await autoPushContact(stop);
-        if (ok) updates[stop.id] = now;
-        await new Promise(r => setTimeout(r, 400));
-      }
-      if (!dead && Object.keys(updates).length > 0) {
-        setContactsPushed(prev => ({ ...prev, ...updates }));
+      try {
+        for (const stop of unpushed) {
+          if (dead) return;
+          // Re-check against the live record: an earlier iteration, or a run
+          // that was interrupted, may already have handled this stop.
+          if (contactsPushedRef.current[stop.id]) continue;
+          const ok = await autoPushContact(stop);
+          if (ok) {
+            // Record it NOW, not after the whole loop. The old code batched
+            // every result to the end, so a reload partway through threw away
+            // all the progress and the next run pushed the same clients again.
+            const next = { ...contactsPushedRef.current, [stop.id]: Date.now() };
+            contactsPushedRef.current = next;
+            lsSet("mts-contacts-pushed-v2", next);
+            setContactsPushed(next);
+          }
+          await new Promise(r => setTimeout(r, 400));
+        }
+      } finally {
+        contactPushRunning.current = false;
       }
     })();
     return () => { dead = true; };
@@ -1497,6 +1567,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false); // route "hamburger" settings sheet
   const [photoUploadsOpen, setPhotoUploadsOpen] = useState(false);
   const [driveCleanupOpen, setDriveCleanupOpen] = useState(false);
+  const [contactCleanupOpen, setContactCleanupOpen] = useState(false);
   // How many stops still have photos waiting for Drive. Surfaced on the
   // settings button itself: the previous answer lived only in a debug panel
   // behind a five-tap gesture, which is how four stops sat wedged for days
@@ -2516,6 +2587,11 @@ export default function App() {
                 label="Free up Drive space"
                 sub="Remove duplicate photos this app left in Drive"
                 onClick={()=>{ setDriveCleanupOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#F6BF26"
+                icon={<IconPhone size={17} color="#F6BF26"/>}
+                label="Duplicate contacts"
+                sub="Remove repeat CLIENT entries from your phone contacts"
+                onClick={()=>{ setContactCleanupOpen(true); setSettingsOpen(false); }} />
               <Row accent="#818cf8"
                 icon={<IconClock size={17} color="#818cf8"/>}
                 label="Find old job photos" sub="Search past visits by name or date"
@@ -2784,6 +2860,10 @@ export default function App() {
 
       {driveCleanupOpen && (
         <DriveCleanup token={token} onClose={() => setDriveCleanupOpen(false)} />
+      )}
+
+      {contactCleanupOpen && (
+        <ContactCleanup token={token} onClose={() => setContactCleanupOpen(false)} />
       )}
 
       {/* ── DEBUG PANEL (5-tap on header spacer) ─────────────────── */}

@@ -1,3 +1,5 @@
+// v54: stop creating a new Google contact for the same client on every
+// calendar reload, and add a tool to remove the duplicates already made.
 // v53: stepping between photos in markup actually changes the photo — the
 // source is now tied to the photo it belongs to, so a stale one cannot show.
 // v52: a Drive cleanup tool that removes the duplicate photo files the
@@ -52,7 +54,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v53";
+const CACHE = "mts-field-v54";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
