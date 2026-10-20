@@ -3,6 +3,8 @@ import { loadField } from "./fieldStore";
 import { lastNameOf } from "./photoSync";
 import { photoToFile, sharePhotoFile } from "./sharePhoto";
 import { IconX, IconLinkExternal } from "./icons";
+import RealWorkSetup from "./RealWorkSetup";
+import { openRealWork, realworkHref, isShortcutReady } from "./realwork";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Hand-off to RealWork, shown right after Done
@@ -31,26 +33,18 @@ import { IconX, IconLinkExternal } from "./icons";
 
 const F = "'Oswald',sans-serif";
 const B = "'DM Sans',system-ui,sans-serif";
-const REALWORK_URL = "https://app.realworklabs.com/jobs/published/new";
 
 // A card thumbnail doesn't need the 1200px rendition Drive photos are stored at.
 const smallThumb = (url) =>
   typeof url === "string" ? url.replace(/([?&]sz=)w\d+/, "$1w400") : url;
-
-function tryOpenRealWork() {
-  try {
-    const w = window.open(REALWORK_URL, "_blank");
-    // Never leave a handle back to this page in a window we didn't write.
-    if (w) { try { w.opener = null; } catch {} }
-    return !!w;
-  } catch { return false; }
-}
 
 export default function RealWorkHandoff({ stopId, cn, token, onRelease }) {
   const [phase, setPhase] = useState("loading");   // loading | pick | opening
   const [photos, setPhotos] = useState([]);
   const [busyKey, setBusyKey] = useState(null);
   const [note, setNote] = useState(null);
+  const [, refresh] = useState(0);          // re-read the saved RealWork choice after setup
+  const [showSetup, setShowSetup] = useState(false);
   const fileCache = useRef(new Map());              // photo key -> File, for a second tap
   const openedRef = useRef(false);
 
@@ -78,7 +72,7 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease }) {
   useEffect(() => {
     if (phase !== "opening" || openedRef.current) return;
     openedRef.current = true;
-    tryOpenRealWork();
+    openRealWork();
   }, [phase]);
 
   // Coming back to the app after RealWork → continue to the next stop.
@@ -158,10 +152,20 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease }) {
           {/* A real link, on purpose: a tap on a link is the one thing iOS will
               always honour, and it is what lets the RealWork app claim the
               address if it has registered for it. */}
-          <a href={REALWORK_URL} target="_blank" rel="noopener noreferrer" style={bigBtn("#7db4ff")}>
+          <a href={realworkHref()}
+             {...(isShortcutReady() ? {} : { target: "_blank", rel: "noopener noreferrer" })}
+             style={bigBtn("#7db4ff")}>
             <IconLinkExternal size={16} color="#7db4ff" /> Open RealWork
           </a>
           <button onClick={onRelease} style={quietBtn}>I'm back — continue</button>
+          <button onClick={() => setShowSetup(v => !v)} style={{ ...quietBtn, border: "none", color: "#6a7688", textTransform: "none", letterSpacing: 0.2, fontSize: 12 }}>
+            {isShortcutReady() ? "RealWork app settings" : "Open the RealWork app instead of the browser…"}
+          </button>
+          {showSetup && (
+            <div style={{ padding: 12, borderRadius: 10, background: "#0e1220", border: "1px solid #1a2540" }}>
+              <RealWorkSetup onChange={() => refresh(n => n + 1)} />
+            </div>
+          )}
         </div>
       </div>
     );

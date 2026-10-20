@@ -17,6 +17,8 @@ import PhotoUploads from "./PhotoUploads";
 import DriveCleanup from "./DriveCleanup";
 import ContactCleanup from "./ContactCleanup";
 import RealWorkHandoff from "./RealWorkHandoff";
+import RealWorkSetup from "./RealWorkSetup";
+import { isShortcutReady } from "./realwork";
 import NextStopCard from "./NextStopCard";
 import VideoUploads from "./VideoUploads";
 import StoragePanel from "./StoragePanel";
@@ -1589,6 +1591,7 @@ export default function App() {
   const [photoUploadsOpen, setPhotoUploadsOpen] = useState(false);
   const [driveCleanupOpen, setDriveCleanupOpen] = useState(false);
   const [contactCleanupOpen, setContactCleanupOpen] = useState(false);
+  const [realworkSetupOpen, setRealworkSetupOpen] = useState(false);
   // How many stops still have photos waiting for Drive. Surfaced on the
   // settings button itself: the previous answer lived only in a debug panel
   // behind a five-tap gesture, which is how four stops sat wedged for days
@@ -2651,6 +2654,11 @@ export default function App() {
                 label="Free up Drive space"
                 sub="Remove duplicate photos this app left in Drive"
                 onClick={()=>{ setDriveCleanupOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#7db4ff"
+                icon={<IconPhone size={17} color="#7db4ff"/>}
+                label="RealWork app"
+                sub={isShortcutReady() ? "On — RealWork opens the app, not the browser" : "Set up so RealWork opens the app instead of the browser"}
+                onClick={()=>{ setRealworkSetupOpen(true); setSettingsOpen(false); }} />
               <Row accent="#F6BF26"
                 icon={<IconPhone size={17} color="#F6BF26"/>}
                 label="Duplicate contacts"
@@ -2933,6 +2941,18 @@ export default function App() {
 
       {driveCleanupOpen && (
         <DriveCleanup token={token} onClose={() => setDriveCleanupOpen(false)} />
+      )}
+
+      {realworkSetupOpen && (
+        <div onClick={() => setRealworkSetupOpen(false)} style={{position:"fixed",inset:0,zIndex:360,background:"rgba(0,0,0,.6)",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
+          <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",borderTop:"1px solid #1a2030",borderTopLeftRadius:18,borderTopRightRadius:18,padding:"16px 18px",paddingBottom:"max(18px,env(safe-area-inset-bottom))",maxHeight:"85vh",overflowY:"auto"}}>
+            <div style={{display:"flex",alignItems:"center",marginBottom:12}}>
+              <div style={{flex:1,fontSize:14,fontWeight:800,color:"#fff",fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>Open the RealWork app</div>
+              <button onClick={() => setRealworkSetupOpen(false)} aria-label="Close" style={{width:34,height:34,borderRadius:17,background:"transparent",border:"1px solid #253049",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={15} color="#8aa0c0"/></button>
+            </div>
+            <RealWorkSetup />
+          </div>
+        </div>
       )}
 
       {contactCleanupOpen && (

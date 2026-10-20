@@ -1,3 +1,4 @@
+// v58: optional iPhone-Shortcut route so RealWork opens the app, not Safari.
 // v57: after Done — pick a photo for RealWork (or skip), RealWork opens, and the
 // unchanged next-stop countdown starts when you come back.
 // v56: RealWork shortcut on the on-site card.
@@ -59,7 +60,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v57";
+const CACHE = "mts-field-v58";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

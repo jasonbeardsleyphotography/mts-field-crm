@@ -48,15 +48,13 @@ import {
 } from "./videoQueue";
 import { saveVideoToDevice } from "./videoSave";
 import { dataUrlToFile, sharePhotoFile } from "./sharePhoto";
+import { openRealWork } from "./realwork";
 import { SINGLEOPS_ITEMS, SINGLEOPS_JOB_TAGS, SINGLEOPS_JOB_TAG_GROUPS } from "./singleOpsCatalog";
 import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin, IconShare, IconLinkExternal } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 const SINGLEOPS_URL = "https://app.singleops.com/";
-// RealWork's "add a new site visit" page. Opened as-is: it is login-protected, so
-// nothing here can pre-fill or read it — this is purely a shortcut to it.
-const REALWORK_NEW_VISIT_URL = "https://app.realworklabs.com/jobs/published/new";
 // Photos are appended by several independent async paths (camera capture,
 // library import, parcel-map snapshot) that can each take a different amount
 // of time to downscale/save — two photos taken back-to-back can finish
@@ -1683,7 +1681,7 @@ ${combined}`);
               </button>
             ) : <div />}
             {/* Shortcut to RealWork's "new site visit" page. */}
-            <button onClick={() => window.open(REALWORK_NEW_VISIT_URL, "_blank", "noopener")} title="Open RealWork to add a new site visit" style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(66,133,244,.12)",border:"1px solid rgba(66,133,244,.4)",color:"#7db4ff",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer",flexShrink:0}}>
+            <button onClick={() => openRealWork()} title="Open RealWork to add a new site visit" style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(66,133,244,.12)",border:"1px solid rgba(66,133,244,.4)",color:"#7db4ff",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer",flexShrink:0}}>
               <IconLinkExternal size={13} color="#7db4ff"/>RealWork
             </button>
             {onEditDetails && (
