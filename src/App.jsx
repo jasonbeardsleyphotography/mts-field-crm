@@ -16,6 +16,7 @@ import DebugPanel from "./DebugPanel";
 import PhotoUploads from "./PhotoUploads";
 import DriveCleanup from "./DriveCleanup";
 import ContactCleanup from "./ContactCleanup";
+import RealWorkHandoff from "./RealWorkHandoff";
 import NextStopCard from "./NextStopCard";
 import VideoUploads from "./VideoUploads";
 import StoragePanel from "./StoragePanel";
@@ -1604,7 +1605,20 @@ export default function App() {
     return () => { clearInterval(iv); window.removeEventListener("mts-field-synced", read); };
   }, []);
   const [debugOpen, setDebugOpen] = useState(false);
-  const [nextStopCard, setNextStopCard] = useState(null); // { stop, stopNumber, totalStops }
+  // The next-stop screen (8-second countdown + Navigate). Unchanged in behaviour.
+  // The one addition: if the app was closed by iOS while you were away in
+  // RealWork, it is restored on relaunch (within 20 minutes) so the next stop is
+  // still waiting instead of being lost.
+  const [nextStopCard, setNextStopCard] = useState(() => {
+    try {
+      const pend = lsGet("mts-pending-next", null);
+      if (pend?.next && Date.now() - (pend.ts || 0) < 20 * 60 * 1000) return pend.next;
+    } catch {}
+    return null;
+  });
+  useEffect(() => { try { localStorage.removeItem("mts-pending-next"); } catch {} }, []);
+  // Shown between Done and the next-stop screen: pick a photo / open RealWork.
+  const [handoff, setHandoff] = useState(null); // { stopId, cn, next }
   const _debugTapCount = useRef(0);
   const _debugTapTimer = useRef(null);
   const handleDebugTap = () => {
@@ -1893,16 +1907,46 @@ export default function App() {
     // earlier dismissed stops exist in the full stops array.
     const activeTasks = active.filter(s => s.isTask && s.id !== id);
     const allTasks = stops.filter(s => s.isTask);
+    let nextInfo = null;
     if (activeTasks.length > 0) {
       const doneCount = allTasks.filter(s => dismissed[s.id] || s.id === id).length;
-      setNextStopCard({
+      nextInfo = {
         stop: activeTasks[0],
         stopNumber: doneCount + 1,
         totalStops: allTasks.length,
-      });
+      };
+    }
+    if (stop?.isTask) {
+      // The visit is saved and filed above, so it is safe to leave the app from
+      // here. Park the next stop first: if iOS closes the app while you are in
+      // RealWork, it comes back on relaunch.
+      if (nextInfo) {
+        try {
+          lsSet("mts-pending-next", {
+            ts: Date.now(),
+            next: { ...nextInfo, stop: { id: nextInfo.stop.id, cn: nextInfo.stop.cn, addr: nextInfo.stop.addr } },
+          });
+        } catch {}
+      }
+      setHandoff({ stopId: id, cn: stop.cn, next: nextInfo });
+    } else if (nextInfo) {
+      setNextStopCard(nextInfo);
     }
     // Contacts auto-save on calendar import — no prompt needed.
   };
+  // Leaving the RealWork step — by picking, skipping, or coming back — hands
+  // over to the existing next-stop screen, whose countdown starts fresh now.
+  const handoffRef = useRef(null);
+  handoffRef.current = handoff;
+  const releaseHandoff = useCallback(() => {
+    const h = handoffRef.current;
+    if (!h) return;
+    handoffRef.current = null;
+    setHandoff(null);
+    try { localStorage.removeItem("mts-pending-next"); } catch {}
+    if (h.next) setNextStopCard(h.next);
+  }, []);
+
   const undoToastAction = () => {
     if (!undoToast) return;
     setDismissed(p => { const n={...p}; delete n[undoToast.id]; return n; });
@@ -2834,7 +2878,16 @@ export default function App() {
       />}
 
       {/* ── NEXT STOP CARD ───────────────────────────────────────── */}
-      {nextStopCard && (
+      {handoff && (
+        <RealWorkHandoff
+          stopId={handoff.stopId}
+          cn={handoff.cn}
+          token={token}
+          onRelease={releaseHandoff}
+        />
+      )}
+
+      {nextStopCard && !handoff && (
         <NextStopCard
           stop={nextStopCard.stop}
           stopNumber={nextStopCard.stopNumber}

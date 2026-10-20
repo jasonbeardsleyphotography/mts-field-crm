@@ -1,3 +1,5 @@
+// v57: after Done — pick a photo for RealWork (or skip), RealWork opens, and the
+// unchanged next-stop countdown starts when you come back.
 // v56: RealWork shortcut on the on-site card.
 // v55: share-a-photo button, no more "save video to phone?" prompt, and the
 // route list no longer fights scrolling while a card is open.
@@ -57,7 +59,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v56";
+const CACHE = "mts-field-v57";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

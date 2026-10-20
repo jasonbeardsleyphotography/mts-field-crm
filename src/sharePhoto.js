@@ -66,3 +66,21 @@ export async function sharePhotoFile(file, title = "Photo") {
     return "downloaded";
   }
 }
+
+/** Get a card photo as a File, wherever it lives: the on-device copy if there
+ *  is one (instant), otherwise Drive. A Drive-only photo uses the signed-in
+ *  token when it has an id to ask for, falling back to its public URL. */
+export async function photoToFile(photo, token, filename) {
+  if (photo?.dataUrl) return dataUrlToFile(photo.dataUrl, filename);
+  const url = photo?.url;
+  if (!url) throw new Error("photo-has-no-source");
+  const fileId = (url.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
+                  url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/))?.[1];
+  const res = fileId && token
+    ? await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+        { headers: { Authorization: `Bearer ${token}` } })
+    : await fetch(url);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const blob = await res.blob();
+  return new File([blob], filename, { type: blob.type || "image/jpeg" });
+}
