@@ -1,3 +1,5 @@
+// v55: share-a-photo button, no more "save video to phone?" prompt, and the
+// route list no longer fights scrolling while a card is open.
 // v54: stop creating a new Google contact for the same client on every
 // calendar reload, and add a tool to remove the duplicates already made.
 // v53: stepping between photos in markup actually changes the photo — the
@@ -54,7 +56,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v54";
+const CACHE = "mts-field-v55";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

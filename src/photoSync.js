@@ -109,7 +109,7 @@ function sanitizePhotoName(s) {
                                            word is still a stable, useful key)
    Falls back to the whole name if there is nothing better. */
 const NAME_SUFFIXES = new Set(["jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "v", "md", "dds", "esq"]);
-function lastNameOf(full) {
+export function lastNameOf(full) {
   const clean = sanitizePhotoName(full).replace(/[.,]+$/, "");
   if (!clean) return "";
   if (clean.includes(",")) {

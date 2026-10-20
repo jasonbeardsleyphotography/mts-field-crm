@@ -426,6 +426,26 @@ export default function App() {
   const selDayRef = useRef(0);
   useEffect(() => { selDayRef.current = selDay; }, [selDay]);
   const [expanded, setExpanded] = useState(null);
+  // Bring a card fully into view when it is OPENED — once.
+  //
+  // This used to be an inline `ref={el => ...scrollIntoView(...)}` on the card.
+  // An inline callback ref is a new function on every render, so React re-ran
+  // it on every re-render of the whole screen while a card was open, and each
+  // run scheduled a smooth scroll back to that card. An open card is taller
+  // than the list's visible area, so scrolling away from it was constantly
+  // dragged back: the list "fought" you, and only while a card was open,
+  // because a closed card never ran the code. Keying this on `expanded` means
+  // it fires when the open card CHANGES and at no other time.
+  useEffect(() => {
+    if (!expanded) return;
+    const t = setTimeout(() => {
+      try {
+        const sel = `[data-stop-card="${(window.CSS && CSS.escape) ? CSS.escape(expanded) : expanded}"]`;
+        document.querySelector(sel)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      } catch {}
+    }, 50);
+    return () => clearTimeout(t);
+  }, [expanded]);
   const [dismissed, setDismissed] = useState(() => lsGet("mts-dismissed", {}));
   useEffect(() => { lsSet("mts-dismissed", dismissed); }, [dismissed]);
   const [completedOpen, setCompletedOpen] = useState(false);
@@ -2348,7 +2368,7 @@ export default function App() {
 
           return <SwipeCard key={s.id} enabled={!reorderMode} onSwipeRight={() => navigate(s.addr)} onSwipeLeft={() => openOnsite(s)}>
             <div onClick={() => { if (reorderMode) handleReorderTap(idx); else { setDeclineConfirm(null); setCompletedOpen(false); setExpanded(isExp ? null : s.id); } }}
-              ref={el => { if (el && expanded === s.id) setTimeout(() => el.scrollIntoView({behavior:"smooth",block:"nearest"}), 50); }}
+              data-stop-card={s.id}
               style={{
               padding:"14px 16px", borderBottom:"1px solid #0e1220",
               cursor: reorderMode ? "grab" : "pointer",

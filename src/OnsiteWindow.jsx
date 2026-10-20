@@ -7,7 +7,7 @@ import { loadFieldFromDrive, queueFieldDriveSync } from "./driveSync";
 import { loadField, peekField, primeField, mergeField, updateField, saveFieldSync, getFieldSlim, getDirtyFieldIds } from "./fieldStore";
 import { loadPipeline } from "./Pipeline";
 import { incUpload, decUpload } from "./uploadStatus";
-import { markStopForPhotoSync } from "./photoSync";
+import { markStopForPhotoSync, lastNameOf } from "./photoSync";
 import { downscaleDataUrl, newPhotoId, photoKey, PHOTO_MAX_DIM, PHOTO_QUALITY } from "./imageUtils";
 import { startGeoWarm, stopGeoWarm, getCurrentGeo } from "./geoCapture";
 import { buildShareUrl, buildStreamUrl } from "./driveUpload";
@@ -47,8 +47,9 @@ import {
   markSavedToDevice,
 } from "./videoQueue";
 import { saveVideoToDevice } from "./videoSave";
+import { dataUrlToFile, sharePhotoFile } from "./sharePhoto";
 import { SINGLEOPS_ITEMS, SINGLEOPS_JOB_TAGS, SINGLEOPS_JOB_TAG_GROUPS } from "./singleOpsCatalog";
-import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin } from "./icons";
+import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin, IconShare } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
@@ -212,11 +213,9 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const [showCamera, setShowCamera] = useState(false);
   const [cameraSection, setCameraSection] = useState("scope");
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
-  const [saveSafetyPrompt, setSaveSafetyPrompt] = useState(null); // { id, file } just-recorded video awaiting a durable save
   const [videoSavedToast, setVideoSavedToast] = useState(false);
   const [copyToast, setCopyToast] = useState(null); // "Name copied" etc.
   const copyToastTimer = useRef(null);
-  const [savingVideo, setSavingVideo] = useState(false);
   // Editing the stop's own contact/address details, in place in the header.
   const [editingDetails, setEditingDetails] = useState(false);
   const [editCn, setEditCn] = useState(s.cn || "");
@@ -275,6 +274,49 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   // enough to kill the JS context.
   const localSaveTimerRef = useRef(null);
   const pendingDataRef = useRef(null);
+
+  // ── Share a photo to another app (RealWork, Messages, Mail…) ────────────────
+  // Opens the phone's share sheet. See sharePhoto.js for what that can and
+  // cannot reach. Photos already on the device share instantly; a Drive-only
+  // photo has to download first, which can outlive the tap, so the downloaded
+  // file is kept and the second tap shares it with no wait.
+  const shareFileCache = useRef(new Map());
+  const [shareNote, setShareNote] = useState(null);
+  const shareNoteTimer = useRef(null);
+  const flashShareNote = (msg, ms = 2600) => {
+    setShareNote(msg);
+    if (shareNoteTimer.current) clearTimeout(shareNoteTimer.current);
+    shareNoteTimer.current = setTimeout(() => setShareNote(null), ms);
+  };
+  const shareFileName = (n) => {
+    const last = lastNameOf(s.cn) || "Photo";
+    const d = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }).replace(/\//g, "-");
+    return `${last} ${d} ${String(n).padStart(2, "0")}.jpg`;
+  };
+  const sharePhoto = async (p, n, key) => {
+    const k = photoKey(p);
+    let file = shareFileCache.current.get(k);
+    if (!file && p.dataUrl) {
+      try { file = dataUrlToFile(p.dataUrl, shareFileName(n)); } catch {}
+    }
+    if (!file) {
+      setDlSet(set => new Set([...set, key]));
+      try {
+        const blob = await _fetchPhotoBlob(p, token);
+        file = new File([blob], shareFileName(n), { type: blob.type || "image/jpeg" });
+        shareFileCache.current.set(k, file);
+      } catch (e) {
+        console.warn("Photo share: could not load photo", e);
+        flashShareNote("Couldn't load that photo");
+        return;
+      } finally {
+        setDlSet(set => { const nx = new Set(set); nx.delete(key); return nx; });
+      }
+    }
+    const r = await sharePhotoFile(file, s.cn || "Photo");
+    if (r === "needs-tap") flashShareNote("Photo ready — tap Share again");
+    else if (r === "downloaded") flashShareNote("Saved to your downloads");
+  };
 
   const downloadPhoto = async (p, filename, key) => {
     setDlSet(s => new Set([...s, key]));
@@ -1188,6 +1230,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
           onNext={(dataUrl, hasEdits) => { if (hasEdits) saveMarkupOnly(dataUrl); setMarkupIdx(i => i + 1); }}
           // Same opt-out flag the card's pin button writes, so flipping it here
           // and flipping it there are the one setting.
+          shareName={shareFileName(markupIdx + 1)}
           onPlan={!photos[markupIdx]?.planOff}
           onTogglePlan={() => togglePhotoOnPlan(markupSection, markupIdx)}
           // Every photo in this section, so you can jump to the fourth one
@@ -1359,12 +1402,17 @@ ${combined}`);
   const handleRecordedVideo = async (file) => {
     setShowVideoRecorder(false);
     try {
+      // Straight into the app's upload queue — no "save to your phone?" step.
+      // The recording is stored durably by enqueueVideo and uploads in the
+      // background; saving a second copy to Photos is still available as the
+      // small Save button in the video queue, but it is no longer asked for.
       const id = await enqueueVideo({ stopId: s.id, file, title: buildVideoTitle() });
-      // The only copy of a fresh recording lives in app storage/memory, both of
-      // which iOS can wipe. Immediately push the user to drop a durable copy in
-      // their Photos library so the video can never be lost — regardless of
-      // whether the upload ever succeeds.
-      if (id) setSaveSafetyPrompt({ id, file });
+      if (id) {
+        try { navigator.vibrate?.([15, 40, 15]); } catch {}
+        playSavedChime();
+        setVideoSavedToast(true);
+        setTimeout(() => setVideoSavedToast(false), 2200);
+      }
     } catch (err) {
       console.warn("Failed to enqueue recorded video:", err);
       alert("Failed to queue video: " + (err.message || err));
@@ -1430,33 +1478,6 @@ ${combined}`);
     setCopyToast(label || "Copied");
     if (copyToastTimer.current) clearTimeout(copyToastTimer.current);
     copyToastTimer.current = setTimeout(() => setCopyToast(null), 1200);
-  };
-
-  const handleSafetySave = async () => {
-    const p = saveSafetyPrompt;
-    if (!p || savingVideo) return;
-    setSavingVideo(true);
-    try {
-      // The iOS share sheet that follows (Save Video / AirDrop / etc.) is a
-      // platform-level picker Apple requires for any web app writing to
-      // Photos — there is no scriptable "just save it" API, so that one
-      // dialog can't be removed. Everything on OUR side closes immediately
-      // and cleanly the instant it reports success — no extra confirmation
-      // step of our own.
-      const ok = await saveVideoToDevice({ id: p.id, file: p.file });
-      if (ok) {
-        try { await markSavedToDevice(p.id); } catch {}
-        setSaveSafetyPrompt(null);
-        try { navigator.vibrate?.([15, 40, 15]); } catch {}
-        playSavedChime();
-        setVideoSavedToast(true);
-        setTimeout(() => setVideoSavedToast(false), 2200);
-      }
-      // If not ok (user dismissed the share sheet), keep the prompt up so they
-      // can try again — the whole point is not to let it slip by unsaved.
-    } finally {
-      setSavingVideo(false);
-    }
   };
 
   if (showVideoRecorder) {
@@ -1525,32 +1546,6 @@ ${combined}`);
   return (
     <div className="mts-onsite-backdrop" style={{position:"fixed",inset:0,zIndex:100,background:"#0a0b10",display:"flex",flexDirection:"column",overflow:"hidden"}}>
 
-      {/* ── SAVE-TO-PHONE SAFETY PROMPT ────────────────────────────────────
-          Fires right after every in-app recording. A fresh recording lives
-          only in app storage/memory, both of which iOS can wipe — so we push
-          the user to drop an un-losable copy in their Photos library before
-          anything else. The upload still runs in the background regardless. */}
-      {saveSafetyPrompt && (
-        <div style={{position:"fixed",inset:0,zIndex:400,background:"rgba(0,0,0,.82)",backdropFilter:"blur(3px)",WebkitBackdropFilter:"blur(3px)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-          <div style={{width:"100%",maxWidth:400,background:"#0e1220",border:"1px solid #253049",borderRadius:16,padding:"22px 20px",boxShadow:"0 20px 60px rgba(0,0,0,.6)"}}>
-            <div style={{fontSize:34,textAlign:"center",marginBottom:8}}>🎬</div>
-            <div style={{fontSize:17,fontWeight:900,color:"#e6ecf5",fontFamily:F,letterSpacing:0.5,textAlign:"center",textTransform:"uppercase",marginBottom:8}}>Save this video to your phone</div>
-            <div style={{fontSize:13,color:"#9fb0c4",lineHeight:1.55,textAlign:"center",marginBottom:18}}>
-              This keeps a permanent copy in your <b style={{color:"#cdd8e6"}}>Photos</b> so it can never be lost — even if the upload fails. It uploads in the background either way.
-            </div>
-            <button onClick={handleSafetySave} disabled={savingVideo} style={{width:"100%",padding:"14px 0",borderRadius:11,background:"#10B981",border:"none",color:"#04140d",fontSize:14,fontWeight:900,fontFamily:F,letterSpacing:0.8,textTransform:"uppercase",cursor:savingVideo?"default":"pointer",opacity:savingVideo?0.7:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:10}}>
-              {savingVideo ? "Saving…" : (<><IconDownload size={17} color="#04140d"/> Save to Phone</>)}
-            </button>
-            <button onClick={() => setSaveSafetyPrompt(null)} disabled={savingVideo} style={{width:"100%",padding:"9px 0",borderRadius:9,background:"transparent",border:"none",color:"#6a7688",fontSize:12,fontWeight:700,fontFamily:F,letterSpacing:0.4,cursor:savingVideo?"default":"pointer",opacity:savingVideo?0.5:1}}>
-              Skip — rely on the upload only
-            </button>
-            <div style={{fontSize:10.5,color:"#c98a3a",textAlign:"center",marginTop:8,lineHeight:1.45}}>
-              ⚠ If you skip and the upload fails, this video could be lost.
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Storage failure. Sticky, not a toast: a photo that could not be saved
           is worth interrupting for, and it needs a tap to dismiss so it can't
           be missed while the camera is still up. */}
@@ -1561,15 +1556,21 @@ ${combined}`);
         </div>
       )}
 
-      {/* Brief "video saved" confirmation — fires once saveVideoToDevice
-          actually confirms the share/save completed, then auto-dismisses.
-          Pairs with the chime + haptic in handleSafetySave. */}
+      {/* Brief "video saved" confirmation — fires as soon as a finished
+          recording has been queued in the app, then auto-dismisses. Pairs with
+          the chime + haptic in handleRecordedVideo. */}
       {videoSavedToast && (
         <div style={{position:"fixed",top:"max(70px, calc(env(safe-area-inset-top) + 60px))",left:"50%",transform:"translateX(-50%)",zIndex:410,display:"flex",alignItems:"center",gap:8,padding:"12px 20px",borderRadius:999,background:"#10B981",color:"#04140d",fontSize:13,fontWeight:900,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",boxShadow:"0 8px 24px rgba(16,185,129,.4)",pointerEvents:"none",animation:"vs-toast .25s ease-out"}}>
           <span style={{fontSize:16}}>👍</span> Video Saved!
         </div>
       )}
       {/* Brief tap-to-copy confirmation — pairs with the pop + haptic. */}
+      {shareNote && (
+        <div style={{position:"fixed",top:"max(70px, calc(env(safe-area-inset-top) + 60px))",left:"50%",transform:"translateX(-50%)",zIndex:410,display:"flex",alignItems:"center",gap:8,padding:"10px 18px",borderRadius:999,background:"#3B82F6",color:"#fff",fontSize:12.5,fontWeight:900,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",boxShadow:"0 8px 24px rgba(59,130,246,.4)",pointerEvents:"none",animation:"vs-toast .2s ease-out"}}>
+          <span style={{fontSize:15}}>📤</span> {shareNote}
+        </div>
+      )}
+
       {copyToast && (
         <div style={{position:"fixed",top:"max(70px, calc(env(safe-area-inset-top) + 60px))",left:"50%",transform:"translateX(-50%)",zIndex:410,display:"flex",alignItems:"center",gap:8,padding:"10px 18px",borderRadius:999,background:"#3B82F6",color:"#fff",fontSize:12.5,fontWeight:900,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",boxShadow:"0 8px 24px rgba(59,130,246,.4)",pointerEvents:"none",animation:"vs-toast .2s ease-out"}}>
           <span style={{fontSize:15}}>📋</span> {copyToast}
@@ -1734,6 +1735,8 @@ ${combined}`);
                   <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
                     <div onClick={()=>{setMarkupIdx(i);setMarkupSection("scope");}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
                     <button onClick={e=>{e.stopPropagation();downloadPhoto(p,`scope_${i+1}.jpg`,`scope_${i}`);}} disabled={dlSet.has(`scope_${i}`)} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`scope_${i}`)?0.5:1}}><IconDownload size={13} color="#ccc"/></button>
+                    {/* Share to RealWork / Messages / Mail via the phone's share sheet */}
+                    <button onClick={e=>{e.stopPropagation();sharePhoto(p,i+1,`scope_${i}`);}} disabled={dlSet.has(`scope_${i}`)} title="Share this photo — e.g. to RealWork" style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`scope_${i}`)?0.5:1,display:"flex",alignItems:"center"}}><IconShare size={13} color="#7db4ff"/></button>
                     {/* On/off for the exported Site Plan */}
                     <button onClick={e=>{e.stopPropagation();togglePhotoOnPlan("scope", i);}}
                       title={p.planOff ? "Not on the site plan — tap to include" : "On the site plan — tap to leave it off"}
@@ -1806,16 +1809,6 @@ ${combined}`);
                         <div style={{flex:1,minWidth:0,fontSize:11,color:"#c0c8d0",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</div>
                         <span style={{fontSize:9,color:statusColor,fontWeight:800,fontFamily:F,letterSpacing:0.4,textTransform:"uppercase",flexShrink:0}}>{statusLabel}</span>
                       </div>
-                      {/* At-risk banner: still only in evictable app storage AND no
-                          durable phone copy. Loud until the user saves it or it
-                          uploads — so a video can't silently slip away. */}
-                      {!it.savedToDevice && (
-                        <div style={{display:"flex",alignItems:"center",gap:6,margin:"2px 0 6px",padding:"5px 8px",borderRadius:6,background:"rgba(201,138,58,.12)",border:"1px solid rgba(201,138,58,.35)"}}>
-                          <span style={{fontSize:12}}>⚠</span>
-                          <span style={{flex:1,fontSize:9.5,color:"#e0a860",fontWeight:700,fontFamily:F,letterSpacing:0.3,lineHeight:1.35}}>Not backed up — save to your phone so it can't be lost</span>
-                          <button onClick={async () => { const ok = await saveVideoToDevice(it); if (ok) { try { await markSavedToDevice(it.id); } catch {} } }} style={{padding:"3px 9px",borderRadius:5,background:"#c98a3a",border:"none",color:"#1a1206",fontSize:9,fontWeight:900,cursor:"pointer",fontFamily:F,letterSpacing:0.4,textTransform:"uppercase",whiteSpace:"nowrap"}}>Save now</button>
-                        </div>
-                      )}
                       <div style={{height:3,background:"rgba(255,255,255,.05)",borderRadius:2,overflow:"hidden",marginBottom:4}}>
                         <div style={{height:"100%",width:`${it.progress||0}%`,background:statusColor,transition:"width .3s"}}/>
                       </div>
