@@ -48,9 +48,8 @@ import {
 } from "./videoQueue";
 import { saveVideoToDevice } from "./videoSave";
 import { dataUrlToFile, sharePhotoFile, prefersShareSheet } from "./sharePhoto";
-import { openRealWork } from "./realwork";
 import { SINGLEOPS_ITEMS, SINGLEOPS_JOB_TAGS, SINGLEOPS_JOB_TAG_GROUPS } from "./singleOpsCatalog";
-import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin, IconLinkExternal } from "./icons";
+import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
@@ -1681,10 +1680,6 @@ ${combined}`);
                 <IconClipboard size={13} color="#7ec4ff"/>#{s.jn}
               </button>
             ) : <div />}
-            {/* Shortcut to RealWork's "new site visit" page. */}
-            <button onClick={() => openRealWork()} title="Open RealWork to add a new site visit" style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(66,133,244,.12)",border:"1px solid rgba(66,133,244,.4)",color:"#7db4ff",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer",flexShrink:0}}>
-              <IconLinkExternal size={13} color="#7db4ff"/>RealWork
-            </button>
             {onEditDetails && (
               <button onClick={openEditDetails} title="Edit client / address details" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:6,borderRadius:8,background:"transparent",border:"1px solid #252d47",cursor:"pointer",flexShrink:0}}>
                 <IconPen size={13} color="#90a8c0"/>
