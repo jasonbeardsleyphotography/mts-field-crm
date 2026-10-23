@@ -84,3 +84,17 @@ export async function photoToFile(photo, token, filename) {
   const blob = await res.blob();
   return new File([blob], filename, { type: blob.type || "image/jpeg" });
 }
+
+/** True on a touch phone or tablet that has a share sheet.
+ *
+ *  On iOS an ordinary download lands in the Files app, not in Photos — which is
+ *  rarely where a photo is wanted. The share sheet's "Save Image" puts it in
+ *  Photos. On a laptop or Chromebook a normal download is right, so this looks
+ *  at the PRIMARY pointer: a phone's is touch ("coarse"), a laptop's — even one
+ *  with a touchscreen — is the trackpad or mouse. */
+export function prefersShareSheet() {
+  try {
+    return typeof navigator.share === "function" &&
+      !!window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+  } catch { return false; }
+}

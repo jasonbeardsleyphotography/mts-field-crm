@@ -47,10 +47,10 @@ import {
   markSavedToDevice,
 } from "./videoQueue";
 import { saveVideoToDevice } from "./videoSave";
-import { dataUrlToFile, sharePhotoFile } from "./sharePhoto";
+import { dataUrlToFile, sharePhotoFile, prefersShareSheet } from "./sharePhoto";
 import { openRealWork } from "./realwork";
 import { SINGLEOPS_ITEMS, SINGLEOPS_JOB_TAGS, SINGLEOPS_JOB_TAG_GROUPS } from "./singleOpsCatalog";
-import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin, IconShare, IconLinkExternal } from "./icons";
+import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin, IconLinkExternal } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
@@ -276,9 +276,10 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
   const localSaveTimerRef = useRef(null);
   const pendingDataRef = useRef(null);
 
-  // ── Share a photo to another app (RealWork, Messages, Mail…) ────────────────
-  // Opens the phone's share sheet. See sharePhoto.js for what that can and
-  // cannot reach. Photos already on the device share instantly; a Drive-only
+  // ── Download a photo on a phone ─────────────────────────────────────────────
+  // On a phone the download button opens the share sheet, where "Save Image"
+  // puts the photo in Photos — an ordinary download would land in the Files app
+  // instead. (A laptop still gets a normal file download.) Photos already on the device share instantly; a Drive-only
   // photo has to download first, which can outlive the tap, so the downloaded
   // file is kept and the second tap shares it with no wait.
   const shareFileCache = useRef(new Map());
@@ -315,7 +316,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkRe
       }
     }
     const r = await sharePhotoFile(file, s.cn || "Photo");
-    if (r === "needs-tap") flashShareNote("Photo ready — tap Share again");
+    if (r === "needs-tap") flashShareNote("Photo ready — tap download again");
     else if (r === "downloaded") flashShareNote("Saved to your downloads");
   };
 
@@ -1739,9 +1740,7 @@ ${combined}`);
                   <button onClick={e=>{e.stopPropagation();removeScopePhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} color="#ff6666"/></button>
                   <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
                     <div onClick={()=>{setMarkupIdx(i);setMarkupSection("scope");}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
-                    <button onClick={e=>{e.stopPropagation();downloadPhoto(p,`scope_${i+1}.jpg`,`scope_${i}`);}} disabled={dlSet.has(`scope_${i}`)} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`scope_${i}`)?0.5:1}}><IconDownload size={13} color="#ccc"/></button>
-                    {/* Share to RealWork / Messages / Mail via the phone's share sheet */}
-                    <button onClick={e=>{e.stopPropagation();sharePhoto(p,i+1,`scope_${i}`);}} disabled={dlSet.has(`scope_${i}`)} title="Share this photo — e.g. to RealWork" style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`scope_${i}`)?0.5:1,display:"flex",alignItems:"center"}}><IconShare size={13} color="#7db4ff"/></button>
+                    <button onClick={e=>{e.stopPropagation(); if (prefersShareSheet()) sharePhoto(p,i+1,`scope_${i}`); else downloadPhoto(p,`scope_${i+1}.jpg`,`scope_${i}`);}} disabled={dlSet.has(`scope_${i}`)} title="Download photo" style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`scope_${i}`)?0.5:1}}><IconDownload size={13} color="#ccc"/></button>
                     {/* On/off for the exported Site Plan */}
                     <button onClick={e=>{e.stopPropagation();togglePhotoOnPlan("scope", i);}}
                       title={p.planOff ? "Not on the site plan — tap to include" : "On the site plan — tap to leave it off"}

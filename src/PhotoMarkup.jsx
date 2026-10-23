@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
-import { IconArrowUpRight, IconArrowLeft, IconArrowRight, IconEraser, IconUndo, IconX, IconDownload, IconRotateCcw, IconMapPin, IconShare } from "./icons";
-import { dataUrlToFile, sharePhotoFile } from "./sharePhoto";
+import { IconArrowUpRight, IconArrowLeft, IconArrowRight, IconEraser, IconUndo, IconX, IconDownload, IconRotateCcw, IconMapPin } from "./icons";
+import { dataUrlToFile, sharePhotoFile, prefersShareSheet } from "./sharePhoto";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Photo Markup (Rebuild)
@@ -802,6 +802,10 @@ export default function PhotoMarkup({
 
   // Download the current canvas (image + all annotations) without saving back.
   const handleDownload = () => {
+    // On a phone, hand the annotated photo to the share sheet so "Save Image"
+    // puts it in Photos; an ordinary download would land in the Files app.
+    // Built synchronously so the tap is still valid when the sheet opens.
+    if (prefersShareSheet()) { handleShare(); return; }
     const img = imgRef.current;
     if (!img) return;
     const fc = document.createElement("canvas");
@@ -826,10 +830,8 @@ export default function PhotoMarkup({
     }, "image/jpeg", 0.9);
   };
 
-  // Share the photo — WITH the markup drawn on it — to another app via the
-  // phone's share sheet (RealWork, Messages, Mail…). The annotated image is
-  // built synchronously so the tap that started this is still valid when the
-  // sheet opens; see sharePhoto.js for why that matters on iOS.
+  // Open the share sheet with the photo — markup included. Used by Download on
+  // a phone. See sharePhoto.js for why this is built synchronously.
   const handleShare = async () => {
     const dataUrl = getAnnotatedDataUrl();
     if (!dataUrl) return;
@@ -1332,9 +1334,6 @@ export default function PhotoMarkup({
           </button>
           <button onClick={handleDownload} style={{ ...fab(), flexShrink: 0 }} title="Download photo with annotations">
             <IconDownload size={20} color="#fff" />
-          </button>
-          <button onClick={handleShare} onPointerDown={e => e.stopPropagation()} style={{ ...fab(), flexShrink: 0 }} title="Share this photo with markup — e.g. to RealWork">
-            <IconShare size={20} color="#7db4ff" />
           </button>
 
           {/* Jump to any photo on the card. */}
