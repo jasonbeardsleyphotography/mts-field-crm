@@ -1,3 +1,4 @@
+// v60: clearer RealWork Shortcut setup steps; the Shortcut name is editable.
 // v59: blue share buttons gone; on a phone, Download opens "Save Image" so the
 // photo lands in Photos.
 // v58: optional iPhone-Shortcut route so RealWork opens the app, not Safari.
@@ -62,7 +63,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v59";
+const CACHE = "mts-field-v60";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

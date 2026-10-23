@@ -18,8 +18,22 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 export const REALWORK_WEB_URL = "https://app.realworklabs.com/jobs/published/new";
-// The user is told to name the Shortcut exactly this.
-export const REALWORK_SHORTCUT_NAME = "Open RealWork";
+// What the user is told to call the Shortcut. They can change it in setup, so a
+// slightly different name isn't a dead end.
+export const DEFAULT_SHORTCUT_NAME = "Open RealWork";
+const NAME_KEY = "mts-realwork-shortcut-name";
+
+export function getShortcutName() {
+  try { return (localStorage.getItem(NAME_KEY) || "").trim() || DEFAULT_SHORTCUT_NAME; }
+  catch { return DEFAULT_SHORTCUT_NAME; }
+}
+export function setShortcutName(name) {
+  try {
+    const n = String(name || "").trim();
+    if (n && n !== DEFAULT_SHORTCUT_NAME) localStorage.setItem(NAME_KEY, n);
+    else localStorage.removeItem(NAME_KEY);
+  } catch {}
+}
 
 const KEY = "mts-realwork-shortcut";
 
@@ -31,7 +45,7 @@ export function setShortcutReady(on) {
 }
 
 export const shortcutHref = () =>
-  `shortcuts://run-shortcut?name=${encodeURIComponent(REALWORK_SHORTCUT_NAME)}`;
+  `shortcuts://run-shortcut?name=${encodeURIComponent(getShortcutName())}`;
 
 /** The address a link should point at right now. */
 export const realworkHref = () => (isShortcutReady() ? shortcutHref() : REALWORK_WEB_URL);
