@@ -131,7 +131,7 @@ export default function UniversalSearch({
       {/* Search bar */}
       <div style={{
         display: "flex", alignItems: "center", gap: 8,
-        padding: "max(10px, env(safe-area-inset-top)) 12px 10px",
+        padding: "max(10px, var(--safe-top)) 12px 10px",
         background: "#0d0f18", borderBottom: "1px solid #1a1f2e", flexShrink: 0,
       }}>
         <IconSearch size={16} color="#4a80c0" />

@@ -164,7 +164,7 @@ export default function PlanView({ planId }) {
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div style={{
         position: "absolute", top: 0, left: 0, right: 0,
-        padding: "max(12px, env(safe-area-inset-top)) 14px 14px",
+        padding: "max(12px, var(--safe-top)) 14px 14px",
         background: "linear-gradient(to bottom, rgba(0,0,0,.78) 0%, transparent 100%)",
         pointerEvents: "none",
       }}>

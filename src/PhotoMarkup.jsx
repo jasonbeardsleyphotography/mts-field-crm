@@ -971,7 +971,7 @@ export default function PhotoMarkup({
           because nothing here grows with the tool count. */}
       <div data-pm-ctl style={{
         position: "absolute",
-        top: "max(12px, env(safe-area-inset-top))",
+        top: "max(12px, var(--safe-top))",
         left: "max(12px, env(safe-area-inset-left))",
         right: "max(12px, env(safe-area-inset-right))",
         display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -1388,7 +1388,7 @@ export default function PhotoMarkup({
           style={{
             position: "absolute",
             left: "50%", transform: "translateX(-50%)",
-            top: "max(72px, calc(env(safe-area-inset-top) + 60px))",
+            top: "max(72px, calc(var(--safe-top) + 60px))",
             padding: "4px 12px", borderRadius: 999,
             background: "rgba(28,28,30,.72)",
             WebkitBackdropFilter: "blur(20px) saturate(180%)",

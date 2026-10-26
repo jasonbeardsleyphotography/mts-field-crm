@@ -73,7 +73,7 @@ export default function NextStopCard({ stop, stopNumber, totalStops, onDismiss, 
       <div
         style={{
           position: "absolute",
-          top: "max(16px, env(safe-area-inset-top, 16px))",
+          top: "max(16px, var(--safe-top))",
           right: "max(16px, env(safe-area-inset-right, 16px))",
           background: "rgba(255,255,255,0.07)",
           border: "1px solid rgba(255,255,255,0.12)",

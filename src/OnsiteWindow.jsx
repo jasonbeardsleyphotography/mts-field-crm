@@ -1622,7 +1622,7 @@ ${combined}`);
           is worth interrupting for, and it needs a tap to dismiss so it can't
           be missed while the camera is still up. */}
       {storageError && (
-        <div style={{position:"fixed",top:"max(70px, calc(env(safe-area-inset-top) + 60px))",left:12,right:12,zIndex:420,display:"flex",alignItems:"flex-start",gap:10,padding:"12px 14px",borderRadius:12,background:"#7f1d1d",border:"1px solid #ef4444",color:"#ffe4e4",fontSize:12.5,lineHeight:1.45,boxShadow:"0 8px 24px rgba(0,0,0,.5)"}}>
+        <div style={{position:"fixed",top:"max(70px, calc(var(--safe-top) + 60px))",left:12,right:12,zIndex:420,display:"flex",alignItems:"flex-start",gap:10,padding:"12px 14px",borderRadius:12,background:"#7f1d1d",border:"1px solid #ef4444",color:"#ffe4e4",fontSize:12.5,lineHeight:1.45,boxShadow:"0 8px 24px rgba(0,0,0,.5)"}}>
           <span style={{flex:1}}>{storageError}</span>
           <button onClick={()=>setStorageError(null)} aria-label="Dismiss" style={{flexShrink:0,width:26,height:26,borderRadius:13,background:"rgba(0,0,0,.25)",border:"1px solid rgba(255,255,255,.3)",color:"#ffe4e4",cursor:"pointer",fontSize:13,lineHeight:1,padding:0}}>✕</button>
         </div>
@@ -1632,19 +1632,19 @@ ${combined}`);
           recording has been queued in the app, then auto-dismisses. Pairs with
           the chime + haptic in handleRecordedVideo. */}
       {videoSavedToast && (
-        <div style={{position:"fixed",top:"max(70px, calc(env(safe-area-inset-top) + 60px))",left:"50%",transform:"translateX(-50%)",zIndex:410,display:"flex",alignItems:"center",gap:8,padding:"12px 20px",borderRadius:999,background:"#10B981",color:"#04140d",fontSize:13,fontWeight:900,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",boxShadow:"0 8px 24px rgba(16,185,129,.4)",pointerEvents:"none",animation:"vs-toast .25s ease-out"}}>
+        <div style={{position:"fixed",top:"max(70px, calc(var(--safe-top) + 60px))",left:"50%",transform:"translateX(-50%)",zIndex:410,display:"flex",alignItems:"center",gap:8,padding:"12px 20px",borderRadius:999,background:"#10B981",color:"#04140d",fontSize:13,fontWeight:900,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",boxShadow:"0 8px 24px rgba(16,185,129,.4)",pointerEvents:"none",animation:"vs-toast .25s ease-out"}}>
           <span style={{fontSize:16}}>👍</span> Video Saved!
         </div>
       )}
       {/* Brief tap-to-copy confirmation — pairs with the pop + haptic. */}
       {shareNote && (
-        <div style={{position:"fixed",top:"max(70px, calc(env(safe-area-inset-top) + 60px))",left:"50%",transform:"translateX(-50%)",zIndex:410,display:"flex",alignItems:"center",gap:8,padding:"10px 18px",borderRadius:999,background:"#3B82F6",color:"#fff",fontSize:12.5,fontWeight:900,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",boxShadow:"0 8px 24px rgba(59,130,246,.4)",pointerEvents:"none",animation:"vs-toast .2s ease-out"}}>
+        <div style={{position:"fixed",top:"max(70px, calc(var(--safe-top) + 60px))",left:"50%",transform:"translateX(-50%)",zIndex:410,display:"flex",alignItems:"center",gap:8,padding:"10px 18px",borderRadius:999,background:"#3B82F6",color:"#fff",fontSize:12.5,fontWeight:900,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",boxShadow:"0 8px 24px rgba(59,130,246,.4)",pointerEvents:"none",animation:"vs-toast .2s ease-out"}}>
           <span style={{fontSize:15}}>📤</span> {shareNote}
         </div>
       )}
 
       {copyToast && (
-        <div style={{position:"fixed",top:"max(70px, calc(env(safe-area-inset-top) + 60px))",left:"50%",transform:"translateX(-50%)",zIndex:410,display:"flex",alignItems:"center",gap:8,padding:"10px 18px",borderRadius:999,background:"#3B82F6",color:"#fff",fontSize:12.5,fontWeight:900,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",boxShadow:"0 8px 24px rgba(59,130,246,.4)",pointerEvents:"none",animation:"vs-toast .2s ease-out"}}>
+        <div style={{position:"fixed",top:"max(70px, calc(var(--safe-top) + 60px))",left:"50%",transform:"translateX(-50%)",zIndex:410,display:"flex",alignItems:"center",gap:8,padding:"10px 18px",borderRadius:999,background:"#3B82F6",color:"#fff",fontSize:12.5,fontWeight:900,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",boxShadow:"0 8px 24px rgba(59,130,246,.4)",pointerEvents:"none",animation:"vs-toast .2s ease-out"}}>
           <span style={{fontSize:15}}>📋</span> {copyToast}
         </div>
       )}
@@ -1659,7 +1659,7 @@ ${combined}`);
       <div className="mts-onsite-shell" style={{display:"flex",flexDirection:"column",flex:1,width:"100%",height:"100%",background:"#0a0b10",fontFamily:B,color:"#f0f4fa",overflow:"hidden"}}>
 
       {/* ── HEADER ────────────────────────────────────────────────────── */}
-      <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",paddingTop:"max(10px,env(safe-area-inset-top))",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",paddingTop:"max(10px,var(--safe-top))",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
         <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:4,padding:"6px 12px",borderRadius:8,background:"transparent",border:"1px solid #252d47",color:"#9eb3c8",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}><IconArrowLeft size={13} color="#9eb3c8"/>{backLabel}</button>
         {/* Cloud-save status. Green cloud = this stop is safely synced to the
             cloud; amber cloud + "SAVING" = saved on this device, still pushing up. */}

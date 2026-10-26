@@ -1,3 +1,5 @@
+// v68: Home Screen app keeps headers below iOS 26.1+'s top-edge blur (40pt band
+//      of plain background); Settings sheet shorter and scrollable.
 // v67: viewfinder sizing in pure CSS (no shrink/snap on rotation); iOS edge
 //      blur re-sampled when the camera or video recorder closes.
 // v66: camera + video viewfinders sized to fill the screen explicitly (no longer
@@ -79,7 +81,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v67";
+const CACHE = "mts-field-v68";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

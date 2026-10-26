@@ -101,7 +101,7 @@ export default function DebugPanel({ onClose, token, lastSyncTime }) {
   if (errorLogEntries.length > 0) health.push({ label: `${errorLogEntries.length} error(s) in log`, color: "#FF5555" });
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "#070910", display: "flex", flexDirection: "column", fontFamily: "'DM Sans',system-ui,sans-serif", color: "#e0e8ff", paddingTop: "env(safe-area-inset-top)" }}>
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "#070910", display: "flex", flexDirection: "column", fontFamily: "'DM Sans',system-ui,sans-serif", color: "#e0e8ff", paddingTop: "var(--safe-top)" }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid #1a2035", flexShrink: 0 }}>
         <button onClick={onClose} style={{ background: "none", border: "none", color: "#8e9bb7", cursor: "pointer", padding: 4, display: "flex" }}>

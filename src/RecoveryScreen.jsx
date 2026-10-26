@@ -99,7 +99,7 @@ function FieldView({ stop, fieldData, loading, onBack, onAddToPipeline, alreadyI
     setAdded(true);
   };
 
-  const hdr = { background: "#0e1120", borderBottom: "1px solid #1a2035", padding: "12px 16px", paddingTop: "max(12px, env(safe-area-inset-top))", display: "flex", alignItems: "center", gap: 12, minHeight: 56, flexShrink: 0 };
+  const hdr = { background: "#0e1120", borderBottom: "1px solid #1a2035", padding: "12px 16px", paddingTop: "max(12px, var(--safe-top))", display: "flex", alignItems: "center", gap: 12, minHeight: 56, flexShrink: 0 };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100dvh", background: "#0a0b10", color: "#f0f4fa", fontFamily: "'DM Sans',system-ui,sans-serif" }}>
@@ -438,7 +438,7 @@ export default function RecoveryScreen({ token, onBack }) {
 
   const hdr = {
     background: "#0e1120", borderBottom: "1px solid #1a2035",
-    padding: "12px 16px", paddingTop: "max(12px, env(safe-area-inset-top))",
+    padding: "12px 16px", paddingTop: "max(12px, var(--safe-top))",
     display: "flex", alignItems: "center", gap: 12,
     minHeight: 56, flexShrink: 0,
   };

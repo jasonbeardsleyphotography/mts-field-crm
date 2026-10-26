@@ -407,7 +407,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
       <button
         onClick={(e) => { e.stopPropagation(); located.length && setListOpen(true); }}
         style={{
-          position: "absolute", top: inFull ? "max(12px, env(safe-area-inset-top))" : 8,
+          position: "absolute", top: inFull ? "max(12px, var(--safe-top))" : 8,
           left: inFull ? "max(12px, env(safe-area-inset-left))" : 8,
           padding: inFull ? "9px 14px" : "6px 10px", borderRadius: 999,
           background: "rgba(0,0,0,.66)", border: "1px solid rgba(255,255,255,.16)",
@@ -428,7 +428,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
         onClick={(e) => { e.stopPropagation(); setFull(!inFull); }}
         aria-label={inFull ? "Close full screen" : "Enlarge the map"}
         style={{
-          position: "absolute", top: inFull ? "max(12px, env(safe-area-inset-top))" : 8,
+          position: "absolute", top: inFull ? "max(12px, var(--safe-top))" : 8,
           right: inFull ? "max(12px, env(safe-area-inset-right))" : 8,
           width: inFull ? 44 : 34, height: inFull ? 44 : 34, borderRadius: 22,
           background: "rgba(0,0,0,.7)", border: "1px solid rgba(255,255,255,.18)",
@@ -579,7 +579,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
           {mapChrome(true)}
           {parcel.length > 0 && !selPin && !propInfo && !listOpen && (
             <div style={{
-              position: "absolute", top: "calc(max(12px, env(safe-area-inset-top)) + 46px)",
+              position: "absolute", top: "calc(max(12px, var(--safe-top)) + 46px)",
               left: "max(12px, env(safe-area-inset-left))",
               fontSize: 10.5, color: "#aab9cd", pointerEvents: "none",
               textShadow: "0 1px 4px rgba(0,0,0,.9)",

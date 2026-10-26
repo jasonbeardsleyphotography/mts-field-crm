@@ -301,7 +301,7 @@ export default function VideoRecorder({ onRecorded, onClose }) {
         alignItems: "center",
         [ctrlEdge === "right" ? "paddingLeft" : "paddingRight"]: 44,
         [ctrlEdge === "right" ? "paddingRight" : "paddingLeft"]: `max(24px, env(safe-area-inset-${ctrlEdge}))`,
-        paddingTop:    "max(16px, env(safe-area-inset-top))",
+        paddingTop:    "max(16px, var(--safe-top))",
         paddingBottom: "max(16px, env(safe-area-inset-bottom))",
       }
     : {
@@ -336,7 +336,7 @@ export default function VideoRecorder({ onRecorded, onClose }) {
       {/* ── TOP-CENTER: timer / status badge ──────────────────────────────── */}
       {state !== "idle" && (
         <div style={{
-          position: "absolute", top: "max(14px, env(safe-area-inset-top))",
+          position: "absolute", top: "max(14px, var(--safe-top))",
           left: "50%", transform: "translateX(-50%)",
           padding: "6px 13px", borderRadius: 999,
           background: paused ? "rgba(246,191,38,.92)" : "rgba(255,59,48,.92)",
@@ -353,7 +353,7 @@ export default function VideoRecorder({ onRecorded, onClose }) {
       {zoomCaps.supported && (
         <div data-vr-ctl style={{
           position: "absolute",
-          top: "max(72px, calc(env(safe-area-inset-top) + 60px))",
+          top: "max(72px, calc(var(--safe-top) + 60px))",
           left: "50%", transform: "translateX(-50%)",
           padding: "4px 12px", borderRadius: 999,
           background: "rgba(28,28,30,.72)",

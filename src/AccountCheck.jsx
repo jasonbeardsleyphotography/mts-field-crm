@@ -126,7 +126,7 @@ export default function AccountCheck({ token, onClose, onServerSignIn }) {
     }}>
       <div style={{
         display: "flex", alignItems: "center", gap: 10, flexShrink: 0,
-        padding: "max(14px, env(safe-area-inset-top)) 16px 12px", borderBottom: "1px solid #1a2030",
+        padding: "max(14px, var(--safe-top)) 16px 12px", borderBottom: "1px solid #1a2030",
       }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 15, fontWeight: 800, color: "#fff", fontFamily: F, letterSpacing: 1, textTransform: "uppercase" }}>

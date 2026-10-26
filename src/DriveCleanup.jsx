@@ -135,7 +135,7 @@ export default function DriveCleanup({ onClose, token }) {
     }}>
       <div style={{
         display: "flex", alignItems: "center", gap: 10, flexShrink: 0,
-        padding: "max(14px, env(safe-area-inset-top)) 16px 12px",
+        padding: "max(14px, var(--safe-top)) 16px 12px",
         borderBottom: "1px solid #1a2030",
       }}>
         <div style={{ flex: 1, minWidth: 0 }}>

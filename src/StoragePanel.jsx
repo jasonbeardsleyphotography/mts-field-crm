@@ -148,7 +148,7 @@ export default function StoragePanel({ open, onClose, token }) {
       {/* Header */}
       <div style={{
         padding: "12px 16px",
-        paddingTop: "max(12px, env(safe-area-inset-top))",
+        paddingTop: "max(12px, var(--safe-top))",
         background: "#0a0c14",
         borderBottom: "1px solid #1a2030",
         display: "flex", alignItems: "center", gap: 10, flexShrink: 0,

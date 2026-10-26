@@ -463,7 +463,7 @@ export default function CameraView({ onPhoto, onClose }) {
       {count > 0 && (
         <div data-cam-ctl style={{
           position: "absolute",
-          top: "max(14px, env(safe-area-inset-top))",
+          top: "max(14px, var(--safe-top))",
           left: "50%", transform: "translateX(-50%)",
           padding: "6px 13px", borderRadius: 999,
           background: "rgba(52,199,89,.92)",
@@ -479,7 +479,7 @@ export default function CameraView({ onPhoto, onClose }) {
       {/* ── TOP-RIGHT: Torch + Grid ───────────────────────────────────────── */}
       <div data-cam-ctl style={{
         position: "absolute",
-        top:   "max(12px, env(safe-area-inset-top))",
+        top:   "max(12px, var(--safe-top))",
         right: "max(12px, env(safe-area-inset-right))",
         display: "flex", gap: 8,
       }}>
@@ -509,7 +509,7 @@ export default function CameraView({ onPhoto, onClose }) {
       {zoomCaps.supported && (
         <div data-cam-ctl style={{
           position: "absolute",
-          top: "max(72px, calc(env(safe-area-inset-top) + 60px))",
+          top: "max(72px, calc(var(--safe-top) + 60px))",
           left: "50%", transform: "translateX(-50%)",
           padding: "4px 12px", borderRadius: 999,
           background: "rgba(28,28,30,.72)",
@@ -557,7 +557,7 @@ export default function CameraView({ onPhoto, onClose }) {
               [ctrlEdge === "right" ? "paddingLeft" : "paddingRight"]: 44,
               [ctrlEdge === "right" ? "paddingRight" : "paddingLeft"]:
                 `max(24px, env(safe-area-inset-${ctrlEdge}))`,
-              paddingTop:    "max(16px, env(safe-area-inset-top))",
+              paddingTop:    "max(16px, var(--safe-top))",
               paddingBottom: "max(16px, env(safe-area-inset-bottom))",
             }
           : {
