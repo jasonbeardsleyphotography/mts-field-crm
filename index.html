@@ -6,11 +6,7 @@
     <meta name="theme-color" content="#090b10" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <!-- Opaque status bar: the page starts below it. Since iOS 26.1 a
-         "black-translucent" bar makes iOS blur the top ~40pt of the app (the
-         header buttons), with no way to turn that off. Installed apps read
-         this at install time — remove and re-add the Home Screen icon. -->
-    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="MTS Field Sales" />
     <title>MTS Field Sales</title>
     <link rel="manifest" href="/manifest.json" />
@@ -27,17 +23,25 @@
 
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      /* Top inset for every header and full-screen panel. The status bar is
-         opaque ("black", below), so on iPhone the page starts underneath it and
-         this is 0 — no space is given up. Kept as one variable so the inset can
-         be tuned in one place. */
+      html { background: #090b10; }
+      /* Top inset for every header and full-screen panel (the status bar
+         height on iPhone; 0 elsewhere). Kept as one variable on purpose. */
       :root { --safe-top: env(safe-area-inset-top, 0px); }
+      /* A solid strip covering ONLY the status-bar area, which the layout
+         already leaves empty — it moves nothing. Since iOS 26.1, iOS blurs
+         the top of a Home Screen web app unless a fixed, solid box covers the
+         top edge; this is that box. Height is 0 where there's no status bar. */
+      #mts-top-band {
+        position: fixed; top: 0; left: 0; right: 0; height: var(--safe-top);
+        background: #0d0f18; z-index: 299; pointer-events: none;
+      }
     </style>
 
     <!-- Load GSI early but non-blocking -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>
+    <div id="mts-top-band" aria-hidden="true"></div>
     <!-- Static dark splash — painted immediately before any JS runs so iOS
          dismisses its native white splash overlay into a dark screen rather
          than a blank white one. React replaces this on first render. -->
