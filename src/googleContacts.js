@@ -42,7 +42,7 @@ export async function listAllContacts(token, onProgress) {
   let pageToken = null;
   do {
     const params = new URLSearchParams({
-      personFields: "names,phoneNumbers,emailAddresses,addresses,biographies,metadata",
+      personFields: "names,phoneNumbers,emailAddresses,addresses,biographies,clientData,metadata",
       pageSize: "1000",
       sortOrder: "LAST_MODIFIED_ASCENDING",
     });
@@ -64,13 +64,54 @@ export function isAppContact(person) {
 
 const digits = (v) => String(v || "").replace(/\D/g, "");
 
+/** A phone number reduced to its last 10 digits. Google may store a number as
+ *  "+1 585-555-0101" while the calendar has "585-555-0101"; compared as raw
+ *  digits those differ ("15855550101" vs "5855550101"), which made a client
+ *  already in Contacts look new. */
+export const phone10 = (v) => { const d = digits(v); return d.length > 10 ? d.slice(-10) : d; };
+
+/** The tag this app writes on every contact it creates (People API clientData,
+ *  which is private to this app). Lets it recognise its own contacts even if a
+ *  phone number or email is later edited. */
+export const CLIENT_KEY_FIELD = "mtsClientKey";
+
+/** The one key that identifies a client: phone, else email, else name+address. */
+export function clientKeyFor({ phone, email, cn, addr } = {}) {
+  const p = phone10(phone);
+  if (p) return `p:${p}`;
+  const e = String(email || "").trim().toLowerCase();
+  if (e) return `e:${e}`;
+  const n = String(cn || "").trim().toLowerCase();
+  return n ? `n:${n}|${String(addr || "").trim().toLowerCase()}` : null;
+}
+
+/**
+ * Every client key already present in "My Contacts", mapped to its contact.
+ *
+ * Read from the full contact LIST, not from search. Google's contact search is
+ * indexed lazily and routinely misses a contact created a few minutes earlier
+ * — on another device, say — which is how a client added from the phone got
+ * added again from the Chromebook. The list reflects what is actually there.
+ */
+export async function loadContactIndex(token) {
+  const people = await listAllContacts(token);
+  const idx = new Map();
+  for (const p of people) {
+    const rn = p.resourceName;
+    for (const ph of p.phoneNumbers || []) { const k = phone10(ph.value); if (k) idx.set(`p:${k}`, rn); }
+    for (const em of p.emailAddresses || []) { const k = String(em.value || "").trim().toLowerCase(); if (k) idx.set(`e:${k}`, rn); }
+    for (const cd of p.clientData || []) { if (cd?.key === CLIENT_KEY_FIELD && cd.value) idx.set(cd.value, rn); }
+  }
+  return idx;
+}
+
 /** Identity for grouping: the same person, however the record was built. */
 function identityOf(person) {
   const n = person?.names?.[0] || {};
   const name = `${n.givenName || ""} ${n.familyName || ""}`
     .replace(new RegExp(`^${NAME_PREFIX}`), "")
     .trim().toLowerCase().replace(/\s+/g, " ");
-  const phone = digits(person?.phoneNumbers?.[0]?.value);
+  const phone = phone10(person?.phoneNumbers?.[0]?.value);
   const email = (person?.emailAddresses?.[0]?.value || "").trim().toLowerCase();
   // Phone is the strongest signal; fall back through email, then the name.
   if (phone) return `p:${phone}`;

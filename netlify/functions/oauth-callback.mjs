@@ -12,6 +12,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { getStore } from "@netlify/blobs";
+import { emailForToken, isAllowedEmail } from "../lib/accounts.mjs";
 
 function parseCookies(header) {
   const out = {};
@@ -70,12 +71,19 @@ export default async (req) => {
     return fail(origin, "no_refresh_token");
   }
 
+  // Only approved Google accounts get a lasting server session. Checked here,
+  // at the one door sessions come through. If Google can't say whose account
+  // this is, refuse rather than guess — the person can simply try again.
+  const email = await emailForToken(data.access_token);
+  if (!email) return fail(origin, "account_check_failed");
+  if (!(await isAllowedEmail(email))) return fail(origin, "account_not_allowed");
+
   const sessionId = crypto.randomUUID();
   try {
     const store = getStore("mts-oauth");
     await store.set(
       sessionId,
-      JSON.stringify({ refresh_token: data.refresh_token, createdAt: Date.now() })
+      JSON.stringify({ refresh_token: data.refresh_token, email, createdAt: Date.now() })
     );
   } catch {
     return fail(origin, "store_failed");

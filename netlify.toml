@@ -30,11 +30,39 @@
   to = "/.netlify/functions/plan"
   status = 200
 
+# Real sign-out: deletes the server session and expires its cookie.
+[[redirects]]
+  from = "/api/logout"
+  to = "/.netlify/functions/logout"
+  status = 200
+
+# AI requests, made server-side so the Gemini key never reaches the browser.
+[[redirects]]
+  from = "/api/ai"
+  to = "/.netlify/functions/ai"
+  status = 200
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
 [build.environment]
   NODE_VERSION = "22"
-  SECRETS_SCAN_OMIT_KEYS = "VITE_GOOGLE_MAPS_API_KEY,VITE_GOOGLE_MAPS_KEY,VITE_GOOGLE_CLIENT_ID,VITE_GEMINI_KEY"
+  # VITE_GEMINI_KEY is deliberately NOT in this list any more. It used to be
+  # here because the key was compiled into the page; now it is only read by the
+  # /api/ai function, so if it ever leaks into the build again the scanner
+  # should stop the deploy. The Maps key and OAuth client id are public by
+  # design (a browser has to send them), so they stay exempt.
+  SECRETS_SCAN_OMIT_KEYS = "VITE_GOOGLE_MAPS_API_KEY,VITE_GOOGLE_MAPS_KEY,VITE_GOOGLE_CLIENT_ID"
   SECRETS_SCAN_SMART_DETECTION_ENABLED = "false"
+
+# Baseline security headers. No Content-Security-Policy yet: the app pulls from
+# Google Maps, Google sign-in, Esri imagery and Drive, and a strict policy that
+# missed one of them would break the app in the field. These four can't.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(self), microphone=(self), geolocation=(self)"

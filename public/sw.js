@@ -1,3 +1,7 @@
+// v63: iPhone Video button (opens Camera in Video, copies address, logs it);
+//      contacts de-duplicated across devices; approved-accounts check; real
+//      sign-out; AI key moved server-side; Account & connection check; brighter
+//      onsite buttons.
 // v62: settings no longer freeze; site-map Link copies reliably; JPEG and
 // line items hidden; video above the map; Library/YouTube/Camera/Video grid;
 // optional auto-send of the first photo to RealWork on Done.
@@ -67,7 +71,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v62";
+const CACHE = "mts-field-v63";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

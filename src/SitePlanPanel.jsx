@@ -511,10 +511,10 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
       style={{ padding: "12px 16px", borderBottom: "1px solid #1a1f2e" }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, color: "#4a5a70", letterSpacing: 1, textTransform: "uppercase", fontFamily: F }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: "#8496b0", letterSpacing: 1, textTransform: "uppercase", fontFamily: F }}>
           Site Map
         </span>
-        <span style={{ fontSize: 10, color: "#3a4a60" }}>
+        <span style={{ fontSize: 10, color: "#71839c" }}>
           drag pins · two fingers to move the map · ⤢ for full screen
         </span>
       </div>

@@ -13,6 +13,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { getStore } from "@netlify/blobs";
+import { emailForToken, isAllowedEmail } from "../lib/accounts.mjs";
 
 function parseCookies(header) {
   const out = {};
@@ -72,5 +73,21 @@ export default async (req) => {
     return json({ error: "refresh_network" }, 401);
   }
 
-  return json({ access_token: data.access_token, expires_in: data.expires_in });
+  // Enforce the approved-accounts list on every renewal, so taking an account
+  // off the list takes effect on its next launch. A session made before emails
+  // were recorded learns its email here. If Google can't be asked right now,
+  // don't lock the person out over a network blip — check again next time.
+  let email = sess.email || null;
+  if (!email) {
+    email = await emailForToken(data.access_token);
+    if (email) {
+      try { await getStore("mts-oauth").set(sessionId, JSON.stringify({ ...sess, email })); } catch {}
+    }
+  }
+  if (email && !(await isAllowedEmail(email))) {
+    try { await getStore("mts-oauth").delete(sessionId); } catch {}
+    return json({ error: "account_not_allowed" }, 403);
+  }
+
+  return json({ access_token: data.access_token, expires_in: data.expires_in, email });
 };

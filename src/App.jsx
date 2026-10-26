@@ -16,8 +16,11 @@ import DebugPanel from "./DebugPanel";
 import PhotoUploads from "./PhotoUploads";
 import DriveCleanup from "./DriveCleanup";
 import ContactCleanup from "./ContactCleanup";
+import { loadContactIndex, clientKeyFor, phone10, CLIENT_KEY_FIELD } from "./googleContacts";
 import RealWorkHandoff from "./RealWorkHandoff";
 import RealWorkSetup from "./RealWorkSetup";
+import IphoneVideoSetup from "./IphoneVideoSetup";
+import { isIphoneVideoReady } from "./iphoneVideo";
 import { isShortcutReady } from "./realwork";
 import NextStopCard from "./NextStopCard";
 import VideoUploads from "./VideoUploads";
@@ -25,6 +28,7 @@ import StoragePanel from "./StoragePanel";
 import RecoveryScreen from "./RecoveryScreen";
 import Linkify from "./Linkify";
 import AddStopModal from "./AddStopModal";
+import AccountCheck from "./AccountCheck";
 import { buildClientIndex } from "./clientIndex";
 import {
   IconArrowLeft, IconNavigation, IconMessageSquare, IconVolume2,
@@ -152,6 +156,25 @@ function stopOverridesSet(val) { lsSet("mts-stop-overrides", val); }
    while its button is being torn down and rebuilt simply does nothing. That
    was the settings menu "freezing". A stable component is only re-rendered,
    never rebuilt, so taps always land. */
+/* Did someone sign out on purpose on this device?
+
+   Signing out used to clear only the token in the browser; the next launch
+   then silently signed the same person back in — through the server session,
+   or failing that through Google's own silent sign-in. On a shared phone or
+   Chromebook that hands the next person the previous person's account. So an
+   explicit sign-out leaves this flag, and automatic sign-in is skipped until
+   someone signs in on purpose. Returning from the server sign-in (?signedin)
+   counts as on purpose. */
+function explicitlySignedOut() {
+  try {
+    if (new URLSearchParams(window.location.search).has("signedin")) {
+      localStorage.removeItem("mts-signed-out");
+      return false;
+    }
+    return localStorage.getItem("mts-signed-out") === "1";
+  } catch { return false; }
+}
+
 function SettingsRow({ icon, label, sub, onClick, danger, accent }) {
   return (
     <button onClick={onClick} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 6px",background:"transparent",border:"none",borderBottom:"1px solid #131a28",cursor:"pointer",textAlign:"left"}}>
@@ -194,6 +217,7 @@ export default function App() {
   const saveToken = (t, expiresIn) => {
     setToken(t);
     if (t) {
+      try { localStorage.removeItem("mts-signed-out"); } catch {}
       // Use the actual expires_in from Google's response (seconds) when
       // available, with a 60s safety buffer. Fall back to 55 min if unknown.
       const ttlMs = ((typeof expiresIn === "number" ? expiresIn : 3300) * 1000) - 60000;
@@ -295,6 +319,8 @@ export default function App() {
   // authBootChecked so the sign-in screen renders.
   useEffect(() => {
     if (authBootChecked) return;
+    // Signed out on purpose: show the sign-in screen, don't sign anyone back in.
+    if (explicitlySignedOut()) { setAuthBootChecked(true); return; }
     let cancelled = false;
     // Retry silent reauth a few times with backoff before giving up and
     // showing the sign-in screen. Most cold-start failures are transient (GIS
@@ -427,7 +453,12 @@ export default function App() {
   useEffect(() => {
     try {
       const p = new URLSearchParams(window.location.search);
-      if (p.has("oauth_error")) setError("Sign-in didn't complete — try again, or use classic sign-in.");
+      if (p.has("oauth_error")) {
+        const why = p.get("oauth_error");
+        setError(why === "account_not_allowed"
+          ? "That Google account isn't approved for MTS Field. Sign in with an approved account."
+          : "Sign-in didn't complete — try again, or use classic sign-in.");
+      }
       if (p.has("signedin") || p.has("oauth_error")) {
         p.delete("signedin"); p.delete("oauth_error");
         const qs = p.toString();
@@ -572,7 +603,10 @@ export default function App() {
     const raw = lsGet("mts-phone-contact-cache-v2", {}) || {};
     const out = { ...raw };
     for (const [k, v] of Object.entries(raw)) {
-      if (/^\d+$/.test(k) && !out[`p:${k}`]) out[`p:${k}`] = v;
+      // Bare digits (oldest format) or "p:<digits>" — re-key by the last 10
+      // digits so "+1 585…" and "585…" are the same client.
+      const m = k.match(/^(?:p:)?(\d+)$/);
+      if (m) { const k10 = `p:${phone10(m[1])}`; if (!out[k10]) out[k10] = v; }
     }
     return out;
   })());
@@ -585,35 +619,42 @@ export default function App() {
      "CLIENT Shawn Beldue" entries: the cache was only ever written when
      phoneDigits was non-empty, so a client with just an email had nothing
      stopping a re-run from creating them again, and again. */
-  const contactKeyFor = (card) => {
-    const digits = (card.phone || "").replace(/\D/g, "");
-    if (digits) return `p:${digits}`;
-    const email = (card.email || "").trim().toLowerCase();
-    if (email) return `e:${email}`;
-    const name = (card.cn || "").trim().toLowerCase();
-    const addr = (card.addr || "").trim().toLowerCase();
-    return name ? `n:${name}|${addr}` : null;
-  };
+  const contactKeyFor = (card) => clientKeyFor(card);
 
-  const autoPushContact = useCallback(async (card) => {
+  /* Add a client to Google Contacts — once, across every device.
+
+     `index` is the caller's snapshot of the user's actual contact list (see
+     loadContactIndex). It is the check that counts: the per-device cache below
+     only remembers what THIS device did, so on its own the phone, the
+     Chromebook and the laptop each added the same client once. Matching runs
+     on the phone's last 10 digits, the email, or the tag this app writes on
+     every contact it creates. With no index — the list couldn't be read —
+     nothing is created: skipping a client until next time is harmless, a
+     duplicate isn't. */
+  const autoPushContact = useCallback(async (card, index) => {
     if (!token || !card) return false;
     if (!card.phone && !card.email) return false;
-    const phoneDigits = (card.phone || "").replace(/\D/g, "");
     const cacheKey = contactKeyFor(card);
+    if (!cacheKey) return false;
 
-    // Cache hit — already pushed, already known to exist, or a push for this
-    // same client is in flight right now. Skip entirely.
-    if (cacheKey && phoneContactCache.current[cacheKey]) {
+    // This device already handled it (or is handling it right now).
+    if (phoneContactCache.current[cacheKey]) return true;
+
+    // Already in Google Contacts, from any device.
+    const p10 = phone10(card.phone);
+    const email = String(card.email || "").trim().toLowerCase();
+    const found = index && (index.get(cacheKey) || (p10 && index.get(`p:${p10}`)) || (email && index.get(`e:${email}`)));
+    if (found) {
+      phoneContactCache.current[cacheKey] = found;
+      persistPhoneCache();
       return true;
     }
-    // CLAIM THE KEY BEFORE THE NETWORK CALL, and persist it immediately. Two
-    // overlapping runs of the push loop — which is exactly what happens when
-    // the calendar reloads mid-loop — would otherwise both see "not cached"
-    // and both create a contact.
-    if (cacheKey) {
-      phoneContactCache.current[cacheKey] = "pending";
-      persistPhoneCache();
-    }
+    if (!index) return false;   // never create blind
+
+    // Claim the key before the network call, so an overlapping run can't also
+    // create this client.
+    phoneContactCache.current[cacheKey] = "pending";
+    persistPhoneCache();
 
     const [givenName, ...rest] = (card.cn || "Unknown").split(" ");
     const familyName = rest.join(" ");
@@ -624,71 +665,30 @@ export default function App() {
       ...(card.email ? { emailAddresses: [{ value: card.email }] } : {}),
       ...(card.addr  ? { addresses: [{ formattedValue: card.addr, type: "home" }] } : {}),
       biographies: [{ value: `MTS Rochester Tree Service Client${card.jn ? ` — Job #${card.jn}` : ""}`, contentType: "TEXT_PLAIN" }],
+      // Private to this app: how every device recognises this contact later.
+      clientData: [{ key: CLIENT_KEY_FIELD, value: cacheKey }],
     };
 
     try {
-      // Dedupe ONLY against primary "My Contacts" — those are what sync to the
-      // phone and supply caller ID. We deliberately do NOT skip creation when a
-      // number is found only in Google's auto-collected "Other Contacts": those
-      // never sync to the iPhone, so treating them as "already exists" left
-      // clients calling in as a bare number with no name. If only an Other
-      // Contact exists we still create a real contact (effectively promoting it).
-      if (phoneDigits) {
-        const auth = { headers: { Authorization: `Bearer ${token}` } };
-        const matchesPhone = (person) =>
-          (person?.phoneNumbers || []).some(p => p.value?.replace(/\D/g, "") === phoneDigits);
-        let existing = null;
-        // Primary contacts search by phone.
-        try {
-          const sr = await fetch(`https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(card.phone)}&readMask=names,phoneNumbers&pageSize=10`, auth);
-          if (sr.ok) {
-            const sd = await sr.json();
-            existing = sd.results?.find(r => matchesPhone(r.person))?.person;
-          }
-        } catch {}
-        // Fallback: name-based search in case searchContacts hasn't indexed the
-        // number yet (the well-known warmup race right after sign-in).
-        if (!existing && card.cn) {
-          try {
-            const ns = await fetch(`https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(card.cn)}&readMask=names,phoneNumbers&pageSize=10`, auth);
-            if (ns.ok) {
-              const nsd = await ns.json();
-              existing = nsd.results?.find(r => matchesPhone(r.person))?.person;
-            }
-          } catch {}
-        }
-        if (existing?.resourceName) {
-          // Already a real (synced) contact — record in cache so we don't re-create.
-          if (cacheKey) {
-            phoneContactCache.current[cacheKey] = existing.resourceName;
-            persistPhoneCache();
-          }
-          return true;
-        }
-      }
-
-      // No existing contact found — create one.
       const res = await fetch("https://people.googleapis.com/v1/people:createContact", {
         method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (cacheKey) {
-        if (res.ok) {
-          // Stash the new resourceName so subsequent runs skip even the search
-          // step — searchContacts does not return a contact created seconds
-          // ago, so our own record is the only reliable guard.
-          let rn = "created";
-          try { rn = (await res.json())?.resourceName || "created"; } catch {}
-          phoneContactCache.current[cacheKey] = rn;
-        } else {
-          // Release the claim so a genuine failure can be retried later.
-          delete phoneContactCache.current[cacheKey];
-        }
-        persistPhoneCache();
+      if (res.ok) {
+        let rn = "created";
+        try { rn = (await res.json())?.resourceName || "created"; } catch {}
+        phoneContactCache.current[cacheKey] = rn;
+        // Keep the snapshot current for the rest of this run.
+        index.set(cacheKey, rn);
+        if (p10) index.set(`p:${p10}`, rn);
+        if (email) index.set(`e:${email}`, rn);
+      } else {
+        delete phoneContactCache.current[cacheKey];   // allow a later retry
       }
+      persistPhoneCache();
       return res.ok;
     } catch {
-      if (cacheKey && phoneContactCache.current[cacheKey] === "pending") {
+      if (phoneContactCache.current[cacheKey] === "pending") {
         delete phoneContactCache.current[cacheKey];
         persistPhoneCache();
       }
@@ -809,6 +809,16 @@ export default function App() {
   // renewal is silent (via /api/token) for as long as the refresh token lives
   // (weekly in Testing mode) — no more hourly popups. This is the primary
   // sign-in; initAuth() (the GIS popup) remains as a fallback.
+  // Sign out of THIS device for real: end the server session (so a reload
+  // can't sign back in), drop the local token, and block automatic sign-in
+  // until someone signs in on purpose. Other devices stay signed in.
+  const signOutEverywhereHere = () => {
+    try { localStorage.setItem("mts-signed-out", "1"); } catch {}
+    fetch("/api/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
+    setToken(null); setNeedsReconnect(false); _acctChecked.current = false;
+    try { localStorage.removeItem("mts-token"); } catch {}
+  };
+
   const serverSignIn = useCallback(() => {
     _authBusy.current = true;
     window.location.href = "/api/oauth/start";
@@ -1506,12 +1516,17 @@ export default function App() {
     let dead = false;
     (async () => {
       try {
+        // Read the actual contact list once for this run. If it can't be read,
+        // stop here — this run would otherwise be guessing.
+        let index;
+        try { index = await loadContactIndex(token); }
+        catch (e) { console.warn("Contacts: couldn't read the contact list; skipping this run", e); return; }
         for (const stop of unpushed) {
           if (dead) return;
           // Re-check against the live record: an earlier iteration, or a run
           // that was interrupted, may already have handled this stop.
           if (contactsPushedRef.current[stop.id]) continue;
-          const ok = await autoPushContact(stop);
+          const ok = await autoPushContact(stop, index);
           if (ok) {
             // Record it NOW, not after the whole loop. The old code batched
             // every result to the end, so a reload partway through threw away
@@ -1647,8 +1662,10 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false); // route "hamburger" settings sheet
   const [photoUploadsOpen, setPhotoUploadsOpen] = useState(false);
   const [driveCleanupOpen, setDriveCleanupOpen] = useState(false);
+  const [accountCheckOpen, setAccountCheckOpen] = useState(false);
   const [contactCleanupOpen, setContactCleanupOpen] = useState(false);
   const [realworkSetupOpen, setRealworkSetupOpen] = useState(false);
+  const [iphoneSetupOpen, setIphoneSetupOpen] = useState(false);
   // How many stops still have photos waiting for Drive. Surfaced on the
   // settings button itself: the previous answer lived only in a debug panel
   // behind a five-tap gesture, which is how four stops sat wedged for days
@@ -2662,7 +2679,7 @@ export default function App() {
           <IconClock size={14} color="#818cf8" />
         </button>
         <button
-          onClick={()=>{ if(signOutConfirm){ setToken(null); setNeedsReconnect(false); _acctChecked.current=false; try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
+          onClick={()=>{ if(signOutConfirm){ signOutEverywhereHere(); setSignOutConfirm(false);} else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }}
           title={signOutConfirm ? "Tap again to confirm" : "Sign out"}
           style={{width:32,height:32,borderRadius:8,background:signOutConfirm?"rgba(255,85,85,.15)":"transparent",border:`1px solid ${signOutConfirm?"rgba(255,85,85,.4)":"#1a2035"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s"}}>
           <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={signOutConfirm?"#FF5555":"#3a4a60"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -2680,6 +2697,11 @@ export default function App() {
             <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",borderTop:"1px solid #1a2030",borderTopLeftRadius:18,borderTopRightRadius:18,padding:"8px 16px",paddingBottom:"max(16px,env(safe-area-inset-bottom))",boxShadow:"0 -14px 44px rgba(0,0,0,.55)"}}>
               <div style={{width:42,height:4,borderRadius:2,background:"#2a3550",margin:"4px auto 12px"}}/>
               <div style={{fontSize:11,fontWeight:800,color:"#4a5a70",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif",margin:"0 6px 6px"}}>Settings &amp; Tools</div>
+              <Row accent="#10B981"
+                icon={<IconCheckCircle size={17} color="#10B981"/>}
+                label="Account & connection check"
+                sub="Test sign-in, Calendar, Drive and Contacts for this account"
+                onClick={()=>{ setAccountCheckOpen(true); setSettingsOpen(false); }} />
               <Row accent="#5a8ab0"
                 icon={<IconRefresh size={17} color="#8aa0c0" style={{animation:loading?"spin 1s linear infinite":undefined}}/>}
                 label="Sync now" sub="Reload today's stops from the calendar"
@@ -2705,6 +2727,11 @@ export default function App() {
                 label="Free up Drive space"
                 sub="Remove duplicate photos this app left in Drive"
                 onClick={()=>{ setDriveCleanupOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#FF8A80"
+                icon={<IconVideo size={17} color="#FF8A80"/>}
+                label="iPhone Video button"
+                sub={isIphoneVideoReady() ? "On — opens the Camera app in Video mode" : "Set up so it opens the Camera app in Video mode"}
+                onClick={()=>{ setIphoneSetupOpen(true); setSettingsOpen(false); }} />
               <Row accent="#7db4ff"
                 icon={<IconPhone size={17} color="#7db4ff"/>}
                 label="RealWork app"
@@ -2727,7 +2754,7 @@ export default function App() {
                 icon={<svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>}
                 label={signOutConfirm?"Tap again to confirm sign out":"Sign out"}
                 sub={signOutConfirm?"Your data is safe in Drive and re-syncs on next sign in":null}
-                onClick={()=>{ if(signOutConfirm){ setToken(null); setNeedsReconnect(false); _acctChecked.current=false; try{localStorage.removeItem("mts-token");}catch(e){} setSignOutConfirm(false); setSettingsOpen(false); } else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }} />
+                onClick={()=>{ if(signOutConfirm){ signOutEverywhereHere(); setSignOutConfirm(false); setSettingsOpen(false); } else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }} />
             </div>
           </div>
         );
@@ -2994,6 +3021,22 @@ export default function App() {
 
       {driveCleanupOpen && (
         <DriveCleanup token={token} onClose={() => setDriveCleanupOpen(false)} />
+      )}
+
+      {accountCheckOpen && (
+        <AccountCheck token={token} onServerSignIn={serverSignIn} onClose={() => setAccountCheckOpen(false)} />
+      )}
+
+      {iphoneSetupOpen && (
+        <div onClick={() => setIphoneSetupOpen(false)} style={{position:"fixed",inset:0,zIndex:360,background:"rgba(0,0,0,.6)",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
+          <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",borderTop:"1px solid #1a2030",borderTopLeftRadius:18,borderTopRightRadius:18,padding:"16px 18px",paddingBottom:"max(18px,env(safe-area-inset-bottom))",maxHeight:"85vh",overflowY:"auto"}}>
+            <div style={{display:"flex",alignItems:"center",marginBottom:12}}>
+              <div style={{flex:1,fontSize:14,fontWeight:800,color:"#fff",fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>iPhone Video button</div>
+              <button onClick={() => setIphoneSetupOpen(false)} aria-label="Close" style={{width:34,height:34,borderRadius:17,background:"transparent",border:"1px solid #253049",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={15} color="#8aa0c0"/></button>
+            </div>
+            <IphoneVideoSetup />
+          </div>
+        </div>
       )}
 
       {realworkSetupOpen && (

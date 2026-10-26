@@ -49,32 +49,17 @@ import {
 import { saveVideoToDevice } from "./videoSave";
 import { dataUrlToFile, sharePhotoFile, prefersShareSheet, copyPhotoToClipboard } from "./sharePhoto";
 import { isSendReady } from "./realwork";
+import { isIphoneVideoReady, runIphoneVideo, fmtCaptured } from "./iphoneVideo";
+import IphoneVideoSetup from "./IphoneVideoSetup";
 import { SINGLEOPS_ITEMS, SINGLEOPS_JOB_TAGS, SINGLEOPS_JOB_TAG_GROUPS } from "./singleOpsCatalog";
-import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin, IconYoutube } from "./icons";
+import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin } from "./icons";
 
-const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
-const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+// AI requests go through /api/ai, so the Gemini key never reaches this page.
 const SINGLEOPS_URL = "https://app.singleops.com/";
 // The Line Items panel is switched off but kept: flip this back to true to show
 // it again. Nothing about how line items are stored or synced depends on it.
 const SHOW_LINE_ITEMS = false;
 
-// Open the YouTube app. youtube:// is the app's own address, so this goes
-// straight to the app rather than the website. If it isn't installed, iOS
-// can't open that address and the page stays put — so after a moment, if
-// we're still here, fall back to the YouTube website.
-function openYouTubeApp() {
-  let left = false;
-  const onHide = () => { if (document.visibilityState === "hidden") left = true; };
-  document.addEventListener("visibilitychange", onHide);
-  try { window.location.href = "youtube://"; } catch {}
-  setTimeout(() => {
-    document.removeEventListener("visibilitychange", onHide);
-    if (!left && document.visibilityState === "visible") {
-      try { window.open("https://www.youtube.com/", "_blank", "noopener"); } catch {}
-    }
-  }, 1500);
-}
 // Photos are appended by several independent async paths (camera capture,
 // library import, parcel-map snapshot) that can each take a different amount
 // of time to downscale/save — two photos taken back-to-back can finish
@@ -108,13 +93,13 @@ const ZONE_COLORS = { Front:"#3B82F6", Back:"#8B5CF6", Tree:"#10B981", Other:"#F
 
 function PhotoZoneTag({ zone, onChange }) {
   const [open, setOpen] = useState(false);
-  const col = zone ? (ZONE_COLORS[zone] || "#7a8aaa") : "#3a4a60";
+  const col = zone ? (ZONE_COLORS[zone] || "#7a8aaa") : "#6f819b";
   return (
     <div style={{position:"relative",width:140}}>
       <button onClick={()=>setOpen(o=>!o)} style={{width:"100%",padding:"3px 6px",borderRadius:5,background:zone?"rgba(255,255,255,.05)":"transparent",border:`1px solid ${zone?col+"40":"#1a2540"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
         {zone && <div style={{width:5,height:5,borderRadius:99,background:col,flexShrink:0}}/>}
-        <span style={{fontSize:9,fontWeight:700,color:zone?col:"#3a4a60",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,flex:1,textAlign:"left"}}>{zone || "Tag zone"}</span>
-        <svg width={7} height={7} viewBox="0 0 24 24" fill="none" stroke={zone?col:"#3a4a60"} strokeWidth={3}><polyline points="6 9 12 15 18 9"/></svg>
+        <span style={{fontSize:9,fontWeight:700,color:zone?col:"#6f819b",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,flex:1,textAlign:"left"}}>{zone || "Tag zone"}</span>
+        <svg width={7} height={7} viewBox="0 0 24 24" fill="none" stroke={zone?col:"#6f819b"} strokeWidth={3}><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       {open && (
         <div style={{position:"absolute",top:"calc(100% + 2px)",left:0,zIndex:10,background:"#0d1020",border:"1px solid #1a2540",borderRadius:8,padding:4,display:"flex",flexDirection:"column",gap:2,minWidth:100,boxShadow:"0 4px 16px rgba(0,0,0,.5)"}}>
@@ -192,6 +177,12 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
   // Per-JOB tags (equipment/crew/access/scheduling) — matches SingleOps's own
   // tag list, applied once to the whole visit, not per line item.
   const [jobTags, setJobTags] = useState(fd.jobTags || []);
+  // Times the iPhone Video button opened the Camera app for this visit. The
+  // recording itself lives in Photos; this is the record that it happened.
+  // Written through updateField (atomic per card, and synced to Drive), so it
+  // isn't part of the autosave field list and can't be clobbered by it.
+  const [iphoneVideoLog, setIphoneVideoLog] = useState(fd.iphoneVideoLog || []);
+  const [showIphoneSetup, setShowIphoneSetup] = useState(false);
   // Tree/location pins plotted on the parcel map. Sources: a photo capture
   // (stamped with the phone's position), a tap on the map, or the GPS button.
   const [mapPins, setMapPins] = useState(fd.mapPins || []);
@@ -338,6 +329,29 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
     const r = await sharePhotoFile(file, s.cn || "Photo");
     if (r === "needs-tap") flashShareNote("Photo ready — tap download again");
     else if (r === "downloaded") flashShareNote("Saved to your downloads");
+  };
+
+  // ── iPhone Video ────────────────────────────────────────────────────────────
+  // Copy the client's address (to paste later, e.g. as the video's title), note
+  // the time on the card, and open the Camera app in Video mode via a Shortcut.
+  // The copy has to happen first, inside the tap — iOS refuses it later.
+  const iphoneVideo = () => {
+    if (!isIphoneVideoReady()) { setShowIphoneSetup(true); return; }
+    try { if (s.addr) navigator.clipboard?.writeText(s.addr).catch(() => {}); } catch {}
+    const entry = { ts: Date.now() };
+    setIphoneVideoLog(prev => [...prev, entry]);
+    updateField(s.id, (existing) => ({
+      iphoneVideoLog: [...((existing && existing.iphoneVideoLog) || []), entry],
+    })).catch(() => {});
+    if (token) queueFieldDriveSync(token, s.id);
+    runIphoneVideo();
+  };
+  const removeIphoneVideoEntry = (ts) => {
+    setIphoneVideoLog(prev => prev.filter(e => e.ts !== ts));
+    updateField(s.id, (existing) => ({
+      iphoneVideoLog: ((existing && existing.iphoneVideoLog) || []).filter(e => e.ts !== ts),
+    })).catch(() => {});
+    if (token) queueFieldDriveSync(token, s.id);
   };
 
   const downloadPhoto = async (p, filename, key) => {
@@ -594,6 +608,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
         if (data.addonNotes)      setAddonNotes(prev => prev || data.addonNotes);
         if (data.aiScopeSummary)  setAiScopeResult(prev => prev || data.aiScopeSummary);
         if ((data.mapPins || []).length) setMapPins(prev => prev.length ? prev : data.mapPins);
+        if ((data.iphoneVideoLog || []).length) setIphoneVideoLog(prev => prev.length ? prev : data.iphoneVideoLog);
         if (data.aiAddonEmail)    setAiAddonResult(prev => prev || data.aiAddonEmail);
 
         // Arrays: merge by ts/timestamp/url so anything captured during the
@@ -1095,6 +1110,9 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
       try {
         const fd = await loadField(s.id);
         if (!fd || !mountedRef.current) return;
+        const inLog = Array.isArray(fd.iphoneVideoLog) ? fd.iphoneVideoLog : [];
+        setIphoneVideoLog(prev =>
+          prev.length === inLog.length && prev.every((e, i) => e.ts === inLog[i]?.ts) ? prev : inLog);
         const incoming = fd.videoUrls || (fd.videoUrl ? [fd.videoUrl] : []);
         setVideoUrls(prev => {
           if (prev.length === incoming.length && prev.every((v, i) => v === incoming[i])) {
@@ -1270,13 +1288,22 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
   // ── GEMINI AI ───────────────────────────────────────────────────────
 
   const callGemini = async (prompt) => {
-    const res = await fetch(`${GEMINI_URL}?key=${GEMINI_KEY}`, {
+    // The server holds the key and checks you're signed in. Send the freshest
+    // token we have, plus the session cookie, so either can vouch for you.
+    let bearer = token;
+    try {
+      const saved = JSON.parse(localStorage.getItem("mts-token") || "null");
+      if (saved?.token && saved.expiry > Date.now()) bearer = saved.token;
+    } catch {}
+    const res = await fetch("/api/ai", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
+      body: JSON.stringify({ prompt }),
     });
-    const data = await res.json();
-    return data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response.";
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(res.status === 401 ? "Sign in again to use AI suggestions." : "AI is unavailable right now — try again.");
+    return data.text || "No response.";
   };
 
   // ── LINE ITEM EXTRACTION ────────────────────────────────────────────
@@ -1289,7 +1316,6 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
   // summary of them meant to feed future automation (e.g. proposal building)
   // without requiring separate manual data entry in the field.
   const extractLineItems = async () => {
-    if (!GEMINI_KEY) { setExtractError("Add VITE_GEMINI_KEY to .env"); return; }
     const combined = `${scopeNotes || ""}\n${addonNotes || ""}`.trim();
     if (!combined) { setExtractError("Add some scope or add-on notes first."); return; }
     setExtractLoading(true);
@@ -1352,7 +1378,6 @@ ${combined}`);
   // ── JOB TAGS: AI-assisted suggestion from the same real SingleOps tag
   // list, tap-to-confirm, same manual-only cost pattern as everything above.
   const suggestJobTags = async () => {
-    if (!GEMINI_KEY) { setExtractError("Add VITE_GEMINI_KEY to .env"); return; }
     const combined = `${scopeNotes || ""}\n${addonNotes || ""}`.trim();
     if (!combined) { setExtractError("Add some scope or add-on notes first."); return; }
     setTagSuggestLoading(true);
@@ -1579,6 +1604,20 @@ ${combined}`);
   return (
     <div className="mts-onsite-backdrop" style={{position:"fixed",inset:0,zIndex:100,background:"#0a0b10",display:"flex",flexDirection:"column",overflow:"hidden"}}>
 
+      {/* iPhone Video setup — shown the first time the button is tapped,
+          until the Shortcut it relies on has been made and tested. */}
+      {showIphoneSetup && (
+        <div onClick={() => setShowIphoneSetup(false)} style={{position:"fixed",inset:0,zIndex:430,background:"rgba(0,0,0,.6)",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
+          <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",borderTop:"1px solid #1a2030",borderTopLeftRadius:18,borderTopRightRadius:18,padding:"16px 18px",paddingBottom:"max(18px,env(safe-area-inset-bottom))",maxHeight:"85vh",overflowY:"auto"}}>
+            <div style={{display:"flex",alignItems:"center",marginBottom:12}}>
+              <div style={{flex:1,fontSize:14,fontWeight:800,color:"#fff",fontFamily:F,letterSpacing:1,textTransform:"uppercase"}}>Set up iPhone Video</div>
+              <button onClick={() => setShowIphoneSetup(false)} aria-label="Close" style={{width:34,height:34,borderRadius:17,background:"transparent",border:"1px solid #253049",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={15} color="#8aa0c0"/></button>
+            </div>
+            <IphoneVideoSetup onReady={() => setShowIphoneSetup(false)} />
+          </div>
+        </div>
+      )}
+
       {/* Storage failure. Sticky, not a toast: a photo that could not be saved
           is worth interrupting for, and it needs a tap to dismiss so it can't
           be missed while the camera is still up. */}
@@ -1726,8 +1765,8 @@ ${combined}`);
         {s.notes && (
           <div style={{borderBottom:"1px solid #1a2030"}}>
             <button onClick={()=>setJobNotesOpen(!jobNotesOpen)} style={{width:"100%",padding:"10px 16px",background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
-              <span style={{transform:jobNotesOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7,color:"#4a5a70"}}>▶</span>
-              <span style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F}}>JOB NOTES</span>
+              <span style={{transform:jobNotesOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7,color:"#8496b0"}}>▶</span>
+              <span style={{fontSize:10,fontWeight:700,color:"#8496b0",letterSpacing:1,textTransform:"uppercase",fontFamily:F}}>JOB NOTES</span>
               <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="#3a4a60" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
               {!jobNotesOpen && <span style={{flex:1,fontSize:12,color:"#8898a8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginLeft:4}}>{s.notes.length > 80 ? s.notes.slice(0,80) + "…" : s.notes}</span>}
             </button>
@@ -1748,17 +1787,17 @@ ${combined}`);
               height the full-width Library bar used to be; Camera and Video
               below are unchanged. */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:10}}>
-            <button onClick={()=>scopeLibRef.current?.click()} title="Add a photo or video from your library" style={{padding:"8px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-              <IconImage size={14} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
+            <button onClick={()=>scopeLibRef.current?.click()} title="Add a photo or video from your library" style={{padding:"8px 0",borderRadius:8,background:"#121829",border:"1px dashed #34466a",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              <IconImage size={15} color="#b8cbe2"/><span style={{fontSize:12,color:"#d4e1f0",fontWeight:700}}>Library</span>
             </button>
-            <button onClick={openYouTubeApp} title="Open the YouTube app" style={{padding:"8px 0",borderRadius:8,background:"rgba(255,0,0,.05)",border:"1px dashed rgba(255,78,69,.3)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-              <IconYoutube size={14} color="#FF4E45"/><span style={{fontSize:11,color:"#FF4E45",fontWeight:600}}>YouTube</span>
+            <button onClick={iphoneVideo} title="Copy the address and open the iPhone camera in Video mode" style={{padding:"8px 0",borderRadius:8,background:"rgba(255,59,48,.06)",border:"1px dashed rgba(255,107,94,.45)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              <IconVideo size={14} color="#FF8A80"/><span style={{fontSize:12,color:"#FFA49C",fontWeight:700}}>iPhone Video</span>
             </button>
-            <button onClick={()=>{setCameraSection("scope");setShowCamera(true);}} style={{padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
-              <IconCamera size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Camera</span>
+            <button onClick={()=>{setCameraSection("scope");setShowCamera(true);}} style={{padding:"10px 0",borderRadius:8,background:"#121829",border:"1px dashed #34466a",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
+              <IconCamera size={17} color="#b8cbe2"/><span style={{fontSize:12,color:"#d4e1f0",fontWeight:700}}>Camera</span>
             </button>
             <button onClick={() => setShowVideoRecorder(true)} style={{padding:"10px 0",borderRadius:8,background:"rgba(255,59,48,.06)",border:"1px dashed rgba(255,59,48,.3)",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
-              <IconVideo size={16} color="#FF6B5E"/><span style={{fontSize:11,color:"#FF6B5E",fontWeight:600}}>Video</span>
+              <IconVideo size={17} color="#FF8A80"/><span style={{fontSize:12,color:"#FFA49C",fontWeight:700}}>Video</span>
             </button>
           </div>
 
@@ -1801,7 +1840,7 @@ ${combined}`);
         {/* ── VIDEO ─────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
-            <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",fontFamily:F,flex:1}}>VIDEO</div>
+            <div style={{fontSize:10,fontWeight:700,color:"#8496b0",letterSpacing:1,textTransform:"uppercase",fontFamily:F,flex:1}}>VIDEO</div>
             {/* Global upload pause/resume — applies to every stop's queue, not
                 just this one — kept reachable but compact, no longer nested
                 behind a SHOW/HIDE toggle. */}
@@ -1811,6 +1850,21 @@ ${combined}`);
               </button>
             )}
           </div>
+
+          {/* iPhone Video log: when the Camera app was opened for this visit. */}
+          {iphoneVideoLog.length > 0 && (
+            <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:8}}>
+              {iphoneVideoLog.map(e => (
+                <div key={e.ts} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderRadius:7,background:"rgba(255,107,94,.06)",border:"1px solid rgba(255,107,94,.22)"}}>
+                  <IconVideo size={12} color="#FF8A80"/>
+                  <span style={{flex:1,fontSize:12,color:"#e6ecf5"}}>iPhone video captured: {fmtCaptured(e.ts)}</span>
+                  <button onClick={() => removeIphoneVideoEntry(e.ts)} aria-label="Remove this entry" style={{padding:"2px 6px",borderRadius:5,background:"transparent",border:"none",cursor:"pointer"}}>
+                    <IconX size={11} color="#9a8a8a"/>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* One merged, always-visible list: still-local (pending/uploading/
               error) videos first — since those need attention — then videos
@@ -1842,7 +1896,7 @@ ${combined}`);
                         <div style={{height:"100%",width:`${it.progress||0}%`,background:statusColor,transition:"width .3s"}}/>
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
-                        <div style={{flex:1,fontSize:9,color:"#5a6580",fontFamily:F,letterSpacing:0.3,display:"flex",alignItems:"center",gap:4}}>
+                        <div style={{flex:1,fontSize:9,color:"#8a9ab0",fontFamily:F,letterSpacing:0.3,display:"flex",alignItems:"center",gap:4}}>
                           <span>{sizeMB}MB</span>
                           {it.savedToDevice && <span style={{color:"#10B981",fontWeight:800}} title="A copy is saved on your phone">✓ on phone</span>}
                         </div>
@@ -2062,7 +2116,7 @@ ${combined}`);
               if (!inGroup.length) return null;
               return (
                 <div key={groupKey}>
-                  <div style={{fontSize:8,color:"#4a5a70",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginBottom:3}}>{groupLabel}</div>
+                  <div style={{fontSize:8,color:"#7d8fa8",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginBottom:3}}>{groupLabel}</div>
                   <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
                     {inGroup.map(t => (
                       <button key={t.tag} onClick={() => toggleJobTag(t.tag)} style={{padding:"3px 8px",borderRadius:999,background:"transparent",border:"1px solid #252d47",color:"#7a8aaa",fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{t.tag}</button>
