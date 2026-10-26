@@ -142,6 +142,28 @@ function stopOverridesSet(val) { lsSet("mts-stop-overrides", val); }
 // ═════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ═════════════════════════════════════════════════════════════════════════════
+/* One row of the Settings sheet.
+
+   Defined HERE, at module level, on purpose. It used to be declared inside the
+   sheet's render code, which makes it a brand-new component type on every
+   render of the app — so React threw away and rebuilt every row each time
+   anything changed. The route keeps changing while the calendar fills in
+   (up to 30 updates after a sync or the weekend toggle), and a tap that lands
+   while its button is being torn down and rebuilt simply does nothing. That
+   was the settings menu "freezing". A stable component is only re-rendered,
+   never rebuilt, so taps always land. */
+function SettingsRow({ icon, label, sub, onClick, danger, accent }) {
+  return (
+    <button onClick={onClick} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 6px",background:"transparent",border:"none",borderBottom:"1px solid #131a28",cursor:"pointer",textAlign:"left"}}>
+      <span style={{width:36,height:36,borderRadius:9,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:(accent||"#5a6580")+"1a",border:`1px solid ${(accent||"#5a6580")}55`}}>{icon}</span>
+      <span style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:14.5,fontWeight:700,color:danger?"#FF6B6B":"#e6ecf5"}}>{label}</div>
+        {sub && <div style={{fontSize:11.5,color:"#5a6580",marginTop:1,lineHeight:1.35}}>{sub}</div>}
+      </span>
+    </button>
+  );
+}
+
 export default function App() {
   // Restore cached token. If it's past its stored expiry we boot with token
   // null — but we suppress the sign-in screen via `authBootChecked` until the
@@ -820,6 +842,9 @@ export default function App() {
   }, [silentReauth]);
 
   // ── LOAD — today first, then background-fill remaining days ──────────
+  // Which load is current. A newer load bumps it, and an older background
+  // fill that sees a different number stops.
+  const loadGenRef = useRef(0);
   const load = useCallback(async (preserveDay = false) => {
     // Use the freshest token available. A background silent-reauth may have
     // written a newer token to localStorage than the one captured in this
@@ -828,6 +853,9 @@ export default function App() {
     const savedTok = lsGet("mts-token", null);
     const tok = (savedTok?.token && savedTok.expiry > Date.now()) ? savedTok.token : token;
     if (!tok) return;
+    // Claim this load as the current one BEFORE any await, so an older load
+    // that is still waiting on the network can never overtake a newer one.
+    const gen = ++loadGenRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -861,6 +889,8 @@ export default function App() {
         }
       }
       if (loadErr) throw loadErr;
+      // A newer load started while this one was fetching — let it win.
+      if (loadGenRef.current !== gen) return;
       const localStops1 = localStopsGet();
       // Roll forward any local stops from past dates to today so they don't disappear.
       const validDayKeys1 = new Set(days.map(d => d.toDateString()));
@@ -890,14 +920,41 @@ export default function App() {
       setError(null); setNeedsReconnect(false);
       setLoading(false);
 
-      // PHASE 2: Background-fill remaining days
+      // PHASE 2: Background-fill remaining days.
+      //
+      // Two things keep this from making the app feel frozen:
+      //  • A newer load cancels an older one. Toggling weekends, or a sync,
+      //    used to start a fresh 30-day fill while the previous one was still
+      //    running, so two (or three) loops fought over the same state.
+      //  • Results are applied in small batches, not one day at a time. Each
+      //    application re-renders the whole app; thirty of them back to back
+      //    is what made the settings sheet and route list stutter.
       const remaining = days.slice(1);
       (async () => {
+        let pending = [];   // [{ dk, events, localStops }]
+        let flushedOnce = false;
+        const flush = () => {
+          if (!pending.length || loadGenRef.current !== gen) { pending = []; return; }
+          const batch = pending; pending = [];
+          setRawEvents(prev => {
+            const next = { ...prev };
+            for (const { dk, events, localStops } of batch) {
+              next[dk] = events;
+              for (const [id, { event, dk: ldk }] of Object.entries(localStops)) {
+                if (ldk === dk)
+                  next[dk] = [...(next[dk] || []).filter(e => e.id !== id && e.id !== event.id), event];
+              }
+            }
+            return next;
+          });
+        };
         for (const day of remaining) {
+          if (loadGenRef.current !== gen) return;   // superseded by a newer load
           try {
             const s = new Date(day); s.setHours(0,0,0,0);
             const e = new Date(day); e.setHours(23,59,59,999);
             const events = await authedFetchEvents(tok, s, e);
+            if (loadGenRef.current !== gen) return;
             const localStops2 = localStopsGet();
             // Clean up confirmed-pushed local stops whose real Calendar event came back.
             const fetchedIds = new Set(events.map(ev => ev.id));
@@ -909,18 +966,15 @@ export default function App() {
               }
             }
             if (lsChanged2) localStopsSet(localStops2);
-            setRawEvents(prev => {
-              const next = { ...prev, [day.toDateString()]: events };
-              for (const [id, { event, dk }] of Object.entries(localStops2)) {
-                if (dk === day.toDateString())
-                  next[dk] = [...(next[dk] || []).filter(e => e.id !== id && e.id !== event.id), event];
-              }
-              return next;
-            });
+            pending.push({ dk: day.toDateString(), events, localStops: localStops2 });
+            // The first batch goes out after two days, so tomorrow — the day
+            // most often checked right after opening — appears as fast as before.
+            if (pending.length >= (flushedOnce ? 6 : 2)) { flush(); flushedOnce = true; }
           } catch(err) {
             console.warn("Background load failed for", day.toDateString(), err);
           }
         }
+        flush();
       })();
 
     } catch (e) {
@@ -935,6 +989,9 @@ export default function App() {
       // Testing-mode refresh token that expired after a week). The only fix is
       // an interactive reconnect, so surface that prominently instead of a
       // powerless "retrying…" banner.
+      // A superseded load's failure is stale news — the newer load owns the
+      // screen now, so don't paint its error over that.
+      if (loadGenRef.current !== gen) return;
       const isAuth = e?.status === 401 || (e?.message || "").includes("401");
       if (isAuth) setNeedsReconnect(true);
       setError(e.message);
@@ -1870,7 +1927,7 @@ export default function App() {
   };
 
   // markDone = move to pipeline as "estimate_needed"
-  const markDone = (id) => {
+  const markDone = (id, opts = {}) => {
     const stop = stopMap[id];
     setUndoStack(u => [...u, {type:"dismiss",id}]);
     setDismissed(p => ({...p,[id]:Date.now()})); // triggers cloud sync automatically
@@ -1931,7 +1988,9 @@ export default function App() {
           });
         } catch {}
       }
-      setHandoff({ stopId: id, cn: stop.cn, next: nextInfo });
+      // sendClip: a promise that the visit's first photo is on the clipboard,
+      // when "Send to RealWork" is on. The hand-off then skips its picker.
+      setHandoff({ stopId: id, cn: stop.cn, next: nextInfo, sendClip: opts.sendClip || null });
     } else if (nextInfo) {
       setNextStopCard(nextInfo);
     }
@@ -2615,15 +2674,7 @@ export default function App() {
           header (sync, weekend toggle, video uploads, data recovery, storage,
           sign out), opened from the bottom-left hamburger. */}
       {settingsOpen && (() => {
-        const Row = ({ icon, label, sub, onClick, danger, accent }) => (
-          <button onClick={onClick} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 6px",background:"transparent",border:"none",borderBottom:"1px solid #131a28",cursor:"pointer",textAlign:"left"}}>
-            <span style={{width:36,height:36,borderRadius:9,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:(accent||"#5a6580")+"1a",border:`1px solid ${(accent||"#5a6580")}55`}}>{icon}</span>
-            <span style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:14.5,fontWeight:700,color:danger?"#FF6B6B":"#e6ecf5"}}>{label}</div>
-              {sub && <div style={{fontSize:11.5,color:"#5a6580",marginTop:1,lineHeight:1.35}}>{sub}</div>}
-            </span>
-          </button>
-        );
+        const Row = SettingsRow;
         return (
           <div onClick={()=>setSettingsOpen(false)} style={{position:"fixed",inset:0,zIndex:350,background:"rgba(0,0,0,.55)",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
             <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",borderTop:"1px solid #1a2030",borderTopLeftRadius:18,borderTopRightRadius:18,padding:"8px 16px",paddingBottom:"max(16px,env(safe-area-inset-bottom))",boxShadow:"0 -14px 44px rgba(0,0,0,.55)"}}>
@@ -2844,7 +2895,8 @@ export default function App() {
         stop={onsiteStop}
         token={token}
         onBack={() => setOnsiteStop(null)}
-        onDone={() => markDone(onsiteStop.id)}
+        onDone={(opts) => markDone(onsiteStop.id, opts)}
+        sendToRealWorkOnDone={!!onsiteStop?.isTask}
         onDecline={() => { decline(onsiteStop.id); setOnsiteStop(null); }}
         onEditDetails={(edits) => {
           const overrides = stopOverridesGet();
@@ -2890,6 +2942,7 @@ export default function App() {
         <RealWorkHandoff
           stopId={handoff.stopId}
           cn={handoff.cn}
+          sendClip={handoff.sendClip}
           token={token}
           onRelease={releaseHandoff}
         />

@@ -94,10 +94,30 @@ export default async (req) => {
       return json({ error: "no_pins" }, 400);
     }
 
-    // Short id, and constrained to the same charset the /plan/:id route accepts.
-    const id = crypto.randomUUID().replace(/-/g, "").slice(0, 10);
+    // The app now picks the id itself, so it can copy the finished link the
+    // instant the button is tapped — iOS only allows a copy during the tap, and
+    // waiting for this server round trip was why the link often wasn't copied.
+    // A client-chosen id must be long enough to be unguessable (16+ characters
+    // of the same charset the /plan/:id route accepts) and must not already
+    // exist: an existing plan is never overwritten.
+    const { id: wanted, ...plan } = body;
+    const CLIENT_ID_RE = /^[a-zA-Z0-9_-]{16,40}$/;
+    let id;
+    const store = getStore(STORE);
+    if (wanted !== undefined) {
+      if (typeof wanted !== "string" || !CLIENT_ID_RE.test(wanted)) return json({ error: "bad_id" }, 400);
+      try {
+        if (await store.get(wanted)) return json({ error: "id_taken" }, 409);
+      } catch {
+        return json({ error: "store_error" }, 500);
+      }
+      id = wanted;
+    } else {
+      // Older app versions don't send one. 20 hex characters = 80 bits.
+      id = crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+    }
     try {
-      await getStore(STORE).set(id, JSON.stringify({ ...body, createdAt: Date.now() }));
+      await store.set(id, JSON.stringify({ ...plan, createdAt: Date.now() }));
     } catch {
       return json({ error: "store_failed" }, 500);
     }

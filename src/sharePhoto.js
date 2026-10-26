@@ -98,3 +98,51 @@ export function prefersShareSheet() {
       !!window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
   } catch { return false; }
 }
+
+/** A card photo as a PNG blob, for the clipboard. Browsers only accept images
+ *  on the clipboard as PNG, so the JPEG is redrawn. Capped at 2000px on the
+ *  long side: plenty for a site-visit photo, and it keeps the copy quick. */
+export async function photoToPngBlob(photo, token, maxDim = 2000) {
+  const file = await photoToFile(photo, token, "photo.jpg");
+  let src, w, h, release = () => {};
+  if (typeof createImageBitmap === "function") {
+    src = await createImageBitmap(file);
+    w = src.width; h = src.height;
+    release = () => { try { src.close?.(); } catch {} };
+  } else {
+    const url = URL.createObjectURL(file);
+    src = await new Promise((res, rej) => {
+      const im = new Image();
+      im.onload = () => res(im);
+      im.onerror = () => rej(new Error("decode-failed"));
+      im.src = url;
+    });
+    w = src.naturalWidth; h = src.naturalHeight;
+    release = () => URL.revokeObjectURL(url);
+  }
+  try {
+    const scale = Math.min(1, maxDim / Math.max(w, h));
+    const c = document.createElement("canvas");
+    c.width = Math.round(w * scale); c.height = Math.round(h * scale);
+    c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
+    return await new Promise((res, rej) =>
+      c.toBlob(b => (b ? res(b) : rej(new Error("png-failed"))), "image/png"));
+  } finally {
+    release();
+  }
+}
+
+/** Put a photo on the clipboard, starting synchronously inside a tap.
+ *  The PNG is still being made when this returns — the clipboard is handed a
+ *  PROMISE for it, which is what lets the copy be claimed during the tap and
+ *  filled in a moment later. Resolves true once the photo is on the clipboard. */
+export function copyPhotoToClipboard(photo, token) {
+  try {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") return Promise.resolve(false);
+    const png = photoToPngBlob(photo, token);
+    return navigator.clipboard.write([new ClipboardItem({ "image/png": png })])
+      .then(() => true, () => false);
+  } catch {
+    return Promise.resolve(false);
+  }
+}

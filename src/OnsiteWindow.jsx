@@ -47,13 +47,34 @@ import {
   markSavedToDevice,
 } from "./videoQueue";
 import { saveVideoToDevice } from "./videoSave";
-import { dataUrlToFile, sharePhotoFile, prefersShareSheet } from "./sharePhoto";
+import { dataUrlToFile, sharePhotoFile, prefersShareSheet, copyPhotoToClipboard } from "./sharePhoto";
+import { isSendReady } from "./realwork";
 import { SINGLEOPS_ITEMS, SINGLEOPS_JOB_TAGS, SINGLEOPS_JOB_TAG_GROUPS } from "./singleOpsCatalog";
-import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin } from "./icons";
+import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin, IconYoutube } from "./icons";
 
 const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 const SINGLEOPS_URL = "https://app.singleops.com/";
+// The Line Items panel is switched off but kept: flip this back to true to show
+// it again. Nothing about how line items are stored or synced depends on it.
+const SHOW_LINE_ITEMS = false;
+
+// Open the YouTube app. youtube:// is the app's own address, so this goes
+// straight to the app rather than the website. If it isn't installed, iOS
+// can't open that address and the page stays put — so after a moment, if
+// we're still here, fall back to the YouTube website.
+function openYouTubeApp() {
+  let left = false;
+  const onHide = () => { if (document.visibilityState === "hidden") left = true; };
+  document.addEventListener("visibilitychange", onHide);
+  try { window.location.href = "youtube://"; } catch {}
+  setTimeout(() => {
+    document.removeEventListener("visibilitychange", onHide);
+    if (!left && document.visibilityState === "visible") {
+      try { window.open("https://www.youtube.com/", "_blank", "noopener"); } catch {}
+    }
+  }, 1500);
+}
 // Photos are appended by several independent async paths (camera capture,
 // library import, parcel-map snapshot) that can each take a different amount
 // of time to downscale/save — two photos taken back-to-back can finish
@@ -152,7 +173,7 @@ function CatalogPicker({ value, onChange, placeholder = "Search catalog…" }) {
 // points Pipeline uses to layer its own chrome (stage-move bar, repeat-client
 // banner, etc. — concepts that don't exist in Route) around the identical
 // shared editor beneath.
-export default function OnsiteWindow({ stop, onBack, onDone, onDecline, onMarkReject, onEditDetails, token, backLabel = "Route", topBar = null, belowScopePhotosSlot = null, bottomExtra = null }) {
+export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDone = false, onDecline, onMarkReject, onEditDetails, token, backLabel = "Route", topBar = null, belowScopePhotosSlot = null, bottomExtra = null }) {
   const s = stop;
   // Synchronous peek for initial state — returns {} or the localStorage
   // mirror if one exists. The real async load runs below and hydrates.
@@ -1495,6 +1516,17 @@ ${combined}`);
   // aren't clobbered — we merge state's photos with IDB's photos by ts/url,
   // preferring state's dataUrl (newer markup) and IDB's url (newer sync).
   const handleDone = async () => {
+    // RealWork, "Send to RealWork" switched on: copy the visit's first photo
+    // NOW, while this tap is still live — iOS only allows a copy during the tap,
+    // and the save below takes long enough to outlast it. The PNG is still being
+    // made when this line finishes; the clipboard is promised it. (Which photo
+    // doesn't matter — the first is used.)
+    let sendClip = null;
+    const firstPhoto = scopePhotos[0] || addonPhotos[0];
+    // Only where Done leads to the RealWork hand-off (the route screen) —
+    // elsewhere, e.g. Pipeline, this would just overwrite the clipboard.
+    if (sendToRealWorkOnDone && firstPhoto && isSendReady()) sendClip = copyPhotoToClipboard(firstPhoto, token);
+
     await updateField(s.id, (existing) => {
       const ex = existing || {};
       const mergePhotos = (state = [], idb = []) => {
@@ -1515,7 +1547,7 @@ ${combined}`);
         addonPhotos: mergePhotos(addonPhotos, ex.addonPhotos || []),
       };
     }).catch(() => {});
-    onDone();
+    onDone(sendClip ? { sendClip } : undefined);
   };
 
   // Swipe left on body → pipeline
@@ -1712,19 +1744,23 @@ ${combined}`);
               MIME type in handleScopeLibraryFiles, so there's one picker
               instead of separate photo/video library buttons. */}
           <input ref={scopeLibRef} type="file" accept="image/*,video/*" multiple onChange={handleScopeLibraryFiles} style={{display:"none"}} />
-          <div style={{display:"flex",gap:6,marginTop:10}}>
-            <button onClick={()=>{setCameraSection("scope");setShowCamera(true);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
+          {/* Capture: a 2×2 grid. The short top row (Library, YouTube) is the
+              height the full-width Library bar used to be; Camera and Video
+              below are unchanged. */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:10}}>
+            <button onClick={()=>scopeLibRef.current?.click()} title="Add a photo or video from your library" style={{padding:"8px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              <IconImage size={14} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library</span>
+            </button>
+            <button onClick={openYouTubeApp} title="Open the YouTube app" style={{padding:"8px 0",borderRadius:8,background:"rgba(255,0,0,.05)",border:"1px dashed rgba(255,78,69,.3)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              <IconYoutube size={14} color="#FF4E45"/><span style={{fontSize:11,color:"#FF4E45",fontWeight:600}}>YouTube</span>
+            </button>
+            <button onClick={()=>{setCameraSection("scope");setShowCamera(true);}} style={{padding:"10px 0",borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
               <IconCamera size={16} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Camera</span>
             </button>
-            {/* Record Video — right alongside Camera, one tap away instead of
-                a separate section scrolled below. */}
-            <button onClick={() => setShowVideoRecorder(true)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(255,59,48,.06)",border:"1px dashed rgba(255,59,48,.3)",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
+            <button onClick={() => setShowVideoRecorder(true)} style={{padding:"10px 0",borderRadius:8,background:"rgba(255,59,48,.06)",border:"1px dashed rgba(255,59,48,.3)",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
               <IconVideo size={16} color="#FF6B5E"/><span style={{fontSize:11,color:"#FF6B5E",fontWeight:600}}>Video</span>
             </button>
           </div>
-          <button onClick={()=>scopeLibRef.current?.click()} style={{width:"100%",padding:"8px 0",marginTop:6,borderRadius:8,background:"#0e1120",border:"1px dashed #1a2540",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-            <IconImage size={14} color="#5a7090"/><span style={{fontSize:11,color:"#5a7090",fontWeight:600}}>Library (photo or video)</span>
-          </button>
 
           {/* Scope photos — shown below the capture/import controls. */}
           {scopePhotos.length > 0 && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12}}>
@@ -1761,12 +1797,6 @@ ${combined}`);
               Rendered after the photo grid per request. Null on Route. */}
           {belowScopePhotosSlot}
         </div>
-
-        {/* ── SITE PLAN ──────────────────────────────────────────────────
-            Live plan right under the photos: no navigation needed, and both
-            actions (JPEG, crew link) are here rather than behind the map. */}
-        <SitePlanPanel stop={s} pins={mapPins} photos={allPhotosForMap} token={token}
-                       onPinsChange={handlePinsChange} onAddToCard={addImageToCard} />
 
         {/* ── VIDEO ─────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
@@ -1887,6 +1917,13 @@ ${combined}`);
           )}
         </div>
 
+        {/* ── SITE PLAN ──────────────────────────────────────────────────
+            Live plan on the card itself, below the photos and video: no
+            navigation needed, and its actions (add to card, crew link) are here
+            rather than behind the map. */}
+        <SitePlanPanel stop={s} pins={mapPins} photos={allPhotosForMap} token={token}
+                       onPinsChange={handlePinsChange} onAddToCard={addImageToCard} />
+
         {/* ADD-ON section removed per request. addonNotes/addonPhotos data
             (and its sync/hydration machinery) is left intact so nothing on
             OLD cards that already has add-on content is lost or orphaned —
@@ -1899,6 +1936,9 @@ ${combined}`);
             "item" is matched against the REAL SingleOps catalog (see
             singleOpsCatalog.js) so this is ready to feed proposal-building
             automation, not a made-up category. */}
+        {/* Hidden for now (SHOW_LINE_ITEMS). Line items are still loaded, saved and
+            synced exactly as before — only this panel is not shown. */}
+        {SHOW_LINE_ITEMS && (<>
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
             <div style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,flex:1}}>Line Items</div>
@@ -1976,6 +2016,7 @@ ${combined}`);
 
           <button onClick={addManualLineItem} style={{width:"100%",padding:"8px 0",borderRadius:8,background:"transparent",border:"1px dashed #1a2540",color:"#5a7090",fontSize:11,fontWeight:600,cursor:"pointer"}}>+ Add line item manually</button>
         </div>
+        </>)}
 
         {/* ── JOB TAGS ──────────────────────────────────────────────────
             Per-JOB (not per-line-item) tags matching SingleOps's own tag

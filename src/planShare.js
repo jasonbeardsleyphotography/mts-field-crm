@@ -54,7 +54,7 @@ export function buildPlanPayload({ pins = [], photos = [], parcelPaths = [], sto
 }
 
 /** POST the payload and return the public link. Throws with a friendly message. */
-export async function createPlanLink(token, payload) {
+export async function createPlanLink(token, payload, id) {
   // Prefer the token currently in storage over whatever was captured in props:
   // a background silent-reauth may have replaced it, and sending the stale one
   // is what produced spurious "sign in again" failures.
@@ -72,59 +72,54 @@ export async function createPlanLink(token, payload) {
       "Content-Type": "application/json",
       ...(best ? { Authorization: `Bearer ${best}` } : {}),
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(id ? { ...payload, id } : payload),
   });
   if (res.status === 401) throw new Error("Sign in to Google again, then try sharing.");
+  if (res.status === 409) throw new Error("That link id was already taken — tap Link again.");
   if (!res.ok) throw new Error("Couldn't create the share link — try again.");
-  const { id } = await res.json();
-  if (!id) throw new Error("Couldn't create the share link — try again.");
-  return `${SHARE_ORIGIN}/plan/${id}`;
+  const { id: savedId } = await res.json();
+  if (!savedId) throw new Error("Couldn't create the share link — try again.");
+  return `${SHARE_ORIGIN}/plan/${savedId}`;
 }
 
 /* ── One-tap copy ───────────────────────────────────────────────────────────
-   Copy the crew link so that pasting it reads "Live Map Site Plan" rather than
-   a wall of random URL characters.
+   Copy the crew link so that pasting it reads "Live Map Site Plan" with the
+   link right under it.
 
-   Two formats go on the clipboard at once: text/html (a real hyperlink, which
-   Notes, Mail and most apps paste as the words "Live Map Site Plan") and
-   text/plain (the label followed by the URL, for anything that only takes
-   plain text — Messages included). Whichever the target app understands, the
-   crew sees the label.
-
-   The subtlety that makes this ONE tap: iOS only allows a clipboard write
-   during a live user gesture, and creating the link needs a round trip to the
-   server, which outlives that gesture. So the ClipboardItem is handed
-   *promises* rather than finished blobs — the write is registered immediately,
-   inside the tap, and resolves when the link comes back. Call this
-   SYNCHRONOUSLY from the click handler, before awaiting anything. */
+   This used to put TWO versions on the clipboard — an HTML one with the
+   address hidden behind the words "Live Map Site Plan", plus plain text — and
+   to wait for the server to create the link before copying. Both went wrong:
+     • Apps that took the HTML version pasted just the words. A text message
+       can't carry a hidden link, so the crew got a label with no link.
+     • iOS only allows a copy during the tap itself. Waiting for the server
+       (a few seconds when it's cold) often outlived the tap, and the copy was
+       quietly refused.
+   So now the link's id is made on the phone, the full address is known the
+   moment the button is tapped, and it is copied right then as plain text. The
+   server then stores the plan under that id. */
 export const PLAN_LINK_LABEL = "Live Map Site Plan";
 
-export function copyPlanLink(linkPromise) {
-  const label = PLAN_LINK_LABEL;
-  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-  const asHtml = linkPromise.then(u =>
-    new Blob([`<a href="${esc(u)}">${label}</a>`], { type: "text/html" }));
-  const asText = linkPromise.then(u =>
-    new Blob([`${label}\n${u}`], { type: "text/plain" }));
+/** A random id for a new plan: 20 URL-safe characters (120 bits). */
+export function newPlanId() {
+  const bytes = new Uint8Array(15);
+  crypto.getRandomValues(bytes);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
 
-  let registered = null;
+export const planUrlFor = (id) => `${SHARE_ORIGIN}/plan/${id}`;
+
+/** The text that lands on the clipboard. Plain text, so every app — Messages,
+ *  SMS to an Android phone, email — turns the address into a tappable link. */
+export const planLinkText = (url) => `${PLAN_LINK_LABEL}\n${url}`;
+
+/** Copy, synchronously inside the tap. Returns a promise for whether it worked. */
+export function copyPlanText(url) {
   try {
-    if (navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
-      registered = navigator.clipboard.write([
-        new ClipboardItem({ "text/html": asHtml, "text/plain": asText }),
-      ]);
-    }
-  } catch { registered = null; }
-
-  // Whether the rich write was unavailable or failed (older Safari rejects
-  // promise-valued ClipboardItems), fall back to plain text once we have the
-  // URL. That path can lose the gesture, so it's the backup, not the plan.
-  return linkPromise.then(async (url) => {
-    let ok = false;
-    if (registered) { try { await registered; ok = true; } catch {} }
-    if (!ok) {
-      try { await navigator.clipboard.writeText(`${label}\n${url}`); ok = true; } catch {}
-    }
-    return { url, copied: ok };
-  });
+    const p = navigator.clipboard?.writeText(planLinkText(url));
+    return p ? p.then(() => true, () => false) : Promise.resolve(false);
+  } catch {
+    return Promise.resolve(false);
+  }
 }

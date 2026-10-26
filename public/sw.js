@@ -1,3 +1,6 @@
+// v62: settings no longer freeze; site-map Link copies reliably; JPEG and
+// line items hidden; video above the map; Library/YouTube/Camera/Video grid;
+// optional auto-send of the first photo to RealWork on Done.
 // v61: RealWork button removed from the on-site card header.
 // v60: clearer RealWork Shortcut setup steps; the Shortcut name is editable.
 // v59: blue share buttons gone; on a phone, Download opens "Save Image" so the
@@ -64,7 +67,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v61";
+const CACHE = "mts-field-v62";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

@@ -65,3 +65,41 @@ export function openRealWork() {
 export function testShortcut() {
   try { window.location.href = shortcutHref(); } catch {}
 }
+
+/* ── Send a photo to RealWork (optional, second Shortcut) ─────────────────────
+   "Send to RealWork" saves the photo it is given to Photos and then opens
+   RealWork, so the photo is first in RealWork's picker. When it is switched on,
+   tapping Done copies the visit's first photo and runs it — no picker, no share
+   sheet. It is a SEPARATE Shortcut from "Open RealWork" on purpose: run with no
+   photo, its save step can fail before RealWork opens, so visits without
+   photos keep using the plain one. Off until the user has tested it. */
+export const DEFAULT_SEND_NAME = "Send to RealWork";
+const SEND_NAME_KEY = "mts-realwork-send-name";
+const SEND_ON_KEY = "mts-realwork-send";
+
+export function getSendName() {
+  try { return (localStorage.getItem(SEND_NAME_KEY) || "").trim() || DEFAULT_SEND_NAME; }
+  catch { return DEFAULT_SEND_NAME; }
+}
+export function setSendName(name) {
+  try {
+    const n = String(name || "").trim();
+    if (n && n !== DEFAULT_SEND_NAME) localStorage.setItem(SEND_NAME_KEY, n);
+    else localStorage.removeItem(SEND_NAME_KEY);
+  } catch {}
+}
+export function isSendReady() {
+  try { return localStorage.getItem(SEND_ON_KEY) === "1"; } catch { return false; }
+}
+export function setSendReady(on) {
+  try { on ? localStorage.setItem(SEND_ON_KEY, "1") : localStorage.removeItem(SEND_ON_KEY); } catch {}
+}
+
+// input=clipboard hands the Shortcut whatever is on the clipboard — the photo
+// MTS Field copied a moment earlier.
+export const sendShortcutHref = () =>
+  `shortcuts://run-shortcut?name=${encodeURIComponent(getSendName())}&input=clipboard`;
+
+export function runSendShortcut() {
+  try { window.location.href = sendShortcutHref(); } catch {}
+}

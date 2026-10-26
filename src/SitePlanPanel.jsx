@@ -4,7 +4,7 @@ import TileMap from "./TileMap";
 import { boundsOf, fitZoom, MAX_Z } from "./tileMath";
 import { fetchParcelsForBounds, parcelAtPoint, parcelPropsToInfo } from "./parcelOverlay";
 import { buildCalloutMap } from "./treeMapExport";
-import { buildPlanPayload, createPlanLink, copyPlanLink } from "./planShare";
+import { buildPlanPayload, createPlanLink, newPlanId, planUrlFor, copyPlanText } from "./planShare";
 import { getCurrentGeo, peekGeo } from "./geoCapture";
 import { geocode } from "./RouteMap";
 import { IconDownload, IconMapPin, IconX, IconPlus, IconTrash, IconImage,
@@ -311,23 +311,6 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
     ? "Couldn't load map imagery — check your signal."
     : "Couldn't build the site plan.");
 
-  const makeJpeg = useCallback(async () => {
-    if (busy) return;
-    setBusy("jpeg"); setErr(null); setNote(null);
-    try {
-      const built = await buildPlan();
-      if (!built) { setErr("Nothing to plot yet."); return; }
-      const name = `${(stop?.cn || "site").replace(/[^\w]+/g, "_")}_site_plan.jpg`;
-      const blob = await (await fetch(built.dataUrl)).blob();
-      const u = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = u; a.download = name;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(u), 20000);
-      if (built.missing > 0) setErr("Site plan saved." + missingNote(built.missing));
-      else setNote("Site plan saved.");
-    } catch (e) { planError(e); } finally { setBusy(null); }
-  }, [busy, buildPlan, stop]);
 
   // File the plan on this card as a photo, so it travels with the proposal.
   const addPlanToCard = useCallback(async () => {
@@ -343,26 +326,40 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
   }, [busy, buildPlan, onAddToCard]);
 
   // ── Crew link (one tap) ───────────────────────────────────────────────────
-  // Not async: the clipboard write has to be registered inside the tap itself
-  // or iOS refuses it, so copyPlanLink takes the still-pending link promise.
+  // Not async: the copy has to happen inside the tap itself or iOS refuses it,
+  // which is why the link's id is made here rather than by the server.
   const makeLink = useCallback(() => {
     if (busy) return;
     const { payload, pendingPhotos } = buildPlanPayload({
       pins: located, photos: onPlanPhotos, parcelPaths: parcel, stop,
     });
     if (!payload.pins.length) { setErr("Add a pin first."); return; }
+    // The id is made here, so the finished address is known NOW and can be
+    // copied inside this tap — the only moment iOS reliably allows it.
+    const id = newPlanId();
+    const url = planUrlFor(id);
+    const copied = copyPlanText(url);
     setBusy("link"); setErr(null); setNote(null);
-    copyPlanLink(createPlanLink(token, payload))
-      .then(({ url, copied }) => {
-        setLink(url);
+    createPlanLink(token, payload, id)
+      .then(async (savedUrl) => {
+        const ok = await copied;
+        setLink(savedUrl);
         setNote(
-          (copied ? "Link copied — paste it to the crew." : "Link ready — copy it below.") +
+          (ok && savedUrl === url
+            ? "Link copied — paste it to the crew."
+            : "Link ready — tap it below to copy.") +
           (pendingPhotos > 0
             ? ` ${pendingPhotos} photo${pendingPhotos === 1 ? "" : "s"} still uploading, so ${pendingPhotos === 1 ? "it won't" : "they won't"} show yet.`
             : "")
         );
       })
-      .catch(e => setErr(e?.message || "Couldn't create the link."))
+      .catch(async (e) => {
+        // The address may already be on the clipboard, but the plan behind it
+        // was never saved. Say so plainly, so a dead link isn't sent.
+        const wasCopied = await copied;
+        setErr((wasCopied ? "The link was NOT created — don't paste what was just copied. " : "") +
+               (e?.message || "Couldn't create the link."));
+      })
       .finally(() => setBusy(null));
   }, [busy, located, onPlanPhotos, parcel, stop, token]);
 
@@ -467,11 +464,6 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
       <button onClick={() => setShowPhotos(v => !v)} style={barBtn(showPhotos, "#F6BF26", inFull)}>
         <IconImage size={inFull ? 17 : 15} color={showPhotos ? "#1a1400" : "#F6BF26"} />Photos
       </button>
-      <button onClick={makeJpeg} disabled={!!busy || !located.length}
-              style={{ ...barBtn(false, "#F6BF26", inFull), opacity: located.length ? 1 : 0.4 }}>
-        <IconDownload size={inFull ? 17 : 15} color="#F6BF26" />
-        {busy === "jpeg" ? "…" : "JPEG"}
-      </button>
       {onAddToCard && (
         <button onClick={addPlanToCard} disabled={!!busy || !located.length}
                 style={{ ...barBtn(false, "#F6BF26", inFull), opacity: located.length ? 1 : 0.4 }}>
@@ -551,15 +543,23 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
       {note && !err && <div style={{ marginTop: 6, fontSize: 11, color: "#8fbf80" }}>{note}</div>}
 
       {link && (
-        <div style={{
-          marginTop: 8, padding: "8px 10px", borderRadius: 8,
-          background: "rgba(26,115,232,.1)", border: "1px solid rgba(26,115,232,.3)",
-        }}>
+        <button
+          onClick={async () => {
+            const ok = await copyPlanText(link);
+            setErr(null);
+            setNote(ok ? "Link copied — paste it to the crew." : "Couldn't copy — press and hold the link to copy it.");
+          }}
+          style={{
+            display: "block", width: "100%", textAlign: "left", cursor: "pointer",
+            marginTop: 8, padding: "8px 10px", borderRadius: 8,
+            background: "rgba(26,115,232,.1)", border: "1px solid rgba(26,115,232,.3)",
+          }}
+        >
           <div style={{ fontSize: 9.5, fontWeight: 800, color: "#7db4ff", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 3 }}>
-            Pastes as “Live Map Site Plan”
+            Tap to copy · pastes as “Live Map Site Plan” + the link
           </div>
-          <div style={{ fontSize: 11, color: "#cfe0f5", wordBreak: "break-all" }}>{link}</div>
-        </div>
+          <div style={{ fontSize: 11, color: "#cfe0f5", wordBreak: "break-all", userSelect: "text", WebkitUserSelect: "text" }}>{link}</div>
+        </button>
       )}
 
       {/* ══ FULL SCREEN ══════════════════════════════════════════════════════

@@ -4,7 +4,7 @@ import { lastNameOf } from "./photoSync";
 import { photoToFile, sharePhotoFile } from "./sharePhoto";
 import { IconX, IconLinkExternal } from "./icons";
 import RealWorkSetup from "./RealWorkSetup";
-import { openRealWork, realworkHref, isShortcutReady } from "./realwork";
+import { openRealWork, realworkHref, isShortcutReady, runSendShortcut, sendShortcutHref } from "./realwork";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Hand-off to RealWork, shown right after Done
@@ -38,8 +38,13 @@ const B = "'DM Sans',system-ui,sans-serif";
 const smallThumb = (url) =>
   typeof url === "string" ? url.replace(/([?&]sz=)w\d+/, "$1w400") : url;
 
-export default function RealWorkHandoff({ stopId, cn, token, onRelease }) {
-  const [phase, setPhase] = useState("loading");   // loading | pick | opening
+export default function RealWorkHandoff({ stopId, cn, token, onRelease, sendClip = null }) {
+  // sendClip: when "Send to RealWork" is on, Done has already started copying
+  // the visit's first photo to the clipboard, and this is the promise for it.
+  // Then there is no picker: wait for the copy, run the Shortcut, done. If the
+  // copy fails, fall back to the picker below so nothing is lost.
+  const [phase, setPhase] = useState(sendClip ? "sending" : "loading");   // sending | loading | pick | opening
+  const [mode, setMode] = useState("plain");      // plain: open RealWork | send: run Send to RealWork
   const [photos, setPhotos] = useState([]);
   const [busyKey, setBusyKey] = useState(null);
   const [note, setNote] = useState(null);
@@ -48,8 +53,24 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease }) {
   const fileCache = useRef(new Map());              // photo key -> File, for a second tap
   const openedRef = useRef(false);
 
+  // Send mode: wait for the photo copy that Done started.
+  useEffect(() => {
+    if (!sendClip) return;
+    let dead = false;
+    sendClip.then((ok) => {
+      if (dead) return;
+      if (ok) { setMode("send"); setPhase("opening"); }
+      else {
+        setNote("Couldn't copy the photo automatically — pick one below instead.");
+        setPhase("loading");
+      }
+    });
+    return () => { dead = true; };
+  }, [sendClip]);
+
   // Which photos does the visit that just finished have?
   useEffect(() => {
+    if (phase !== "loading") return;
     let dead = false;
     (async () => {
       let list = [];
@@ -66,14 +87,14 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease }) {
       setPhase(list.length ? "pick" : "opening");
     })();
     return () => { dead = true; };
-  }, [stopId]);
+  }, [stopId, phase]);
 
   // Entering "opening": try to launch RealWork once.
   useEffect(() => {
     if (phase !== "opening" || openedRef.current) return;
     openedRef.current = true;
-    openRealWork();
-  }, [phase]);
+    if (mode === "send") runSendShortcut(); else openRealWork();
+  }, [phase, mode]);
 
   // Coming back to the app after RealWork → continue to the next stop.
   useEffect(() => {
@@ -138,6 +159,16 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease }) {
     return <div style={{ ...shell, alignItems: "center", justifyContent: "center", color: "#5a6580", fontSize: 12 }}>One moment…</div>;
   }
 
+  // Send mode, while the photo is being copied (usually under a second).
+  if (phase === "sending") {
+    return (
+      <div style={{ ...shell, alignItems: "center", justifyContent: "center", padding: 24, gap: 14 }}>
+        <div style={{ fontSize: 13, color: "#8aa0c0" }}>Getting the photo ready for RealWork…</div>
+        <button onClick={onRelease} style={{ ...quietBtn, maxWidth: 380, border: "none", color: "#6a7688" }}>Skip RealWork</button>
+      </div>
+    );
+  }
+
   // ── Open RealWork ───────────────────────────────────────────────────────────
   if (phase === "opening") {
     return (
@@ -146,14 +177,16 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease }) {
           <div style={{ textAlign: "center", marginBottom: 6 }}>
             <div style={{ fontSize: 18, fontWeight: 800, fontFamily: F, letterSpacing: 0.8, textTransform: "uppercase" }}>RealWork</div>
             <div style={{ fontSize: 12.5, color: "#7a8aaa", marginTop: 6, lineHeight: 1.5 }}>
-              Opening it now. If nothing opened, tap below.
+              {mode === "send"
+                ? "Saving the first photo to your Photos and opening RealWork. If nothing happened, tap below."
+                : "Opening it now. If nothing opened, tap below."}
             </div>
           </div>
           {/* A real link, on purpose: a tap on a link is the one thing iOS will
               always honour, and it is what lets the RealWork app claim the
               address if it has registered for it. */}
-          <a href={realworkHref()}
-             {...(isShortcutReady() ? {} : { target: "_blank", rel: "noopener noreferrer" })}
+          <a href={mode === "send" ? sendShortcutHref() : realworkHref()}
+             {...(mode === "send" || isShortcutReady() ? {} : { target: "_blank", rel: "noopener noreferrer" })}
              style={bigBtn("#7db4ff")}>
             <IconLinkExternal size={16} color="#7db4ff" /> Open RealWork
           </a>
