@@ -1,3 +1,5 @@
+// v67: viewfinder sizing in pure CSS (no shrink/snap on rotation); iOS edge
+//      blur re-sampled when the camera or video recorder closes.
 // v66: camera + video viewfinders sized to fill the screen explicitly (no longer
 //      trusting object-fit on iOS); camera Permissions-Policy header removed.
 // v65: status bar back to black-translucent — "black" shrank the full-screen
@@ -77,7 +79,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v66";
+const CACHE = "mts-field-v67";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
