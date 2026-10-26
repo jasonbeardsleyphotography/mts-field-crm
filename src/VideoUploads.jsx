@@ -44,10 +44,10 @@ function StatusPill({ item }) {
     );
   }
   if (item.status === "queued") return (
-    <span style={{ fontSize: 10, fontWeight: 700, color: "#6a7a90", fontFamily: F, letterSpacing: 0.5 }}>WAITING</span>
+    <span style={{ fontSize: 10, fontWeight: 700, color: "#818fa2", fontFamily: F, letterSpacing: 0.5 }}>WAITING</span>
   );
   if (item.status === "local") return (
-    <span style={{ fontSize: 10, fontWeight: 700, color: "#8898a8", fontFamily: F, letterSpacing: 0.5 }}>ON PHONE</span>
+    <span style={{ fontSize: 10, fontWeight: 700, color: "#99a7b5", fontFamily: F, letterSpacing: 0.5 }}>ON PHONE</span>
   );
   if (item.status === "error") return (
     <span style={{
@@ -139,14 +139,14 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
           background: "transparent", cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
         }}>
-          <IconArrowLeft size={20} color="#5a6580" />
+          <IconArrowLeft size={20} color="#707c9a" />
         </button>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 16, fontWeight: 900, color: "#e0e8f0", fontFamily: F, letterSpacing: 1.5, textTransform: "uppercase" }}>
             Video Uploads
           </div>
           {visibleItems.length > 0 && (
-            <div style={{ fontSize: 11, color: "#5a6580", fontFamily: F, letterSpacing: 0.5, marginTop: 1 }}>
+            <div style={{ fontSize: 11, color: "#707c9a", fontFamily: F, letterSpacing: 0.5, marginTop: 1 }}>
               {[
                 activeCount > 0 && `${activeCount} uploading`,
                 waitingCount > 0 && `${waitingCount} waiting`,
@@ -164,7 +164,7 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
             fontFamily: F, fontWeight: 800, fontSize: 11, letterSpacing: 0.5,
             background: showDiag ? "rgba(100,180,246,.15)" : "transparent",
             border: `1px solid ${showDiag ? "rgba(100,180,246,.4)" : "#252d47"}`,
-            color: showDiag ? "#64B5F6" : "#5a6580",
+            color: showDiag ? "#64B5F6" : "#707c9a",
           }}
         >🔍 Log</button>
         {visibleItems.length > 0 && (
@@ -228,13 +228,13 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
           uploader took. First stop when something looks stuck. */}
       {showDiag && (
         <div style={{ flexShrink: 0, maxHeight: "40vh", overflowY: "auto", padding: "8px 16px", background: "#060810", borderBottom: "1px solid #1a2030" }}>
-          {logEntries.length === 0 && <div style={{ fontSize: 11, color: "#4a5a70", fontStyle: "italic" }}>No log entries yet.</div>}
+          {logEntries.length === 0 && <div style={{ fontSize: 11, color: "#607591", fontStyle: "italic" }}>No log entries yet.</div>}
           {logEntries.map(e => (
-            <div key={e.id} style={{ fontSize: 10, color: e.level === "error" ? "#FF8888" : e.level === "warn" ? "#F6BF26" : "#8898a8", fontFamily: "ui-monospace,Menlo,monospace", lineHeight: 1.45, marginBottom: 2, wordBreak: "break-word" }}>
-              <span style={{ color: "#4a5a70" }}>{new Date(e.ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</span>
+            <div key={e.id} style={{ fontSize: 10, color: e.level === "error" ? "#FF8888" : e.level === "warn" ? "#F6BF26" : "#99a7b5", fontFamily: "ui-monospace,Menlo,monospace", lineHeight: 1.45, marginBottom: 2, wordBreak: "break-word" }}>
+              <span style={{ color: "#607591" }}>{new Date(e.ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</span>
               {" "}<span style={{ fontWeight: 700 }}>{e.event}</span>
-              {e.itemId && <span style={{ color: "#4a5a70" }}> [{String(e.itemId).slice(-8)}]</span>}
-              {e.data && <span style={{ color: "#5a6580" }}> {JSON.stringify(e.data)}</span>}
+              {e.itemId && <span style={{ color: "#607591" }}> [{String(e.itemId).slice(-8)}]</span>}
+              {e.data && <span style={{ color: "#707c9a" }}> {JSON.stringify(e.data)}</span>}
             </div>
           ))}
         </div>
@@ -261,7 +261,7 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
         {visibleItems.length === 0 && (
           <div style={{
             padding: 40, textAlign: "center",
-            color: "#4a5a70", fontSize: 13, fontFamily: F,
+            color: "#607591", fontSize: 13, fontFamily: F,
             letterSpacing: 0.5, textTransform: "uppercase",
           }}>
             No uploads in queue
@@ -287,7 +287,7 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                   }}>{nameFor(item)}</div>
                   <div style={{
-                    fontSize: 10, color: "#4a5a70", marginTop: 2,
+                    fontSize: 10, color: "#607591", marginTop: 2,
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                   }}>{item.title}</div>
                 </div>
@@ -312,14 +312,14 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
               {/* Size + bytes sent */}
               <div style={{
                 display: "flex", alignItems: "center", gap: 8,
-                marginBottom: 8, fontSize: 11, color: "#5a6580", fontFamily: F, letterSpacing: 0.3,
+                marginBottom: 8, fontSize: 11, color: "#707c9a", fontFamily: F, letterSpacing: 0.3,
               }}>
                 <span>{fmtMB(item.fileSize)}</span>
                 {item.bytesUploaded > 0 && item.status !== "error" && (
-                  <span style={{ color: "#7a8090" }}>{fmtMB(item.bytesUploaded)} sent</span>
+                  <span style={{ color: "#8f94a1" }}>{fmtMB(item.bytesUploaded)} sent</span>
                 )}
                 {item.status === "uploading" && item.fileSize > 0 && (
-                  <span style={{ color: "#4a5a70", marginLeft: "auto" }}>{pct}%</span>
+                  <span style={{ color: "#607591", marginLeft: "auto" }}>{pct}%</span>
                 )}
               </div>
 
@@ -404,7 +404,7 @@ export default function VideoUploads({ open, onClose, stopMap = {} }) {
                     cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
                   }}
                 >
-                  <IconX size={13} color="#6a3a3a" />
+                  <IconX size={13} color="#914f4f" />
                 </button>
               </div>
             </div>

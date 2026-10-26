@@ -130,7 +130,7 @@ export default function PhotoUploads({ onClose, token, onFreeSpace }) {
           <div style={{ fontSize: 15, fontWeight: 800, color: "#fff", fontFamily: F, letterSpacing: 1, textTransform: "uppercase" }}>
             Photo Uploads
           </div>
-          <div style={{ fontSize: 11.5, color: "#5a6580", marginTop: 2 }}>
+          <div style={{ fontSize: 11.5, color: "#707c9a", marginTop: 2 }}>
             {rows.length === 0
               ? "Everything is uploaded"
               : `${rows.length} stop${rows.length === 1 ? "" : "s"} with photos still to upload`}
@@ -153,7 +153,7 @@ export default function PhotoUploads({ onClose, token, onFreeSpace }) {
           width: 38, height: 38, borderRadius: 19, flexShrink: 0,
           background: "transparent", border: "1px solid #253049", cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
-        }}><IconX size={16} color="#8aa0c0" /></button>
+        }}><IconX size={16} color="#9aadc8" /></button>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 16px max(20px, env(safe-area-inset-bottom))" }}>
@@ -162,7 +162,7 @@ export default function PhotoUploads({ onClose, token, onFreeSpace }) {
             margin: "6px 0 10px", padding: "10px 12px", borderRadius: 9,
             background: storage.full ? "rgba(239,68,68,.12)" : "rgba(255,255,255,.04)",
             border: `1px solid ${storage.full ? "#ef4444" : "#1e2740"}`,
-            color: storage.full ? "#ffc9c9" : "#8aa0c0", fontSize: 12, lineHeight: 1.45,
+            color: storage.full ? "#ffc9c9" : "#9aadc8", fontSize: 12, lineHeight: 1.45,
           }}>
             <b style={{ color: storage.full ? "#ff8080" : "#cfe0f5" }}>
               Google Drive: {fmtBytes(storage.used)} of {fmtBytes(storage.limit)} used
@@ -198,8 +198,8 @@ export default function PhotoUploads({ onClose, token, onFreeSpace }) {
             display: "flex", flexDirection: "column", alignItems: "center",
             gap: 10, padding: "60px 20px", textAlign: "center",
           }}>
-            <IconImage size={30} color="#253049" />
-            <div style={{ fontSize: 13.5, color: "#5a6580" }}>
+            <IconImage size={30} color="#3d5079" />
+            <div style={{ fontSize: 13.5, color: "#707c9a" }}>
               No photos are waiting. Everything on this device has reached Drive.
             </div>
           </div>
@@ -217,11 +217,11 @@ export default function PhotoUploads({ onClose, token, onFreeSpace }) {
               <div style={{
                 fontSize: 14, fontWeight: 700, color: "#e6ecf5",
                 overflowWrap: "anywhere",
-                ...(r.cn ? {} : { fontSize: 11.5, color: "#8aa0c0", fontWeight: 600 }),
+                ...(r.cn ? {} : { fontSize: 11.5, color: "#9aadc8", fontWeight: 600 }),
               }}>
                 {r.cn || r.stopId}
               </div>
-              <div style={{ fontSize: 11.5, color: "#7a8aaa", marginTop: 3, lineHeight: 1.45 }}>
+              <div style={{ fontSize: 11.5, color: "#8e9bb7", marginTop: 3, lineHeight: 1.45 }}>
                 {r.pending == null
                   ? "Queued — not tried yet"
                   : `${r.pending} photo${r.pending === 1 ? "" : "s"} left to upload`}
@@ -248,7 +248,7 @@ export default function PhotoUploads({ onClose, token, onFreeSpace }) {
               style={{
                 flexShrink: 0, padding: "7px 11px", borderRadius: 8,
                 background: "transparent", border: "1px solid #3a2540",
-                color: "#c08090", fontSize: 10.5, fontWeight: 800, fontFamily: F,
+                color: "#c9919f", fontSize: 10.5, fontWeight: 800, fontFamily: F,
                 letterSpacing: 0.4, textTransform: "uppercase", cursor: "pointer",
               }}
             >Stop</button>
@@ -256,7 +256,7 @@ export default function PhotoUploads({ onClose, token, onFreeSpace }) {
         ))}
 
         {rows.length > 0 && (
-          <div style={{ fontSize: 11.5, color: "#4a5a70", lineHeight: 1.5, padding: "14px 0" }}>
+          <div style={{ fontSize: 11.5, color: "#607591", lineHeight: 1.5, padding: "14px 0" }}>
             Photos live on this device until Drive accepts them, so nothing here is
             lost while it waits. Uploads retry on their own, backing off as they
             fail — “Retry all” skips the wait and tries again right now.

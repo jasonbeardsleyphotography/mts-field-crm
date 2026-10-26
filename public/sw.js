@@ -1,3 +1,5 @@
+// v64: special callout on in-app visits; status bar no longer overlaps (blur);
+//      brighter muted text app-wide; phone kept when an email is also given.
 // v63: iPhone Video button (opens Camera in Video, copies address, logs it);
 //      contacts de-duplicated across devices; approved-accounts check; real
 //      sign-out; AI key moved server-side; Account & connection check; brighter
@@ -71,7 +73,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v63";
+const CACHE = "mts-field-v64";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

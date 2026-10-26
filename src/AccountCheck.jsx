@@ -132,7 +132,7 @@ export default function AccountCheck({ token, onClose, onServerSignIn }) {
           <div style={{ fontSize: 15, fontWeight: 800, color: "#fff", fontFamily: F, letterSpacing: 1, textTransform: "uppercase" }}>
             Account & Connection Check
           </div>
-          <div style={{ fontSize: 11.5, color: "#7d8fa8", marginTop: 2 }}>
+          <div style={{ fontSize: 11.5, color: "#90a0b5", marginTop: 2 }}>
             {busy ? "Checking…" : rows ? (allGood ? "Everything is connected." : "Some things need attention.") : ""}
           </div>
         </div>
@@ -140,12 +140,12 @@ export default function AccountCheck({ token, onClose, onServerSignIn }) {
           width: 38, height: 38, borderRadius: 19, flexShrink: 0, background: "transparent",
           border: "1px solid #253049", cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1,
           display: "flex", alignItems: "center", justifyContent: "center",
-        }}><IconRefresh size={16} color="#8aa0c0" /></button>
+        }}><IconRefresh size={16} color="#9aadc8" /></button>
         <button onClick={onClose} aria-label="Close" style={{
           width: 38, height: 38, borderRadius: 19, flexShrink: 0, background: "transparent",
           border: "1px solid #253049", cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
-        }}><IconX size={16} color="#8aa0c0" /></button>
+        }}><IconX size={16} color="#9aadc8" /></button>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 16px max(20px, env(safe-area-inset-bottom))" }}>
@@ -161,7 +161,7 @@ export default function AccountCheck({ token, onClose, onServerSignIn }) {
               }}>{glyph}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: "#e6ecf5" }}>{r.label}</div>
-                <div style={{ fontSize: 12.5, color: "#a9b8cc", marginTop: 3, lineHeight: 1.45, overflowWrap: "anywhere" }}>{r.detail}</div>
+                <div style={{ fontSize: 12.5, color: "#b2bfd1", marginTop: 3, lineHeight: 1.45, overflowWrap: "anywhere" }}>{r.detail}</div>
                 {r.action && (
                   <button onClick={r.action.run} style={{
                     marginTop: 8, padding: "8px 12px", borderRadius: 8,
@@ -175,7 +175,7 @@ export default function AccountCheck({ token, onClose, onServerSignIn }) {
           );
         })}
         {rows && (
-          <div style={{ fontSize: 11.5, color: "#6a7a92", lineHeight: 1.5, padding: "14px 0" }}>
+          <div style={{ fontSize: 11.5, color: "#818fa4", lineHeight: 1.5, padding: "14px 0" }}>
             Checks only read — nothing is created or changed. Each person signs in with
             their own Google account and sees their own calendar, Drive and contacts.
           </div>

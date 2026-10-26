@@ -142,7 +142,7 @@ export default function DriveCleanup({ onClose, token }) {
           <div style={{ fontSize: 15, fontWeight: 800, color: "#fff", fontFamily: F, letterSpacing: 1, textTransform: "uppercase" }}>
             Free Up Drive Space
           </div>
-          <div style={{ fontSize: 11.5, color: "#5a6580", marginTop: 2 }}>
+          <div style={{ fontSize: 11.5, color: "#707c9a", marginTop: 2 }}>
             Duplicate photos this app left behind
           </div>
         </div>
@@ -150,7 +150,7 @@ export default function DriveCleanup({ onClose, token }) {
           width: 38, height: 38, borderRadius: 19, flexShrink: 0,
           background: "transparent", border: "1px solid #253049", cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
-        }}><IconX size={16} color="#8aa0c0" /></button>
+        }}><IconX size={16} color="#9aadc8" /></button>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px max(20px, env(safe-area-inset-bottom))" }}>
@@ -176,13 +176,13 @@ export default function DriveCleanup({ onClose, token }) {
 
         {phase === "idle" && (
           <>
-            <p style={{ fontSize: 13, color: "#8aa0c0", lineHeight: 1.55 }}>
+            <p style={{ fontSize: 13, color: "#9aadc8", lineHeight: 1.55 }}>
               A bug in this app re-uploaded photos it thought had failed — once a
               minute, for as long as the app was open — leaving a copy in Drive
               every time. The bug is fixed, but those files are still taking up
               the space that is now blocking new uploads.
             </p>
-            <p style={{ fontSize: 12.5, color: "#5a6580", lineHeight: 1.55, marginTop: 10 }}>
+            <p style={{ fontSize: 12.5, color: "#707c9a", lineHeight: 1.55, marginTop: 10 }}>
               Scanning only reads. Nothing is deleted until you confirm, and you
               will see how many files and how much space first. One copy of every
               photo is always kept, and any file a card still points at is left
@@ -197,7 +197,7 @@ export default function DriveCleanup({ onClose, token }) {
         )}
 
         {phase === "scanning" && (
-          <div style={{ padding: "40px 0", textAlign: "center", color: "#8aa0c0", fontSize: 13 }}>
+          <div style={{ padding: "40px 0", textAlign: "center", color: "#9aadc8", fontSize: 13 }}>
             Scanning your Drive… this can take a minute on a large account.
           </div>
         )}
@@ -212,7 +212,7 @@ export default function DriveCleanup({ onClose, token }) {
                 ["Space they take", fmtBytes(scan.bytes)],
               ].map(([k, v]) => (
                 <div key={k} style={{ display: "flex", gap: 10, padding: "7px 0", borderBottom: "1px solid #141a28" }}>
-                  <span style={{ flex: 1, fontSize: 12, color: "#5a6580" }}>{k}</span>
+                  <span style={{ flex: 1, fontSize: 12, color: "#707c9a" }}>{k}</span>
                   <span style={{ fontSize: 13, color: "#e6ecf5", fontWeight: 700 }}>{v}</span>
                 </div>
               ))}
@@ -233,7 +233,7 @@ export default function DriveCleanup({ onClose, token }) {
             )}
 
             {phase === "deleting" && (
-              <div style={{ fontSize: 12.5, color: "#8aa0c0", marginBottom: 12 }}>
+              <div style={{ fontSize: 12.5, color: "#9aadc8", marginBottom: 12 }}>
                 Deleting {progress?.done ?? 0} of {progress?.total ?? 0}…
               </div>
             )}
@@ -246,7 +246,7 @@ export default function DriveCleanup({ onClose, token }) {
             )}
 
             {phase === "ready" && scan.deletable.length === 0 && (
-              <div style={{ fontSize: 13, color: "#8aa0c0", lineHeight: 1.55 }}>
+              <div style={{ fontSize: 13, color: "#9aadc8", lineHeight: 1.55 }}>
                 No duplicates found. The space is being used by something else —
                 check Google Photos, Gmail attachments, and Drive's Trash, which
                 still counts against the quota.
@@ -255,7 +255,7 @@ export default function DriveCleanup({ onClose, token }) {
 
             {phase !== "deleting" && (
               <button onClick={runScan} style={{ ...btn("#5a6580"), marginTop: 10 }}>
-                <IconRefresh size={15} color="#8aa0c0" /> Scan again
+                <IconRefresh size={15} color="#9aadc8" /> Scan again
               </button>
             )}
           </>

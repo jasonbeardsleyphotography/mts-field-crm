@@ -125,7 +125,7 @@ export default function PlanView({ planId }) {
     }}>
       <div>
         <div style={{ fontSize: 16, fontWeight: 700 }}>{msg}</div>
-        {sub && <div style={{ fontSize: 13, color: "#5a6580", marginTop: 8, lineHeight: 1.5 }}>{sub}</div>}
+        {sub && <div style={{ fontSize: 13, color: "#707c9a", marginTop: 8, lineHeight: 1.5 }}>{sub}</div>}
       </div>
     </div>
   );
@@ -177,7 +177,7 @@ export default function PlanView({ planId }) {
             {plan.address}
           </div>
         )}
-        <div style={{ fontSize: 11, color: "#8fa0b6", marginTop: 3, textShadow: "0 1px 4px rgba(0,0,0,.7)" }}>
+        <div style={{ fontSize: 11, color: "#9eadc0", marginTop: 3, textShadow: "0 1px 4px rgba(0,0,0,.7)" }}>
           {plan.pins.length} marked {plan.pins.length === 1 ? "location" : "locations"}
           {" · "}{locState === "on"
             ? "nearest first along the bottom"
@@ -333,7 +333,7 @@ export default function PlanView({ planId }) {
             </div>
             <button onClick={() => setSel(null)} aria-label="Close" style={{
               width: 32, height: 32, borderRadius: 16, background: "transparent",
-              border: "1px solid #253049", color: "#8aa0c0", cursor: "pointer",
+              border: "1px solid #253049", color: "#9aadc8", cursor: "pointer",
               fontSize: 16, lineHeight: 1, flexShrink: 0,
             }}>✕</button>
           </div>
@@ -343,7 +343,7 @@ export default function PlanView({ planId }) {
               borderRadius: 10, background: "#0a0c14", display: "block",
             }} />
           ) : (
-            <div style={{ fontSize: 12.5, color: "#5a6580", padding: "14px 0" }}>
+            <div style={{ fontSize: 12.5, color: "#707c9a", padding: "14px 0" }}>
               No photo for this location.
             </div>
           )}

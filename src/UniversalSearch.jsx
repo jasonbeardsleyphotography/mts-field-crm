@@ -58,7 +58,7 @@ function buildRecords({ routeStops, pipeline, weekEvents, deepEvents, deep }) {
     });
   }
   for (const card of Object.values(pipeline || {})) {
-    const meta = STAGE_META[card.stage] || { label: titleCase(card.stage) || "Lead", color: "#7a8aaa" };
+    const meta = STAGE_META[card.stage] || { label: titleCase(card.stage) || "Lead", color: "#8e9bb7" };
     add({
       id: card.id, _priority: 2, source: "pipeline",
       cn: card.cn, addr: card.addr, phone: card.phone, email: card.email, jn: card.jn,
@@ -141,13 +141,13 @@ export default function UniversalSearch({
           style={{ flex: 1, padding: "8px 4px", background: "transparent", border: "none", color: "#e0e8f0", fontSize: 16, fontFamily: "'DM Sans',system-ui", outline: "none" }}
         />
         <button onClick={onClose} aria-label="Close search" style={{ padding: 6, background: "transparent", border: "none", cursor: "pointer", display: "flex" }}>
-          <IconX size={18} color="#5a6580" />
+          <IconX size={18} color="#707c9a" />
         </button>
       </div>
 
       {/* Scope row */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 14px", borderBottom: "1px solid #11151f", flexShrink: 0 }}>
-        <span style={{ fontSize: 10, color: "#4a5a70", fontFamily: F, letterSpacing: 0.5, textTransform: "uppercase", flex: 1 }}>
+        <span style={{ fontSize: 10, color: "#607591", fontFamily: F, letterSpacing: 0.5, textTransform: "uppercase", flex: 1 }}>
           {q.trim()
             ? `${results.length} result${results.length === 1 ? "" : "s"}${results.length > RENDER_CAP ? ` · showing ${RENDER_CAP}` : ""}`
             : "Pipeline + route" + (deep ? " + all calendar history" : "")}
@@ -166,13 +166,13 @@ export default function UniversalSearch({
       {/* Results */}
       <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
         {!q.trim() && (
-          <div style={{ padding: "40px 24px", textAlign: "center", color: "#3a4560", fontSize: 13, lineHeight: 1.6 }}>
+          <div style={{ padding: "40px 24px", textAlign: "center", color: "#526187", fontSize: 13, lineHeight: 1.6 }}>
             Search across every client — today's stops, your whole pipeline, and
             scheduled appointments. Tap a result to open it.
           </div>
         )}
         {q.trim() && results.length === 0 && (
-          <div style={{ padding: "40px 24px", textAlign: "center", color: "#3a4560", fontSize: 13, lineHeight: 1.6 }}>
+          <div style={{ padding: "40px 24px", textAlign: "center", color: "#526187", fontSize: 13, lineHeight: 1.6 }}>
             No matches for “{q.trim()}”.
             {!deep && <><br /><button onClick={enableDeep} style={{ marginTop: 10, padding: "6px 14px", borderRadius: 8, background: "rgba(59,130,246,.1)", border: "1px solid rgba(59,130,246,.3)", color: "#4a80c0", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: F, letterSpacing: 0.5, textTransform: "uppercase" }}>Search all calendar history</button></>}
           </div>
@@ -185,8 +185,8 @@ export default function UniversalSearch({
           }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: "#e8eef6", fontFamily: F, textTransform: "uppercase", letterSpacing: 0.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.cn}</div>
-              {r.addr && <div style={{ fontSize: 11, color: "#6a7890", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.addr}</div>}
-              {r.jn && <div style={{ fontSize: 10, color: "#3a4560", marginTop: 1 }}>#{r.jn}</div>}
+              {r.addr && <div style={{ fontSize: 11, color: "#818da2", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.addr}</div>}
+              {r.jn && <div style={{ fontSize: 10, color: "#526187", marginTop: 1 }}>#{r.jn}</div>}
             </div>
             <div style={{
               flexShrink: 0, fontSize: 9, fontWeight: 800, fontFamily: F, letterSpacing: 0.4,
@@ -198,7 +198,7 @@ export default function UniversalSearch({
           </button>
         ))}
         {results.length > RENDER_CAP && (
-          <div style={{ padding: "14px 24px", textAlign: "center", color: "#3a4560", fontSize: 12 }}>
+          <div style={{ padding: "14px 24px", textAlign: "center", color: "#526187", fontSize: 12 }}>
             +{results.length - RENDER_CAP} more — keep typing to narrow it down.
           </div>
         )}

@@ -90,7 +90,7 @@ export default function ContactCleanup({ onClose, token }) {
           <div style={{ fontSize: 15, fontWeight: 800, color: "#fff", fontFamily: F, letterSpacing: 1, textTransform: "uppercase" }}>
             Duplicate Contacts
           </div>
-          <div style={{ fontSize: 11.5, color: "#5a6580", marginTop: 2 }}>
+          <div style={{ fontSize: 11.5, color: "#707c9a", marginTop: 2 }}>
             Extra client contacts this app created
           </div>
         </div>
@@ -98,7 +98,7 @@ export default function ContactCleanup({ onClose, token }) {
           width: 38, height: 38, borderRadius: 19, flexShrink: 0,
           background: "transparent", border: "1px solid #253049", cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
-        }}><IconX size={16} color="#8aa0c0" /></button>
+        }}><IconX size={16} color="#9aadc8" /></button>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px max(20px, env(safe-area-inset-bottom))" }}>
@@ -112,13 +112,13 @@ export default function ContactCleanup({ onClose, token }) {
 
         {phase === "idle" && (
           <>
-            <p style={{ fontSize: 13, color: "#8aa0c0", lineHeight: 1.55 }}>
+            <p style={{ fontSize: 13, color: "#9aadc8", lineHeight: 1.55 }}>
               The app adds a “CLIENT …” contact for each new client so their
               calls show a name. A bug let it add the same person more than
               once — that's fixed, but the extra entries are still in your
               phone.
             </p>
-            <p style={{ fontSize: 12.5, color: "#5a6580", lineHeight: 1.55, marginTop: 10 }}>
+            <p style={{ fontSize: 12.5, color: "#707c9a", lineHeight: 1.55, marginTop: 10 }}>
               Scanning only reads. Nothing is deleted until you confirm, and you
               will see the count first. Only contacts this app created are
               considered, and every client keeps one.
@@ -132,7 +132,7 @@ export default function ContactCleanup({ onClose, token }) {
         )}
 
         {phase === "scanning" && (
-          <div style={{ padding: "40px 0", textAlign: "center", color: "#8aa0c0", fontSize: 13 }}>
+          <div style={{ padding: "40px 0", textAlign: "center", color: "#9aadc8", fontSize: 13 }}>
             Reading your contacts… {count > 0 ? `${count} so far` : ""}
           </div>
         )}
@@ -147,7 +147,7 @@ export default function ContactCleanup({ onClose, token }) {
                 ["Extra copies to remove", String(scan.deletable.length)],
               ].map(([k, v]) => (
                 <div key={k} style={{ display: "flex", gap: 10, padding: "7px 0", borderBottom: "1px solid #141a28" }}>
-                  <span style={{ flex: 1, fontSize: 12, color: "#5a6580" }}>{k}</span>
+                  <span style={{ flex: 1, fontSize: 12, color: "#707c9a" }}>{k}</span>
                   <span style={{ fontSize: 13, color: "#e6ecf5", fontWeight: 700 }}>{v}</span>
                 </div>
               ))}
@@ -166,7 +166,7 @@ export default function ContactCleanup({ onClose, token }) {
             )}
 
             {phase === "deleting" && (
-              <div style={{ fontSize: 12.5, color: "#8aa0c0", marginBottom: 12 }}>
+              <div style={{ fontSize: 12.5, color: "#9aadc8", marginBottom: 12 }}>
                 Deleting {progress?.done ?? 0} of {progress?.total ?? 0}…
               </div>
             )}
@@ -179,7 +179,7 @@ export default function ContactCleanup({ onClose, token }) {
             )}
 
             {phase === "ready" && scan.deletable.length === 0 && (
-              <div style={{ fontSize: 13, color: "#8aa0c0", lineHeight: 1.55 }}>
+              <div style={{ fontSize: 13, color: "#9aadc8", lineHeight: 1.55 }}>
                 No duplicates found among the contacts this app created.
               </div>
             )}
@@ -187,7 +187,7 @@ export default function ContactCleanup({ onClose, token }) {
             {/* What would go, so this isn't a blind delete. */}
             {scan.groups.length > 0 && phase !== "deleting" && (
               <div style={{ marginTop: 18 }}>
-                <div style={{ fontSize: 10.5, fontWeight: 800, color: "#4a5a70", fontFamily: F, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>
+                <div style={{ fontSize: 10.5, fontWeight: 800, color: "#607591", fontFamily: F, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>
                   {phase === "done" ? "Cleaned up" : "Will keep one of each"}
                 </div>
                 {scan.groups.slice(0, 60).map(g => (
@@ -204,7 +204,7 @@ export default function ContactCleanup({ onClose, token }) {
                   </div>
                 ))}
                 {scan.groups.length > 60 && (
-                  <div style={{ fontSize: 11.5, color: "#5a6580", paddingTop: 8 }}>
+                  <div style={{ fontSize: 11.5, color: "#707c9a", paddingTop: 8 }}>
                     …and {scan.groups.length - 60} more.
                   </div>
                 )}
@@ -213,7 +213,7 @@ export default function ContactCleanup({ onClose, token }) {
 
             {phase !== "deleting" && (
               <button onClick={runScan} style={{ ...btn("#5a6580"), marginTop: 14 }}>
-                <IconRefresh size={15} color="#8aa0c0" /> Scan again
+                <IconRefresh size={15} color="#9aadc8" /> Scan again
               </button>
             )}
           </>

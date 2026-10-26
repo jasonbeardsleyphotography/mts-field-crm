@@ -181,7 +181,7 @@ function SettingsRow({ icon, label, sub, onClick, danger, accent }) {
       <span style={{width:36,height:36,borderRadius:9,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:(accent||"#5a6580")+"1a",border:`1px solid ${(accent||"#5a6580")}55`}}>{icon}</span>
       <span style={{flex:1,minWidth:0}}>
         <div style={{fontSize:14.5,fontWeight:700,color:danger?"#FF6B6B":"#e6ecf5"}}>{label}</div>
-        {sub && <div style={{fontSize:11.5,color:"#5a6580",marginTop:1,lineHeight:1.35}}>{sub}</div>}
+        {sub && <div style={{fontSize:11.5,color:"#707c9a",marginTop:1,lineHeight:1.35}}>{sub}</div>}
       </span>
     </button>
   );
@@ -2291,7 +2291,7 @@ export default function App() {
   // flash of "Sign in with Google" on every page reload before silent reauth
   // completes.
   if (!token && !authBootChecked) return (
-    <div style={{height:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0a0b10",color:"#5a6580",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
+    <div style={{height:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0a0b10",color:"#707c9a",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
       <div style={{textAlign:"center"}}><div style={{fontSize:14,fontWeight:600,letterSpacing:1}}>Signing in…</div></div>
     </div>
   );
@@ -2299,17 +2299,17 @@ export default function App() {
   if (!token) return (
     <div style={{height:"100dvh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0a0b10",fontFamily:"'Oswald','DM Sans',system-ui,sans-serif",color:"#f0f4fa",padding:20,paddingTop:"max(20px,env(safe-area-inset-top))",boxSizing:"border-box"}}>
       <div style={{fontSize:28,fontWeight:900,letterSpacing:3,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif"}}>MTS FIELD SALES</div>
-      <div style={{fontSize:12,color:"#5a6580",marginBottom:32,fontWeight:500,letterSpacing:1}}>Monster Tree Service of Rochester</div>
+      <div style={{fontSize:12,color:"#707c9a",marginBottom:32,fontWeight:500,letterSpacing:1}}>Monster Tree Service of Rochester</div>
       <button onClick={serverSignIn} style={{padding:"16px 40px",borderRadius:12,background:"#1a2035",border:"1px solid #2a3560",color:"#f0f4fa",fontSize:16,fontWeight:700,cursor:"pointer",letterSpacing:.5}}>Sign in with Google</button>
       {/* Fallback: the original popup sign-in, in case the redirect flow ever
           has trouble — so a backend hiccup can never lock you out. */}
-      <button onClick={initAuth} style={{marginTop:14,padding:"8px 16px",borderRadius:8,background:"transparent",border:"none",color:"#5a6580",fontSize:12,fontWeight:600,cursor:"pointer",letterSpacing:.3,textDecoration:"underline"}}>Trouble signing in? Use classic sign-in</button>
+      <button onClick={initAuth} style={{marginTop:14,padding:"8px 16px",borderRadius:8,background:"transparent",border:"none",color:"#707c9a",fontSize:12,fontWeight:600,cursor:"pointer",letterSpacing:.3,textDecoration:"underline"}}>Trouble signing in? Use classic sign-in</button>
       {error && <div style={{marginTop:16,color:"#ff5555",fontSize:12}}>{error}</div>}
     </div>
   );
 
   if (loading && !Object.keys(rawEvents).length) return (
-    <div style={{height:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0a0b10",color:"#5a6580",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
+    <div style={{height:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0a0b10",color:"#707c9a",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
       <div style={{textAlign:"center"}}><div style={{fontSize:16,fontWeight:700}}>Loading...</div></div>
     </div>
   );
@@ -2369,8 +2369,8 @@ export default function App() {
       <div style={{display:"flex",alignItems:"center",gap:6,padding:"8px 12px",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
         {/* Segmented pill switch — ROUTE | PIPELINE */}
         <div style={{display:"flex",background:"#0a0b10",border:"1px solid #1a2035",borderRadius:10,padding:2,flexShrink:0}}>
-          <button onClick={()=>setView("route")} style={{padding:"5px 12px",borderRadius:8,background:view==="route"?"#1a2035":"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:12,letterSpacing:1.5,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#4a5a70",transition:"all .15s"}}>Route</button>
-          <button onClick={()=>setView("pipeline")} style={{padding:"5px 12px",borderRadius:8,background:view==="pipeline"?"#1a2035":"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:12,letterSpacing:1.5,textTransform:"uppercase",color:view==="pipeline"?"#10B981":"#4a5a70",transition:"all .15s",display:"flex",alignItems:"center",gap:4}}>
+          <button onClick={()=>setView("route")} style={{padding:"5px 12px",borderRadius:8,background:view==="route"?"#1a2035":"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:12,letterSpacing:1.5,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#607591",transition:"all .15s"}}>Route</button>
+          <button onClick={()=>setView("pipeline")} style={{padding:"5px 12px",borderRadius:8,background:view==="pipeline"?"#1a2035":"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:12,letterSpacing:1.5,textTransform:"uppercase",color:view==="pipeline"?"#10B981":"#607591",transition:"all .15s",display:"flex",alignItems:"center",gap:4}}>
             Pipeline
             {(() => {
               try {
@@ -2407,19 +2407,19 @@ export default function App() {
           {(syncIndicator==="error"||syncIndicator==="auth-error") ? <IconCloudOff size={13} color="#FF5555"/> : (syncIndicator==="syncing"||syncPulling) ? <IconCloud size={13} color="#F6BF26"/> : <IconCloud size={13} color="#10B981"/>}
           {/* data-synctick references syncTick (updated every minute) so the
               "Xm ago" label re-renders and stays current between syncs. */}
-          {lastSyncTime>0 && <span data-synctick={syncTick} style={{fontSize:9,color:(syncIndicator==="syncing"||syncPulling)?"#F6BF26":"#3a5060",fontFamily:"'Oswald',sans-serif"}}>{(syncIndicator==="syncing"||syncPulling)?"syncing…":Math.floor((Date.now()-lastSyncTime)/60000)<1?"now":`${Math.floor((Date.now()-lastSyncTime)/60000)}m`}</span>}
+          {lastSyncTime>0 && <span data-synctick={syncTick} style={{fontSize:9,color:(syncIndicator==="syncing"||syncPulling)?"#F6BF26":"#527187",fontFamily:"'Oswald',sans-serif"}}>{(syncIndicator==="syncing"||syncPulling)?"syncing…":Math.floor((Date.now()-lastSyncTime)/60000)<1?"now":`${Math.floor((Date.now()-lastSyncTime)/60000)}m`}</span>}
         </button>}
         <div style={{flex:1}} onClick={handleDebugTap}/>
         {view === "route" && <div style={{display:"flex",alignItems:"center",gap:6}}>
-          <button onClick={()=>setSearchOpen(true)} title="Search everything" style={{padding:"5px 7px",borderRadius:8,background:"transparent",border:"1px solid #2a3560",color:"#3a4a60",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-            <IconSearch size={14} color="#3a4a60" />
+          <button onClick={()=>setSearchOpen(true)} title="Search everything" style={{padding:"5px 7px",borderRadius:8,background:"transparent",border:"1px solid #2a3560",color:"#526887",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <IconSearch size={14} color="#526887" />
           </button>
           <select value={selDay} onChange={e=>{setSelDay(Number(e.target.value));setExpanded(null);setReorderMode(false);setMoving(null);}} style={{padding:"5px 10px",borderRadius:8,border:"1px solid #2a3560",background:"#0a0b10",color:"#f0f4fa",fontSize:11,fontWeight:600,cursor:"pointer",outline:"none",appearance:"auto",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
             {dayLabels.map((l,i) => <option key={i} value={i}>{l}</option>)}
           </select>
         </div>}
         {view === "pipeline" && <button onClick={()=>setSearchOpen(true)} title="Search everything" style={{padding:"5px 7px",borderRadius:8,background:"transparent",border:"1px solid #2a3560",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <IconSearch size={14} color="#3a4a60" />
+          <IconSearch size={14} color="#526887" />
         </button>}
         {view === "pipeline" && pipelineSelectMode && pipelineSelectedCount > 0 && (
           <button onClick={()=>setPipelineBulkEmailTick(t=>t+1)} style={{padding:"5px 10px",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.3)",color:"#3B82F6",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
@@ -2428,7 +2428,7 @@ export default function App() {
           </button>
         )}
         {view === "pipeline" && (
-          <button onClick={()=>{setPipelineSelectMode(s=>!s);setPipelineSelectedCount(0);}} style={{padding:"5px 10px",borderRadius:8,background:pipelineSelectMode?"rgba(59,130,246,.15)":"transparent",border:`1px solid ${pipelineSelectMode?"rgba(59,130,246,.3)":"#2a3560"}`,color:pipelineSelectMode?"#3B82F6":"#4a5a70",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
+          <button onClick={()=>{setPipelineSelectMode(s=>!s);setPipelineSelectedCount(0);}} style={{padding:"5px 10px",borderRadius:8,background:pipelineSelectMode?"rgba(59,130,246,.15)":"transparent",border:`1px solid ${pipelineSelectMode?"rgba(59,130,246,.3)":"#2a3560"}`,color:pipelineSelectMode?"#3B82F6":"#607591",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
             {pipelineSelectMode ? <><svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Done</> : "Select"}
             {pipelineSelectMode && pipelineSelectedCount > 0 && <span style={{fontSize:9,padding:"1px 5px",borderRadius:99,background:"rgba(59,130,246,.25)",color:"#3B82F6",fontWeight:800}}>{pipelineSelectedCount}</span>}
           </button>
@@ -2460,7 +2460,7 @@ export default function App() {
           {moving !== null ? <>
             <div style={{width:10,height:10,borderRadius:10,background:active[moving]?.color||"#8E24AA"}}/>
             <span style={{fontSize:12,fontWeight:600,color:"#c8a0e8"}}>Moving: {active[moving]?.cn} — tap where to place</span>
-            <button onClick={()=>setMoving(null)} style={{marginLeft:"auto",padding:"3px 10px",borderRadius:6,background:"#1a2035",border:"none",color:"#90a8c0",fontSize:10,fontWeight:700,cursor:"pointer"}}>Cancel</button>
+            <button onClick={()=>setMoving(null)} style={{marginLeft:"auto",padding:"3px 10px",borderRadius:6,background:"#1a2035",border:"none",color:"#9eb3c8",fontSize:10,fontWeight:700,cursor:"pointer"}}>Cancel</button>
           </> : <span style={{fontSize:12,fontWeight:500,color:"#9a80c8"}}><span style={{display:"flex",alignItems:"center",gap:4}}><IconReorder size={12} color="#9a80c8"/>Tap a stop to pick it up</span></span>}
         </div>}
         <div className="mts-map-inner">
@@ -2477,7 +2477,7 @@ export default function App() {
 
       {/* ── STOP LIST ──────────────────────────────────────────────────── */}
       <div className="scr mts-list" style={{paddingBottom:"max(12px,env(safe-area-inset-bottom))"}}>
-        {active.length === 0 && <div style={{padding:40,textAlign:"center",color:"#2a3050",fontSize:14,fontWeight:600}}>No stops</div>}
+        {active.length === 0 && <div style={{padding:40,textAlign:"center",color:"#424b7e",fontSize:14,fontWeight:600}}>No stops</div>}
 
         {(()=>{ let taskNum = 0; return filteredActive.map((s, idx) => {
           if (s.isTask) taskNum++;
@@ -2513,17 +2513,17 @@ export default function App() {
                     letterSpacing: isNext ? 1 : 0.5,
                     textShadow: isNext ? "0 0 8px rgba(255,255,255,.15)" : "none",
                   }}>{isNext?"▸ ":""}{s.cn}</div>
-                  {s.addr && <div style={{fontSize:12,color:"#96a2b4",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:2,fontWeight:500,letterSpacing:1,fontFamily:"'Oswald',sans-serif",textTransform:"uppercase"}}>{s.addr}</div>}
+                  {s.addr && <div style={{fontSize:12,color:"#a4aebe",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:2,fontWeight:500,letterSpacing:1,fontFamily:"'Oswald',sans-serif",textTransform:"uppercase"}}>{s.addr}</div>}
                 </div>
                 {s.isTask && s.window && <span style={{padding:"3px 8px",borderRadius:6,fontSize:11,fontWeight:900,color:isAM?"#66BB6A":"#64B5F6",background:winBg,border:`1px solid ${winColor}40`,flexShrink:0,letterSpacing:1,fontFamily:"'Oswald',sans-serif",textTransform:"uppercase"}}>{s.window}</span>}
                 {s.isTask && s.db && <span style={{padding:"3px 6px",borderRadius:6,fontSize:10,fontWeight:900,color:"#FFD54F",background:"rgba(255,213,79,.12)",border:"1px solid rgba(255,213,79,.3)",flexShrink:0,letterSpacing:1,fontFamily:"'Oswald',sans-serif"}}>DB</span>}
-                {!s.isTask && s.timeLabel && <span style={{padding:"3px 8px",borderRadius:6,fontSize:10,fontWeight:700,color:"#9a8cc0",background:"rgba(100,80,160,.1)",border:"1px solid rgba(100,80,160,.2)",flexShrink:0}}>{s.timeLabel}</span>}
-                {!reorderMode && s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} onClick={e=>{e.stopPropagation();markContact(s.id,"call");}} style={{padding:"5px 10px",borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#90a8c0",fontSize:12,textDecoration:"none",fontWeight:700,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}><IconPhone size={13} color="#90a8c0"/></a>}
+                {!s.isTask && s.timeLabel && <span style={{padding:"3px 8px",borderRadius:6,fontSize:10,fontWeight:700,color:"#a79bc8",background:"rgba(100,80,160,.1)",border:"1px solid rgba(100,80,160,.2)",flexShrink:0}}>{s.timeLabel}</span>}
+                {!reorderMode && s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} onClick={e=>{e.stopPropagation();markContact(s.id,"call");}} style={{padding:"5px 10px",borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#9eb3c8",fontSize:12,textDecoration:"none",fontWeight:700,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}><IconPhone size={13} color="#9eb3c8"/></a>}
               </div>
 
               {s.constraint && <div style={{marginTop:6,marginLeft:isNext?50:44,padding:"4px 10px",borderRadius:6,background:"rgba(255,80,160,.12)",border:"1px solid rgba(255,80,160,.25)",color:"#FF80AB",fontSize:12,fontWeight:800,display:"inline-block",letterSpacing:0.3,fontFamily:"'Oswald','DM Sans',sans-serif",textTransform:"uppercase"}}>{s.constraint}</div>}
 
-              {s.titleContext && !reorderMode && <div style={{marginTop:4,marginLeft:isNext?50:44,fontSize:12,color:"#b0b8c8",lineHeight:1.5,fontStyle:"italic",fontWeight:500}}>{s.titleContext}</div>}
+              {s.titleContext && !reorderMode && <div style={{marginTop:4,marginLeft:isNext?50:44,fontSize:12,color:"#b8bfce",lineHeight:1.5,fontStyle:"italic",fontWeight:500}}>{s.titleContext}</div>}
 
               {isExp && <div onClick={e=>e.stopPropagation()} style={{marginTop:12,marginLeft:isNext?50:44,paddingTop:12,borderTop:"1px solid #1a2030"}}>
                 {lastContact[s.id] && (() => {
@@ -2533,22 +2533,22 @@ export default function App() {
                   const kindLabel = lc.kind === "sms" ? "Texted" : lc.kind === "call" ? "Called" : lc.kind === "email" ? "Emailed" : "Contacted";
                   return <div style={{fontSize:11,color:"#64B5F6",marginBottom:8,fontWeight:600,fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>{kindLabel} · {label}</div>;
                 })()}
-                {s.notes && <div style={{fontSize:13,color:"#a0b0c0",lineHeight:1.6,marginBottom:10,fontWeight:500}}><Linkify text={s.notes} linkColor="#7BB3FF"/></div>}
-                {s.phone && <div style={{fontSize:13,color:"#a0b8d0",marginBottom:3,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><IconPhone size={13} color="#a0b8d0"/>{s.phone}</div>}
-                {s.email && <div style={{fontSize:13,color:"#a0b8d0",marginBottom:8,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#a0b8d0"/>{s.email}</div>}
+                {s.notes && <div style={{fontSize:13,color:"#abbac8",lineHeight:1.6,marginBottom:10,fontWeight:500}}><Linkify text={s.notes} linkColor="#7BB3FF"/></div>}
+                {s.phone && <div style={{fontSize:13,color:"#aac0d5",marginBottom:3,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><IconPhone size={13} color="#aac0d5"/>{s.phone}</div>}
+                {s.email && <div style={{fontSize:13,color:"#aac0d5",marginBottom:8,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#aac0d5"/>{s.email}</div>}
                 {declineConfirm === s.id ? (
                   <button onClick={()=>decline(s.id)} style={{width:"100%",padding:"11px 0",marginTop:4,borderRadius:8,background:"rgba(200,60,60,.15)",border:"1px solid rgba(200,60,60,.3)",color:"#FF5555",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",animation:"pulse 1s infinite",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconX size={14} color="#FF5555"/>CONFIRM DECLINE?</button>
                 ) : rejectConfirm === s.id ? (
                   <button onClick={()=>markReject(s.id)} style={{width:"100%",padding:"11px 0",marginTop:4,borderRadius:8,background:"rgba(255,140,0,.15)",border:"1px solid rgba(255,140,0,.4)",color:"#FF8C00",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",animation:"pulse 1s infinite",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconNoSymbol size={14} color="#FF8C00"/>CONFIRM REJECT?</button>
                 ) : (
                   <div style={{display:"flex",gap:6,marginTop:4}}>
-                    {s.phone && <button onClick={()=>{setTextSheet(s);setOtwMinutes(null);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#1a2035",border:"1px solid #2a3560",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconMessageSquare size={16} color="#a0b8d0"/></button>}
-                    {s.notes && <button onClick={()=>speakStop(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:ttsSpeaking?"rgba(100,80,200,.18)":"rgba(100,80,200,.08)",border:"1px solid rgba(100,80,200,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{ttsSpeaking ? <IconX size={16} color="#8a80c0"/> : <IconVolume2 size={16} color="#8a80c0"/>}</button>}
+                    {s.phone && <button onClick={()=>{setTextSheet(s);setOtwMinutes(null);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"#1a2035",border:"1px solid #2a3560",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconMessageSquare size={16} color="#aac0d5"/></button>}
+                    {s.notes && <button onClick={()=>speakStop(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:ttsSpeaking?"rgba(100,80,200,.18)":"rgba(100,80,200,.08)",border:"1px solid rgba(100,80,200,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{ttsSpeaking ? <IconX size={16} color="#9a91c9"/> : <IconVolume2 size={16} color="#9a91c9"/>}</button>}
                     <button onClick={()=>openOnsite(s)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(16,185,129,.06)",border:"1px solid rgba(16,185,129,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconClipboard size={16} color="#10B981"/></button>
                     <button onClick={()=>setMovePicker(movePicker?.stopId === s.id ? null : { stopId: s.id })} title="Move to another day" style={{flex:1,padding:"10px 0",borderRadius:8,background:movePicker?.stopId===s.id?"rgba(246,191,38,.18)":"rgba(246,191,38,.06)",border:`1px solid ${movePicker?.stopId===s.id?"rgba(246,191,38,.4)":"rgba(246,191,38,.15)"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconCalendar size={16} color="#F6BF26"/></button>
-                    <button onClick={()=>{setDeclineConfirm(s.id);setRejectConfirm(null);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(200,60,60,.06)",border:"1px solid rgba(200,60,60,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={16} color="#a06060"/></button>
+                    <button onClick={()=>{setDeclineConfirm(s.id);setRejectConfirm(null);}} style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(200,60,60,.06)",border:"1px solid rgba(200,60,60,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={16} color="#af7979"/></button>
                     <button onClick={()=>{setRejectConfirm(s.id);setDeclineConfirm(null);}} title="Flag: reject in SingleOps" style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(255,140,0,.06)",border:"1px solid rgba(255,140,0,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconNoSymbol size={16} color="#a07030"/></button>
-                    {!s.isTask && <button onClick={()=>deleteStop(s.id)} title="Delete permanently" style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(100,100,100,.06)",border:"1px solid rgba(100,100,100,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconTrash size={16} color="#4a5a70"/></button>}
+                    {!s.isTask && <button onClick={()=>deleteStop(s.id)} title="Delete permanently" style={{flex:1,padding:"10px 0",borderRadius:8,background:"rgba(100,100,100,.06)",border:"1px solid rgba(100,100,100,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconTrash size={16} color="#607591"/></button>}
                   </div>
                 )}
                 {/* Day picker popover — shown beneath action row when active */}
@@ -2571,7 +2571,7 @@ export default function App() {
                               borderRadius: 6,
                               background: isCurrent ? "transparent" : "rgba(246,191,38,.08)",
                               border: `1px solid ${isCurrent ? "#1a2030" : "rgba(246,191,38,.25)"}`,
-                              color: isCurrent ? "#3a4a60" : "#F6BF26",
+                              color: isCurrent ? "#526887" : "#F6BF26",
                               fontSize: 11,
                               fontWeight: 700,
                               cursor: isCurrent ? "default" : "pointer",
@@ -2585,7 +2585,7 @@ export default function App() {
                         );
                       })}
                     </div>
-                    <button onClick={() => setMovePicker(null)} style={{width:"100%",marginTop:8,padding:"6px 0",borderRadius:6,background:"transparent",border:"1px solid #1a2030",color:"#5a6580",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>Cancel</button>
+                    <button onClick={() => setMovePicker(null)} style={{width:"100%",marginTop:8,padding:"6px 0",borderRadius:6,background:"transparent",border:"1px solid #1a2030",color:"#707c9a",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>Cancel</button>
                   </div>
                 )}
               </div>}
@@ -2598,7 +2598,7 @@ export default function App() {
           {/* Search row */}
           {routeSearchOpen && <div style={{padding:"6px 8px",borderBottom:"1px solid #0e1218",display:"flex",gap:6,alignItems:"center"}}>
             <input value={routeSearch} onChange={e=>setRouteSearch(e.target.value)} autoFocus placeholder="Search clients, addresses..." style={{flex:1,padding:"6px 10px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:16,fontFamily:"'DM Sans',system-ui",outline:"none"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
-            <button onClick={()=>{setRouteSearchOpen(false);setRouteSearch("");}} style={{padding:"6px 8px",borderRadius:6,background:"transparent",border:"none",color:"#4a5a70",fontSize:12,cursor:"pointer"}}><IconX size={13} color="#4a5a70"/></button>
+            <button onClick={()=>{setRouteSearchOpen(false);setRouteSearch("");}} style={{padding:"6px 8px",borderRadius:6,background:"transparent",border:"none",color:"#607591",fontSize:12,cursor:"pointer"}}><IconX size={13} color="#607591"/></button>
           </div>}
           <div style={{display:"flex",alignItems:"center",padding:"4px 8px",gap:4}}>
             {completed.length>0 ? (
@@ -2621,8 +2621,8 @@ export default function App() {
             <div key={s.id} style={{padding:"10px 16px",borderBottom:"1px solid #0a0e16",display:"flex",alignItems:"center",gap:10}}>
               <div style={{width:24,height:24,borderRadius:"50%",background:s.color+"44",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><IconCheckCircle size={13} color="#fff"/></div>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,color:"#6a7890",textDecoration:"line-through",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.cn}</div>
-                {s.addr && <div style={{fontSize:10,color:"#3a4560",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{s.addr}</div>}
+                <div style={{fontSize:13,color:"#818da2",textDecoration:"line-through",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.cn}</div>
+                {s.addr && <div style={{fontSize:10,color:"#526187",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{s.addr}</div>}
               </div>
               <button onClick={()=>openOnsite(s)} style={{padding:"6px 12px",borderRadius:8,background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.2)",color:"#3B82F6",fontSize:11,fontWeight:800,cursor:"pointer",letterSpacing:0.3,fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5}}><IconEdit size={13} color="#3B82F6"/>EDIT</button>
               <button onClick={()=>restore(s.id)} style={{padding:"6px 12px",borderRadius:8,background:"rgba(255,183,77,.08)",border:"1px solid rgba(255,183,77,.25)",color:"#FFB74D",fontSize:11,fontWeight:800,cursor:"pointer",letterSpacing:0.3,fontFamily:"'Oswald',sans-serif",textTransform:"uppercase",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5}}><IconUndo size={13} color="#FFB74D"/>RESTORE</button>
@@ -2658,7 +2658,7 @@ export default function App() {
             title={reorderMode?"Done reordering":"Reorder stops"}
             style={{height:34,padding:"0 20px",borderRadius:8,background:reorderMode?"rgba(142,36,170,.2)":"rgba(255,255,255,.04)",border:`1px solid ${reorderMode?"rgba(142,36,170,.5)":"#252d47"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:5,transition:"all .15s"}}>
             <IconReorder size={14} color={reorderMode?"#c8a0e8":"#5a6890"}/>
-            <span style={{fontSize:11,fontWeight:700,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",color:reorderMode?"#c8a0e8":"#5a6890"}}>{reorderMode?"DONE":"REORDER"}</span>
+            <span style={{fontSize:11,fontWeight:700,fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",color:reorderMode?"#c8a0e8":"#717fa6"}}>{reorderMode?"DONE":"REORDER"}</span>
           </button>
         </div>
         {/* Add Visit */}
@@ -2696,14 +2696,14 @@ export default function App() {
           <div onClick={()=>setSettingsOpen(false)} style={{position:"fixed",inset:0,zIndex:350,background:"rgba(0,0,0,.55)",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
             <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",borderTop:"1px solid #1a2030",borderTopLeftRadius:18,borderTopRightRadius:18,padding:"8px 16px",paddingBottom:"max(16px,env(safe-area-inset-bottom))",boxShadow:"0 -14px 44px rgba(0,0,0,.55)"}}>
               <div style={{width:42,height:4,borderRadius:2,background:"#2a3550",margin:"4px auto 12px"}}/>
-              <div style={{fontSize:11,fontWeight:800,color:"#4a5a70",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif",margin:"0 6px 6px"}}>Settings &amp; Tools</div>
+              <div style={{fontSize:11,fontWeight:800,color:"#607591",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif",margin:"0 6px 6px"}}>Settings &amp; Tools</div>
               <Row accent="#10B981"
                 icon={<IconCheckCircle size={17} color="#10B981"/>}
                 label="Account & connection check"
                 sub="Test sign-in, Calendar, Drive and Contacts for this account"
                 onClick={()=>{ setAccountCheckOpen(true); setSettingsOpen(false); }} />
               <Row accent="#5a8ab0"
-                icon={<IconRefresh size={17} color="#8aa0c0" style={{animation:loading?"spin 1s linear infinite":undefined}}/>}
+                icon={<IconRefresh size={17} color="#9aadc8" style={{animation:loading?"spin 1s linear infinite":undefined}}/>}
                 label="Sync now" sub="Reload today's stops from the calendar"
                 onClick={()=>{ load(true); setSettingsOpen(false); }} />
               <Row accent={includeWeekends?"#F6BF26":"#5a6580"}
@@ -2808,6 +2808,7 @@ export default function App() {
             // Build a description that includes phone/email if provided so
             // parseEvent can extract them.
             const descParts = [];
+            if (form.callout) descParts.push(`Callout: ${form.callout.replace(/\s+/g, " ")}`);
             if (form.phone) descParts.push(`Phone: ${form.phone}`);
             if (form.email) descParts.push(`Email: ${form.email}`);
             if (form.notes) descParts.push(`Notes: ${form.notes}`);
@@ -2880,7 +2881,7 @@ export default function App() {
       {/* ── PIPELINE VIEW ──────────────────────────────────────────── */}
       {view === "pipeline" && pipelineSearchOpen && <div style={{padding:"6px 8px",borderBottom:"1px solid #0e1218",background:"#090b0f",display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
         <input value={pipelineSearch} onChange={e=>setPipelineSearch(e.target.value)} autoFocus placeholder="Search pipeline..." style={{flex:1,padding:"6px 10px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:16,fontFamily:"'DM Sans',system-ui",outline:"none"}} onBlur={()=>{try{window.scrollTo(0,0);}catch(e){}}} />
-        <button onClick={()=>{setPipelineSearchOpen(false);setPipelineSearch("");}} style={{padding:"6px 8px",borderRadius:6,background:"transparent",border:"none",color:"#4a5a70",cursor:"pointer"}}><IconX size={13} color="#4a5a70"/></button>
+        <button onClick={()=>{setPipelineSearchOpen(false);setPipelineSearch("");}} style={{padding:"6px 8px",borderRadius:6,background:"transparent",border:"none",color:"#607591",cursor:"pointer"}}><IconX size={13} color="#607591"/></button>
       </div>}
       {view === "pipeline" && <Pipeline onSwitchToRoute={(cardId) => { setView("route"); setSelDay(0); if (cardId) { setDismissed(prev => { const n={...prev}; delete n[cardId]; return n; }); const pl=loadPipeline(); delete pl[cardId]; savePipeline(pl); } }} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} lastContact={lastContact} markContact={markContact} selectMode={pipelineSelectMode} setSelectMode={setPipelineSelectMode} onSelectCountChange={setPipelineSelectedCount} bulkEmailTick={pipelineBulkEmailTick} />}
 
@@ -2889,18 +2890,18 @@ export default function App() {
         <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:"14px 14px 0 0",padding:18,maxWidth:480,width:"100%",paddingBottom:"max(18px,env(safe-area-inset-bottom))"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
             <span style={{fontSize:15,fontWeight:700,color:"#f0f4fa",flex:1}}>Text {(textSheet.cn||"").split(" ")[0]}</span>
-            <span style={{fontSize:12,color:"#5a6580"}}>{textSheet.phone}</span>
-            <button onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{width:28,height:28,borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={13} color="#5a6580"/></button>
+            <span style={{fontSize:12,color:"#707c9a"}}>{textSheet.phone}</span>
+            <button onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{width:28,height:28,borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#707c9a",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={13} color="#707c9a"/></button>
           </div>
 
           <button onClick={()=>{window.open(`sms:${textSheet.phone.replace(/\D/g,"")}`,"_self");markContact(textSheet.id,"sms");setTextSheet(null);}} style={{width:"100%",padding:"12px 14px",marginBottom:8,borderRadius:8,background:"#1a2035",border:"1px solid #2a3560",cursor:"pointer",textAlign:"left"}}>
-            <div style={{fontSize:12,fontWeight:700,color:"#90a8c0"}}>Custom</div>
-            <div style={{fontSize:11,color:"#5a6580",marginTop:2}}>Open blank message</div>
+            <div style={{fontSize:12,fontWeight:700,color:"#9eb3c8"}}>Custom</div>
+            <div style={{fontSize:11,color:"#707c9a",marginTop:2}}>Open blank message</div>
           </button>
 
           {otwMinutes === null ? (
             <div>
-              <div style={{fontSize:11,fontWeight:700,color:"#5a6580",marginBottom:6,letterSpacing:.5}}>OTW — how far out are you?</div>
+              <div style={{fontSize:11,fontWeight:700,color:"#707c9a",marginBottom:6,letterSpacing:.5}}>OTW — how far out are you?</div>
               <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
                 {[["4–6","4 to 6 minutes"],["5–7","5 to 7 minutes"],["6–8","6 to 8 minutes"],["8–10","8 to 10 minutes"],["10–12","10 to 12 minutes"],["12–15","12 to 15 minutes"],["15–20","15 to 20 minutes"],["20–25","20 to 25 minutes"],["30–40","30 to 40 minutes"],["40–50","40 to 50 minutes"],["45–1 hr","45 minutes to an hour"]].map(([label,txt]) => (
                   <button key={label} onClick={()=>{
@@ -3032,7 +3033,7 @@ export default function App() {
           <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",borderTop:"1px solid #1a2030",borderTopLeftRadius:18,borderTopRightRadius:18,padding:"16px 18px",paddingBottom:"max(18px,env(safe-area-inset-bottom))",maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{display:"flex",alignItems:"center",marginBottom:12}}>
               <div style={{flex:1,fontSize:14,fontWeight:800,color:"#fff",fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>iPhone Video button</div>
-              <button onClick={() => setIphoneSetupOpen(false)} aria-label="Close" style={{width:34,height:34,borderRadius:17,background:"transparent",border:"1px solid #253049",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={15} color="#8aa0c0"/></button>
+              <button onClick={() => setIphoneSetupOpen(false)} aria-label="Close" style={{width:34,height:34,borderRadius:17,background:"transparent",border:"1px solid #253049",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={15} color="#9aadc8"/></button>
             </div>
             <IphoneVideoSetup />
           </div>
@@ -3044,7 +3045,7 @@ export default function App() {
           <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",borderTop:"1px solid #1a2030",borderTopLeftRadius:18,borderTopRightRadius:18,padding:"16px 18px",paddingBottom:"max(18px,env(safe-area-inset-bottom))",maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{display:"flex",alignItems:"center",marginBottom:12}}>
               <div style={{flex:1,fontSize:14,fontWeight:800,color:"#fff",fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>Open the RealWork app</div>
-              <button onClick={() => setRealworkSetupOpen(false)} aria-label="Close" style={{width:34,height:34,borderRadius:17,background:"transparent",border:"1px solid #253049",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={15} color="#8aa0c0"/></button>
+              <button onClick={() => setRealworkSetupOpen(false)} aria-label="Close" style={{width:34,height:34,borderRadius:17,background:"transparent",border:"1px solid #253049",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={15} color="#9aadc8"/></button>
             </div>
             <RealWorkSetup />
           </div>
@@ -3068,7 +3069,7 @@ export default function App() {
       {undoToast && <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"10px 16px",paddingBottom:"max(10px,env(safe-area-inset-bottom))",background:"#1a2a20",borderTop:"1px solid rgba(16,185,129,.3)",display:"flex",alignItems:"center",gap:10,zIndex:150}}>
         <div style={{flex:1,fontSize:13,color:"#10B981",fontWeight:600,fontFamily:"'Oswald',sans-serif",letterSpacing:0.5}}><span style={{display:"flex",alignItems:"center",gap:5}}><IconCheckCircle size={13} color="#10B981"/>{undoToast.cn} → PIPELINE</span></div>
         <button onClick={undoToastAction} style={{padding:"6px 16px",borderRadius:8,background:"rgba(255,183,77,.12)",border:"1px solid rgba(255,183,77,.3)",color:"#FFB74D",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5}}>UNDO</button>
-        <button onClick={() => { if (undoToastTimer.current) clearTimeout(undoToastTimer.current); setUndoToast(null); }} style={{padding:"6px 10px",borderRadius:6,background:"transparent",border:"none",color:"#4a6050",cursor:"pointer",display:"flex",alignItems:"center"}}><IconX size={14} color="#4a6050"/></button>
+        <button onClick={() => { if (undoToastTimer.current) clearTimeout(undoToastTimer.current); setUndoToast(null); }} style={{padding:"6px 10px",borderRadius:6,background:"transparent",border:"none",color:"#64816c",cursor:"pointer",display:"flex",alignItems:"center"}}><IconX size={14} color="#64816c"/></button>
       </div>}
 
       {/* ── TTS ERROR TOAST ────────────────────────────────────────── */}
@@ -3077,7 +3078,7 @@ export default function App() {
           <div style={{fontWeight:700,marginBottom:2,fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,textTransform:"uppercase",fontSize:11}}>TTS failed</div>
           <div style={{fontSize:11,color:"#e0a0a0",wordBreak:"break-word"}}>{ttsError}</div>
         </div>
-        <button onClick={() => setTtsError(null)} style={{padding:"4px 8px",borderRadius:6,background:"transparent",border:"none",color:"#a06060",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}><IconX size={14} color="#a06060"/></button>
+        <button onClick={() => setTtsError(null)} style={{padding:"4px 8px",borderRadius:6,background:"transparent",border:"none",color:"#af7979",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}><IconX size={14} color="#af7979"/></button>
       </div>}
 
       {/* (UploadTracker is mounted inline above the bottom bar — see above) */}

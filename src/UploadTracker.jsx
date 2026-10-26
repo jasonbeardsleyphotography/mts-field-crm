@@ -30,11 +30,11 @@ const F = "'Oswald',sans-serif";
 
 function describeStatus(item) {
   switch (item.status) {
-    case "queued":    return { label: "Waiting…", color: "#7a7050" };
+    case "queued":    return { label: "Waiting…", color: "#998d65" };
     case "uploading": return { label: `Uploading ${item.progress||0}%`, color: "#10B981" };
     case "error":     return { label: "Failed", color: "#FF5555" };
-    case "local":     return { label: "On phone only", color: "#8898a8" };
-    default:          return { label: item.status, color: "#7a7050" };
+    case "local":     return { label: "On phone only", color: "#99a7b5" };
+    default:          return { label: item.status, color: "#998d65" };
   }
 }
 
@@ -161,9 +161,9 @@ export default function UploadTracker({ stopMap = {}, bottomOffset = 0, inline =
             <IconYoutube size={12} color={accent} />
             <div style={{ flex: 1, minWidth: 0, fontSize: 10, fontWeight: 800, color: accent, fontFamily: F, letterSpacing: 0.5, textTransform: "uppercase" }}>
               {summary}
-              {!errorCount && !paused && activeCount > 0 && <span style={{marginLeft:6,color:"#7a8090",fontWeight:600}}>{avgProgress}%</span>}
+              {!errorCount && !paused && activeCount > 0 && <span style={{marginLeft:6,color:"#8f94a1",fontWeight:600}}>{avgProgress}%</span>}
             </div>
-            <button onClick={() => setExpanded(false)} style={{ padding:"3px 8px", borderRadius:4, background:"transparent", border:"1px solid #252d47", color:"#5a6580", fontSize:9, fontWeight:700, cursor:"pointer", fontFamily:F, letterSpacing:0.5 }}>HIDE</button>
+            <button onClick={() => setExpanded(false)} style={{ padding:"3px 8px", borderRadius:4, background:"transparent", border:"1px solid #252d47", color:"#707c9a", fontSize:9, fontWeight:700, cursor:"pointer", fontFamily:F, letterSpacing:0.5 }}>HIDE</button>
           </div>
           {/* Action row */}
           <div style={{ padding: "8px 12px", display: "flex", alignItems: "center", gap: 6, background: "#0e1120", borderBottom: "1px solid #1a2030", flexWrap: "wrap" }}>
@@ -185,7 +185,7 @@ export default function UploadTracker({ stopMap = {}, bottomOffset = 0, inline =
                 padding: "5px 10px", borderRadius: 5,
                 background: showDiag ? "rgba(100,180,246,.15)" : "transparent",
                 border: "1px solid #252d47",
-                color: showDiag ? "#64B5F6" : "#5a6580",
+                color: showDiag ? "#64B5F6" : "#707c9a",
                 fontSize: 10, fontWeight: 700, cursor: "pointer",
                 fontFamily: F, letterSpacing: 0.5, textTransform: "uppercase",
               }}
@@ -210,16 +210,16 @@ export default function UploadTracker({ stopMap = {}, bottomOffset = 0, inline =
           {showDiag && (
             <div style={{ padding: "6px 12px 10px", background: "#080a14", borderBottom: "1px solid #1a2030", maxHeight: 240, overflowY: "auto" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <span style={{ fontSize: 9, color: "#5a6580", fontWeight: 700, fontFamily: F, letterSpacing: 0.5, textTransform: "uppercase", flex: 1 }}>Recent log entries (newest first)</span>
-                <button onClick={() => { clearLog(); setLogEntries([]); }} style={{ padding: "2px 8px", borderRadius: 4, background: "transparent", border: "1px solid #252d47", color: "#5a6580", fontSize: 9, fontWeight: 700, cursor: "pointer", fontFamily: F, letterSpacing: 0.5 }}>CLEAR</button>
+                <span style={{ fontSize: 9, color: "#707c9a", fontWeight: 700, fontFamily: F, letterSpacing: 0.5, textTransform: "uppercase", flex: 1 }}>Recent log entries (newest first)</span>
+                <button onClick={() => { clearLog(); setLogEntries([]); }} style={{ padding: "2px 8px", borderRadius: 4, background: "transparent", border: "1px solid #252d47", color: "#707c9a", fontSize: 9, fontWeight: 700, cursor: "pointer", fontFamily: F, letterSpacing: 0.5 }}>CLEAR</button>
               </div>
-              {logEntries.length === 0 && <div style={{ fontSize: 10, color: "#4a5a70", fontStyle: "italic" }}>No log entries yet. Upload a video to see what happens.</div>}
+              {logEntries.length === 0 && <div style={{ fontSize: 10, color: "#607591", fontStyle: "italic" }}>No log entries yet. Upload a video to see what happens.</div>}
               {logEntries.map(e => (
-                <div key={e.id} style={{ fontSize: 10, color: e.level === "error" ? "#FF8888" : e.level === "warn" ? "#F6BF26" : "#8898a8", fontFamily: "ui-monospace,Menlo,monospace", lineHeight: 1.4, marginBottom: 2, wordBreak: "break-word" }}>
-                  <span style={{ color: "#4a5a70" }}>{new Date(e.ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</span>
+                <div key={e.id} style={{ fontSize: 10, color: e.level === "error" ? "#FF8888" : e.level === "warn" ? "#F6BF26" : "#99a7b5", fontFamily: "ui-monospace,Menlo,monospace", lineHeight: 1.4, marginBottom: 2, wordBreak: "break-word" }}>
+                  <span style={{ color: "#607591" }}>{new Date(e.ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</span>
                   {" "}<span style={{ fontWeight: 700 }}>{e.event}</span>
-                  {e.itemId && <span style={{ color: "#4a5a70" }}> [{e.itemId.slice(-8)}]</span>}
-                  {e.data && <span style={{ color: "#5a6580" }}> {JSON.stringify(e.data)}</span>}
+                  {e.itemId && <span style={{ color: "#607591" }}> [{e.itemId.slice(-8)}]</span>}
+                  {e.data && <span style={{ color: "#707c9a" }}> {JSON.stringify(e.data)}</span>}
                 </div>
               ))}
             </div>
@@ -236,7 +236,7 @@ export default function UploadTracker({ stopMap = {}, bottomOffset = 0, inline =
                     <div style={{ fontSize: 11, fontWeight: 700, color: "#e0e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: F, letterSpacing: 0.3 }}>
                       {nameFor(item)}
                     </div>
-                    <div style={{ fontSize: 9, color: "#5a6580", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>
+                    <div style={{ fontSize: 9, color: "#707c9a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>
                       {item.title}
                     </div>
                   </div>
@@ -246,10 +246,10 @@ export default function UploadTracker({ stopMap = {}, bottomOffset = 0, inline =
                   <div style={{ height: "100%", width: `${item.progress || 0}%`, background: sd.color, transition: "width .3s" }} />
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <div style={{ flex: 1, fontSize: 9, color: "#5a6580", fontFamily: F, letterSpacing: 0.3 }}>
+                  <div style={{ flex: 1, fontSize: 9, color: "#707c9a", fontFamily: F, letterSpacing: 0.3 }}>
                     {sizeMB}MB
                     {item.bytesUploaded > 0 && item.status !== "error" && (
-                      <span style={{ marginLeft: 6, color: "#7a8090" }}>
+                      <span style={{ marginLeft: 6, color: "#8f94a1" }}>
                         {(item.bytesUploaded / (1024*1024)).toFixed(1)}MB sent
                       </span>
                     )}
@@ -258,7 +258,7 @@ export default function UploadTracker({ stopMap = {}, bottomOffset = 0, inline =
                     <button onClick={() => retryItem(item.id)} style={btnStyle("rgba(246,191,38,.1)", "rgba(246,191,38,.3)", "#F6BF26")}>RETRY</button>
                   )}
                   <button onClick={() => { if (window.confirm("Stop uploading this video? It stays on the client's card so you can save or upload it later.")) cancelItem(item.id); }} style={btnStyle("transparent", "#252d47", "#a06060", true)}>
-                    <IconX size={11} color="#a06060" />
+                    <IconX size={11} color="#af7979" />
                   </button>
                 </div>
                 {item.error && (

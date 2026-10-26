@@ -15,9 +15,9 @@ import { getPhotoQueueDetail, retryPhotoQueueNow, dropPhotoStop, processPhotoQue
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const ROW  = { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #1a2035" };
-const LABEL = { fontSize: 12, color: "#7a8aaa", fontWeight: 500 };
+const LABEL = { fontSize: 12, color: "#8e9bb7", fontWeight: 500 };
 const VALUE = { fontSize: 12, color: "#e0e8ff", fontWeight: 700, fontFamily: "'DM Mono',monospace", textAlign: "right", maxWidth: "60%" };
-const SECTION_HEAD = { fontSize: 10, letterSpacing: 1.5, color: "#4a5a70", fontWeight: 700, textTransform: "uppercase", paddingTop: 16, paddingBottom: 4 };
+const SECTION_HEAD = { fontSize: 10, letterSpacing: 1.5, color: "#607591", fontWeight: 700, textTransform: "uppercase", paddingTop: 16, paddingBottom: 4 };
 
 const LEVEL_COLOR = { error: "#FF5555", warn: "#F6BF26", info: "#5a9fdf" };
 
@@ -104,17 +104,17 @@ export default function DebugPanel({ onClose, token, lastSyncTime }) {
     <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "#070910", display: "flex", flexDirection: "column", fontFamily: "'DM Sans',system-ui,sans-serif", color: "#e0e8ff", paddingTop: "env(safe-area-inset-top)" }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid #1a2035", flexShrink: 0 }}>
-        <button onClick={onClose} style={{ background: "none", border: "none", color: "#7a8aaa", cursor: "pointer", padding: 4, display: "flex" }}>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: "#8e9bb7", cursor: "pointer", padding: 4, display: "flex" }}>
           <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
         <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", fontFamily: "'Oswald',sans-serif", flex: 1 }}>Debug Panel</span>
-        <button onClick={refresh} style={{ background: "none", border: "1px solid #2a3560", borderRadius: 6, color: "#7a8aaa", cursor: "pointer", padding: "3px 8px", fontSize: 11, fontWeight: 600 }}>Refresh</button>
+        <button onClick={refresh} style={{ background: "none", border: "1px solid #2a3560", borderRadius: 6, color: "#8e9bb7", cursor: "pointer", padding: "3px 8px", fontSize: 11, fontWeight: 600 }}>Refresh</button>
       </div>
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 2, padding: "6px 14px", borderBottom: "1px solid #1a2035", flexShrink: 0 }}>
         {["overview", "queues", "log"].map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{ padding: "4px 12px", borderRadius: 6, background: tab === t ? "#1a2035" : "transparent", border: "none", color: tab === t ? "#f0f4fa" : "#4a5a70", fontSize: 11, fontWeight: 700, cursor: "pointer", textTransform: "uppercase", letterSpacing: 1, fontFamily: "'Oswald',sans-serif" }}>{t}</button>
+          <button key={t} onClick={() => setTab(t)} style={{ padding: "4px 12px", borderRadius: 6, background: tab === t ? "#1a2035" : "transparent", border: "none", color: tab === t ? "#f0f4fa" : "#607591", fontSize: 11, fontWeight: 700, cursor: "pointer", textTransform: "uppercase", letterSpacing: 1, fontFamily: "'Oswald',sans-serif" }}>{t}</button>
         ))}
       </div>
 
@@ -176,7 +176,7 @@ export default function DebugPanel({ onClose, token, lastSyncTime }) {
 
         {tab === "queues" && <>
           <div style={SECTION_HEAD}>Video Upload Queue ({videoItems.length})</div>
-          {videoItems.length === 0 && <div style={{ fontSize: 12, color: "#4a5a70", padding: "8px 0" }}>No video items</div>}
+          {videoItems.length === 0 && <div style={{ fontSize: 12, color: "#607591", padding: "8px 0" }}>No video items</div>}
           {videoItems.map(item => {
             const pct = item.fileSize > 0 ? Math.round((item.bytesUploaded || 0) / item.fileSize * 100) : 0;
             const statusCol = { queued: "#5a9fdf", uploading: "#F6BF26", done: "#10B981", error: "#FF5555", failed: "#FF5555", cancelled: "#7a8aaa" }[item.status] || "#7a8aaa";
@@ -185,14 +185,14 @@ export default function DebugPanel({ onClose, token, lastSyncTime }) {
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#e0e8ff", marginBottom: 4 }}>{item.title || item.id}</div>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                   <span style={{ fontSize: 11, color: statusCol, fontWeight: 700 }}>{item.status}</span>
-                  {item.fileSize > 0 && <span style={{ fontSize: 11, color: "#7a8aaa" }}>{(item.bytesUploaded / 1e6).toFixed(1)} / {(item.fileSize / 1e6).toFixed(1)} MB</span>}
+                  {item.fileSize > 0 && <span style={{ fontSize: 11, color: "#8e9bb7" }}>{(item.bytesUploaded / 1e6).toFixed(1)} / {(item.fileSize / 1e6).toFixed(1)} MB</span>}
                 </div>
                 {item.fileSize > 0 && (
                   <div style={{ height: 4, background: "#1a2035", borderRadius: 99 }}>
                     <div style={{ height: 4, width: `${pct}%`, background: statusCol, borderRadius: 99, transition: "width .3s" }} />
                   </div>
                 )}
-                <div style={{ fontSize: 10, color: "#4a5a70", marginTop: 4 }}>
+                <div style={{ fontSize: 10, color: "#607591", marginTop: 4 }}>
                   {item.retryCount > 0 && `Retries: ${item.retryCount}  `}
                   {item.updatedAt ? `Updated: ${ago(item.updatedAt)}` : ""}
                 </div>
@@ -215,12 +215,12 @@ export default function DebugPanel({ onClose, token, lastSyncTime }) {
                   if (tok) processPhotoQueue(tok);
                   refresh();
                 }}
-                style={{ background: "none", border: "1px solid #2a3560", borderRadius: 6, color: "#7a8aaa", cursor: "pointer", padding: "3px 8px", fontSize: 10, fontWeight: 700 }}
+                style={{ background: "none", border: "1px solid #2a3560", borderRadius: 6, color: "#8e9bb7", cursor: "pointer", padding: "3px 8px", fontSize: 10, fontWeight: 700 }}
               >Retry all now</button>
             )}
           </div>
           {photoQueue.length === 0
-            ? <div style={{ fontSize: 12, color: "#4a5a70", padding: "8px 0" }}>No pending photo uploads</div>
+            ? <div style={{ fontSize: 12, color: "#607591", padding: "8px 0" }}>No pending photo uploads</div>
             : photoQueue.map(q => {
                 const slim = getFieldSlim(q.stopId);
                 return (
@@ -230,7 +230,7 @@ export default function DebugPanel({ onClose, token, lastSyncTime }) {
                         <div style={{ fontSize: 12.5, color: "#e0e8f5", fontWeight: 700 }}>
                           {slim?.cn || q.stopId}
                         </div>
-                        <div style={{ fontSize: 11, color: "#7a8aaa", marginTop: 2 }}>
+                        <div style={{ fontSize: 11, color: "#8e9bb7", marginTop: 2 }}>
                           {q.pending == null ? "not attempted yet" : `${q.pending} photo${q.pending === 1 ? "" : "s"} left`}
                           {q.tries > 0 ? ` · ${q.tries} failed ${q.tries === 1 ? "attempt" : "attempts"}` : ""}
                           {q.lastTry ? ` · last tried ${ago(q.lastTry)}` : ""}
@@ -252,7 +252,7 @@ export default function DebugPanel({ onClose, token, lastSyncTime }) {
                           dropPhotoStop(q.stopId);
                           refresh();
                         }}
-                        style={{ flexShrink: 0, background: "none", border: "1px solid #3a2540", borderRadius: 6, color: "#c08090", cursor: "pointer", padding: "4px 8px", fontSize: 10, fontWeight: 700 }}
+                        style={{ flexShrink: 0, background: "none", border: "1px solid #3a2540", borderRadius: 6, color: "#c9919f", cursor: "pointer", padding: "4px 8px", fontSize: 10, fontWeight: 700 }}
                       >Stop retrying</button>
                     </div>
                   </div>
@@ -264,18 +264,18 @@ export default function DebugPanel({ onClose, token, lastSyncTime }) {
         {tab === "log" && <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, paddingBottom: 4 }}>
             <span style={SECTION_HEAD}>Error Log ({log.length} entries)</span>
-            <button onClick={downloadLog} style={{ background: "none", border: "1px solid #2a3560", borderRadius: 6, color: "#7a8aaa", cursor: "pointer", padding: "3px 8px", fontSize: 10, fontWeight: 700 }}>Download</button>
+            <button onClick={downloadLog} style={{ background: "none", border: "1px solid #2a3560", borderRadius: 6, color: "#8e9bb7", cursor: "pointer", padding: "3px 8px", fontSize: 10, fontWeight: 700 }}>Download</button>
           </div>
-          {log.length === 0 && <div style={{ fontSize: 12, color: "#4a5a70", padding: "8px 0" }}>No log entries</div>}
+          {log.length === 0 && <div style={{ fontSize: 12, color: "#607591", padding: "8px 0" }}>No log entries</div>}
           {[...log].reverse().map((entry, i) => (
             <div key={i} style={{ borderBottom: "1px solid #111520", padding: "7px 0" }}>
               <div style={{ display: "flex", gap: 8, alignItems: "baseline", marginBottom: 2 }}>
-                <span style={{ fontSize: 10, fontWeight: 800, color: LEVEL_COLOR[entry.level] || "#7a8aaa", textTransform: "uppercase", minWidth: 36 }}>{entry.level}</span>
-                <span style={{ fontSize: 10, color: "#5a6a8a", fontFamily: "'DM Mono',monospace" }}>{fmt(entry.ts)}</span>
-                <span style={{ fontSize: 10, color: "#4a5a70" }}>{entry.context}</span>
+                <span style={{ fontSize: 10, fontWeight: 800, color: LEVEL_COLOR[entry.level] || "#8e9bb7", textTransform: "uppercase", minWidth: 36 }}>{entry.level}</span>
+                <span style={{ fontSize: 10, color: "#7081a2", fontFamily: "'DM Mono',monospace" }}>{fmt(entry.ts)}</span>
+                <span style={{ fontSize: 10, color: "#607591" }}>{entry.context}</span>
               </div>
               <div style={{ fontSize: 12, color: "#c0d0e8", paddingLeft: 44 }}>{entry.message}</div>
-              {entry.data && <div style={{ fontSize: 10, color: "#4a6070", paddingLeft: 44, fontFamily: "'DM Mono',monospace", wordBreak: "break-all", marginTop: 2 }}>{entry.data}</div>}
+              {entry.data && <div style={{ fontSize: 10, color: "#607d91", paddingLeft: 44, fontFamily: "'DM Mono',monospace", wordBreak: "break-all", marginTop: 2 }}>{entry.data}</div>}
             </div>
           ))}
         </>}

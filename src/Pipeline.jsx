@@ -59,7 +59,7 @@ const STAGES = [
   { id: "weak",            label: "Weak",            short: "Weak",     letter: "K", color: "#E67C73", bg: "rgba(230,124,115,.1)" },
   { id: "follow_up",       label: "Follow up",       short: "Follow up",letter: "F", color: "#F6BF26", bg: "rgba(246,191,38,.1)" },
   { id: "sold",            label: "Sold",            short: "Sold",     letter: "✓", color: "#0B8043", bg: "rgba(11,128,67,.1)" },
-  { id: "declined",        label: "Declined",        short: "Declined", letter: "D", color: "#616161", bg: "rgba(97,97,97,.1)" },
+  { id: "declined",        label: "Declined",        short: "Declined", letter: "D", color: "#7c7c7c", bg: "rgba(97,97,97,.1)" },
 ];
 
 // Google Calendar colorId for each pipeline stage — must match the canonical
@@ -809,10 +809,10 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
             <div style={{fontSize:compact?14:15,fontWeight:600,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
               {card.hot && <IconFire size={12} color="#FFB300" style={{marginRight:3,flexShrink:0}}/>}
               {card.revision && <IconRevision size={12} color="#FF6B9D" style={{marginRight:3,flexShrink:0}}/>}
-              {card.pauseUntil && Date.now() < card.pauseUntil && <IconPause size={12} color="#8a96a8" style={{marginRight:3,flexShrink:0}}/>}
+              {card.pauseUntil && Date.now() < card.pauseUntil && <IconPause size={12} color="#9ba5b4" style={{marginRight:3,flexShrink:0}}/>}
               {card.cn}
             </div>
-            {card.addr && <div style={{fontSize:11,color:"#6a7890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1,fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{card.addr}</div>}
+            {card.addr && <div style={{fontSize:11,color:"#818da2",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1,fontFamily:F,textTransform:"uppercase",letterSpacing:0.5}}>{card.addr}</div>}
           </div>
           <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0}}>
             {!compact && <span style={{fontSize:10,padding:"2px 4px 2px 3px",borderRadius:99,background:stage?.bg,color:stage?.color,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",display:"inline-flex",alignItems:"center",gap:5}}>
@@ -825,7 +825,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
               return lc ? <span style={{fontSize:9,color:"#64B5F6",fontWeight:600,fontFamily:F,letterSpacing:0.3,textTransform:"uppercase"}}>{lc}</span> : null;
             })()}
             <div style={{display:"flex",alignItems:"center",gap:4}}>
-              <span style={{fontSize:10,color:card.stage==="weak"?"#FF8A65":"#4a5a70"}}>{daysSince(card.estimateSentAt || (card.stage !== "estimate_needed" ? card.stageChangedAt : null) || card.addedAt)}</span>
+              <span style={{fontSize:10,color:card.stage==="weak"?"#FF8A65":"#607591"}}>{daysSince(card.estimateSentAt || (card.stage !== "estimate_needed" ? card.stageChangedAt : null) || card.addedAt)}</span>
               {contactWarning && <span style={{fontSize:9,padding:"1px 4px",borderRadius:4,background:"rgba(230,124,115,.12)",border:"1px solid rgba(230,124,115,.25)",color:"#E67C73",fontWeight:700,fontFamily:F}}>⚠{daysSinceContact}d</span>}
               {(() => {
                 const q = queueByStop[card.id] || [];
@@ -856,10 +856,10 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
       <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
         {/* Tabs */}
         <div style={{display:"flex",overflowX:"auto",borderBottom:"1px solid #1a2030",flexShrink:0,background:"#0d0f18"}}>
-          <button onClick={()=>setActiveTab("all")} style={{padding:"8px 14px",fontSize:11,fontWeight:activeTab==="all"?700:500,color:activeTab==="all"?"#3B82F6":"#4a5a70",borderBottom:activeTab==="all"?"2px solid #039BE5":"2px solid transparent",background:"transparent",border:"none",borderBottomStyle:"solid",cursor:"pointer",whiteSpace:"nowrap",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>All ({allCards.length})</button>
+          <button onClick={()=>setActiveTab("all")} style={{padding:"8px 14px",fontSize:11,fontWeight:activeTab==="all"?700:500,color:activeTab==="all"?"#3B82F6":"#607591",borderBottom:activeTab==="all"?"2px solid #039BE5":"2px solid transparent",background:"transparent",border:"none",borderBottomStyle:"solid",cursor:"pointer",whiteSpace:"nowrap",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>All ({allCards.length})</button>
           {STAGES.map(st => {
             const count = (cardsByStage[st.id] || []).length;
-            return <button key={st.id} onClick={()=>setActiveTab(st.id)} style={{padding:"8px 12px",fontSize:11,fontWeight:activeTab===st.id?700:500,color:activeTab===st.id?st.color:"#4a5a70",borderBottom:activeTab===st.id?`2px solid ${st.color}`:"2px solid transparent",background:"transparent",border:"none",borderBottomStyle:"solid",cursor:"pointer",whiteSpace:"nowrap",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",position:"relative"}}>
+            return <button key={st.id} onClick={()=>setActiveTab(st.id)} style={{padding:"8px 12px",fontSize:11,fontWeight:activeTab===st.id?700:500,color:activeTab===st.id?st.color:"#607591",borderBottom:activeTab===st.id?`2px solid ${st.color}`:"2px solid transparent",background:"transparent",border:"none",borderBottomStyle:"solid",cursor:"pointer",whiteSpace:"nowrap",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",position:"relative"}}>
               {st.short} {count > 0 && <span style={{fontSize:9,color:st.color,marginLeft:2}}>({count})</span>}
               {st.id === "weak" && count > 0 && <span style={{position:"absolute",top:4,right:2,width:5,height:5,borderRadius:3,background:"#FF8A65"}}/>}
             </button>;
@@ -892,7 +892,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
 
         {/* Card list */}
         <div className="mts-pl-col" style={{flex:1,overflowY:"auto",paddingBottom:selectMode && selectedCount>0?"max(70px,calc(60px + env(safe-area-inset-bottom)))":"max(12px,env(safe-area-inset-bottom))"}}>
-          {sorted.length === 0 && <div style={{padding:40,textAlign:"center",color:"#2a3050",fontSize:14,fontWeight:600}}>No cards{search ? ` matching "${search}"` : ""}</div>}
+          {sorted.length === 0 && <div style={{padding:40,textAlign:"center",color:"#424b7e",fontSize:14,fontWeight:600}}>No cards{search ? ` matching "${search}"` : ""}</div>}
           {sorted.map(card => renderCard(card, false))}
         </div>
 
@@ -913,7 +913,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
                 <div style={{display:"flex",alignItems:"center",gap:6}}>
                   <div style={{width:8,height:8,borderRadius:4,background:st.color,flexShrink:0}}/>
                   <span style={{fontSize:11,fontWeight:600,color:st.color,fontFamily:F,textTransform:"uppercase",letterSpacing:1,flex:1}}>{st.label}</span>
-                  <span style={{fontSize:10,color:"#4a5a70",fontWeight:600}}>{cards.length}</span>
+                  <span style={{fontSize:10,color:"#607591",fontWeight:600}}>{cards.length}</span>
                   {selectMode && cards.length > 0 && (
                     <button onClick={()=>{
                       const allInCol = cards.every(c => selected[c.id]);
@@ -946,7 +946,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
       {/* ── SELECT MODE ACTION BAR (shared mobile + desktop) ───────── */}
       {selectMode && selectedCount > 0 && (
         <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"10px 16px",background:"#0d0f18",borderTop:"1px solid #1a2030",display:"flex",gap:8,alignItems:"center",paddingBottom:"max(10px,env(safe-area-inset-bottom))",zIndex:50}}>
-          <span style={{fontSize:12,color:"#90a8c0",fontWeight:600}}>{selectedCount} selected</span>
+          <span style={{fontSize:12,color:"#9eb3c8",fontWeight:600}}>{selectedCount} selected</span>
           <div style={{flex:1}}/>
           <button onClick={()=>setEmailSheet(true)} style={{padding:"8px 14px",borderRadius:8,background:"rgba(59,130,246,.12)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:12,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}><IconMail size={13} color="#3B82F6"/>Email</span></button>
           <button onClick={()=>setPipelineSheet({card:null,type:"sms_bulk"})} style={{padding:"8px 14px",borderRadius:8,background:"rgba(16,185,129,.1)",border:"1px solid rgba(16,185,129,.2)",color:"#10B981",fontSize:12,fontWeight:700,cursor:"pointer"}}><span style={{display:"flex",alignItems:"center",gap:5}}>💬 Text</span></button>
@@ -954,7 +954,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
           {bulkMoveOpen && (
             <div onClick={()=>setBulkMoveOpen(false)} style={{position:"fixed",inset:0,zIndex:200}}>
               <div onClick={e=>e.stopPropagation()} style={{position:"absolute",bottom:"calc(max(10px,env(safe-area-inset-bottom)) + 54px)",right:16,background:"#0d0f18",border:"1px solid #1a2030",borderRadius:12,padding:"8px 0",minWidth:180,boxShadow:"0 4px 20px rgba(0,0,0,.5)"}}>
-                <div style={{fontSize:10,fontWeight:700,color:"#4a5a70",letterSpacing:1,textTransform:"uppercase",padding:"4px 14px 8px",fontFamily:F}}>Move {selectedCount} cards to</div>
+                <div style={{fontSize:10,fontWeight:700,color:"#607591",letterSpacing:1,textTransform:"uppercase",padding:"4px 14px 8px",fontFamily:F}}>Move {selectedCount} cards to</div>
                 {STAGES.filter(st => st.id !== "declined").map(st => (
                   <button key={st.id} onClick={()=>{
                     selectedCards.forEach(c => moveCard(c.id, st.id));
@@ -975,9 +975,9 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
       {/* ── UNDO TOAST ─────────────────────────────────────────────── */}
       {undoAction && (
         <div style={{position:"fixed",bottom:"max(80px,calc(70px + env(safe-area-inset-bottom)))",left:"50%",transform:"translateX(-50%)",zIndex:300,display:"flex",alignItems:"center",gap:10,padding:"10px 16px",borderRadius:12,background:"#1a2035",border:"1px solid #2a3560",boxShadow:"0 4px 20px rgba(0,0,0,.5)",whiteSpace:"nowrap",pointerEvents:"all"}}>
-          <span style={{fontSize:12,color:"#90a8c0",fontFamily:F,letterSpacing:0.5}}>{undoAction.label}</span>
+          <span style={{fontSize:12,color:"#9eb3c8",fontFamily:F,letterSpacing:0.5}}>{undoAction.label}</span>
           <button onClick={undoMove} style={{padding:"5px 12px",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.35)",color:"#3B82F6",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>UNDO</button>
-          <button onClick={()=>{clearTimeout(undoTimerRef.current);setUndoAction(null);}} style={{width:20,height:20,borderRadius:4,background:"transparent",border:"none",color:"#4a5a70",fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>✕</button>
+          <button onClick={()=>{clearTimeout(undoTimerRef.current);setUndoAction(null);}} style={{width:20,height:20,borderRadius:4,background:"transparent",border:"none",color:"#607591",fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>✕</button>
         </div>
       )}
 
@@ -1054,22 +1054,22 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
           {/* ── Email client toggle ── */}
           <div style={{display:"flex",gap:4,marginBottom:14,background:"#0a0c14",borderRadius:8,padding:3}}>
             {[["outlook_web","Outlook (work)"],["outlook_live","Outlook.com"],["mailto","Default app"]].map(([id,label])=>(
-              <button key={id} onClick={()=>saveEmailClient(id)} style={{flex:1,padding:"5px 0",borderRadius:6,background:emailClient===id?"#1a2540":"transparent",border:emailClient===id?"1px solid #2a3560":"1px solid transparent",color:emailClient===id?"#90b8e0":"#3a4a60",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.3,transition:"all .15s"}}>{label}</button>
+              <button key={id} onClick={()=>saveEmailClient(id)} style={{flex:1,padding:"5px 0",borderRadius:6,background:emailClient===id?"#1a2540":"transparent",border:emailClient===id?"1px solid #2a3560":"1px solid transparent",color:emailClient===id?"#90b8e0":"#526887",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:F,textTransform:"uppercase",letterSpacing:0.3,transition:"all .15s"}}>{label}</button>
             ))}
           </div>
 
           {/* ── Bulk queue: tap each recipient to open their compose window ── */}
           {bulkEmailQueue ? <>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-              <button onClick={()=>setBulkEmailQueue(null)} style={{padding:"4px 10px",borderRadius:6,background:"transparent",border:"1px solid #2a3560",color:"#5a6580",fontSize:11,cursor:"pointer"}}>← Back</button>
+              <button onClick={()=>setBulkEmailQueue(null)} style={{padding:"4px 10px",borderRadius:6,background:"transparent",border:"1px solid #2a3560",color:"#707c9a",fontSize:11,cursor:"pointer"}}>← Back</button>
               <span style={{fontSize:13,fontWeight:700,color:"#f0f4fa",flex:1}}>Tap each to open in Outlook</span>
             </div>
-            <div style={{fontSize:10,color:"#4a5060",marginBottom:10}}>Each tap opens one compose window — browsers only allow one per click.</div>
+            <div style={{fontSize:10,color:"#646c81",marginBottom:10}}>Each tap opens one compose window — browsers only allow one per click.</div>
             {bulkEmailQueue.map((item, i) => (
               <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",borderRadius:8,background:item.opened?"rgba(16,185,129,.05)":"#0e1120",border:`1px solid ${item.opened?"rgba(16,185,129,.2)":"#1a2540"}`,marginBottom:6}}>
                 <div style={{flex:1}}>
-                  <div style={{fontSize:13,fontWeight:600,color:item.opened?"#10B981":"#a0b8d0"}}>{item.name} — {item.email}</div>
-                  <div style={{fontSize:10,color:"#4a5a70",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.subject}</div>
+                  <div style={{fontSize:13,fontWeight:600,color:item.opened?"#10B981":"#aac0d5"}}>{item.name} — {item.email}</div>
+                  <div style={{fontSize:10,color:"#607591",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.subject}</div>
                 </div>
                 {item.opened
                   ? <span style={{fontSize:11,color:"#10B981",fontWeight:700}}>✓ Opened</span>
@@ -1095,29 +1095,29 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
           </> : !emailPreview ? <>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
               <span style={{fontSize:15,fontWeight:700,color:"#f0f4fa",flex:1,fontFamily:F,letterSpacing:1,textTransform:"uppercase"}}>Email {selectedCount} clients</span>
-              <button onClick={()=>{setEmailSheet(false);}} style={{width:28,height:28,borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+              <button onClick={()=>{setEmailSheet(false);}} style={{width:28,height:28,borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#707c9a",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
-              <span style={{fontSize:11,color:"#5a6580",flex:1}}>Choose a template — each email is personalized with the client's name.</span>
-              <button onClick={()=>{ setDraftTemplates(effectiveTemplates.reduce((acc,t)=>({...acc,[t.id]:{subject:t.subject,body:t.body}}),{})); setTemplateEditorOpen(true); }} style={{padding:"4px 10px",borderRadius:6,background:"transparent",border:"1px solid #2a3560",color:"#5a6580",fontSize:10,cursor:"pointer",fontWeight:700}}>✏ Edit</button>
+              <span style={{fontSize:11,color:"#707c9a",flex:1}}>Choose a template — each email is personalized with the client's name.</span>
+              <button onClick={()=>{ setDraftTemplates(effectiveTemplates.reduce((acc,t)=>({...acc,[t.id]:{subject:t.subject,body:t.body}}),{})); setTemplateEditorOpen(true); }} style={{padding:"4px 10px",borderRadius:6,background:"transparent",border:"1px solid #2a3560",color:"#707c9a",fontSize:10,cursor:"pointer",fontWeight:700}}>✏ Edit</button>
             </div>
             {effectiveTemplates.map(t => (
               <button key={t.id} onClick={()=>setEmailPreview(t)} style={{width:"100%",padding:"12px 14px",marginBottom:6,borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",cursor:"pointer",textAlign:"left"}}>
-                <div style={{fontSize:13,fontWeight:700,color:"#a0b8d0"}}>{t.label}</div>
-                <div style={{fontSize:11,color:"#4a5a70",marginTop:2}}>{t.subject}</div>
+                <div style={{fontSize:13,fontWeight:700,color:"#aac0d5"}}>{t.label}</div>
+                <div style={{fontSize:11,color:"#607591",marginTop:2}}>{t.subject}</div>
               </button>
             ))}
           </> : <>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-              <button onClick={()=>setEmailPreview(null)} style={{padding:"4px 10px",borderRadius:6,background:"transparent",border:"1px solid #2a3560",color:"#5a6580",fontSize:11,cursor:"pointer"}}>← Back</button>
+              <button onClick={()=>setEmailPreview(null)} style={{padding:"4px 10px",borderRadius:6,background:"transparent",border:"1px solid #2a3560",color:"#707c9a",fontSize:11,cursor:"pointer"}}>← Back</button>
               <span style={{fontSize:13,fontWeight:700,color:"#f0f4fa",flex:1}}>{emailPreview.label}</span>
             </div>
-            <div style={{fontSize:11,color:"#5a6580",marginBottom:6}}>Preview for {selectedCards[0]?.cn || "—"}:</div>
+            <div style={{fontSize:11,color:"#707c9a",marginBottom:6}}>Preview for {selectedCards[0]?.cn || "—"}:</div>
             <div style={{padding:"10px 12px",borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",marginBottom:10}}>
-              <div style={{fontSize:11,color:"#6a8aB0",marginBottom:4,fontWeight:600}}>Subject: {emailPreview.subject}</div>
-              <div style={{fontSize:12,color:"#8898a8",lineHeight:1.5,whiteSpace:"pre-wrap"}}>{emailPreview.body.replace(/\{firstName\}/g, (selectedCards[0]?.cn || "").split(" ")[0])}</div>
+              <div style={{fontSize:11,color:"#819cbc",marginBottom:4,fontWeight:600}}>Subject: {emailPreview.subject}</div>
+              <div style={{fontSize:12,color:"#99a7b5",lineHeight:1.5,whiteSpace:"pre-wrap"}}>{emailPreview.body.replace(/\{firstName\}/g, (selectedCards[0]?.cn || "").split(" ")[0])}</div>
             </div>
-            <div style={{fontSize:10,color:"#4a5a70",marginBottom:10}}>Will send to: {selectedCards.map(c => c.email || "(no email)").join(", ")}</div>
+            <div style={{fontSize:10,color:"#607591",marginBottom:10}}>Will send to: {selectedCards.map(c => c.email || "(no email)").join(", ")}</div>
             <button onClick={()=>sendBulkEmail(emailPreview)} style={{width:"100%",padding:"12px 0",borderRadius:8,background:"rgba(59,130,246,.15)",border:"1px solid rgba(59,130,246,.25)",color:"#3B82F6",fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:1,textTransform:"uppercase"}}><span style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconMail size={15} color="#3B82F6"/>PREPARE {selectedCount} EMAILS →</span></button>
           </>}
         </div>
@@ -1129,30 +1129,30 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
           <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:14,padding:18,maxWidth:520,width:"100%",maxHeight:"88vh",overflowY:"auto"}}>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
               <span style={{fontSize:15,fontWeight:700,color:"#f0f4fa",flex:1,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Edit Email Templates</span>
-              <button onClick={()=>setTemplateEditorOpen(false)} style={{width:28,height:28,borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+              <button onClick={()=>setTemplateEditorOpen(false)} style={{width:28,height:28,borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#707c9a",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
             </div>
-            <div style={{fontSize:10,color:"#4a5060",marginBottom:12,lineHeight:1.5}}>
-              Use <span style={{color:"#a0b8d0",fontWeight:700}}>{"{firstName}"}</span> where you want the client's first name inserted.
+            <div style={{fontSize:10,color:"#646c81",marginBottom:12,lineHeight:1.5}}>
+              Use <span style={{color:"#aac0d5",fontWeight:700}}>{"{firstName}"}</span> where you want the client's first name inserted.
               Font and signature are controlled by your Outlook compose settings (Settings → Compose and reply → Default font).
             </div>
             {EMAIL_TEMPLATES.map(t => (
               <div key={t.id} style={{marginBottom:16,padding:"12px 14px",borderRadius:8,background:"#0a0c14",border:"1px solid #1a2030"}}>
                 <div style={{fontSize:11,fontWeight:700,color:"#3B82F6",letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>{t.label}</div>
-                <div style={{fontSize:10,color:"#4a5a70",marginBottom:4}}>Subject line:</div>
+                <div style={{fontSize:10,color:"#607591",marginBottom:4}}>Subject line:</div>
                 <input value={draftTemplates[t.id]?.subject ?? t.subject}
                   onChange={e => setDraftTemplates(prev => ({...prev,[t.id]:{...prev[t.id],subject:e.target.value}}))}
                   style={{width:"100%",boxSizing:"border-box",padding:"7px 10px",borderRadius:7,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:12,fontFamily:"inherit",marginBottom:8,outline:"none"}} />
-                <div style={{fontSize:10,color:"#4a5a70",marginBottom:4}}>Body:</div>
+                <div style={{fontSize:10,color:"#607591",marginBottom:4}}>Body:</div>
                 <textarea value={draftTemplates[t.id]?.body ?? t.body}
                   onChange={e => setDraftTemplates(prev => ({...prev,[t.id]:{...prev[t.id],body:e.target.value}}))}
                   rows={7}
                   style={{width:"100%",boxSizing:"border-box",padding:"7px 10px",borderRadius:7,background:"#0e1120",border:"1px solid #1a2540",color:"#e0e8f0",fontSize:12,fontFamily:"inherit",lineHeight:1.5,resize:"vertical",outline:"none"}} />
                 <button onClick={()=>setDraftTemplates(prev=>({...prev,[t.id]:{subject:t.subject,body:t.body}}))}
-                  style={{fontSize:10,color:"#5a6580",background:"transparent",border:"none",cursor:"pointer",padding:"2px 0",textDecoration:"underline"}}>Reset to default</button>
+                  style={{fontSize:10,color:"#707c9a",background:"transparent",border:"none",cursor:"pointer",padding:"2px 0",textDecoration:"underline"}}>Reset to default</button>
               </div>
             ))}
             <div style={{display:"flex",gap:8,marginTop:4}}>
-              <button onClick={()=>setTemplateEditorOpen(false)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"transparent",border:"1px solid #2a3560",color:"#5a6580",fontSize:12,cursor:"pointer"}}>Cancel</button>
+              <button onClick={()=>setTemplateEditorOpen(false)} style={{flex:1,padding:"10px 0",borderRadius:8,background:"transparent",border:"1px solid #2a3560",color:"#707c9a",fontSize:12,cursor:"pointer"}}>Cancel</button>
               <button onClick={()=>{
                 const updates = {};
                 EMAIL_TEMPLATES.forEach(t => { updates[t.id] = { subject: draftTemplates[t.id]?.subject ?? t.subject, body: draftTemplates[t.id]?.body ?? t.body }; });
@@ -1181,10 +1181,10 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
             <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",border:"1px solid #1a2030",borderRadius:"14px 14px 0 0",padding:18,maxWidth:480,width:"100%",paddingBottom:"max(18px,env(safe-area-inset-bottom))"}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
                 <span style={{fontSize:15,fontWeight:700,color:"#f0f4fa",flex:1,fontFamily:F,letterSpacing:1,textTransform:"uppercase"}}>{title}</span>
-                {!isBulk && card && (isSms ? card.phone : card.email) && <span style={{fontSize:11,color:"#5a6580"}}>{isSms ? card.phone : card.email}</span>}
-                <button onClick={()=>setPipelineSheet(null)} style={{width:28,height:28,borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#5a6580",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={13} color="#5a6580"/></button>
+                {!isBulk && card && (isSms ? card.phone : card.email) && <span style={{fontSize:11,color:"#707c9a"}}>{isSms ? card.phone : card.email}</span>}
+                <button onClick={()=>setPipelineSheet(null)} style={{width:28,height:28,borderRadius:6,background:"#1a2035",border:"1px solid #2a3560",color:"#707c9a",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={13} color="#707c9a"/></button>
               </div>
-              {isBulk && <div style={{fontSize:11,color:"#5a6580",marginBottom:10}}>Choose a template — each message will be personalized with the client's name.</div>}
+              {isBulk && <div style={{fontSize:11,color:"#707c9a",marginBottom:10}}>Choose a template — each message will be personalized with the client's name.</div>}
               {templates.map(t => (
                 <button key={t.id} onClick={() => {
                   if (isBulk) {
@@ -1202,8 +1202,8 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
                     setPipelineSheet(null);
                   }
                 }} style={{width:"100%",padding:"12px 14px",marginBottom:8,borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",cursor:"pointer",textAlign:"left"}}>
-                  <div style={{fontSize:13,fontWeight:700,color:isSms?"#10B981":"#a0b8d0"}}>{t.label}</div>
-                  <div style={{fontSize:11,color:"#4a5a70",marginTop:3,lineHeight:1.4}}>{t.body.replace(/\{firstName\}/g, firstName || "[Name]").slice(0,90)}…</div>
+                  <div style={{fontSize:13,fontWeight:700,color:isSms?"#10B981":"#aac0d5"}}>{t.label}</div>
+                  <div style={{fontSize:11,color:"#607591",marginTop:3,lineHeight:1.4}}>{t.body.replace(/\{firstName\}/g, firstName || "[Name]").slice(0,90)}…</div>
                 </button>
               ))}
               {/* Custom / blank */}
@@ -1218,8 +1218,8 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
                 }
                 setPipelineSheet(null);
               }} style={{width:"100%",padding:"10px 14px",borderRadius:8,background:"transparent",border:"1px solid #1a2030",cursor:"pointer",textAlign:"left"}}>
-                <div style={{fontSize:12,fontWeight:700,color:"#5a6580"}}>Custom</div>
-                <div style={{fontSize:11,color:"#3a4a60",marginTop:2}}>Open blank {isSms?"message":"email"}</div>
+                <div style={{fontSize:12,fontWeight:700,color:"#707c9a"}}>Custom</div>
+                <div style={{fontSize:11,color:"#526887",marginTop:2}}>Open blank {isSms?"message":"email"}</div>
               </button>}
             </div>
           </div>

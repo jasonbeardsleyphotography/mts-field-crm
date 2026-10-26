@@ -77,8 +77,8 @@ export function parseEvent(ev) {
   const parsedAddr = addrSegments.join(", ");
   const address = ev.location || parsedAddr;
 
-  const mobileMatch = desc.match(/Mobile:\s*([\d\-(). +]+?)(?:\s*$|\s*Email)/);
-  const phoneMatch = desc.match(/Phone:\s*([\d\-(). +]+?)(?:\s*$|\s*Mobile)/);
+  const mobileMatch = desc.match(/Mobile:\s*([\d\-(). +]+?)(?:\s*$|\s*(?:Email|Notes|Callout):)/);
+  const phoneMatch = desc.match(/Phone:\s*([\d\-(). +]+?)(?:\s*$|\s*(?:Mobile|Email|Notes|Callout):)/);
   const phone = (mobileMatch && mobileMatch[1].trim().length > 5 ? mobileMatch[1].trim() : "") || (phoneMatch && phoneMatch[1].trim().length > 5 ? phoneMatch[1].trim() : "");
   const emailMatch = desc.match(/Email:\s*(\S+@\S+)/);
   const email = emailMatch ? emailMatch[1].trim() : "";
@@ -98,8 +98,11 @@ export function parseEvent(ev) {
   const fmt = d => d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}).replace(":00","");
   const timeLabel = fmt(start) + "–" + fmt(end);
 
-  // Constraints
-  let constraint = "";
+  // Constraints. A "Callout:" line is the special notice typed into the app's
+  // Add-a-stop form ("only 10–12", "meet husband") — it leads the badge.
+  const calloutMatch = desc.match(/Callout:\s*(.+?)(?=\s*(?:Phone|Mobile|Email|Notes):|$)/i);
+  const callout = calloutMatch ? calloutMatch[1].trim() : "";
+  let constraint = callout ? "⚠ " + callout : "";
   if (/CALL (WHEN|FIRST|BEFORE|OTW)/i.test(s)) constraint = "📞 CALL FIRST";
   if (/NOT BEFORE\s*([\d:]+)/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "Not before " + s.match(/NOT BEFORE\s*([\d:]+)/i)[1];
   if (/([\d:]+)\s*OR LATER/i.test(s)) constraint = (constraint ? constraint + " · " : "") + s.match(/([\d:]+)\s*OR LATER/i)[1] + " or later";
@@ -134,7 +137,7 @@ export function parseEvent(ev) {
 
   return {
     id: ev.id, cn: clientName, addr: address, phone, email, notes, desc,
-    jn: jobNum, db: isDriveBy, isTask, isTodo, isAdmin, constraint, color,
+    jn: jobNum, callout, db: isDriveBy, isTask, isTodo, isAdmin, constraint, color,
     colorId: ev.colorId, raw: s, rawD: rd, window, timeLabel, titleContext,
   };
 }

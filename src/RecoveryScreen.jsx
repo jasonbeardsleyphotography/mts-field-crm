@@ -107,14 +107,14 @@ function FieldView({ stop, fieldData, loading, onBack, onAddToPipeline, alreadyI
 
       {/* Header */}
       <div style={hdr}>
-        <button onClick={onBack} style={{ background: "none", border: "none", color: "#7b8ab8", cursor: "pointer", padding: 4, display: "flex" }}>
+        <button onClick={onBack} style={{ background: "none", border: "none", color: "#8e9bc2", cursor: "pointer", padding: 4, display: "flex" }}>
           <IconArrowLeft size={22} />
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {stop.cn || "Unknown"}
           </div>
-          <div style={{ fontSize: 12, color: "#5a6580" }}>
+          <div style={{ fontSize: 12, color: "#707c9a" }}>
             {stop.jn ? `#${stop.jn} · ` : ""}{stop.addr || ""}
           </div>
         </div>
@@ -139,14 +139,14 @@ function FieldView({ stop, fieldData, loading, onBack, onAddToPipeline, alreadyI
       {/* Body */}
       <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px 32px" }}>
         {loading ? (
-          <div style={{ color: "#5a6580", textAlign: "center", paddingTop: 48, fontSize: 14 }}>
+          <div style={{ color: "#707c9a", textAlign: "center", paddingTop: 48, fontSize: 14 }}>
             Loading data from Drive…
           </div>
         ) : (
           <>
             {/* Photo count summary */}
             {allPhotos.length === 0 && !fieldData?.scopeNotes && !fieldData?.addonNotes ? (
-              <div style={{ color: "#5a6580", textAlign: "center", paddingTop: 48, fontSize: 14 }}>
+              <div style={{ color: "#707c9a", textAlign: "center", paddingTop: 48, fontSize: 14 }}>
                 <IconImage size={32} style={{ display: "block", margin: "0 auto 12px", opacity: .4 }} />
                 No photos or notes found for this stop in Drive.<br />
                 <span style={{ fontSize: 12, opacity: .7 }}>Photos may still exist in the Drive photos folder by date.</span>
@@ -156,7 +156,7 @@ function FieldView({ stop, fieldData, loading, onBack, onAddToPipeline, alreadyI
             {/* Photos — scope */}
             {scopePhotos.length > 0 && (
               <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "#5a6580", textTransform: "uppercase", marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "#707c9a", textTransform: "uppercase", marginBottom: 10 }}>
                   Scope Photos ({scopePhotos.length})
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 8 }}>
@@ -173,7 +173,7 @@ function FieldView({ stop, fieldData, loading, onBack, onAddToPipeline, alreadyI
                       >
                         {src
                           ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                          : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#5a6580" }}><IconImage size={24} /></div>
+                          : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#707c9a" }}><IconImage size={24} /></div>
                         }
                       </div>
                     );
@@ -185,7 +185,7 @@ function FieldView({ stop, fieldData, loading, onBack, onAddToPipeline, alreadyI
             {/* Scope notes */}
             {fieldData?.scopeNotes && (
               <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "#5a6580", textTransform: "uppercase", marginBottom: 8 }}>Scope Notes</div>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "#707c9a", textTransform: "uppercase", marginBottom: 8 }}>Scope Notes</div>
                 <div style={{ fontSize: 14, lineHeight: 1.6, color: "#d0d8f0", background: "#0e1120", borderRadius: 8, padding: 12, whiteSpace: "pre-wrap" }}>
                   {fieldData.scopeNotes}
                 </div>
@@ -195,7 +195,7 @@ function FieldView({ stop, fieldData, loading, onBack, onAddToPipeline, alreadyI
             {/* Photos — addon */}
             {addonPhotos.length > 0 && (
               <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "#5a6580", textTransform: "uppercase", marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "#707c9a", textTransform: "uppercase", marginBottom: 10 }}>
                   Add-on Photos ({addonPhotos.length})
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 8 }}>
@@ -213,7 +213,7 @@ function FieldView({ stop, fieldData, loading, onBack, onAddToPipeline, alreadyI
                       >
                         {src
                           ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                          : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#5a6580" }}><IconImage size={24} /></div>
+                          : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#707c9a" }}><IconImage size={24} /></div>
                         }
                       </div>
                     );
@@ -225,7 +225,7 @@ function FieldView({ stop, fieldData, loading, onBack, onAddToPipeline, alreadyI
             {/* Addon notes */}
             {fieldData?.addonNotes && (
               <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "#5a6580", textTransform: "uppercase", marginBottom: 8 }}>Add-on Notes</div>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "#707c9a", textTransform: "uppercase", marginBottom: 8 }}>Add-on Notes</div>
                 <div style={{ fontSize: 14, lineHeight: 1.6, color: "#d0d8f0", background: "#0e1120", borderRadius: 8, padding: 12, whiteSpace: "pre-wrap" }}>
                   {fieldData.addonNotes}
                 </div>
@@ -235,7 +235,7 @@ function FieldView({ stop, fieldData, loading, onBack, onAddToPipeline, alreadyI
             {/* AI summary */}
             {fieldData?.aiScopeSummary && (
               <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "#5a6580", textTransform: "uppercase", marginBottom: 8 }}>AI Scope Summary</div>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "#707c9a", textTransform: "uppercase", marginBottom: 8 }}>AI Scope Summary</div>
                 <div style={{ fontSize: 14, lineHeight: 1.6, color: "#d0d8f0", background: "#0e1120", borderRadius: 8, padding: 12, whiteSpace: "pre-wrap" }}>
                   {fieldData.aiScopeSummary}
                 </div>
@@ -262,9 +262,9 @@ function StopCard({ stop, onClick }) {
       }}
     >
       <div style={{ fontWeight: 700, fontSize: 15 }}>{stop.cn || "Unknown"}</div>
-      {stop.jn && <div style={{ fontSize: 12, color: "#7b8ab8" }}>Job #{stop.jn}</div>}
-      {stop.addr && <div style={{ fontSize: 13, color: "#5a6580" }}>{stop.addr}</div>}
-      {startStr && <div style={{ fontSize: 12, color: "#3a4560", marginTop: 2 }}>{startStr}</div>}
+      {stop.jn && <div style={{ fontSize: 12, color: "#8e9bc2" }}>Job #{stop.jn}</div>}
+      {stop.addr && <div style={{ fontSize: 13, color: "#707c9a" }}>{stop.addr}</div>}
+      {startStr && <div style={{ fontSize: 12, color: "#526187", marginTop: 2 }}>{startStr}</div>}
     </button>
   );
 }
@@ -446,7 +446,7 @@ export default function RecoveryScreen({ token, onBack }) {
     flex: 1, padding: "9px 0", borderRadius: 8, border: "none", cursor: "pointer",
     fontWeight: 600, fontSize: 14, fontFamily: "inherit",
     background: active ? "#1a2a50" : "transparent",
-    color: active ? "#7ec8f8" : "#5a6580",
+    color: active ? "#7ec8f8" : "#707c9a",
   });
 
   return (
@@ -454,7 +454,7 @@ export default function RecoveryScreen({ token, onBack }) {
 
       {/* Header */}
       <div style={hdr}>
-        <button onClick={onBack} style={{ background: "none", border: "none", color: "#7b8ab8", cursor: "pointer", padding: 4, display: "flex" }}>
+        <button onClick={onBack} style={{ background: "none", border: "none", color: "#8e9bc2", cursor: "pointer", padding: 4, display: "flex" }}>
           <IconArrowLeft size={22} />
         </button>
         <div style={{ fontWeight: 700, fontSize: 17, letterSpacing: .3 }}>Data Recovery</div>
@@ -548,7 +548,7 @@ export default function RecoveryScreen({ token, onBack }) {
         )}
 
         {mode === "search" && (
-          <div style={{ fontSize: 12, color: "#3a4560", marginTop: 8 }}>
+          <div style={{ fontSize: 12, color: "#526187", marginTop: 8 }}>
             Searches all Google Calendar events — type a client name, job number, or address.
           </div>
         )}
@@ -563,12 +563,12 @@ export default function RecoveryScreen({ token, onBack }) {
         {/* ── ON-THIS-DEVICE recovery list ─────────────────────────────── */}
         {mode === "device" && (
           deviceLoading && deviceRecords === null ? (
-            <div style={{ color: "#5a6580", textAlign: "center", paddingTop: 40, fontSize: 14 }}>Scanning device storage…</div>
+            <div style={{ color: "#707c9a", textAlign: "center", paddingTop: 40, fontSize: 14 }}>Scanning device storage…</div>
           ) : deviceRecords && deviceRecords.length === 0 ? (
-            <div style={{ color: "#5a6580", textAlign: "center", paddingTop: 40, fontSize: 14 }}>No saved notes or photos found on this device.</div>
+            <div style={{ color: "#707c9a", textAlign: "center", paddingTop: 40, fontSize: 14 }}>No saved notes or photos found on this device.</div>
           ) : deviceRecords ? (
             <>
-              <div style={{ fontSize: 12, color: "#3a4560", paddingBottom: 10 }}>
+              <div style={{ fontSize: 12, color: "#526187", paddingBottom: 10 }}>
                 {deviceRecords.length} saved card{deviceRecords.length !== 1 ? "s" : ""} — tap to view its notes &amp; photos
               </div>
               {deviceRecords.map(rec => (
@@ -584,13 +584,13 @@ export default function RecoveryScreen({ token, onBack }) {
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <div style={{ fontWeight: 700, fontSize: 15, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rec.cn || "(no name)"}</div>
-                    <div style={{ fontSize: 11, color: "#7b8ab8", flexShrink: 0 }}>
+                    <div style={{ fontSize: 11, color: "#8e9bc2", flexShrink: 0 }}>
                       {rec.photoCount > 0 ? `${rec.photoCount} photo${rec.photoCount === 1 ? "" : "s"}` : ""}
                     </div>
                   </div>
-                  {rec.jn && <div style={{ fontSize: 12, color: "#7b8ab8" }}>Job #{rec.jn}</div>}
-                  {rec.notePreview && <div style={{ fontSize: 12.5, color: "#9aa8c0", lineHeight: 1.4 }}>{rec.notePreview}{rec.notePreview.length >= 120 ? "…" : ""}</div>}
-                  {rec.savedAt > 0 && <div style={{ fontSize: 10, color: "#3a4560" }}>saved {formatDate(new Date(rec.savedAt))}</div>}
+                  {rec.jn && <div style={{ fontSize: 12, color: "#8e9bc2" }}>Job #{rec.jn}</div>}
+                  {rec.notePreview && <div style={{ fontSize: 12.5, color: "#a7b3c8", lineHeight: 1.4 }}>{rec.notePreview}{rec.notePreview.length >= 120 ? "…" : ""}</div>}
+                  {rec.savedAt > 0 && <div style={{ fontSize: 10, color: "#526187" }}>saved {formatDate(new Date(rec.savedAt))}</div>}
                 </button>
               ))}
             </>
@@ -598,7 +598,7 @@ export default function RecoveryScreen({ token, onBack }) {
         )}
 
         {results !== null && results.length === 0 && !searching && (
-          <div style={{ color: "#5a6580", textAlign: "center", paddingTop: 40, fontSize: 14 }}>
+          <div style={{ color: "#707c9a", textAlign: "center", paddingTop: 40, fontSize: 14 }}>
             No matching jobs found.
             {mode === "search" && <div style={{ fontSize: 12, marginTop: 8, opacity: .7 }}>Try the client's last name or just the job number.</div>}
           </div>
@@ -606,7 +606,7 @@ export default function RecoveryScreen({ token, onBack }) {
 
         {results !== null && results.length > 0 && (
           <>
-            <div style={{ fontSize: 12, color: "#3a4560", paddingBottom: 10 }}>
+            <div style={{ fontSize: 12, color: "#526187", paddingBottom: 10 }}>
               {results.length} job{results.length !== 1 ? "s" : ""} found — tap to view photos &amp; notes
             </div>
             {results.map(stop => (
@@ -616,7 +616,7 @@ export default function RecoveryScreen({ token, onBack }) {
         )}
 
         {mode !== "device" && results === null && !searching && (
-          <div style={{ color: "#3a4560", textAlign: "center", paddingTop: 48, fontSize: 13, lineHeight: 1.7 }}>
+          <div style={{ color: "#526187", textAlign: "center", paddingTop: 48, fontSize: 13, lineHeight: 1.7 }}>
             {mode === "search"
               ? 'Enter a name or job number above and tap Search.\nResults include all past and future jobs.'
               : 'Pick a date and tap Load to see all stops from that day.'}

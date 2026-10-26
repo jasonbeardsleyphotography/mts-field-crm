@@ -36,7 +36,7 @@ export default function VideoWatch({ fileId, title }) {
           />
         ) : (
           <div style={{
-            color: "#a0b0c0", fontFamily: "system-ui, sans-serif", fontSize: 14,
+            color: "#abbac8", fontFamily: "system-ui, sans-serif", fontSize: 14,
             textAlign: "center", padding: 30, border: "1px solid #1a2540",
             borderRadius: 10, background: "#0e1120",
           }}>

@@ -158,7 +158,7 @@ export default function StoragePanel({ open, onClose, token }) {
           background: "transparent", cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
         }}>
-          <IconArrowLeft size={20} color="#5a6580" />
+          <IconArrowLeft size={20} color="#707c9a" />
         </button>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 16, fontWeight: 900, color: "#e0e8f0", fontFamily: F, letterSpacing: 1.5, textTransform: "uppercase" }}>
@@ -170,14 +170,14 @@ export default function StoragePanel({ open, onClose, token }) {
       <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
         {/* Total usage */}
         <div style={{ marginBottom: 18 }}>
-          <div style={{ fontSize: 11, color: "#5a6580", fontFamily: F, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>
+          <div style={{ fontSize: 11, color: "#707c9a", fontFamily: F, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>
             Total on this device
           </div>
           {estimate ? (
             <>
               <div style={{ fontSize: 24, fontWeight: 900, color: "#e0e8f0", fontFamily: F }}>
                 {fmtBytes(estimate.usage)}
-                {estimate.quota ? <span style={{ fontSize: 13, color: "#5a6580", fontWeight: 600 }}> / {fmtBytes(estimate.quota)}</span> : null}
+                {estimate.quota ? <span style={{ fontSize: 13, color: "#707c9a", fontWeight: 600 }}> / {fmtBytes(estimate.quota)}</span> : null}
               </div>
               {usagePct != null && (
                 <div style={{ height: 6, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden", marginTop: 8 }}>
@@ -186,20 +186,20 @@ export default function StoragePanel({ open, onClose, token }) {
               )}
             </>
           ) : (
-            <div style={{ fontSize: 12, color: "#4a5a70", fontFamily: B }}>{loading ? "Calculating…" : "Not available on this browser."}</div>
+            <div style={{ fontSize: 12, color: "#607591", fontFamily: B }}>{loading ? "Calculating…" : "Not available on this browser."}</div>
           )}
         </div>
 
         {/* Breakdown */}
         <div style={{ marginBottom: 18 }}>
-          <div style={{ fontSize: 11, color: "#5a6580", fontFamily: F, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>
+          <div style={{ fontSize: 11, color: "#707c9a", fontFamily: F, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>
             Breakdown
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", borderRadius: 8, background: "rgba(255,255,255,.03)", border: "1px solid #1a2030" }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "#e0e8f0", fontFamily: F }}>Videos in upload queue</div>
-                <div style={{ fontSize: 10, color: "#4a5a70", fontFamily: B, marginTop: 2 }}>
+                <div style={{ fontSize: 10, color: "#607591", fontFamily: B, marginTop: 2 }}>
                   {videoItems.length} file{videoItems.length === 1 ? "" : "s"}
                   {errorItems.length > 0 && <span style={{ color: "#FF8888" }}> · {errorItems.length} failed ({fmtBytes(errorBytes)})</span>}
                 </div>
@@ -209,7 +209,7 @@ export default function StoragePanel({ open, onClose, token }) {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", borderRadius: 8, background: "rgba(255,255,255,.03)", border: "1px solid #1a2030" }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "#e0e8f0", fontFamily: F }}>Local photo copies</div>
-                <div style={{ fontSize: 10, color: "#4a5a70", fontFamily: B, marginTop: 2 }}>
+                <div style={{ fontSize: 10, color: "#607591", fontFamily: B, marginTop: 2 }}>
                   Cloud-backed copies are kept on-device for 7 days, then cleared automatically.
                 </div>
               </div>
@@ -221,7 +221,7 @@ export default function StoragePanel({ open, onClose, token }) {
         {/* Failed video uploads */}
         {errorItems.length > 0 && (
           <div style={{ marginBottom: 18 }}>
-            <div style={{ fontSize: 11, color: "#5a6580", fontFamily: F, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>
+            <div style={{ fontSize: 11, color: "#707c9a", fontFamily: F, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>
               Failed video uploads
             </div>
             <div style={{ fontSize: 11, color: "#d4aa60", fontFamily: B, lineHeight: 1.5, marginBottom: 8, padding: "8px 10px", borderRadius: 6, background: "rgba(246,191,38,.07)", border: "1px solid rgba(246,191,38,.2)" }}>
@@ -232,7 +232,7 @@ export default function StoragePanel({ open, onClose, token }) {
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: "#e0e8f0", fontFamily: F, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
-                    <div style={{ fontSize: 10, color: "#4a5a70", marginTop: 2 }}>{fmtBytes(item.fileSize)} · {fmtAge(Date.now() - (item.updatedAt || item.createdAt || Date.now()))}</div>
+                    <div style={{ fontSize: 10, color: "#607591", marginTop: 2 }}>{fmtBytes(item.fileSize)} · {fmtAge(Date.now() - (item.updatedAt || item.createdAt || Date.now()))}</div>
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
@@ -264,7 +264,7 @@ export default function StoragePanel({ open, onClose, token }) {
                       cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
                     }}
                   >
-                    <IconX size={13} color="#6a3a3a" />
+                    <IconX size={13} color="#914f4f" />
                   </button>
                 </div>
               </div>

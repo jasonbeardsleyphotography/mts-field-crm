@@ -98,12 +98,12 @@ function PhotoZoneTag({ zone, onChange }) {
     <div style={{position:"relative",width:140}}>
       <button onClick={()=>setOpen(o=>!o)} style={{width:"100%",padding:"3px 6px",borderRadius:5,background:zone?"rgba(255,255,255,.05)":"transparent",border:`1px solid ${zone?col+"40":"#1a2540"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
         {zone && <div style={{width:5,height:5,borderRadius:99,background:col,flexShrink:0}}/>}
-        <span style={{fontSize:9,fontWeight:700,color:zone?col:"#6f819b",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,flex:1,textAlign:"left"}}>{zone || "Tag zone"}</span>
+        <span style={{fontSize:9,fontWeight:700,color:zone?col:"#8595ab",fontFamily:"'Oswald',sans-serif",letterSpacing:0.5,flex:1,textAlign:"left"}}>{zone || "Tag zone"}</span>
         <svg width={7} height={7} viewBox="0 0 24 24" fill="none" stroke={zone?col:"#6f819b"} strokeWidth={3}><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       {open && (
         <div style={{position:"absolute",top:"calc(100% + 2px)",left:0,zIndex:10,background:"#0d1020",border:"1px solid #1a2540",borderRadius:8,padding:4,display:"flex",flexDirection:"column",gap:2,minWidth:100,boxShadow:"0 4px 16px rgba(0,0,0,.5)"}}>
-          {zone && <button onClick={()=>{onChange(null);setOpen(false);}} style={{padding:"4px 8px",borderRadius:5,background:"transparent",border:"none",cursor:"pointer",textAlign:"left",fontSize:10,color:"#5a6a8a",fontWeight:700}}>— Clear</button>}
+          {zone && <button onClick={()=>{onChange(null);setOpen(false);}} style={{padding:"4px 8px",borderRadius:5,background:"transparent",border:"none",cursor:"pointer",textAlign:"left",fontSize:10,color:"#7081a2",fontWeight:700}}>— Clear</button>}
           {ZONES.map(z => (
             <button key={z} onClick={()=>{onChange(z);setOpen(false);}} style={{padding:"4px 8px",borderRadius:5,background:z===zone?"rgba(255,255,255,.06)":"transparent",border:"none",cursor:"pointer",textAlign:"left",fontSize:10,color:ZONE_COLORS[z],fontWeight:700,display:"flex",alignItems:"center",gap:5}}>
               <div style={{width:5,height:5,borderRadius:99,background:ZONE_COLORS[z]}}/>
@@ -1222,7 +1222,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
       }
       if (ready === null) {
         return (
-          <div style={{ position:"fixed", inset:0, background:"#000", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", color:"#a0b0c0", fontFamily:F, letterSpacing:1, textTransform:"uppercase", fontSize:11 }}>
+          <div style={{ position:"fixed", inset:0, background:"#000", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", color:"#abbac8", fontFamily:F, letterSpacing:1, textTransform:"uppercase", fontSize:11 }}>
             {markupLoading ? "Loading photo from Drive…" : "Preparing…"}
           </div>
         );
@@ -1231,8 +1231,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
         return (
           <div style={{ position:"fixed", inset:0, background:"#000", zIndex:1000, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", color:"#FF8888", fontFamily:F, padding:20 }}>
             <div style={{ fontSize:14, fontWeight:700, marginBottom:8, letterSpacing:1, textTransform:"uppercase" }}>Could not load photo</div>
-            <div style={{ fontSize:11, color:"#7a8090", marginBottom:20, textAlign:"center" }}>The local copy was cleaned up and the cloud copy could not be reached. Check your connection and try again.</div>
-            <button onClick={() => setMarkupIdx(null)} style={{ padding:"10px 20px", background:"transparent", border:"1px solid #2a3560", borderRadius:8, color:"#a0b8d0", fontSize:12, fontWeight:700, cursor:"pointer" }}>BACK</button>
+            <div style={{ fontSize:11, color:"#8f94a1", marginBottom:20, textAlign:"center" }}>The local copy was cleaned up and the cloud copy could not be reached. Check your connection and try again.</div>
+            <button onClick={() => setMarkupIdx(null)} style={{ padding:"10px 20px", background:"transparent", border:"1px solid #2a3560", borderRadius:8, color:"#aac0d5", fontSize:12, fontWeight:700, cursor:"pointer" }}>BACK</button>
           </div>
         );
       }
@@ -1611,7 +1611,7 @@ ${combined}`);
           <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",borderTop:"1px solid #1a2030",borderTopLeftRadius:18,borderTopRightRadius:18,padding:"16px 18px",paddingBottom:"max(18px,env(safe-area-inset-bottom))",maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{display:"flex",alignItems:"center",marginBottom:12}}>
               <div style={{flex:1,fontSize:14,fontWeight:800,color:"#fff",fontFamily:F,letterSpacing:1,textTransform:"uppercase"}}>Set up iPhone Video</div>
-              <button onClick={() => setShowIphoneSetup(false)} aria-label="Close" style={{width:34,height:34,borderRadius:17,background:"transparent",border:"1px solid #253049",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={15} color="#8aa0c0"/></button>
+              <button onClick={() => setShowIphoneSetup(false)} aria-label="Close" style={{width:34,height:34,borderRadius:17,background:"transparent",border:"1px solid #253049",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={15} color="#9aadc8"/></button>
             </div>
             <IphoneVideoSetup onReady={() => setShowIphoneSetup(false)} />
           </div>
@@ -1660,7 +1660,7 @@ ${combined}`);
 
       {/* ── HEADER ────────────────────────────────────────────────────── */}
       <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",paddingTop:"max(10px,env(safe-area-inset-top))",background:"#0d0f18",borderBottom:"1px solid #1a1f2e",flexShrink:0}}>
-        <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:4,padding:"6px 12px",borderRadius:8,background:"transparent",border:"1px solid #252d47",color:"#90a8c0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}><IconArrowLeft size={13} color="#90a8c0"/>{backLabel}</button>
+        <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:4,padding:"6px 12px",borderRadius:8,background:"transparent",border:"1px solid #252d47",color:"#9eb3c8",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,flexShrink:0}}><IconArrowLeft size={13} color="#9eb3c8"/>{backLabel}</button>
         {/* Cloud-save status. Green cloud = this stop is safely synced to the
             cloud; amber cloud + "SAVING" = saved on this device, still pushing up. */}
         <div title={cloudSynced ? "Saved to cloud" : "Saved on this device — still syncing to cloud"}
@@ -1673,7 +1673,7 @@ ${combined}`);
         <div style={{flex:1,minWidth:0}}/>
         {/* Decline — moved from bottom bar so it can't be hit when reaching for DONE */}
         {onDecline && (!declineConfirm ? (
-          <button onClick={()=>setDeclineConfirm(true)} title="Decline lead" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"6px 8px",borderRadius:8,background:"transparent",border:"1px solid #252d47",cursor:"pointer",flexShrink:0}}><IconX size={15} color="#a06060"/></button>
+          <button onClick={()=>setDeclineConfirm(true)} title="Decline lead" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"6px 8px",borderRadius:8,background:"transparent",border:"1px solid #252d47",cursor:"pointer",flexShrink:0}}><IconX size={15} color="#af7979"/></button>
         ) : (
           <button onClick={()=>{setDeclineConfirm(false);onDecline();}} style={{display:"flex",alignItems:"center",gap:4,padding:"6px 10px",borderRadius:8,background:"rgba(200,60,60,.2)",border:"1px solid rgba(200,60,60,.4)",color:"#FF5555",fontSize:10,fontWeight:800,cursor:"pointer",animation:"pulse 1s infinite",flexShrink:0,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Confirm?</button>
         ))}
@@ -1720,7 +1720,7 @@ ${combined}`);
               </div>
               <input value={editJn} onChange={e=>setEditJn(e.target.value)} placeholder="Job #" style={{width:"100%",boxSizing:"border-box",padding:"8px 10px",borderRadius:8,background:"#0a0c14",border:"1px solid #253049",color:"#7ec4ff",fontSize:13,fontFamily:B,outline:"none"}} />
               <div style={{display:"flex",gap:8,marginTop:2}}>
-                <button onClick={()=>setEditingDetails(false)} style={{flex:1,padding:"8px 0",borderRadius:8,background:"transparent",border:"1px solid #252d47",color:"#90a8c0",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Cancel</button>
+                <button onClick={()=>setEditingDetails(false)} style={{flex:1,padding:"8px 0",borderRadius:8,background:"transparent",border:"1px solid #252d47",color:"#9eb3c8",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Cancel</button>
                 <button onClick={saveEditDetails} style={{flex:1,padding:"8px 0",borderRadius:8,background:"#10B981",border:"none",color:"#04140d",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:F,letterSpacing:0.5,textTransform:"uppercase"}}>Save</button>
               </div>
             </div>
@@ -1730,15 +1730,15 @@ ${combined}`);
             {/* Left: name + address — tap either to copy it */}
             <div style={{minWidth:0,flex:1}}>
               <div onClick={(e)=>{e.stopPropagation();copyText(s.cn,"Name copied");}} title="Tap to copy name" style={{fontSize:16,fontWeight:700,color:"#fff",fontFamily:F,textTransform:"uppercase",letterSpacing:1.2,marginBottom:3,cursor:"pointer"}}>{s.cn}</div>
-              <div onClick={(e)=>{e.stopPropagation();copyText(s.addr,"Address copied");}} title="Tap to copy address" style={{fontSize:12,color:"#96a2b4",fontFamily:F,textTransform:"uppercase",letterSpacing:1,cursor:"pointer"}}>{s.addr}</div>
+              <div onClick={(e)=>{e.stopPropagation();copyText(s.addr,"Address copied");}} title="Tap to copy address" style={{fontSize:12,color:"#a4aebe",fontFamily:F,textTransform:"uppercase",letterSpacing:1,cursor:"pointer"}}>{s.addr}</div>
               {s.constraint && (
                 <div style={{fontSize:11,color:"#FF80AB",marginTop:2}}>{s.constraint}</div>
               )}
             </div>
             {/* Right: phone (call) + email (tap to copy) */}
             <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0,textAlign:"right",maxWidth:"50%"}}>
-              {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#a0b8d0",textDecoration:"none",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>{s.phone}<IconPhone size={12} color="#a0b8d0"/></a>}
-              {s.email && <div onClick={(e)=>{e.stopPropagation();copyText(s.email,"Email copied");}} title="Tap to copy email" style={{fontSize:12,color:"#a0b8d0",display:"flex",alignItems:"center",gap:4,maxWidth:"100%",minWidth:0,cursor:"pointer"}}><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.email}</span><IconMail size={12} color="#a0b8d0"/></div>}
+              {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{fontSize:12,color:"#aac0d5",textDecoration:"none",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>{s.phone}<IconPhone size={12} color="#aac0d5"/></a>}
+              {s.email && <div onClick={(e)=>{e.stopPropagation();copyText(s.email,"Email copied");}} title="Tap to copy email" style={{fontSize:12,color:"#aac0d5",display:"flex",alignItems:"center",gap:4,maxWidth:"100%",minWidth:0,cursor:"pointer"}}><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.email}</span><IconMail size={12} color="#aac0d5"/></div>}
             </div>
           </div>
 
@@ -1753,7 +1753,7 @@ ${combined}`);
             ) : <div />}
             {onEditDetails && (
               <button onClick={openEditDetails} title="Edit client / address details" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:6,borderRadius:8,background:"transparent",border:"1px solid #252d47",cursor:"pointer",flexShrink:0}}>
-                <IconPen size={13} color="#90a8c0"/>
+                <IconPen size={13} color="#9eb3c8"/>
               </button>
             )}
           </div>
@@ -1765,12 +1765,12 @@ ${combined}`);
         {s.notes && (
           <div style={{borderBottom:"1px solid #1a2030"}}>
             <button onClick={()=>setJobNotesOpen(!jobNotesOpen)} style={{width:"100%",padding:"10px 16px",background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
-              <span style={{transform:jobNotesOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7,color:"#8496b0"}}>▶</span>
-              <span style={{fontSize:10,fontWeight:700,color:"#8496b0",letterSpacing:1,textTransform:"uppercase",fontFamily:F}}>JOB NOTES</span>
+              <span style={{transform:jobNotesOpen?"rotate(90deg)":"",transition:"transform .15s",display:"inline-block",fontSize:7,color:"#95a5bb"}}>▶</span>
+              <span style={{fontSize:10,fontWeight:700,color:"#95a5bb",letterSpacing:1,textTransform:"uppercase",fontFamily:F}}>JOB NOTES</span>
               <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="#3a4a60" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-              {!jobNotesOpen && <span style={{flex:1,fontSize:12,color:"#8898a8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginLeft:4}}>{s.notes.length > 80 ? s.notes.slice(0,80) + "…" : s.notes}</span>}
+              {!jobNotesOpen && <span style={{flex:1,fontSize:12,color:"#99a7b5",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginLeft:4}}>{s.notes.length > 80 ? s.notes.slice(0,80) + "…" : s.notes}</span>}
             </button>
-            {jobNotesOpen && <div style={{padding:"0 16px 12px",fontSize:13,color:"#8898a8",lineHeight:1.6}}><Linkify text={s.notes} linkColor="#7BB3FF"/></div>}
+            {jobNotesOpen && <div style={{padding:"0 16px 12px",fontSize:13,color:"#99a7b5",lineHeight:1.6}}><Linkify text={s.notes} linkColor="#7BB3FF"/></div>}
           </div>
         )}
 
@@ -1840,7 +1840,7 @@ ${combined}`);
         {/* ── VIDEO ─────────────────────────────────────────────────── */}
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2030"}}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
-            <div style={{fontSize:10,fontWeight:700,color:"#8496b0",letterSpacing:1,textTransform:"uppercase",fontFamily:F,flex:1}}>VIDEO</div>
+            <div style={{fontSize:10,fontWeight:700,color:"#95a5bb",letterSpacing:1,textTransform:"uppercase",fontFamily:F,flex:1}}>VIDEO</div>
             {/* Global upload pause/resume — applies to every stop's queue, not
                 just this one — kept reachable but compact, no longer nested
                 behind a SHOW/HIDE toggle. */}
@@ -1859,7 +1859,7 @@ ${combined}`);
                   <IconVideo size={12} color="#FF8A80"/>
                   <span style={{flex:1,fontSize:12,color:"#e6ecf5"}}>iPhone video captured: {fmtCaptured(e.ts)}</span>
                   <button onClick={() => removeIphoneVideoEntry(e.ts)} aria-label="Remove this entry" style={{padding:"2px 6px",borderRadius:5,background:"transparent",border:"none",cursor:"pointer"}}>
-                    <IconX size={11} color="#9a8a8a"/>
+                    <IconX size={11} color="#a99b9b"/>
                   </button>
                 </div>
               ))}
@@ -1889,14 +1889,14 @@ ${combined}`);
                     {previewUrl && <video controls preload="metadata" src={previewUrl} style={{width:"100%",height:160,display:"block",background:"#000"}} />}
                     <div style={{padding:"8px 10px"}}>
                       <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
-                        <div style={{flex:1,minWidth:0,fontSize:11,color:"#c0c8d0",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</div>
+                        <div style={{flex:1,minWidth:0,fontSize:11,color:"#c5ccd4",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</div>
                         <span style={{fontSize:9,color:statusColor,fontWeight:800,fontFamily:F,letterSpacing:0.4,textTransform:"uppercase",flexShrink:0}}>{statusLabel}</span>
                       </div>
                       <div style={{height:3,background:"rgba(255,255,255,.05)",borderRadius:2,overflow:"hidden",marginBottom:4}}>
                         <div style={{height:"100%",width:`${it.progress||0}%`,background:statusColor,transition:"width .3s"}}/>
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
-                        <div style={{flex:1,fontSize:9,color:"#8a9ab0",fontFamily:F,letterSpacing:0.3,display:"flex",alignItems:"center",gap:4}}>
+                        <div style={{flex:1,fontSize:9,color:"#9aa8bb",fontFamily:F,letterSpacing:0.3,display:"flex",alignItems:"center",gap:4}}>
                           <span>{sizeMB}MB</span>
                           {it.savedToDevice && <span style={{color:"#10B981",fontWeight:800}} title="A copy is saved on your phone">✓ on phone</span>}
                         </div>
@@ -1909,16 +1909,16 @@ ${combined}`);
                           {it.status === "uploading" ? "Restart" : it.status === "local" ? "Upload" : "Retry"}
                         </button>
                         {it.status === "local" ? (
-                          <button onClick={() => { if(window.confirm("Permanently delete this video from the phone? This can't be undone — save it to Photos/Files first if you still need it.")) deleteVideoQueueItem(it.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#a06060",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,display:"flex",alignItems:"center"}}>
-                            <IconX size={10} color="#a06060"/>
+                          <button onClick={() => { if(window.confirm("Permanently delete this video from the phone? This can't be undone — save it to Photos/Files first if you still need it.")) deleteVideoQueueItem(it.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#af7979",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,display:"flex",alignItems:"center"}}>
+                            <IconX size={10} color="#af7979"/>
                           </button>
                         ) : (
-                          <button onClick={() => { if(window.confirm("Stop uploading this video? It stays on this card so you can save it to your phone or upload it later.")) cancelVideoQueueItem(it.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#a06060",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,display:"flex",alignItems:"center"}}>
-                            <IconX size={10} color="#a06060"/>
+                          <button onClick={() => { if(window.confirm("Stop uploading this video? It stays on this card so you can save it to your phone or upload it later.")) cancelVideoQueueItem(it.id); }} style={{padding:"3px 6px",borderRadius:5,background:"transparent",border:"1px solid #252d47",color:"#af7979",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:F,letterSpacing:0.5,display:"flex",alignItems:"center"}}>
+                            <IconX size={10} color="#af7979"/>
                           </button>
                         )}
                       </div>
-                      {(it.status === "error" || it.status === "local") && <div style={{fontSize:9,color:"#9fb0c0",marginTop:3,fontFamily:F,lineHeight:1.5}}>{it.status === "error" ? "Upload failed, but the video is still saved on this phone." : "This video is kept on this phone."} Tap <b style={{color:"#10B981"}}>Save</b> to keep a copy in Photos/Files.</div>}
+                      {(it.status === "error" || it.status === "local") && <div style={{fontSize:9,color:"#abbac8",marginTop:3,fontFamily:F,lineHeight:1.5}}>{it.status === "error" ? "Upload failed, but the video is still saved on this phone." : "This video is kept on this phone."} Tap <b style={{color:"#10B981"}}>Save</b> to keep a copy in Photos/Files.</div>}
                       {it.error && <div style={{fontSize:9,color:"#FF8888",marginTop:3,fontFamily:F}}>{it.error}</div>}
                     </div>
                   </div>
@@ -1938,7 +1938,7 @@ ${combined}`);
                     {ytId && <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" style={{width:"100%",height:90,objectFit:"cover"}} />}
                     {driveId && <video controls preload="metadata" src={buildStreamUrl(driveId)} style={{width:"100%",height:160,display:"block",background:"#000"}} />}
                     <div style={{padding:"6px 8px",display:"flex",alignItems:"center",gap:6}}>
-                      <div style={{fontSize:9,color:"#5a6890",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{shareLink}</div>
+                      <div style={{fontSize:9,color:"#717fa6",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{shareLink}</div>
                       {typeof navigator !== "undefined" && navigator.share && (
                         <button onClick={async () => {
                           const name = (s.cn || "").split(" ")[0];
@@ -2023,11 +2023,11 @@ ${combined}`);
                             <CatalogPicker value={it.item} onChange={v => updateSuggestedItem(it.id, { item: v })} />
                           </div>
                         )}
-                        <div style={{fontSize:10,color:"#5a6580",marginTop:2}}>Target: {targetString(it)}</div>
-                        {it.notes && <div style={{fontSize:10,color:"#5a6580",marginTop:1}}>{it.notes}</div>}
+                        <div style={{fontSize:10,color:"#707c9a",marginTop:2}}>Target: {targetString(it)}</div>
+                        {it.notes && <div style={{fontSize:10,color:"#707c9a",marginTop:1}}>{it.notes}</div>}
                       </div>
                       <button onClick={() => acceptSuggestedItem(it.id)} style={{padding:"4px 10px",borderRadius:6,background:"rgba(16,185,129,.12)",border:"1px solid rgba(16,185,129,.3)",color:"#10B981",fontSize:10,fontWeight:800,cursor:"pointer",flexShrink:0}}>Add</button>
-                      <button onClick={() => dismissSuggestedItem(it.id)} style={{width:26,height:26,borderRadius:6,background:"transparent",border:"1px solid #252d47",color:"#a06060",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><IconX size={11} color="#a06060"/></button>
+                      <button onClick={() => dismissSuggestedItem(it.id)} style={{width:26,height:26,borderRadius:6,background:"transparent",border:"1px solid #252d47",color:"#af7979",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><IconX size={11} color="#af7979"/></button>
                     </div>
                   </div>
                 ))}
@@ -2037,7 +2037,7 @@ ${combined}`);
 
           {/* Confirmed items */}
           {lineItems.length === 0 && suggestedItems.length === 0 && !extractLoading && (
-            <div style={{fontSize:11,color:"#4a5a70",fontStyle:"italic",fontFamily:B,marginBottom:8}}>No line items yet — write your Scope/Add-on notes, then tap Extract.</div>
+            <div style={{fontSize:11,color:"#607591",fontStyle:"italic",fontFamily:B,marginBottom:8}}>No line items yet — write your Scope/Add-on notes, then tap Extract.</div>
           )}
           {lineItems.length > 0 && (
             <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
@@ -2058,17 +2058,17 @@ ${combined}`);
                         <input value={it.location} onChange={e => updateLineItem(it.id, { location: e.target.value })} placeholder="Location" style={{flex:"1 1 100px",padding:"5px 7px",borderRadius:6,background:"#0a0c14",border:"1px solid #1a2540",color:"#c8d0e0",fontSize:10,fontFamily:B}} />
                         <input type="number" min="1" value={it.qty} onChange={e => updateLineItem(it.id, { qty: Math.max(1, Number(e.target.value) || 1) })} style={{width:48,padding:"5px 7px",borderRadius:6,background:"#0a0c14",border:"1px solid #1a2540",color:"#c8d0e0",fontSize:10,fontFamily:B}} />
                       </div>
-                      <div style={{fontSize:9,color:"#4a5a70",marginTop:3}}>Target: {targetString(it)}</div>
-                      {it.notes && <div style={{fontSize:10,color:"#5a6580",marginTop:1}}>{it.notes}</div>}
+                      <div style={{fontSize:9,color:"#607591",marginTop:3}}>Target: {targetString(it)}</div>
+                      {it.notes && <div style={{fontSize:10,color:"#707c9a",marginTop:1}}>{it.notes}</div>}
                     </div>
-                    <button onClick={() => removeLineItem(it.id)} style={{width:26,height:26,borderRadius:6,background:"transparent",border:"1px solid #252d47",color:"#a06060",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><IconX size={11} color="#a06060"/></button>
+                    <button onClick={() => removeLineItem(it.id)} style={{width:26,height:26,borderRadius:6,background:"transparent",border:"1px solid #252d47",color:"#af7979",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><IconX size={11} color="#af7979"/></button>
                   </div>
                 </div>
               ))}
             </div>
           )}
 
-          <button onClick={addManualLineItem} style={{width:"100%",padding:"8px 0",borderRadius:8,background:"transparent",border:"1px dashed #1a2540",color:"#5a7090",fontSize:11,fontWeight:600,cursor:"pointer"}}>+ Add line item manually</button>
+          <button onClick={addManualLineItem} style={{width:"100%",padding:"8px 0",borderRadius:8,background:"transparent",border:"1px dashed #1a2540",color:"#7187a6",fontSize:11,fontWeight:600,cursor:"pointer"}}>+ Add line item manually</button>
         </div>
         </>)}
 
@@ -2116,10 +2116,10 @@ ${combined}`);
               if (!inGroup.length) return null;
               return (
                 <div key={groupKey}>
-                  <div style={{fontSize:8,color:"#7d8fa8",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginBottom:3}}>{groupLabel}</div>
+                  <div style={{fontSize:8,color:"#90a0b5",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginBottom:3}}>{groupLabel}</div>
                   <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
                     {inGroup.map(t => (
-                      <button key={t.tag} onClick={() => toggleJobTag(t.tag)} style={{padding:"3px 8px",borderRadius:999,background:"transparent",border:"1px solid #252d47",color:"#7a8aaa",fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{t.tag}</button>
+                      <button key={t.tag} onClick={() => toggleJobTag(t.tag)} style={{padding:"3px 8px",borderRadius:999,background:"transparent",border:"1px solid #252d47",color:"#8e9bb7",fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{t.tag}</button>
                     ))}
                   </div>
                 </div>
@@ -2141,8 +2141,8 @@ ${combined}`);
 
       {/* ── STICKY BOTTOM BAR ──────────────────────────────────────── */}
       <div style={{flexShrink:0,padding:"10px 16px",paddingBottom:"max(10px,env(safe-area-inset-bottom))",background:"#0d0f18",borderTop:"1px solid #1a1f2e",display:"flex",gap:8,zIndex:101}}>
-        {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#1a2035",border:"1px solid #252d47",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",textDecoration:"none"}}><IconPhone size={18} color="#a0b8d0"/></a>}
-        {s.phone && <button onClick={() => window.open(`sms:${s.phone.replace(/\D/g,"")}`,"_self")} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#1a2035",border:"1px solid #252d47",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconMessageSquare size={18} color="#a0b8d0"/></button>}
+        {s.phone && <a href={`tel:${s.phone.replace(/\D/g,"")}`} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#1a2035",border:"1px solid #252d47",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",textDecoration:"none"}}><IconPhone size={18} color="#aac0d5"/></a>}
+        {s.phone && <button onClick={() => window.open(`sms:${s.phone.replace(/\D/g,"")}`,"_self")} style={{flex:1,padding:"12px 0",borderRadius:10,background:"#1a2035",border:"1px solid #252d47",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconMessageSquare size={18} color="#aac0d5"/></button>}
         {s.addr && <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(s.addr)}`} target="_blank" rel="noreferrer" style={{flex:1,padding:"12px 0",borderRadius:10,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.2)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",textDecoration:"none"}}><IconNavigation size={18} color="#3B82F6"/></a>}
         <button onClick={handleDone} style={{flex:3,padding:"12px 0",borderRadius:10,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconCheckCircle size={18} color="#10B981"/><span style={{fontSize:13,color:"#10B981",fontWeight:800,fontFamily:F,letterSpacing:0.5}}>DONE</span></button>
       </div>

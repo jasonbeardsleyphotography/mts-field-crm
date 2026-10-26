@@ -46,12 +46,12 @@ function OpenRealWorkSetup({ onChange }) {
   );
   const b = (t) => <b style={{ color: "#fff" }}>{t}</b>;
   const hint = (children) => (
-    <div style={{ fontSize: 12, color: "#8aa0c0", lineHeight: 1.5, marginTop: 4 }}>{children}</div>
+    <div style={{ fontSize: 12, color: "#9aadc8", lineHeight: 1.5, marginTop: 4 }}>{children}</div>
   );
 
   const nameField = (
     <div style={{ marginTop: 12 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: "#4a5a70", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "#607591", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4 }}>
         Name of your Shortcut
       </div>
       <input
@@ -117,7 +117,7 @@ function OpenRealWorkSetup({ onChange }) {
         </button>
         {tested && (
           <>
-            <div style={{ fontSize: 12, color: "#8aa0c0", lineHeight: 1.5 }}>
+            <div style={{ fontSize: 12, color: "#9aadc8", lineHeight: 1.5 }}>
               Did the RealWork app open? If you came back to this screen, tell me below.
             </div>
             <button onClick={() => apply(true)} style={btn("#10B981", true)}>
@@ -196,7 +196,7 @@ function SendToRealWorkSetup() {
 
   const nameField = (
     <div style={{ marginTop: 12 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: "#4a5a70", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "#607591", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4 }}>
         Name of this Shortcut
       </div>
       <input value={name} onChange={e => saveName(e.target.value)}
@@ -227,7 +227,7 @@ function SendToRealWorkSetup() {
         </>
       ) : (
         <>
-          <div style={{ fontSize: 12.5, color: "#8aa0c0", lineHeight: 1.55, marginBottom: 4 }}>
+          <div style={{ fontSize: 12.5, color: "#9aadc8", lineHeight: 1.55, marginBottom: 4 }}>
             Optional. Skips the photo picker after Done: the first photo is sent
             automatically. Needs a second Shortcut, built from the one you already have:
           </div>
@@ -242,7 +242,7 @@ function SendToRealWorkSetup() {
           {msg && <div style={{ marginTop: 10, fontSize: 12, color: "#ff9a9a" }}>{msg}</div>}
           <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
             <button onClick={test} style={btn("#7db4ff")}>Test it from here</button>
-            <div style={{ fontSize: 11.5, color: "#6a7688", lineHeight: 1.45 }}>
+            <div style={{ fontSize: 11.5, color: "#818c9d", lineHeight: 1.45 }}>
               The test saves a small “MTS Field test photo” picture to your Photos and
               opens RealWork. Delete the picture afterwards.
             </div>

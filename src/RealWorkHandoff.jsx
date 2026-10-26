@@ -151,20 +151,20 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease, sendClip
   });
   const quietBtn = {
     width: "100%", padding: "12px 0", borderRadius: 10, background: "transparent",
-    border: "1px solid #253049", color: "#9fb0c4", fontSize: 12.5, fontWeight: 700,
+    border: "1px solid #253049", color: "#aab9cb", fontSize: 12.5, fontWeight: 700,
     fontFamily: F, letterSpacing: 0.5, textTransform: "uppercase", cursor: "pointer",
   };
 
   if (phase === "loading") {
-    return <div style={{ ...shell, alignItems: "center", justifyContent: "center", color: "#5a6580", fontSize: 12 }}>One moment…</div>;
+    return <div style={{ ...shell, alignItems: "center", justifyContent: "center", color: "#707c9a", fontSize: 12 }}>One moment…</div>;
   }
 
   // Send mode, while the photo is being copied (usually under a second).
   if (phase === "sending") {
     return (
       <div style={{ ...shell, alignItems: "center", justifyContent: "center", padding: 24, gap: 14 }}>
-        <div style={{ fontSize: 13, color: "#8aa0c0" }}>Getting the photo ready for RealWork…</div>
-        <button onClick={onRelease} style={{ ...quietBtn, maxWidth: 380, border: "none", color: "#6a7688" }}>Skip RealWork</button>
+        <div style={{ fontSize: 13, color: "#9aadc8" }}>Getting the photo ready for RealWork…</div>
+        <button onClick={onRelease} style={{ ...quietBtn, maxWidth: 380, border: "none", color: "#818c9d" }}>Skip RealWork</button>
       </div>
     );
   }
@@ -176,7 +176,7 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease, sendClip
         <div style={{ width: "100%", maxWidth: 380, display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ textAlign: "center", marginBottom: 6 }}>
             <div style={{ fontSize: 18, fontWeight: 800, fontFamily: F, letterSpacing: 0.8, textTransform: "uppercase" }}>RealWork</div>
-            <div style={{ fontSize: 12.5, color: "#7a8aaa", marginTop: 6, lineHeight: 1.5 }}>
+            <div style={{ fontSize: 12.5, color: "#8e9bb7", marginTop: 6, lineHeight: 1.5 }}>
               {mode === "send"
                 ? "Saving the first photo to your Photos and opening RealWork. If nothing happened, tap below."
                 : "Opening it now. If nothing opened, tap below."}
@@ -191,7 +191,7 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease, sendClip
             <IconLinkExternal size={16} color="#7db4ff" /> Open RealWork
           </a>
           <button onClick={onRelease} style={quietBtn}>I'm back — continue</button>
-          <button onClick={() => setShowSetup(v => !v)} style={{ ...quietBtn, border: "none", color: "#6a7688", textTransform: "none", letterSpacing: 0.2, fontSize: 12 }}>
+          <button onClick={() => setShowSetup(v => !v)} style={{ ...quietBtn, border: "none", color: "#818c9d", textTransform: "none", letterSpacing: 0.2, fontSize: 12 }}>
             {isShortcutReady() ? "RealWork app settings" : "Open the RealWork app instead of the browser…"}
           </button>
           {showSetup && (
@@ -215,14 +215,14 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease, sendClip
           <div style={{ fontSize: 15, fontWeight: 800, fontFamily: F, letterSpacing: 1, textTransform: "uppercase" }}>
             Photo for RealWork
           </div>
-          <div style={{ fontSize: 11.5, color: "#5a6580", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <div style={{ fontSize: 11.5, color: "#707c9a", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {cn || "This visit"} · tap one, then “Save Image”
           </div>
         </div>
         <button onClick={onRelease} aria-label="Skip RealWork" style={{
           width: 38, height: 38, borderRadius: 19, flexShrink: 0, background: "transparent",
           border: "1px solid #253049", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-        }}><IconX size={16} color="#8aa0c0" /></button>
+        }}><IconX size={16} color="#9aadc8" /></button>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px 8px" }}>
@@ -265,7 +265,7 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease, sendClip
         <button onClick={() => setPhase("opening")} disabled={!!busyKey} style={quietBtn}>
           No photo — just open RealWork
         </button>
-        <button onClick={onRelease} disabled={!!busyKey} style={{ ...quietBtn, border: "none", color: "#6a7688" }}>
+        <button onClick={onRelease} disabled={!!busyKey} style={{ ...quietBtn, border: "none", color: "#818c9d" }}>
           Skip RealWork
         </button>
       </div>

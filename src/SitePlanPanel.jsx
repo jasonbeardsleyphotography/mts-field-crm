@@ -511,10 +511,10 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
       style={{ padding: "12px 16px", borderBottom: "1px solid #1a1f2e" }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, color: "#8496b0", letterSpacing: 1, textTransform: "uppercase", fontFamily: F }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: "#95a5bb", letterSpacing: 1, textTransform: "uppercase", fontFamily: F }}>
           Site Map
         </span>
-        <span style={{ fontSize: 10, color: "#71839c" }}>
+        <span style={{ fontSize: 10, color: "#8796ab" }}>
           drag pins · two fingers to move the map · ⤢ for full screen
         </span>
       </div>
@@ -531,7 +531,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
             {mapChrome(false)}
           </>
         ) : (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#4a5a70", fontSize: 12, textAlign: "center", padding: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#607591", fontSize: 12, textAlign: "center", padding: 20 }}>
             {live ? "Finding this property…" : "Loading map…"}
           </div>
         )}
@@ -540,7 +540,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
       {live && view && actionBar(false)}
 
       {err && <div style={{ marginTop: 6, fontSize: 11, color: "#ff8080" }}>{err}</div>}
-      {note && !err && <div style={{ marginTop: 6, fontSize: 11, color: "#8fbf80" }}>{note}</div>}
+      {note && !err && <div style={{ marginTop: 6, fontSize: 11, color: "#9ec891" }}>{note}</div>}
 
       {link && (
         <button
@@ -581,7 +581,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
             <div style={{
               position: "absolute", top: "calc(max(12px, env(safe-area-inset-top)) + 46px)",
               left: "max(12px, env(safe-area-inset-left))",
-              fontSize: 10.5, color: "#9fb0c6", pointerEvents: "none",
+              fontSize: 10.5, color: "#aab9cd", pointerEvents: "none",
               textShadow: "0 1px 4px rgba(0,0,0,.9)",
             }}>Tap the ground for property info</div>
           )}
@@ -617,11 +617,11 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
                   {propInfo.owner}
                 </div>
                 {propInfo.parcelAddr && (
-                  <div style={{ fontSize: 12.5, color: "#8aa0c0", marginTop: 2 }}>{propInfo.parcelAddr}</div>
+                  <div style={{ fontSize: 12.5, color: "#9aadc8", marginTop: 2 }}>{propInfo.parcelAddr}</div>
                 )}
               </div>
               <button onClick={() => setPropInfo(null)} aria-label="Close" style={closeBtn}>
-                <IconX size={15} color="#8aa0c0" />
+                <IconX size={15} color="#9aadc8" />
               </button>
             </div>
             {[
@@ -633,7 +633,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
               ["Owner mailing", propInfo.mailAddr],
             ].filter(([, v]) => v).map(([k, v]) => (
               <div key={k} style={{ display: "flex", gap: 10, padding: "6px 0", borderTop: "1px solid #161c2b" }}>
-                <span style={{ width: 118, flexShrink: 0, fontSize: 10, fontWeight: 800, color: "#4a5a70", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", paddingTop: 2 }}>{k}</span>
+                <span style={{ width: 118, flexShrink: 0, fontSize: 10, fontWeight: 800, color: "#607591", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", paddingTop: 2 }}>{k}</span>
                 <span style={{ flex: 1, fontSize: 13, color: "#e6ecf5" }}>{v}</span>
               </div>
             ))}
@@ -648,11 +648,11 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
           <div onClick={() => setListOpen(false)} style={scrim} />
           <div style={{ ...sheet, padding: "14px 12px max(16px, env(safe-area-inset-bottom))" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, padding: "0 4px" }}>
-              <div style={{ flex: 1, fontSize: 11, fontWeight: 800, color: "#4a5a70", fontFamily: F, letterSpacing: 1, textTransform: "uppercase" }}>
+              <div style={{ flex: 1, fontSize: 11, fontWeight: 800, color: "#607591", fontFamily: F, letterSpacing: 1, textTransform: "uppercase" }}>
                 Pins · plan order
               </div>
               <button onClick={() => setListOpen(false)} aria-label="Close list" style={closeBtn}>
-                <IconX size={15} color="#8aa0c0" />
+                <IconX size={15} color="#9aadc8" />
               </button>
             </div>
             {viewPins.map((p, i) => (
@@ -677,7 +677,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
                   }}>
                     {(p.photo || p.photoLocal)
                       ? <img src={p.photo || p.photoLocal} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                      : <IconMapPin size={16} color="#3a4a60" />}
+                      : <IconMapPin size={16} color="#526887" />}
                   </span>
                   <span style={{
                     flex: 1, minWidth: 0, fontSize: 13, color: "#e6ecf5", fontWeight: 600,
@@ -686,11 +686,11 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
                 </button>
                 <button onClick={() => reorderPin(i, -1)} disabled={i === 0}
                         aria-label="Move up" style={rowBtn(i === 0)}>
-                  <IconChevronUp size={15} color="#8aa0c0" />
+                  <IconChevronUp size={15} color="#9aadc8" />
                 </button>
                 <button onClick={() => reorderPin(i, 1)} disabled={i === viewPins.length - 1}
                         aria-label="Move down" style={rowBtn(i === viewPins.length - 1)}>
-                  <IconChevronDown size={15} color="#8aa0c0" />
+                  <IconChevronDown size={15} color="#9aadc8" />
                 </button>
                 <button onClick={() => deletePin(i)} aria-label="Delete pin" style={rowBtn(false)}>
                   <IconTrash size={14} color="#ff8080" />
@@ -707,11 +707,11 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
           <div onClick={() => setSel(null)} style={scrim} />
           <div style={sheet}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-              <div style={{ flex: 1, fontSize: 12, color: "#5a6580" }}>
+              <div style={{ flex: 1, fontSize: 12, color: "#707c9a" }}>
                 Close this to drag the pin.
               </div>
               <button onClick={() => setSel(null)} aria-label="Close" style={closeBtn}>
-                <IconX size={15} color="#8aa0c0" />
+                <IconX size={15} color="#9aadc8" />
               </button>
             </div>
 
@@ -735,8 +735,8 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
 
             {photos.length > 0 && (
               <>
-                <div style={{ fontSize: 9.5, fontWeight: 800, color: "#4a5a70", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 5, display: "flex", alignItems: "center", gap: 5 }}>
-                  <IconImage size={11} color="#4a5a70" /> Photo on this pin
+                <div style={{ fontSize: 9.5, fontWeight: 800, color: "#607591", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 5, display: "flex", alignItems: "center", gap: 5 }}>
+                  <IconImage size={11} color="#607591" /> Photo on this pin
                 </div>
                 <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 6, marginBottom: 10 }}>
                   {photos.map((ph) => {

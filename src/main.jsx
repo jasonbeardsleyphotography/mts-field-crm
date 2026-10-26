@@ -48,7 +48,7 @@ class AppErrorBoundary extends React.Component {
             textTransform: "uppercase", color: "#FF5555", marginBottom: 12,
             fontFamily: "'Oswald', sans-serif",
           }}>App Error</div>
-          <div style={{ fontSize: 13, color: "#a0b0c0", lineHeight: 1.5, marginBottom: 16 }}>
+          <div style={{ fontSize: 13, color: "#abbac8", lineHeight: 1.5, marginBottom: 16 }}>
             Something crashed before the app could load. This is almost certainly a bug.
             Try reloading first; if it happens again, tap "Show details" and screenshot the result.
           </div>
@@ -81,7 +81,7 @@ class AppErrorBoundary extends React.Component {
               style={{
                 flex: 1, padding: "12px 0", borderRadius: 8,
                 background: "transparent", border: "1px solid #252d47",
-                color: "#5a6580", fontSize: 13, fontWeight: 600,
+                color: "#707c9a", fontSize: 13, fontWeight: 600,
                 cursor: "pointer", letterSpacing: 0.5,
               }}
             >{showDetails ? "Hide details" : "Show details"}</button>
@@ -94,7 +94,7 @@ class AppErrorBoundary extends React.Component {
               padding: 10,
               fontFamily: "ui-monospace, Menlo, monospace",
               fontSize: 10,
-              color: "#7a8090",
+              color: "#8f94a1",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
               maxHeight: 320,
@@ -104,7 +104,7 @@ class AppErrorBoundary extends React.Component {
               {info?.componentStack ? "\n\n--- React component stack ---\n" + info.componentStack : ""}
             </div>
           )}
-          <div style={{ fontSize: 10, color: "#4a5a70", marginTop: 24, textAlign: "center" }}>
+          <div style={{ fontSize: 10, color: "#607591", marginTop: 24, textAlign: "center" }}>
             If reloading doesn't fix it, force-quit the browser and reopen.
           </div>
         </div>

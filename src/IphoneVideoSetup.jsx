@@ -37,7 +37,7 @@ export default function IphoneVideoSetup({ onReady }) {
   );
   const nameField = (
     <div style={{ marginTop: 12 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: "#7d8fa8", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "#90a0b5", fontFamily: F, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4 }}>
         Name of the Shortcut
       </div>
       <input value={name} onChange={e => saveName(e.target.value)}
@@ -66,7 +66,7 @@ export default function IphoneVideoSetup({ onReady }) {
 
   return (
     <div>
-      <div style={{ fontSize: 12.5, color: "#9fb0c6", lineHeight: 1.55, marginBottom: 4 }}>
+      <div style={{ fontSize: 12.5, color: "#aab9cd", lineHeight: 1.55, marginBottom: 4 }}>
         A web app can't open the Camera app by itself, but a Shortcut can — and it can
         choose Video mode. One-time setup, about a minute:
       </div>
