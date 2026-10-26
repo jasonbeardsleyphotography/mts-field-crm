@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { IconX } from "./icons";
+import { useCoverVideo } from "./coverVideo";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Video Recorder
@@ -45,6 +46,7 @@ const fmtDur = (s) => `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
 
 export default function VideoRecorder({ onRecorded, onClose }) {
   const videoRef    = useRef(null);
+  useCoverVideo(videoRef);   // fill the screen even when iOS ignores object-fit
   const streamRef   = useRef(null);
   const trackRef    = useRef(null);
   const recorderRef = useRef(null);

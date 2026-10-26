@@ -58,11 +58,10 @@
 
 # Baseline security headers. No Content-Security-Policy yet: the app pulls from
 # Google Maps, Google sign-in, Esri imagery and Drive, and a strict policy that
-# missed one of them would break the app in the field. These four can't.
+# missed one of them would break the app in the field. These three can't.
 [[headers]]
   for = "/*"
   [headers.values]
     X-Content-Type-Options = "nosniff"
     X-Frame-Options = "DENY"
     Referrer-Policy = "strict-origin-when-cross-origin"
-    Permissions-Policy = "camera=(self), microphone=(self), geolocation=(self)"

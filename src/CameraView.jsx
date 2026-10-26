@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { IconX } from "./icons";
+import { useCoverVideo } from "./coverVideo";
 import { scoreSharpness } from "./sharpness";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -88,6 +89,7 @@ function portraitBottomEdge() {
 
 export default function CameraView({ onPhoto, onClose }) {
   const videoRef           = useRef(null);
+  useCoverVideo(videoRef);   // fill the screen even when iOS ignores object-fit
   const streamRef          = useRef(null);
   const trackRef           = useRef(null);
   const containerRef       = useRef(null);
@@ -232,7 +234,10 @@ export default function CameraView({ onPhoto, onClose }) {
     const nx = (clientX - r.left) / r.width;
     const ny = (clientY - r.top)  / r.height;
 
-    setFocusPoint({ x: clientX - r.left, y: clientY - r.top, t: Date.now() });
+    // The ring lives in the full-screen container; the video can be larger
+    // than the screen (it's sized to cover it), so measure from the container.
+    const c = containerRef.current?.getBoundingClientRect() || { left: 0, top: 0 };
+    setFocusPoint({ x: clientX - c.left, y: clientY - c.top, t: Date.now() });
     setTimeout(() => {
       if (!mountedRef.current) return; // don't setState after the camera closed
       setFocusPoint(p => (p && Date.now() - p.t >= FOCUS_INDICATOR_MS ? null : p));

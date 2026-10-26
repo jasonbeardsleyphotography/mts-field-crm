@@ -1,3 +1,5 @@
+// v66: camera + video viewfinders sized to fill the screen explicitly (no longer
+//      trusting object-fit on iOS); camera Permissions-Policy header removed.
 // v65: status bar back to black-translucent — "black" shrank the full-screen
 //      camera and video viewfinders.
 // v64: special callout on in-app visits; status bar no longer overlaps (blur);
@@ -75,7 +77,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v65";
+const CACHE = "mts-field-v66";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
