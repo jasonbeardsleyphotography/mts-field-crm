@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { getDriveStorage } from "./driveSync";
 import { IconX, IconRefresh } from "./icons";
+import { getMyName } from "./myName";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Account & connection check
@@ -87,7 +88,14 @@ async function runChecks(token, onServerSignIn) {
       : `Couldn't read contacts (error ${r.status}). Sign out and back in, and allow Contacts access.`);
   } catch { add("Contacts", "bad", "Couldn't reach Google Contacts — check your signal."); }
 
-  // 6. Anything stuck on this device?
+  // 6. Name used in messages to customers
+  {
+    const n = getMyName();
+    add("Your name in customer texts", n ? "ok" : "warn",
+      n ? `Texts and follow-up emails are signed “${n}”.` : "Not set — texts would say “your Monster Tree estimator”. Set it in Settings → Your name.");
+  }
+
+  // 7. Anything stuck on this device?
   try {
     const q = JSON.parse(localStorage.getItem("mts-photo-queue") || "[]");
     add("Photo uploads", q.length ? "warn" : "ok", q.length
@@ -95,10 +103,10 @@ async function runChecks(token, onServerSignIn) {
       : "Nothing waiting — every photo on this device has reached Drive.");
   } catch {}
 
-  // 7. Which version is running
+  // 8. Which version is running
   try {
     const keys = (await caches.keys()).filter(k => k.startsWith("mts-field-v"));
-    if (keys.length) add("App version", "ok", keys.sort().pop().replace("mts-field-", ""));
+    if (keys.length) add("App version", "ok", keys.sort((a, b) => parseInt(a.slice(11)) - parseInt(b.slice(11))).pop().replace("mts-field-", ""));
   } catch {}
 
   return out;

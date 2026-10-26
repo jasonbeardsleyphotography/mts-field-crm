@@ -16,7 +16,7 @@ import DebugPanel from "./DebugPanel";
 import PhotoUploads from "./PhotoUploads";
 import DriveCleanup from "./DriveCleanup";
 import ContactCleanup from "./ContactCleanup";
-import { loadContactIndex, clientKeyFor, phone10, CLIENT_KEY_FIELD } from "./googleContacts";
+import { loadContactIndex, clientKeyFor, phone10, CLIENT_KEY_FIELD, saveClientContact } from "./googleContacts";
 import RealWorkHandoff from "./RealWorkHandoff";
 import RealWorkSetup from "./RealWorkSetup";
 import IphoneVideoSetup from "./IphoneVideoSetup";
@@ -29,6 +29,9 @@ import RecoveryScreen from "./RecoveryScreen";
 import Linkify from "./Linkify";
 import AddStopModal from "./AddStopModal";
 import AccountCheck from "./AccountCheck";
+import { openDirections } from "./openMaps";
+import { getMyName, setMyName, ensureMyName } from "./myName";
+import { openAccountGate, closeAccountGate } from "./accountGate";
 import { buildClientIndex } from "./clientIndex";
 import {
   IconArrowLeft, IconNavigation, IconMessageSquare, IconVolume2,
@@ -71,7 +74,13 @@ function getBusinessDays(n, includeWeekends = false) {
 // ── GOOGLE CALENDAR API ──────────────────────────────────────────────────────
 async function fetchEvents(token, dayStart, dayEnd) {
   const url = `${CAL_BASE}/events?timeMin=${dayStart.toISOString()}&timeMax=${dayEnd.toISOString()}&singleEvents=true&orderBy=startTime&maxResults=250&timeZone=America/New_York`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  // Give up on a request after 20s: on a weak signal it could otherwise hang
+  // for minutes behind the full-screen "Loading…" (the caller retries).
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 20000);
+  let res;
+  try { res = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: ac.signal }); }
+  finally { clearTimeout(timer); }
   if (!res.ok) {
     const err = new Error(`API ${res.status}`);
     err.status = res.status;
@@ -92,6 +101,17 @@ function lsSet(key, val) {
 // Resolve the signed-in Google account's identity (email) via the People API.
 // Uses the already-granted `contacts` scope, so no extra consent prompt.
 async function fetchGoogleAccountId(token) {
+  // The primary calendar's id IS the account's address, and calendar access is
+  // the one permission every sign-in has (the route needs it) — the server
+  // checks accounts the same way. People API is only a fallback.
+  try {
+    const r = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary?fields=id",
+      { headers: { Authorization: `Bearer ${token}` } });
+    if (r.ok) {
+      const id = (await r.json())?.id;
+      if (typeof id === "string" && id.includes("@")) return id.toLowerCase();
+    }
+  } catch {}
   try {
     const r = await fetch(
       "https://people.googleapis.com/v1/people/me?personFields=emailAddresses",
@@ -110,6 +130,16 @@ async function fetchGoogleAccountId(token) {
     // Returning null instead just makes the caller retry next load, harmless.
     return primary?.value ? primary.value.toLowerCase() : null;
   } catch { return null; }
+}
+
+// Work captured on this device that hasn't reached Drive yet. A switch to a
+// different account must not delete it.
+async function pendingLocalWork() {
+  let photos = 0, notes = 0, videos = 0;
+  try { photos = JSON.parse(localStorage.getItem("mts-photo-queue") || "[]").length; } catch {}
+  try { notes = getDirtyFieldIds().length; } catch {}
+  try { videos = await videoPendingCount(); } catch {}
+  return { photos, notes, videos, any: photos + notes + videos > 0 };
 }
 
 // Wipe all app data on this device (keeping only the current auth token), then
@@ -281,7 +311,14 @@ export default function App() {
         const r = await fetch("/api/token", { credentials: "same-origin", cache: "no-store" });
         if (r.ok) {
           const d = await r.json().catch(() => null);
-          if (d?.access_token) { saveToken(d.access_token, d.expires_in); return true; }
+          if (d?.access_token) {
+            // A server session for a different account than this device last
+            // confirmed (e.g. a sign-out whose server call never landed): hold
+            // all Drive/Contacts writes until the account check re-runs.
+            let known = null; try { known = localStorage.getItem("mts-account"); } catch {}
+            if (d.email && known && known.includes("@") && d.email.toLowerCase() !== known) closeAccountGate();
+            saveToken(d.access_token, d.expires_in); return true;
+          }
         }
       } catch { /* network — fall through to GIS */ }
       // 2) Fall back to the original GIS silent token. This is the visible one:
@@ -406,25 +443,36 @@ export default function App() {
   // never fires; it's a safety net). First sign-in just records the account.
   // If identity can't be resolved (offline), we do nothing and retry next load.
   const _acctChecked = useRef(false);
+  // Set when a different account signs in while the previous one still has
+  // unsent work on this device: { prev, next, pending }.
+  const [acctConflict, setAcctConflict] = useState(null);
   useEffect(() => {
     if (!token || _acctChecked.current) return;
     _acctChecked.current = true;
-    (async () => {
+    let cancelled = false, retry = null;
+    const check = async () => {
       const acct = await fetchGoogleAccountId(token);
-      if (!acct) { _acctChecked.current = false; return; } // couldn't resolve — retry
+      if (cancelled) return;
+      // Couldn't tell (offline / slow): Drive can't be reached either, so keep
+      // the gate shut and try again shortly rather than waiting for a reload.
+      if (!acct) { retry = setTimeout(check, 15000); return; }
       let prev = null;
       try { prev = localStorage.getItem("mts-account"); } catch {}
-      // Only wipe on a genuine email↔email switch. Guard against ever nuking
-      // data when either side isn't a real email (legacy resourceName values,
-      // or any non-email that slipped in) — a destructive wipe must require
-      // unambiguous proof of a different account, not a format mismatch.
+      // Only treat it as a switch on a genuine email↔email difference — a
+      // destructive wipe needs unambiguous proof of a different account.
       const bothEmails = prev && prev.includes("@") && acct.includes("@");
       if (prev && prev !== acct && bothEmails) {
+        const pending = await pendingLocalWork();
+        if (pending.any) { setAcctConflict({ prev, next: acct, pending }); return; } // gate stays shut
         await clearLocalDataForAccountSwitch(acct); // wipes + reloads
         return;
       }
       try { localStorage.setItem("mts-account", acct); } catch {}
-    })();
+      openAccountGate();
+      ensureMyName(token, acct).catch(() => {});
+    };
+    check();
+    return () => { cancelled = true; clearTimeout(retry); _acctChecked.current = false; };
   }, [token]);
 
   // ── OFFLINE PHOTO QUEUE ───────────────────────────────────────────────────
@@ -540,43 +588,9 @@ export default function App() {
   const saveContactFromPrompt = async (card) => {
     if (!token || !card) return;
     setContactSaving(true);
-    const [givenName, ...rest] = (card.cn || "Unknown").split(" ");
-    const familyName = rest.join(" ");
-    const body = {
-      names: [{ givenName, familyName }],
-      ...(card.phone ? { phoneNumbers: [{ value: card.phone, type: "mobile" }] } : {}),
-      ...(card.email ? { emailAddresses: [{ value: card.email }] } : {}),
-      ...(card.addr  ? { addresses: [{ formattedValue: card.addr, type: "home" }] } : {}),
-      ...(card.jn    ? { biographies: [{ value: `MTS Rochester — Job #${card.jn}`, contentType: "TEXT_PLAIN" }] } : {}),
-    };
     try {
-      if (card.phone) {
-        const raw = (card.phone || "").replace(/\D/g, "");
-        const sr = await fetch(
-          `https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(card.phone)}&readMask=names,phoneNumbers,emailAddresses,metadata&pageSize=5`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const sd = await sr.json();
-        const existing = sd.results?.find(r =>
-          (r.person?.phoneNumbers || []).some(p => p.value?.replace(/\D/g,"") === raw)
-        );
-        if (existing?.person?.resourceName) {
-          const rn = existing.person.resourceName;
-          const mask = ["names", card.phone && "phoneNumbers", card.email && "emailAddresses", card.addr && "addresses"].filter(Boolean).join(",");
-          await fetch(`https://people.googleapis.com/v1/${rn}:updateContact?updatePersonFields=${mask}`, {
-            method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ ...body, etag: existing.person.etag }),
-          });
-          setContactResult("updated"); setContactSaving(false);
-          setTimeout(() => { setContactPrompt(null); setContactResult(null); }, 2500);
-          return;
-        }
-      }
-      await fetch("https://people.googleapis.com/v1/people:createContact", {
-        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      setContactResult("saved");
+      const r = await saveClientContact(token, card);
+      setContactResult(r === "saved" ? "saved" : "updated");
     } catch(e) { setContactResult("error"); }
     setContactSaving(false);
     setTimeout(() => { setContactPrompt(null); setContactResult(null); }, 2500);
@@ -643,7 +657,10 @@ export default function App() {
     // Already in Google Contacts, from any device.
     const p10 = phone10(card.phone);
     const email = String(card.email || "").trim().toLowerCase();
-    const found = index && (index.get(cacheKey) || (p10 && index.get(`p:${p10}`)) || (email && index.get(`e:${email}`)));
+    // Email only decides for clients with no phone: a spouse or office email
+    // shared with an existing contact mustn't stop a new number getting its
+    // own caller-ID contact.
+    const found = index && (index.get(cacheKey) || (p10 && index.get(`p:${p10}`)) || (!p10 && email && index.get(`e:${email}`)));
     if (found) {
       phoneContactCache.current[cacheKey] = found;
       persistPhoneCache();
@@ -709,6 +726,13 @@ export default function App() {
   // starting while the first was still working was the other half of the
   // duplicate-contact bug.
   const contactPushRunning = useRef(false);
+  // The contact-list snapshot, reused for a few minutes: the push effect
+  // re-fires on every calendar change while the week loads, and re-reading a
+  // whole contact book each time burned People API quota for nothing.
+  const contactIndexRef = useRef({ at: 0, index: null });
+  // Stops whose contact couldn't be created this session (e.g. Google rejects
+  // the data) — capped so one bad stop can't trigger endless full re-reads.
+  const contactFailsRef = useRef({});
 
   // (Auto-contact-push effect is defined below, after allParsed is declared.)
 
@@ -812,11 +836,20 @@ export default function App() {
   // Sign out of THIS device for real: end the server session (so a reload
   // can't sign back in), drop the local token, and block automatic sign-in
   // until someone signs in on purpose. Other devices stay signed in.
-  const signOutEverywhereHere = () => {
+  const signOutEverywhereHere = async () => {
     try { localStorage.setItem("mts-signed-out", "1"); } catch {}
-    fetch("/api/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
     setToken(null); setNeedsReconnect(false); _acctChecked.current = false;
     try { localStorage.removeItem("mts-token"); } catch {}
+    // Wait (briefly) for the server session to end, then reload so nothing of
+    // this account — route, pipeline, cached Drive folders — stays in memory
+    // for whoever signs in next.
+    try {
+      await Promise.race([
+        fetch("/api/logout", { method: "POST", credentials: "same-origin" }),
+        new Promise(r => setTimeout(r, 4000)),
+      ]);
+    } catch {}
+    try { location.reload(); } catch {}
   };
 
   const serverSignIn = useCallback(() => {
@@ -1331,7 +1364,20 @@ export default function App() {
               // "local || drive" always preferred the non-empty local value.
               // Photos are always union-merged regardless of which text wins.
               const cloudNewer = (data.savedAt || 0) >= (ex.savedAt || 0);
+              // Every other field (job tags, line items, iPhone video log,
+              // client name/job #, anything added later) comes from the newer
+              // side, falling back to whichever side has it — previously only
+              // the fields listed below were ever copied down, so the rest
+              // never reached a second device.
+              const others = {};
+              for (const k of new Set([...Object.keys(ex), ...Object.keys(data)])) {
+                if (k === "savedAt" || k.startsWith("_")) continue;
+                others[k] = cloudNewer ? (data[k] ?? ex[k]) : (ex[k] ?? data[k]);
+              }
               return {
+                ...others,
+                savedAt: Math.max(ex.savedAt || 0, data.savedAt || 0) || Date.now(),
+                iphoneVideoLog: unionByKey(ex.iphoneVideoLog || [], data.iphoneVideoLog || [], e => e?.ts),
                 // Use ?? (not ||) so the winning side's value is taken LITERALLY,
                 // including an intentional "" (a note the user cleared). With ||,
                 // an empty string was treated as "absent" and the merge fell
@@ -1506,6 +1552,7 @@ export default function App() {
     const seen = new Set();
     const unpushed = allEventsAcrossDays.filter(s => {
       if (!s.isTask || contactsPushedRef.current[s.id] || !(s.phone || s.email)) return false;
+      if ((contactFailsRef.current[s.id] || 0) >= 3) return false;
       if (seen.has(s.id)) return false; // same event can appear across day buckets
       seen.add(s.id);
       return true;
@@ -1518,23 +1565,39 @@ export default function App() {
       try {
         // Read the actual contact list once for this run. If it can't be read,
         // stop here — this run would otherwise be guessing.
-        let index;
-        try { index = await loadContactIndex(token); }
-        catch (e) { console.warn("Contacts: couldn't read the contact list; skipping this run", e); return; }
+        // Stops this device has already matched need no list at all.
+        const markPushed = (id) => {
+          const next = { ...contactsPushedRef.current, [id]: Date.now() };
+          contactsPushedRef.current = next;
+          lsSet("mts-contacts-pushed-v2", next);
+          setContactsPushed(next);
+        };
+        const rest = [];
         for (const stop of unpushed) {
+          const k = contactKeyFor(stop);
+          if (k && phoneContactCache.current[k] && phoneContactCache.current[k] !== "pending") markPushed(stop.id);
+          else rest.push(stop);
+        }
+        if (!rest.length) return;
+        let index;
+        const cached = contactIndexRef.current;
+        if (cached.index && Date.now() - cached.at < 10 * 60 * 1000) index = cached.index;
+        else {
+          try { index = await loadContactIndex(token); contactIndexRef.current = { at: Date.now(), index }; }
+          catch (e) { console.warn("Contacts: couldn't read the contact list; skipping this run", e); return; }
+        }
+        for (const stop of rest) {
           if (dead) return;
           // Re-check against the live record: an earlier iteration, or a run
           // that was interrupted, may already have handled this stop.
           if (contactsPushedRef.current[stop.id]) continue;
           const ok = await autoPushContact(stop, index);
-          if (ok) {
-            // Record it NOW, not after the whole loop. The old code batched
-            // every result to the end, so a reload partway through threw away
-            // all the progress and the next run pushed the same clients again.
-            const next = { ...contactsPushedRef.current, [stop.id]: Date.now() };
-            contactsPushedRef.current = next;
-            lsSet("mts-contacts-pushed-v2", next);
-            setContactsPushed(next);
+          // Recorded NOW, not after the whole loop: a reload partway through
+          // used to throw away the progress and push the same clients again.
+          if (ok) markPushed(stop.id);
+          else {
+            contactFailsRef.current[stop.id] = (contactFailsRef.current[stop.id] || 0) + 1;
+            contactIndexRef.current = { at: 0, index: null };   // re-read next time
           }
           await new Promise(r => setTimeout(r, 400));
         }
@@ -1663,6 +1726,7 @@ export default function App() {
   const [photoUploadsOpen, setPhotoUploadsOpen] = useState(false);
   const [driveCleanupOpen, setDriveCleanupOpen] = useState(false);
   const [accountCheckOpen, setAccountCheckOpen] = useState(false);
+  const [, setMyNameTick] = useState(0);   // re-render after the name is edited
   const [contactCleanupOpen, setContactCleanupOpen] = useState(false);
   const [realworkSetupOpen, setRealworkSetupOpen] = useState(false);
   const [iphoneSetupOpen, setIphoneSetupOpen] = useState(false);
@@ -2048,8 +2112,7 @@ export default function App() {
   };
   const navigate = addr => {
     if (!addr) return;
-    const q = encodeURIComponent(addr);
-    window.location.href = `comgooglemaps://?daddr=${q}&directionsmode=driving`;
+    openDirections(addr);
   };
 
 
@@ -2198,9 +2261,7 @@ export default function App() {
     const addrs = mapStops.filter(s=>s.addr).map(s=>s.addr);
     if (!addrs.length) return;
     if (addrs.length === 1) { navigate(addrs[0]); return; }
-    // saddr= blank uses device GPS as origin
-    const chain = addrs.map(a => encodeURIComponent(a)).join("+to:");
-    window.location.href = `comgooglemaps://?saddr=&daddr=${chain}&directionsmode=driving`;
+    openDirections(addrs);   // starts from the phone's current location
   }, [mapStops]);
   const hasStopsWithAddr = mapStops.some(s => s.addr);
 
@@ -2727,6 +2788,11 @@ export default function App() {
                 label="Free up Drive space"
                 sub="Remove duplicate photos this app left in Drive"
                 onClick={()=>{ setDriveCleanupOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#B39DDB"
+                icon={<IconEdit size={17} color="#B39DDB"/>}
+                label={`Your name: ${getMyName() || "not set"}`}
+                sub="Used in “on my way” texts and follow-up emails to customers"
+                onClick={()=>{ const n = window.prompt("Your first name, as customers should see it in texts and emails:", getMyName()); if (n != null) { setMyName(n); setMyNameTick(t => t + 1); } }} />
               <Row accent="#FF8A80"
                 icon={<IconVideo size={17} color="#FF8A80"/>}
                 label="iPhone Video button"
@@ -2906,7 +2972,7 @@ export default function App() {
                 {[["4–6","4 to 6 minutes"],["5–7","5 to 7 minutes"],["6–8","6 to 8 minutes"],["8–10","8 to 10 minutes"],["10–12","10 to 12 minutes"],["12–15","12 to 15 minutes"],["15–20","15 to 20 minutes"],["20–25","20 to 25 minutes"],["30–40","30 to 40 minutes"],["40–50","40 to 50 minutes"],["45–1 hr","45 minutes to an hour"]].map(([label,txt]) => (
                   <button key={label} onClick={()=>{
                     const fn = (textSheet.cn||"").split(" ")[0];
-                    const msg = `Hi there ${fn}, this is Jason with Monster Tree Service, and I'm just reaching out to let you know that I'm headed toward your property and I'm about ${txt} away.`;
+                    const msg = `Hi there ${fn}, this is ${getMyName() ? `${getMyName()} with ` : ""}Monster Tree Service, and I'm just reaching out to let you know that I'm headed toward your property and I'm about ${txt} away.`;
                     window.open(`sms:${textSheet.phone.replace(/\D/g,"")}&body=${encodeURIComponent(msg)}`,"_self");
                     markContact(textSheet.id,"sms");
                     setTextSheet(null); setOtwMinutes(null);
@@ -3022,6 +3088,25 @@ export default function App() {
 
       {driveCleanupOpen && (
         <DriveCleanup token={token} onClose={() => setDriveCleanupOpen(false)} />
+      )}
+
+      {acctConflict && (
+        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.8)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:"#0d0f18",border:"1px solid #3a2a20",borderRadius:14,padding:20,maxWidth:380,width:"100%",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
+            <div style={{fontSize:15,fontWeight:800,color:"#FFB74D",fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Unsent work on this phone</div>
+            <div style={{fontSize:13.5,color:"#d4e1f0",lineHeight:1.5}}>
+              You signed in as <b>{acctConflict.next}</b>, but this phone still has work from <b>{acctConflict.prev}</b> that hasn't reached its Google Drive yet:
+              <div style={{margin:"10px 0",color:"#FFCC80"}}>
+                {[acctConflict.pending.photos && `${acctConflict.pending.photos} visit${acctConflict.pending.photos===1?"":"s"} with photos`,
+                  acctConflict.pending.notes && `${acctConflict.pending.notes} visit${acctConflict.pending.notes===1?"":"s"} with notes`,
+                  acctConflict.pending.videos && `${acctConflict.pending.videos} video${acctConflict.pending.videos===1?"":"s"}`].filter(Boolean).join(" · ")}
+              </div>
+              Sign back in as {acctConflict.prev} and let it finish uploading first. Nothing has been sent to either account.
+            </div>
+            <button onClick={signOutEverywhereHere} style={{marginTop:16,width:"100%",padding:"12px 0",borderRadius:10,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.5)",color:"#34d399",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:.5,textTransform:"uppercase"}}>Sign out — I'll switch back</button>
+            <button onClick={() => { if (window.confirm(`Permanently delete the unsent work from ${acctConflict.prev} on this phone and continue as ${acctConflict.next}?`)) clearLocalDataForAccountSwitch(acctConflict.next); }} style={{marginTop:8,width:"100%",padding:"10px 0",borderRadius:10,background:"transparent",border:"1px solid #4a2a2a",color:"#ff8a80",fontSize:12,fontWeight:700,cursor:"pointer"}}>Delete it and continue as {acctConflict.next}</button>
+          </div>
+        </div>
       )}
 
       {accountCheckOpen && (

@@ -52,6 +52,12 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease, sendClip
   const [showSetup, setShowSetup] = useState(false);
   const fileCache = useRef(new Map());              // photo key -> File, for a second tap
   const openedRef = useRef(false);
+  const [slowLoad, setSlowLoad] = useState(false);
+  useEffect(() => {
+    if (phase !== "loading") return;
+    const t = setTimeout(() => setSlowLoad(true), 4000);
+    return () => clearTimeout(t);
+  }, [phase]);
 
   // Send mode: wait for the photo copy that Done started.
   useEffect(() => {
@@ -156,7 +162,14 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease, sendClip
   };
 
   if (phase === "loading") {
-    return <div style={{ ...shell, alignItems: "center", justifyContent: "center", color: "#707c9a", fontSize: 12 }}>One moment…</div>;
+    // A way out if loading the card's photos ever hangs (slow storage after
+    // the app was backgrounded) — appears after a few seconds.
+    return (
+      <div style={{ ...shell, alignItems: "center", justifyContent: "center", color: "#707c9a", fontSize: 12, gap: 18, padding: 24 }}>
+        One moment…
+        {slowLoad && <button onClick={() => onRelease?.()} style={{ ...quietBtn, width: 200 }}>Skip</button>}
+      </div>
+    );
   }
 
   // Send mode, while the photo is being copied (usually under a second).

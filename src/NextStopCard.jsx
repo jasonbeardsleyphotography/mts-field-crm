@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { openDirections } from "./openMaps";
 
 const COUNTDOWN_SECONDS = 8;
 const RING_SIZE = 60;
@@ -38,8 +39,7 @@ export default function NextStopCard({ stop, stopNumber, totalStops, onDismiss, 
 
   const handleNavigate = () => {
     clearInterval(timerRef.current);
-    const encoded = encodeURIComponent(stop.addr || "");
-    window.location.href = `comgooglemaps://?daddr=${encoded}&directionsmode=driving`;
+    openDirections(stop.addr);
     if (onNavigate) onNavigate(stop);
   };
 

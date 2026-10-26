@@ -5,6 +5,7 @@
 
 import { loadField, markFieldDirty, clearFieldDirty } from "./fieldStore";
 import { logError, logWarn, logInfo } from "./debugLog";
+import { waitForAccount } from "./accountGate";
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -132,8 +133,11 @@ function applyDriveError(err, info) {
 export function triggerAuthError() { if (authErrorCallback) authErrorCallback(); }
 
 async function driveReq(token, url, opts = {}) {
+  await waitForAccount();
+  const { timeoutMs = FETCH_TIMEOUT_MS, ...fetchOpts } = opts;
+  opts = fetchOpts;
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
   let res;
   try {
     res = await fetch(url, { ...opts, signal: ac.signal, headers: { Authorization: `Bearer ${token}`, ...opts.headers } });
@@ -150,20 +154,32 @@ async function driveReq(token, url, opts = {}) {
   return res;
 }
 
+// In-flight lookups, shared: on a new account many sync routines ask for the
+// same folder at once (they're all released together by the account gate),
+// and separate find-then-create calls each made their own "MTS Field" folder.
+const folderInflight = {};
+
 export async function findOrCreateFolder(token, name, parentId = null) {
   const ck = parentId ? `${parentId}/${name}` : name;
   if (folderCache[ck]) return folderCache[ck];
-  let q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
-  if (parentId) q += ` and '${parentId}' in parents`;
-  const r = await driveReq(token, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id)&spaces=drive`);
-  const d = await r.json();
-  if (d.files?.length > 0) { folderCache[ck] = d.files[0].id; return d.files[0].id; }
-  const meta = { name, mimeType: "application/vnd.google-apps.folder" };
-  if (parentId) meta.parents = [parentId];
-  const c = await driveReq(token, `${DRIVE_API}/files`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(meta) });
-  const cr = await c.json();
-  folderCache[ck] = cr.id;
-  return cr.id;
+  if (folderInflight[ck]) return folderInflight[ck];
+  const p = (async () => {
+    let q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    if (parentId) q += ` and '${parentId}' in parents`;
+    // Oldest first, so if duplicates already exist every device settles on the same one.
+    const r = await driveReq(token, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id)&orderBy=createdTime&spaces=drive`);
+    const d = await r.json();
+    if (d.files?.length > 0) { folderCache[ck] = d.files[0].id; return d.files[0].id; }
+    const meta = { name, mimeType: "application/vnd.google-apps.folder" };
+    if (parentId) meta.parents = [parentId];
+    const c = await driveReq(token, `${DRIVE_API}/files`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(meta) });
+    const cr = await c.json();
+    if (!cr?.id) throw new Error("folder-create-failed");
+    folderCache[ck] = cr.id;
+    return cr.id;
+  })();
+  folderInflight[ck] = p;
+  try { return await p; } finally { delete folderInflight[ck]; }
 }
 
 async function findFile(token, name, folderId) {
@@ -353,7 +369,11 @@ export async function uploadPhotoToDrive(token, dataUrl, filename) {
     const res = await driveReq(
       token,
       `${UPLOAD_API}/files?uploadType=multipart&fields=id,webContentLink`,
-      { method: "POST", body: form }
+      // A 2–3 MB photo on weak LTE can't finish in the default 30s, and every
+      // timeout re-sends the whole photo — so it never got through. Allow time
+      // in proportion to size (~20 KB/s floor), between 45s and 3 minutes.
+      { method: "POST", body: form,
+        timeoutMs: Math.min(180_000, Math.max(45_000, Math.round((blob.size || 0) / 20))) }
     );
     const data = await res.json();
     if (!data.id) return null;
@@ -490,15 +510,24 @@ export function queueFieldDriveSync(token, id) {
   return next;
 }
 
+// Every visit's sync file, all pages. Throws on failure (rather than
+// returning an empty list) so the caller doesn't record a failed pull as a
+// successful one — the sync indicator used to read "now" while offline.
+// The old single page of 1000 also meant that once there were more visit
+// files than that, the rest silently stopped syncing between devices.
 export async function listFieldFiles(token) {
-  try {
-    const rootId = await findOrCreateFolder(token, FOLDER_NAME);
-    const fid = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
-    const q = `'${fid}' in parents and trashed=false`;
-    const r = await driveReq(token, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name,modifiedTime)&spaces=drive&pageSize=1000`);
+  const rootId = await findOrCreateFolder(token, FOLDER_NAME);
+  const fid = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
+  const q = `'${fid}' in parents and trashed=false`;
+  const out = [];
+  let pageToken = "";
+  do {
+    const r = await driveReq(token, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,modifiedTime)&spaces=drive&pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`);
     const d = await r.json();
-    return d.files || [];
-  } catch(e) { return []; }
+    out.push(...(d.files || []));
+    pageToken = d.nextPageToken || "";
+  } while (pageToken);
+  return out;
 }
 
 export async function loadFieldFromDrive(token, eventId) {

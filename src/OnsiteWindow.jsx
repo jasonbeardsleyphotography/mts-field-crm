@@ -342,8 +342,12 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
     setIphoneVideoLog(prev => [...prev, entry]);
     updateField(s.id, (existing) => ({
       iphoneVideoLog: [...((existing && existing.iphoneVideoLog) || []), entry],
-    })).catch(() => {});
-    if (token) queueFieldDriveSync(token, s.id);
+    }))
+      // Push only once the entry is saved, or the sync can upload the record
+      // without it and clear the dirty flag. Navigation stays immediate: iOS
+      // only opens shortcuts:// straight from the tap.
+      .then(() => { if (token) queueFieldDriveSync(token, s.id); })
+      .catch(() => {});
     runIphoneVideo();
   };
   const removeIphoneVideoEntry = (ts) => {
@@ -378,6 +382,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
   // first change in a window schedules a save 500ms out; subsequent changes
   // update pendingDataRef without resetting the timer). Absorbs dictation
   // bursts while guaranteeing no change waits more than 500ms to hit IDB.
+  const lastSavedSigRef = useRef(null);
   useEffect(() => {
     if (!hydrated) return;
     // Text/AI fields only — these go to IDB via mergeField (which preserves
@@ -400,6 +405,16 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
     // Full snapshot (text + photos) for the in-memory mirror, the
     // pagehide flush, and the Drive sync. State is authoritative for
     // what the user is currently looking at.
+    // Only save when something actually changed. Opening a card used to save
+    // it straight away — stamping it "just edited" and pushing it to Drive —
+    // so a phone holding older notes overwrote newer ones typed elsewhere.
+    const sig = JSON.stringify([textPartial,
+      (scopePhotos || []).map(p => p?.ts ?? p?.url), (addonPhotos || []).map(p => p?.ts ?? p?.url)]);
+    if (lastSavedSigRef.current === null || lastSavedSigRef.current === sig) {
+      lastSavedSigRef.current = sig;
+      return;
+    }
+    lastSavedSigRef.current = sig;
     const fullSnapshot = { ...textPartial, scopePhotos, addonPhotos };
     primeField(s.id, fullSnapshot);
     pendingDataRef.current = fullSnapshot;
@@ -473,8 +488,12 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
     try {
       await updateField(s.id, (existing) => ({
         scopePhotos: sortPhotosByTs([...(existing.scopePhotos || existing.photos || []), photo]),
-      }));
-    } catch (e) { console.warn("Site plan IDB save failed:", e); }
+      }), { throwOnFail: true });
+    } catch (e) {
+      console.warn("Site plan IDB save failed:", e);
+      setStorageError("That image could not be saved to this device (storage may be full). Clear space in Settings → Storage usage, then try again.");
+      return;
+    }
     setScopePhotos(prev => sortPhotosByTs([...prev, photo]));
     markStopForPhotoSync(s.id);
     if (token) queueFieldDriveSync(token, s.id);
@@ -778,6 +797,10 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
   const processPhoto = (file, section = "scope") => {
     if (!file) return;
     _processPhoto(file, section, s.id).then(photo => {
+      if (photo?._saveFailed) {
+        if (mountedRef.current) setStorageError("That photo could not be saved to this device (storage may be full). Clear space in Settings → Storage usage, then add it again.");
+        return;
+      }
       if (!photo || !mountedRef.current) return;
       if (section === "addon") setAddonPhotos(prev => sortPhotosByTs([...prev, photo]));
       else setScopePhotos(prev => sortPhotosByTs([...prev, photo]));
@@ -1151,7 +1174,10 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
         // tree from across the yard puts the point where you stood. That's why
         // every pin is draggable on the parcel map, and why the pin records its
         // accuracy so a loose fix is visible rather than silently trusted.
-        const geo = await getCurrentGeo();
+        // Capped short: with no warm fix (indoors, first shot) a full GPS lock
+        // could hold the photo unsaved for 8s — long enough to lose it by
+        // locking the phone. A photo without a location still saves.
+        const geo = await getCurrentGeo({ timeout: 1200 });
         const photo = { dataUrl, ts: Date.now(), id: newPhotoId(), ...(geo ? { geo } : {}) };
         const pin = geo ? {
           id: `pin_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -1172,7 +1198,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
             // can never disagree if the app is closed mid-capture.
             if (pin) patch.mapPins = [...(existing.mapPins || []), pin];
             return patch;
-          });
+          }, { throwOnFail: true });
         } catch (e) {
           console.warn("Camera photo IDB save failed:", e);
           setStorageError(
@@ -1180,6 +1206,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
               ? "This device is out of storage — that photo could not be saved. Clear space in Settings → Storage usage, then take it again."
               : "That photo could not be saved to this device. Take it again."
           );
+          return;   // not stored — don't show or queue a photo that would vanish
         }
         // Now reflect in component state so the UI updates
         if (cameraSection === "addon") setAddonPhotos(prev => sortPhotosByTs([...prev, photo]));
@@ -2183,9 +2210,14 @@ function _processPhoto(file, section, stopId) {
             const key = section === "addon" ? "addonPhotos" : "scopePhotos";
             const existingPhotos = existing[key] || existing.photos || [];
             return { [key]: sortPhotosByTs([...existingPhotos, photo]) };
-          });
+          }, { throwOnFail: true });
           markStopForPhotoSync(stopId);
-        } catch (e) { console.warn("Photo background save failed:", e); }
+        } catch (e) {
+          // Don't show a photo that isn't stored — it would vanish on restart.
+          console.warn("Photo background save failed:", e);
+          resolve({ _saveFailed: true });
+          return;
+        }
         resolve(photo);
       };
       img.onerror = () => resolve(null);

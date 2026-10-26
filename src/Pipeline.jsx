@@ -43,6 +43,8 @@ import { loadFieldFromDrive } from "./driveSync";
 import { loadField, peekField, primeField, updateField } from "./fieldStore";
 import { downscaleDataUrl, stripPhotoDataUrls, OVERSIZE_DATAURL_LEN, photoKey } from "./imageUtils";
 import { listAll as listAllQueue, onQueueChange } from "./videoQueue";
+import { saveClientContact } from "./googleContacts";
+import { fillMyName } from "./myName";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Pipeline
@@ -94,43 +96,9 @@ async function pushCalendarColor(eventId, stage, token) {
 
 async function pushToGoogleContacts(card, token) {
   if (!token || !card) return { success: false };
-  const [givenName, ...rest] = (card.cn || "Unknown").split(" ");
-  const familyName = rest.join(" ");
-  const body = {
-    names: [{ givenName, familyName }],
-    ...(card.phone ? { phoneNumbers: [{ value: card.phone, type: "mobile" }] } : {}),
-    ...(card.email ? { emailAddresses: [{ value: card.email }] } : {}),
-    ...(card.addr  ? { addresses: [{ formattedValue: card.addr, type: "home" }] } : {}),
-    ...(card.jn    ? { biographies: [{ value: `MTS Rochester — Job #${card.jn}`, contentType: "TEXT_PLAIN" }] } : {}),
-  };
   try {
-    // Search for existing contact by phone first
-    if (card.phone) {
-      const raw = (card.phone || "").replace(/\D/g, "");
-      const sr = await fetch(
-        `https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(card.phone)}&readMask=names,phoneNumbers,emailAddresses,metadata&pageSize=5`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      const sd = await sr.json();
-      const existing = sd.results?.find(r =>
-        (r.person?.phoneNumbers || []).some(p => p.value?.replace(/\D/g, "") === raw)
-      );
-      if (existing?.person?.resourceName) {
-        const rn = existing.person.resourceName;
-        const mask = ["names", card.phone && "phoneNumbers", card.email && "emailAddresses", card.addr && "addresses"].filter(Boolean).join(",");
-        await fetch(
-          `https://people.googleapis.com/v1/${rn}:updateContact?updatePersonFields=${mask}`,
-          { method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ ...body, etag: existing.person.etag }) }
-        );
-        return { success: true, action: "updated" };
-      }
-    }
-    await fetch("https://people.googleapis.com/v1/people:createContact", {
-      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    return { success: true, action: "created" };
+    const r = await saveClientContact(token, card);
+    return { success: true, action: r === "saved" ? "created" : "updated" };
   } catch(e) { console.warn("Contact push failed:", e); return { success: false }; }
 }
 
@@ -144,21 +112,21 @@ const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
 const SINGLEOPS_URL = "https://app.singleops.com/";
 
 const EMAIL_TEMPLATES = [
-  { id: "checkin", label: "Quick check-in", subject: "Quick question about your estimate — Jason @ Monster Tree",
-    body: "Hey {firstName}!\n\nJason with Monster Tree Service of Rochester here. Just wanted to pop in and make sure you got everything you needed from the proposal we sent over.\n\nAny questions at all? Happy to jump on a quick call or answer by email — whatever's easier for you. No pressure whatsoever.\n\nTalk soon,\nJason\nMonster Tree Service of Rochester" },
+  { id: "checkin", label: "Quick check-in", subject: "Quick question about your estimate — {myName} @ Monster Tree",
+    body: "Hey {firstName}!\n\n{myName} with Monster Tree Service of Rochester here. Just wanted to pop in and make sure you got everything you needed from the proposal we sent over.\n\nAny questions at all? Happy to jump on a quick call or answer by email — whatever's easier for you. No pressure whatsoever.\n\nTalk soon,\n{myName}\nMonster Tree Service of Rochester" },
   { id: "followup", label: "Friendly follow-up", subject: "Following up on your tree care estimate — MTS Rochester",
-    body: "Hi {firstName},\n\nJason from Monster Tree Service of Rochester here. Just following up on the estimate we put together for your property — wanted to make sure you had everything you need to make a decision.\n\nIf anything was unclear or if you'd like to talk through options, I'm just a text or call away. No rush at all on my end!\n\nBest,\nJason\nMonster Tree Service of Rochester" },
+    body: "Hi {firstName},\n\n{myName} from Monster Tree Service of Rochester here. Just following up on the estimate we put together for your property — wanted to make sure you had everything you need to make a decision.\n\nIf anything was unclear or if you'd like to talk through options, I'm just a text or call away. No rush at all on my end!\n\nBest,\n{myName}\nMonster Tree Service of Rochester" },
   { id: "seasonal", label: "Seasonal / schedule heads-up", subject: "Our schedule is filling in — MTS Rochester",
-    body: "Hey {firstName},\n\nJason with Monster Tree here! Just wanted to give you a heads-up that our schedule is starting to fill in for the season. I didn't want you to miss your window if the tree work is still on your radar.\n\nNo pressure at all — just keeping you in the loop. If you have any questions or want to move forward, feel free to reach out anytime.\n\nThanks,\nJason\nMonster Tree Service of Rochester" },
+    body: "Hey {firstName},\n\n{myName} with Monster Tree here! Just wanted to give you a heads-up that our schedule is starting to fill in for the season. I didn't want you to miss your window if the tree work is still on your radar.\n\nNo pressure at all — just keeping you in the loop. If you have any questions or want to move forward, feel free to reach out anytime.\n\nThanks,\n{myName}\nMonster Tree Service of Rochester" },
 ];
 
 const SMS_TEMPLATES = [
   { id: "sms_checkin", label: "Quick check-in",
-    body: "Hey {firstName}, Jason with Monster Tree here! Just checking in to see if you had a chance to look over your proposal. Any questions at all? Happy to help 🌳" },
+    body: "Hey {firstName}, {myName} with Monster Tree here! Just checking in to see if you had a chance to look over your proposal. Any questions at all? Happy to help 🌳" },
   { id: "sms_followup", label: "Friendly follow-up",
-    body: "Hi {firstName}! Jason from MTS Rochester. Wanted to make sure the proposal came through okay. No rush — just here if you need anything!" },
+    body: "Hi {firstName}! {myName} from MTS Rochester. Wanted to make sure the proposal came through okay. No rush — just here if you need anything!" },
   { id: "sms_seasonal", label: "Schedule heads-up",
-    body: "Hey {firstName}, Jason with Monster Tree here. Just a heads up — our schedule is starting to fill in for the season. Didn't want you to miss your window if you're still interested! No pressure, just keeping you posted 🌿" },
+    body: "Hey {firstName}, {myName} with Monster Tree here. Just a heads up — our schedule is starting to fill in for the season. Didn't want you to miss your window if you're still interested! No pressure, just keeping you posted 🌿" },
 ];
 
 function loadPipeline() { try { return JSON.parse(localStorage.getItem(PIPELINE_KEY)) || {}; } catch(e) { return {}; } }
@@ -722,7 +690,10 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   };
 
   // Effective templates — defaults merged with any user edits stored in localStorage
-  const effectiveTemplates = EMAIL_TEMPLATES.map(t => ({ ...t, ...(customTemplates?.[t.id] || {}) }));
+  const effectiveTemplates = EMAIL_TEMPLATES.map(t => {
+    const m = { ...t, ...(customTemplates?.[t.id] || {}) };
+    return { ...m, subject: fillMyName(m.subject), body: fillMyName(m.body) };
+  });
 
   const saveCustomTemplates = (updates) => {
     setCustomTemplates(updates);
@@ -1170,7 +1141,7 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
         const isSms = pipelineSheet.type === "sms" || isBulk;
         const card = pipelineSheet.card;
         const firstName = card ? (card.cn || "").split(" ")[0] : null;
-        const templates = isSms ? SMS_TEMPLATES : EMAIL_TEMPLATES;
+        const templates = (isSms ? SMS_TEMPLATES : EMAIL_TEMPLATES).map(t => ({ ...t, subject: fillMyName(t.subject), body: fillMyName(t.body) }));
         const title = isBulk
           ? `Text ${selectedCount} clients`
           : isSms

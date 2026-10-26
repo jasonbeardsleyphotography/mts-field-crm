@@ -14,11 +14,14 @@
    no duplicate is never a candidate, and every group keeps one.
    ═══════════════════════════════════════════════════════════════════════════ */
 
+import { waitForAccount } from "./accountGate";
+
 const PEOPLE = "https://people.googleapis.com/v1";
 const APP_NOTE = "MTS Rochester Tree Service Client";
 const NAME_PREFIX = "CLIENT ";
 
 async function api(token, path, opts = {}) {
+  await waitForAccount();
   const res = await fetch(`${PEOPLE}${path}`, {
     ...opts,
     headers: {
@@ -181,4 +184,58 @@ export async function deleteContacts(token, resourceNames, onProgress) {
     onProgress?.({ done, failed, total: resourceNames.length });
   }
   return { done, failed };
+}
+
+/**
+ * Save one client to Google Contacts from a button tap ("Save to contacts").
+ * Matches against the WHOLE contact list — phone (last 10 digits), email, or
+ * the app's own tag — the same way the automatic sync does, rather than
+ * Google's search, which lags minutes behind and missed contacts the app had
+ * just created (one source of duplicates). A match is filled in, not
+ * overwritten: a missing phone, email or address is added, names are left
+ * alone. No match → a new contact, tagged so every device recognises it.
+ * Resolves to "updated" | "exists" | "saved".
+ */
+export async function saveClientContact(token, card) {
+  const idx = await loadContactIndex(token);
+  const key = clientKeyFor(card);
+  const p = phone10(card.phone);
+  const e = String(card.email || "").trim().toLowerCase();
+  const rn = (key && idx.get(key)) || (p && idx.get(`p:${p}`)) || (e && idx.get(`e:${e}`)) || null;
+
+  if (rn) {
+    const person = await api(token, `/${rn}?personFields=phoneNumbers,emailAddresses,addresses,clientData`);
+    const patch = {}, fields = [];
+    if (p && !(person.phoneNumbers || []).some(x => phone10(x.value) === p)) {
+      patch.phoneNumbers = [...(person.phoneNumbers || []), { value: card.phone, type: "mobile" }]; fields.push("phoneNumbers");
+    }
+    if (e && !(person.emailAddresses || []).some(x => String(x.value || "").toLowerCase() === e)) {
+      patch.emailAddresses = [...(person.emailAddresses || []), { value: card.email }]; fields.push("emailAddresses");
+    }
+    if (card.addr && !(person.addresses || []).length) {
+      patch.addresses = [{ formattedValue: card.addr, type: "home" }]; fields.push("addresses");
+    }
+    if (key && !(person.clientData || []).some(x => x?.key === CLIENT_KEY_FIELD)) {
+      patch.clientData = [...(person.clientData || []), { key: CLIENT_KEY_FIELD, value: key }]; fields.push("clientData");
+    }
+    if (!fields.length) return "exists";
+    await api(token, `/${rn}:updateContact?updatePersonFields=${fields.join(",")}`, {
+      method: "PATCH", body: JSON.stringify({ ...patch, etag: person.etag }),
+    });
+    return "updated";
+  }
+
+  const [givenName, ...rest] = String(card.cn || "Unknown").trim().split(/\s+/);
+  await api(token, "/people:createContact", {
+    method: "POST",
+    body: JSON.stringify({
+      names: [{ givenName, familyName: rest.join(" ") }],
+      ...(card.phone ? { phoneNumbers: [{ value: card.phone, type: "mobile" }] } : {}),
+      ...(card.email ? { emailAddresses: [{ value: card.email }] } : {}),
+      ...(card.addr  ? { addresses: [{ formattedValue: card.addr, type: "home" }] } : {}),
+      ...(card.jn    ? { biographies: [{ value: `MTS Rochester — Job #${card.jn}`, contentType: "TEXT_PLAIN" }] } : {}),
+      ...(key ? { clientData: [{ key: CLIENT_KEY_FIELD, value: key }] } : {}),
+    }),
+  });
+  return "saved";
 }

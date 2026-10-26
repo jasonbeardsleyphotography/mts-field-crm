@@ -29,7 +29,7 @@
          below that band and leaves only plain background inside it. Safari tabs,
          desktop and landscape (no status bar) are unaffected. */
       :root { --safe-top: env(safe-area-inset-top, 0px); }
-      @media (orientation: portrait) {
+      @media (orientation: portrait) and (max-width: 600px) {  /* phones; iPads have no such band over their layout */
         html.ios-home-app { --safe-top: calc(env(safe-area-inset-top, 0px) + 40px); }
       }
       #mts-top-band { display: none; }

@@ -22,6 +22,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { findOrCreateFolder } from "./driveSync";
+import { waitForAccount } from "./accountGate";
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -47,6 +48,7 @@ const CHUNK_TIMEOUT_MS = 60_000;
  * @param {string} parentId - Drive folder ID
  */
 export async function initDriveSession(token, title, size, mime, parentId) {
+  await waitForAccount();
   // Strip any MediaRecorder codecs parameter (e.g. "video/webm;codecs=vp9,opus")
   // — Drive's content-type handling only wants the bare type.
   const cleanMime = (mime || "video/mp4").split(";")[0];
@@ -404,6 +406,7 @@ export async function fixDriveFileContentType(token, fileId, mime, onProgress) {
  * Cached internally by findOrCreateFolder().
  */
 export async function getVideosFolderId(token) {
+  await waitForAccount();
   const rootId = await findOrCreateFolder(token, ROOT_FOLDER);
   const fieldId = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
   const videosId = await findOrCreateFolder(token, VIDEOS_FOLDER, fieldId);

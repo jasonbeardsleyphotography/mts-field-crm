@@ -103,7 +103,7 @@ export function parseEvent(ev) {
   const calloutMatch = desc.match(/Callout:\s*(.+?)(?=\s*(?:Phone|Mobile|Email|Notes):|$)/i);
   const callout = calloutMatch ? calloutMatch[1].trim() : "";
   let constraint = callout ? "⚠ " + callout : "";
-  if (/CALL (WHEN|FIRST|BEFORE|OTW)/i.test(s)) constraint = "📞 CALL FIRST";
+  if (/CALL (WHEN|FIRST|BEFORE|OTW)/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "📞 CALL FIRST";
   if (/NOT BEFORE\s*([\d:]+)/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "Not before " + s.match(/NOT BEFORE\s*([\d:]+)/i)[1];
   if (/([\d:]+)\s*OR LATER/i.test(s)) constraint = (constraint ? constraint + " · " : "") + s.match(/([\d:]+)\s*OR LATER/i)[1] + " or later";
   if (/CAN'?T MEET BEFORE\s*([\d:]+)/i.test(s)) constraint = (constraint ? constraint + " · " : "") + "Not before " + s.match(/CAN'?T MEET BEFORE\s*([\d:]+)/i)[1];

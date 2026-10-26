@@ -139,9 +139,9 @@ export async function loadField(id) {
 // (which iterates localStorage keys) and the Pipeline cardsByStage memo
 // (which still has some sync paths during transition). Once all callers
 // are async-safe, the mirror can be dropped.
-export async function saveField(id, data) {
-  if (!id) return;
-  const enriched = { ...data, savedAt: Date.now() };
+export async function saveField(id, data, { keepSavedAt = false } = {}) {
+  if (!id) return false;
+  const enriched = { ...data, savedAt: keepSavedAt && data.savedAt ? data.savedAt : Date.now() };
   // Retry the IndexedDB write on failure. iOS closes/aborts IDB transactions
   // when the app is backgrounded under memory pressure — most likely right
   // after a big photo write. Previously a single failed put was caught and
@@ -191,6 +191,7 @@ export async function saveField(id, data) {
     // Even the slim payload was too big or storage is full — drop the mirror.
     try { localStorage.removeItem(LS_PREFIX + id); } catch {}
   }
+  return idbOk;
 }
 
 // ── SYNC MIRROR: caches latest loaded values so sync code can peek ──────────
@@ -234,7 +235,7 @@ function _enqueueWrite(id, fn) {
   // Drop the entry when the chain settles so the map doesn't leak.
   next.finally(() => {
     if (writeQueues.get(id) === next) writeQueues.delete(id);
-  });
+  }).catch(() => {});   // the caller handles a rejection; this branch mustn't be "unhandled"
   return next;
 }
 
@@ -254,14 +255,26 @@ export function mergeField(id, partial) {
     await saveField(id, merged).catch((e) => console.warn("mergeField save failed:", e));
   });
 }
-export function updateField(id, transformer) {
+// opts.throwOnFail: reject when the record couldn't be written to this
+// device's storage (e.g. storage full), so a photo capture can tell the user
+// instead of showing a photo that won't survive a restart.
+export function updateField(id, transformer, opts = {}) {
   if (!id || typeof transformer !== "function") return Promise.resolve();
   return _enqueueWrite(id, async () => {
     const existing = await loadField(id).catch(() => ({}));
     const updates = transformer(existing) || {};
-    const merged = { ...existing, ...updates, savedAt: Date.now() };
+    // A caller may pass its own savedAt — the Drive merge does, so pulling
+    // data down doesn't make this device's copy look freshly edited (which
+    // let it win the next "newer side" comparison over real edits elsewhere).
+    const keepSavedAt = updates.savedAt != null;
+    const merged = { ...existing, ...updates, savedAt: updates.savedAt ?? Date.now() };
     mirror.set(id, merged);
-    await saveField(id, merged).catch((e) => console.warn("updateField save failed:", e));
+    const ok = await saveField(id, merged, { keepSavedAt }).catch((e) => { console.warn("updateField save failed:", e); return false; });
+    if (!ok && opts.throwOnFail) {
+      const err = new Error("Could not save to this device's storage");
+      err.name = "QuotaExceededError";
+      throw err;
+    }
   });
 }
 
