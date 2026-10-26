@@ -1,3 +1,5 @@
+// v70: 40pt top padding removed; opaque ("black") status bar instead, so the
+//      header sits right under it with no iOS blur and no lost space.
 // v69: debug pass — account gate before any Drive/Contacts write, safe account
 //      switching, notes no longer overwritten by just opening a card, all fields
 //      sync across devices, manual contact saves de-duplicated, photo-save
@@ -85,7 +87,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v69";
+const CACHE = "mts-field-v70";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

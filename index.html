@@ -6,7 +6,11 @@
     <meta name="theme-color" content="#090b10" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- Opaque status bar: the page starts below it. Since iOS 26.1 a
+         "black-translucent" bar makes iOS blur the top ~40pt of the app (the
+         header buttons), with no way to turn that off. Installed apps read
+         this at install time — remove and re-add the Home Screen icon. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="MTS Field Sales" />
     <title>MTS Field Sales</title>
     <link rel="manifest" href="/manifest.json" />
@@ -23,36 +27,17 @@
 
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      /* Top inset for every header and full-screen panel. Since iOS 26.1 the
-         iPhone draws a dark blur over roughly the top 40pt of a Home Screen web
-         app (it can't be switched off), so there the app keeps its controls
-         below that band and leaves only plain background inside it. Safari tabs,
-         desktop and landscape (no status bar) are unaffected. */
+      /* Top inset for every header and full-screen panel. The status bar is
+         opaque ("black", below), so on iPhone the page starts underneath it and
+         this is 0 — no space is given up. Kept as one variable so the inset can
+         be tuned in one place. */
       :root { --safe-top: env(safe-area-inset-top, 0px); }
-      @media (orientation: portrait) and (max-width: 600px) {  /* phones; iPads have no such band over their layout */
-        html.ios-home-app { --safe-top: calc(env(safe-area-inset-top, 0px) + 40px); }
-      }
-      #mts-top-band { display: none; }
-      html.ios-home-app #mts-top-band {
-        display: block; position: fixed; top: 0; left: 0; right: 0;
-        height: var(--safe-top); background: #0d0f18; z-index: 150; pointer-events: none;
-      }
-      body { background: #090b10; overflow: hidden; }
-      @media screen and (orientation: landscape) {
-        html { -webkit-text-size-adjust: 100%; }
-      }
     </style>
-
-    <script>
-      // iPhone/iPad Home Screen app only (navigator.standalone is iOS-specific).
-      if (window.navigator.standalone === true) document.documentElement.classList.add("ios-home-app");
-    </script>
 
     <!-- Load GSI early but non-blocking -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>
-    <div id="mts-top-band" aria-hidden="true"></div>
     <!-- Static dark splash — painted immediately before any JS runs so iOS
          dismisses its native white splash overlay into a dark screen rather
          than a blank white one. React replaces this on first render. -->
