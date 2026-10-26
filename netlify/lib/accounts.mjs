@@ -15,6 +15,7 @@
 
 const BUILT_IN = new Set([
   "20e41e5a59a9e03d82b24ed1d55411705a6df86b36175a2d284345e56468cb9f", // owner
+  "5e23005b665a38a63de2d1a69d597d7c605ec51f896d3b61dd0aaf178e571c05", // main sales account (signs in to the app)
   "de47890413c8ccc0ccda34c22be9d5b52620c34f7734a9fff6fe3e60734f7233", // sales account 2
 ]);
 
