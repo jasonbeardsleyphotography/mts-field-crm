@@ -2352,13 +2352,13 @@ export default function App() {
   // flash of "Sign in with Google" on every page reload before silent reauth
   // completes.
   if (!token && !authBootChecked) return (
-    <div style={{height:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0a0b10",color:"#707c9a",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
+    <div style={{position:"fixed",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#0a0b10",color:"#707c9a",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
       <div style={{textAlign:"center"}}><div style={{fontSize:14,fontWeight:600,letterSpacing:1}}>Signing in…</div></div>
     </div>
   );
 
   if (!token) return (
-    <div style={{height:"100dvh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0a0b10",fontFamily:"'Oswald','DM Sans',system-ui,sans-serif",color:"#f0f4fa",padding:20,paddingTop:"max(20px,var(--safe-top))",boxSizing:"border-box"}}>
+    <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0a0b10",fontFamily:"'Oswald','DM Sans',system-ui,sans-serif",color:"#f0f4fa",padding:20,paddingTop:"max(20px,var(--safe-top))",boxSizing:"border-box"}}>
       <div style={{fontSize:28,fontWeight:900,letterSpacing:3,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif"}}>MTS FIELD SALES</div>
       <div style={{fontSize:12,color:"#707c9a",marginBottom:32,fontWeight:500,letterSpacing:1}}>Monster Tree Service of Rochester</div>
       <button onClick={serverSignIn} style={{padding:"16px 40px",borderRadius:12,background:"#1a2035",border:"1px solid #2a3560",color:"#f0f4fa",fontSize:16,fontWeight:700,cursor:"pointer",letterSpacing:.5}}>Sign in with Google</button>
@@ -2370,14 +2370,14 @@ export default function App() {
   );
 
   if (loading && !Object.keys(rawEvents).length) return (
-    <div style={{height:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0a0b10",color:"#707c9a",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
+    <div style={{position:"fixed",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#0a0b10",color:"#707c9a",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
       <div style={{textAlign:"center"}}><div style={{fontSize:16,fontWeight:700}}>Loading...</div></div>
     </div>
   );
 
   // ═════════════════════════════════════════════════════════════════════════
   return (
-    <div style={{height:"100dvh",width:"100%",background:"#0a0b10",display:"flex",flexDirection:"column",fontFamily:"'DM Sans',system-ui,sans-serif",color:"#f0f4fa",overflow:"hidden",paddingTop:"var(--safe-top)",boxSizing:"border-box"}}>
+    <div style={{position:"fixed",inset:0,background:"#0a0b10",display:"flex",flexDirection:"column",fontFamily:"'DM Sans',system-ui,sans-serif",color:"#f0f4fa",overflow:"hidden",paddingTop:"var(--safe-top)",boxSizing:"border-box"}}>
       {/* Reconnect bar — shown when a silent token refresh failed but we still
           have local data. Keeps the app usable and offers ONE interactive
           re-auth instead of bouncing to the sign-in screen in a loop. */}
