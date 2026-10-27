@@ -307,8 +307,16 @@ export async function saveAppState(token, pipeline, dismissed, lastContact) {
 
 export async function loadAppState(token) {
   try {
-    const rootId = await findOrCreateFolder(token, FOLDER_NAME);
-    const data = await loadJson(token, STATE_FILE, rootId);
+    // Newest app-state file across every "MTS Field" folder (see
+    // allFieldFolderIds): a duplicate root mustn't hide the current pipeline.
+    const roots = await listAll(token, `name='${FOLDER_NAME}' and mimeType='${FOLDER_MIME}' and trashed=false`, "id");
+    let data = null;
+    if (roots.length) {
+      const parents = roots.map(r => `'${r.id}' in parents`).join(" or ");
+      const r = await driveReq(token, `${DRIVE_API}/files?q=${encodeURIComponent(`name='${STATE_FILE}' and trashed=false and (${parents})`)}&fields=files(id)&orderBy=modifiedTime desc&spaces=drive&pageSize=5`);
+      const id = (await r.json()).files?.[0]?.id;
+      if (id) data = await (await driveReq(token, `${DRIVE_API}/files/${id}?alt=media`)).json();
+    }
     logInfo("driveSync", "App state pull ok");
     return data;
   } catch(e) {
@@ -510,19 +518,18 @@ export function queueFieldDriveSync(token, id) {
   return next;
 }
 
-// Every visit's sync file, all pages. Throws on failure (rather than
-// returning an empty list) so the caller doesn't record a failed pull as a
-// successful one — the sync indicator used to read "now" while offline.
-// The old single page of 1000 also meant that once there were more visit
-// files than that, the rest silently stopped syncing between devices.
-export async function listFieldFiles(token) {
-  const rootId = await findOrCreateFolder(token, FOLDER_NAME);
-  const fid = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
-  const q = `'${fid}' in parents and trashed=false`;
+// ── READING ACROSS DUPLICATE FOLDERS ─────────────────────────────────────────
+// More than one "MTS Field" (or "field-data") folder can exist in a Drive:
+// earlier versions could create a second one when several syncs started at
+// once, and which copy a lookup returned was never guaranteed. Writes go to
+// one folder, but reads must see ALL of them — otherwise visits saved into
+// the other copy look empty on a device that settles on a different one
+// (which is how photos and videos "disappeared" after a reinstall).
+async function listAll(token, q, fields) {
   const out = [];
   let pageToken = "";
   do {
-    const r = await driveReq(token, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,modifiedTime)&spaces=drive&pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`);
+    const r = await driveReq(token, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=nextPageToken,files(${fields})&spaces=drive&pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`);
     const d = await r.json();
     out.push(...(d.files || []));
     pageToken = d.nextPageToken || "";
@@ -530,11 +537,51 @@ export async function listFieldFiles(token) {
   return out;
 }
 
+const FOLDER_MIME = "application/vnd.google-apps.folder";
+let _fieldFolderIds = null, _fieldFolderAt = 0;
+async function allFieldFolderIds(token) {
+  if (_fieldFolderIds && Date.now() - _fieldFolderAt < 10 * 60 * 1000) return _fieldFolderIds;
+  const roots = await listAll(token, `name='${FOLDER_NAME}' and mimeType='${FOLDER_MIME}' and trashed=false`, "id");
+  const ids = [];
+  for (const r of roots) {
+    const subs = await listAll(token, `name='${FIELD_FOLDER}' and mimeType='${FOLDER_MIME}' and '${r.id}' in parents and trashed=false`, "id");
+    ids.push(...subs.map(x => x.id));
+  }
+  if (!ids.length) {   // brand-new account: make the one folder
+    const rootId = await findOrCreateFolder(token, FOLDER_NAME);
+    ids.push(await findOrCreateFolder(token, FIELD_FOLDER, rootId));
+  }
+  _fieldFolderIds = ids; _fieldFolderAt = Date.now();
+  return ids;
+}
+
+// Every visit's sync file, across every field-data folder and all pages; where
+// a visit has a file in more than one folder, the most recently modified wins.
+// Throws on failure (rather than returning an empty list) so the caller
+// doesn't record a failed pull as a successful one.
+export async function listFieldFiles(token) {
+  const byName = new Map();
+  for (const fid of await allFieldFolderIds(token)) {
+    for (const f of await listAll(token, `'${fid}' in parents and trashed=false`, "id,name,modifiedTime")) {
+      const prev = byName.get(f.name);
+      if (!prev || (f.modifiedTime || "") > (prev.modifiedTime || "")) byName.set(f.name, f);
+    }
+  }
+  return [...byName.values()];
+}
+
+// The newest copy of one visit's file, from whichever folder holds it.
 export async function loadFieldFromDrive(token, eventId) {
   try {
-    const rootId = await findOrCreateFolder(token, FOLDER_NAME);
-    const fid = await findOrCreateFolder(token, FIELD_FOLDER, rootId);
-    return await loadJson(token, `${eventId}.json`, fid);
+    const fids = await allFieldFolderIds(token);
+    const parents = fids.map(f => `'${f}' in parents`).join(" or ");
+    const name = `${eventId}.json`.replace(/'/g, "\\'");
+    const r = await driveReq(token, `${DRIVE_API}/files?q=${encodeURIComponent(`name='${name}' and trashed=false and (${parents})`)}&fields=files(id,modifiedTime)&orderBy=modifiedTime desc&spaces=drive&pageSize=10`);
+    const d = await r.json();
+    const fileId = d.files?.[0]?.id;
+    if (!fileId) return null;
+    const res = await driveReq(token, `${DRIVE_API}/files/${fileId}?alt=media`);
+    return await res.json();
   } catch(e) { return null; }
 }
 

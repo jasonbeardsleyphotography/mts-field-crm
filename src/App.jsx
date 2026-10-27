@@ -29,6 +29,7 @@ import RecoveryScreen from "./RecoveryScreen";
 import Linkify from "./Linkify";
 import AddStopModal from "./AddStopModal";
 import AccountCheck from "./AccountCheck";
+import MediaRecover from "./MediaRecover";
 import { openDirections } from "./openMaps";
 import { getMyName, setMyName, ensureMyName } from "./myName";
 import { openAccountGate, closeAccountGate } from "./accountGate";
@@ -1424,7 +1425,7 @@ export default function App() {
   // Drive→local), then push all local fields (union→Drive). This is what
   // gets the phone's complete-but-never-successfully-uploaded records onto
   // Drive so other devices can finally see them.
-  const RECONCILE_VERSION = "2026-05-fetch-timeout";
+  const RECONCILE_VERSION = "2026-10-all-folders";   // re-pull from every MTS Field folder
   useEffect(() => {
     if (!token) return;
     if (lsGet("mts-reconcile-version", "") === RECONCILE_VERSION) return;
@@ -1726,6 +1727,7 @@ export default function App() {
   const [photoUploadsOpen, setPhotoUploadsOpen] = useState(false);
   const [driveCleanupOpen, setDriveCleanupOpen] = useState(false);
   const [accountCheckOpen, setAccountCheckOpen] = useState(false);
+  const [mediaRecoverOpen, setMediaRecoverOpen] = useState(false);
   const [, setMyNameTick] = useState(0);   // re-render after the name is edited
   const [contactCleanupOpen, setContactCleanupOpen] = useState(false);
   const [realworkSetupOpen, setRealworkSetupOpen] = useState(false);
@@ -2763,6 +2765,11 @@ export default function App() {
                 label="Account & connection check"
                 sub="Test sign-in, Calendar, Drive and Contacts for this account"
                 onClick={()=>{ setAccountCheckOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#F6BF26"
+                icon={<IconImage size={17} color="#F6BF26"/>}
+                label="Recover photos & videos"
+                sub="Find a card's photos and videos in your Drive and put them back"
+                onClick={()=>{ setMediaRecoverOpen(true); setSettingsOpen(false); }} />
               <Row accent="#5a8ab0"
                 icon={<IconRefresh size={17} color="#9aadc8" style={{animation:loading?"spin 1s linear infinite":undefined}}/>}
                 label="Sync now" sub="Reload today's stops from the calendar"
@@ -3107,6 +3114,10 @@ export default function App() {
             <button onClick={() => { if (window.confirm(`Permanently delete the unsent work from ${acctConflict.prev} on this phone and continue as ${acctConflict.next}?`)) clearLocalDataForAccountSwitch(acctConflict.next); }} style={{marginTop:8,width:"100%",padding:"10px 0",borderRadius:10,background:"transparent",border:"1px solid #4a2a2a",color:"#ff8a80",fontSize:12,fontWeight:700,cursor:"pointer"}}>Delete it and continue as {acctConflict.next}</button>
           </div>
         </div>
+      )}
+
+      {mediaRecoverOpen && (
+        <MediaRecover token={token} onClose={() => setMediaRecoverOpen(false)} />
       )}
 
       {accountCheckOpen && (

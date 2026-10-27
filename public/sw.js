@@ -1,3 +1,5 @@
+// v73: read visit records and app state from EVERY "MTS Field" folder (newest
+//      wins); one-time full re-pull; Settings → Recover photos & videos.
 // v72: solid ("black") status bar so iOS has nothing under it to blur; main
 //      screens are position:fixed (fill whatever iOS gives them); dark html.
 //      Existing installs: remove + re-add the Home Screen icon once.
@@ -93,7 +95,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v72";
+const CACHE = "mts-field-v73";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
