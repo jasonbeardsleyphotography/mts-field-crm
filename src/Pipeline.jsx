@@ -103,6 +103,8 @@ async function pushToGoogleContacts(card, token) {
 }
 
 const PIPELINE_KEY = "mts-pipeline";
+// Cards whose field summary has been loaded this session (see the hydrate effect).
+const _summaryHydrated = new Set();
 const FIELD_KEY = id => `mts-field-${id}`;
 const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
 const FIVE_DAYS  = 5 * 24 * 60 * 60 * 1000;
@@ -445,6 +447,10 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
     (async () => {
       let hydrated = false;
       for (const card of allCards) {
+        // Once per session per card: the mirror outlives this screen, so
+        // switching Route ↔ Pipeline no longer re-reads every visit record.
+        if (_summaryHydrated.has(card.id)) continue;
+        _summaryHydrated.add(card.id);
         try {
           const fresh = await loadField(card.id);
           if (dead) return;

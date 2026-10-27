@@ -1,3 +1,5 @@
+// v78: no iOS text auto-zoom (text-size-adjust always 100%); pull no longer
+//      loads every visit record; Pipeline summary hydrates once per session.
 // v77: camera debug — one encode per shot at final size (async), shots stored
 //      one at a time, uploads/Drive pushes held until the camera closes, small
 //      thumbnails for photo tiles.
@@ -105,7 +107,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v77";
+const CACHE = "mts-field-v78";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

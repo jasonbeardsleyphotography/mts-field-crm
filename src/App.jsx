@@ -1289,10 +1289,13 @@ export default function App() {
       // skip a genuinely-updated remote file.)
       const seen = lsGet("mts-field-remote-seen", {});
       let seenChanged = false;
+      // Which visits exist on this device — one key-only read, instead of
+      // loading every visit record in full (1,400+ of them, photos included)
+      // on every pull just to see whether it's empty.
+      const localIds = new Set(await listFieldIds().catch(() => []));
       for (const f of (files || [])) {
         const id = f.name.replace(/\.json$/, "");
-        const localData = await loadField(id);
-        const localEmpty = !localData || Object.keys(localData).length === 0;
+        const localEmpty = !localIds.has(id);
         const remoteTs = f.modifiedTime ? new Date(f.modifiedTime).getTime() : 0;
         const lastSeen = seen[id] || 0;
         // Pull when forced (manual sync / reconcile), when we have no local
@@ -2384,7 +2387,7 @@ export default function App() {
 .mts-map{flex-shrink:0;border-bottom:1px solid #1a2030}
 .mts-list{flex:1;overflow-y:auto}
 @keyframes spin{to{transform:rotate(360deg)}}
-@media screen and (orientation:landscape){html{-webkit-text-size-adjust:100%}}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 @media(min-width:768px){
   .mts-body{flex-direction:row}
   .mts-map{width:45%;min-width:320px;max-width:500px;border-bottom:none;border-right:1px solid #1a2030;overflow:hidden;display:flex;flex-direction:column}

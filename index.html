@@ -31,6 +31,10 @@
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body { background: #090b10; height: 100%; }
+      /* Never let iOS enlarge text by itself. This used to be set only in
+         landscape, so after the phone rotated (e.g. in the camera) iOS could
+         "auto-size" text in portrait and whole screens came back zoomed. */
+      html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
       /* Top inset for every header and full-screen panel (the status bar
          height on iPhone; 0 elsewhere). Kept as one variable on purpose. */
       :root { --safe-top: env(safe-area-inset-top, 0px); }
