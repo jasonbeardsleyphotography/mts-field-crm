@@ -305,6 +305,17 @@ export async function saveAppState(token, pipeline, dismissed, lastContact) {
   }
 }
 
+// ── PHONE SETTINGS BACKUP (see devicePrefs.js) ──────────────────────────────
+const PREFS_FILE = "phone-settings.json";
+export async function savePhoneSettings(token, prefs) {
+  const rootId = await findOrCreateFolder(token, FOLDER_NAME);
+  await saveJson(token, PREFS_FILE, rootId, { prefs, savedAt: Date.now() });
+}
+export async function loadPhoneSettings(token) {
+  const rootId = await findOrCreateFolder(token, FOLDER_NAME);
+  return (await loadJson(token, PREFS_FILE, rootId))?.prefs || null;
+}
+
 export async function loadAppState(token) {
   try {
     // Newest app-state file across every "MTS Field" folder (see

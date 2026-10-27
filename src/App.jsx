@@ -30,6 +30,7 @@ import Linkify from "./Linkify";
 import AddStopModal from "./AddStopModal";
 import AccountCheck from "./AccountCheck";
 import MediaRecover from "./MediaRecover";
+import { startPrefsBackup } from "./devicePrefs";
 import { openDirections } from "./openMaps";
 import { getMyName, setMyName, ensureMyName } from "./myName";
 import { openAccountGate, closeAccountGate } from "./accountGate";
@@ -444,6 +445,7 @@ export default function App() {
   // never fires; it's a safety net). First sign-in just records the account.
   // If identity can't be resolved (offline), we do nothing and retry next load.
   const _acctChecked = useRef(false);
+  const _prefsBackupStarted = useRef(false);
   // Set when a different account signs in while the previous one still has
   // unsent work on this device: { prev, next, pending }.
   const [acctConflict, setAcctConflict] = useState(null);
@@ -471,6 +473,10 @@ export default function App() {
       try { localStorage.setItem("mts-account", acct); } catch {}
       openAccountGate();
       ensureMyName(token, acct).catch(() => {});
+      if (!_prefsBackupStarted.current) {
+        _prefsBackupStarted.current = true;
+        startPrefsBackup(() => { const t = lsGet("mts-token", null); return t && t.expiry > Date.now() ? t.token : null; });
+      }
     };
     check();
     return () => { cancelled = true; clearTimeout(retry); _acctChecked.current = false; };

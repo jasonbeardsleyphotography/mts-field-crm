@@ -1,3 +1,4 @@
+import { notifyPrefsChanged } from "./devicePrefs";
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Opening RealWork
    ───────────────────────────────────────────────────────────────────────────
@@ -33,6 +34,7 @@ export function setShortcutName(name) {
     if (n && n !== DEFAULT_SHORTCUT_NAME) localStorage.setItem(NAME_KEY, n);
     else localStorage.removeItem(NAME_KEY);
   } catch {}
+  notifyPrefsChanged();
 }
 
 const KEY = "mts-realwork-shortcut";
@@ -42,6 +44,7 @@ export function isShortcutReady() {
 }
 export function setShortcutReady(on) {
   try { on ? localStorage.setItem(KEY, "1") : localStorage.removeItem(KEY); } catch {}
+  notifyPrefsChanged();
 }
 
 export const shortcutHref = () =>
@@ -87,12 +90,14 @@ export function setSendName(name) {
     if (n && n !== DEFAULT_SEND_NAME) localStorage.setItem(SEND_NAME_KEY, n);
     else localStorage.removeItem(SEND_NAME_KEY);
   } catch {}
+  notifyPrefsChanged();
 }
 export function isSendReady() {
   try { return localStorage.getItem(SEND_ON_KEY) === "1"; } catch { return false; }
 }
 export function setSendReady(on) {
   try { on ? localStorage.setItem(SEND_ON_KEY, "1") : localStorage.removeItem(SEND_ON_KEY); } catch {}
+  notifyPrefsChanged();
 }
 
 // input=clipboard hands the Shortcut whatever is on the clipboard — the photo

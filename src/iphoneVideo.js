@@ -1,3 +1,4 @@
+import { notifyPrefsChanged } from "./devicePrefs";
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — "iPhone Video": open the iPhone's own Camera app, in Video mode
    ───────────────────────────────────────────────────────────────────────────
@@ -25,12 +26,14 @@ export function setIphoneVideoName(name) {
     if (n && n !== DEFAULT_IPHONE_VIDEO_NAME) localStorage.setItem(NAME_KEY, n);
     else localStorage.removeItem(NAME_KEY);
   } catch {}
+  notifyPrefsChanged();
 }
 export function isIphoneVideoReady() {
   try { return localStorage.getItem(ON_KEY) === "1"; } catch { return false; }
 }
 export function setIphoneVideoReady(on) {
   try { on ? localStorage.setItem(ON_KEY, "1") : localStorage.removeItem(ON_KEY); } catch {}
+  notifyPrefsChanged();
 }
 
 export const iphoneVideoHref = () =>
