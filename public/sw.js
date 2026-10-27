@@ -1,3 +1,6 @@
+// v76: camera responsiveness — viewfinder sizing event-driven only (no timer,
+//      no container units/transform); removed the full re-upload reconcile and
+//      the re-upload-everything on the cloud button.
 // v75: iPhone Shortcut settings (RealWork, Send to RealWork, iPhone Video)
 //      backed up to Drive and restored after a reinstall.
 // v74: in-app recordings saved as MP4 again (iOS now accepts WebM, which iPhones
@@ -99,7 +102,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v75";
+const CACHE = "mts-field-v76";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
