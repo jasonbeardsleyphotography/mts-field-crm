@@ -10,7 +10,14 @@ import { useCoverVideo } from "./coverVideo";
    MediaRecorder.pause()/.resume() encode into one continuous output blob.
    ═══════════════════════════════════════════════════════════════════════════ */
 
+// MP4 first, named the way Safari recognises ("avc1"/"mp4a"). The old
+// "h264,aac" spelling is never accepted by Safari, so once iOS gained WebM
+// recording, iPhone videos came out as WebM — which iPhones then often fail
+// to play back (first frame, then "couldn't load").
 const MIME_CANDIDATES = [
+  "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+  "video/mp4;codecs=avc1,mp4a",
+  "video/mp4",
   "video/mp4;codecs=h264,aac",
   "video/webm;codecs=vp9,opus",
   "video/webm;codecs=vp8,opus",

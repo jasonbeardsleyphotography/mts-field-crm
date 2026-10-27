@@ -1,4 +1,4 @@
-import { useState } from "react";
+import DriveVideo from "./DriveVideo";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Standalone video player page — /watch/:fileId
@@ -8,8 +8,6 @@ import { useState } from "react";
    not Drive's iframe player, which is what produced "No preview available".
    ═══════════════════════════════════════════════════════════════════════════ */
 export default function VideoWatch({ fileId, title }) {
-  const [failed, setFailed] = useState(false);
-  const streamUrl = `/api/video-stream?id=${fileId}`;
 
   return (
     <div style={{
@@ -24,25 +22,12 @@ export default function VideoWatch({ fileId, title }) {
             fontWeight: 600, marginBottom: 10, textAlign: "center",
           }}>{title}</div>
         )}
-        {!failed ? (
-          <video
-            controls
-            autoPlay
-            playsInline
-            preload="metadata"
-            src={streamUrl}
-            onError={() => setFailed(true)}
-            style={{ width: "100%", maxHeight: "80dvh", borderRadius: 10, background: "#000" }}
-          />
-        ) : (
-          <div style={{
-            color: "#abbac8", fontFamily: "system-ui, sans-serif", fontSize: 14,
-            textAlign: "center", padding: 30, border: "1px solid #1a2540",
-            borderRadius: 10, background: "#0e1120",
-          }}>
-            This video couldn't load. The link may be invalid, or the video may have been removed.
-          </div>
-        )}
+        <DriveVideo fileId={fileId} autoPlay frameHeight="75dvh"
+          style={{ width: "100%", maxHeight: "80dvh", borderRadius: 10 }} />
+        <a href={`https://drive.google.com/file/d/${fileId}/view`} target="_blank" rel="noopener noreferrer"
+          style={{ display: "block", textAlign: "center", marginTop: 12, color: "#8aa0c0", fontFamily: "system-ui, sans-serif", fontSize: 13 }}>
+          Trouble playing? Open in Google Drive
+        </a>
       </div>
     </div>
   );

@@ -11,6 +11,7 @@ import { markStopForPhotoSync, lastNameOf } from "./photoSync";
 import { downscaleDataUrl, newPhotoId, photoKey, PHOTO_MAX_DIM, PHOTO_QUALITY } from "./imageUtils";
 import { startGeoWarm, stopGeoWarm, getCurrentGeo } from "./geoCapture";
 import { buildShareUrl, buildStreamUrl } from "./driveUpload";
+import DriveVideo from "./DriveVideo";
 
 function _driveFileId(url) {
   const m = (url || "").match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
@@ -1963,7 +1964,7 @@ ${combined}`);
                   // <video> elements' src and reload them (losing playback).
                   <div key={url || idx} style={{borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",overflow:"hidden"}}>
                     {ytId && <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" style={{width:"100%",height:90,objectFit:"cover"}} />}
-                    {driveId && <video controls preload="metadata" src={buildStreamUrl(driveId)} style={{width:"100%",height:160,display:"block",background:"#000"}} />}
+                    {driveId && <DriveVideo fileId={driveId} frameHeight={160} style={{width:"100%",height:160}} />}
                     <div style={{padding:"6px 8px",display:"flex",alignItems:"center",gap:6}}>
                       <div style={{fontSize:9,color:"#717fa6",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{shareLink}</div>
                       {typeof navigator !== "undefined" && navigator.share && (
