@@ -482,8 +482,17 @@ export function resetPhotoQueueLock() {
   _processingStartMs = 0;
 }
 
+// Paused while the in-app camera is open: uploading means decoding each photo
+// and pushing the visit record, and doing that between shots competed with the
+// camera for memory and the main thread until it froze. Resumes on close.
+let _paused = false;
+export function setPhotoSyncPaused(p) {
+  _paused = !!p;
+  if (!_paused) { const tok = _getToken?.(); if (tok && navigator.onLine) processPhotoQueue(tok); }
+}
+
 export async function processPhotoQueue(token) {
-  if (!token) return;
+  if (!token || _paused) return;
   if (_processing) {
     // Take the lock back if the holder has plainly stopped making progress.
     if (!_processingStartMs || Date.now() - _processingStartMs < PASS_LOCK_STALE_MS) return;

@@ -8,7 +8,7 @@ import { loadField, peekField, primeField, mergeField, updateField, saveFieldSyn
 import { loadPipeline } from "./Pipeline";
 import { incUpload, decUpload } from "./uploadStatus";
 import { markStopForPhotoSync, lastNameOf } from "./photoSync";
-import { downscaleDataUrl, newPhotoId, photoKey, PHOTO_MAX_DIM, PHOTO_QUALITY } from "./imageUtils";
+import { downscaleDataUrl, newPhotoId, photoKey, PHOTO_MAX_DIM, PHOTO_QUALITY, makeThumb } from "./imageUtils";
 import { startGeoWarm, stopGeoWarm, getCurrentGeo } from "./geoCapture";
 import { buildShareUrl, buildStreamUrl } from "./driveUpload";
 import DriveVideo from "./DriveVideo";
@@ -384,6 +384,10 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
   // update pendingDataRef without resetting the timer). Absorbs dictation
   // bursts while guaranteeing no change waits more than 500ms to hit IDB.
   const lastSavedSigRef = useRef(null);
+  const lastTextSigRef = useRef(null);
+  // Camera shots are stored one at a time, in order (see onPhoto below).
+  const photoChainRef = useRef(Promise.resolve());
+  const shotsThisCameraRef = useRef(0);
   useEffect(() => {
     if (!hydrated) return;
     // Text/AI fields only — these go to IDB via mergeField (which preserves
@@ -413,15 +417,22 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
       (scopePhotos || []).map(p => p?.ts ?? p?.url), (addonPhotos || []).map(p => p?.ts ?? p?.url)]);
     if (lastSavedSigRef.current === null || lastSavedSigRef.current === sig) {
       lastSavedSigRef.current = sig;
+      if (lastTextSigRef.current === null) lastTextSigRef.current = JSON.stringify(textPartial);
       return;
     }
     lastSavedSigRef.current = sig;
     const fullSnapshot = { ...textPartial, scopePhotos, addonPhotos };
     primeField(s.id, fullSnapshot);
     pendingDataRef.current = fullSnapshot;
+    // A photo is written to storage by its own handler before it reaches
+    // state, so when only photos changed there's no text to save — skip a
+    // second read-and-rewrite of the whole record (all photos included).
+    const textSig = JSON.stringify(textPartial);
+    const textChanged = textSig !== lastTextSigRef.current;
+    lastTextSigRef.current = textSig;
     // Leading-trailing rate limit — if a save is already scheduled, just
     // update pendingDataRef and let the existing timer fire.
-    if (!localSaveTimerRef.current) {
+    if (textChanged && !localSaveTimerRef.current) {
       localSaveTimerRef.current = setTimeout(() => {
         localSaveTimerRef.current = null;
         // Re-read pendingDataRef at fire time to get the freshest text.
@@ -448,7 +459,9 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
         });
       }, 500);
     }
-    if (token) {
+    // While the camera is open the push waits — the camera's close handler
+    // sends one push for the whole session.
+    if (token && !showCamera) {
       // Per-stop timer key — opening OnsiteWindow for a different stop must
       // not cancel the pending Drive save for this stop. A shared
       // window._fieldSyncTimer would be cleared by the next stop's effect.
@@ -466,7 +479,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
     // changing — without them here the effect kept a stale closure and saved the
     // OLD name/job#, so the photo/video uploader named Drive files with the
     // pre-edit client name.
-  }, [hydrated, scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, lineItems, jobTags, mapPins, aiScopeResult, aiAddonResult, s.id, s.cn, s.jn, token]);
+  }, [hydrated, scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, lineItems, jobTags, mapPins, aiScopeResult, aiAddonResult, s.id, s.cn, s.jn, token, showCamera]);
 
   // Keep a warm GPS fix while this card is open. A cold lock takes seconds —
   // far too slow to sit between the shutter and the saved photo — so we hold a
@@ -1164,11 +1177,29 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
   // Camera view — rapid capture mode
   if (showCamera) {
     return <CameraView
-      onPhoto={async (rawDataUrl) => {
-        // Downscale to the 2400px budget BEFORE storing. The camera captures at
-        // up to 4K; raw 4K base64 OOM-crashes the renderer when several are
-        // shown and bloats the Drive payload so sync fails.
-        const dataUrl = await downscaleDataUrl(rawDataUrl);
+      onPhoto={(rawDataUrl, meta) => {
+        // Stored strictly one at a time: overlapping shots each held their own
+        // full-size image in memory at once, which is how a quick series of
+        // photos froze the camera.
+        shotsThisCameraRef.current++;
+        photoChainRef.current = photoChainRef.current.then(() => storeCameraPhoto(rawDataUrl, meta)).catch(() => {});
+      }}
+      onClose={() => {
+        setShowCamera(false);
+        // One Drive push for the whole session, once the last shot is stored
+        // (instead of a push after every photo while still shooting).
+        if (shotsThisCameraRef.current) {
+          shotsThisCameraRef.current = 0;
+          photoChainRef.current.then(() => { if (token) queueFieldDriveSync(token, s.id); });
+        }
+      }}
+    />;
+  }
+
+  async function storeCameraPhoto(rawDataUrl, meta) {
+        // The camera now hands over a photo already at the size budget; only
+        // anything else is downscaled here.
+        const dataUrl = meta?.sized ? rawDataUrl : await downscaleDataUrl(rawDataUrl);
         // Stamp the shot with where the phone was standing. This comes from the
         // warm fix held while the card is open, so it costs no shutter delay.
         // NOTE: this is the PHOTOGRAPHER's position, not the tree's — shooting a
@@ -1179,7 +1210,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
         // could hold the photo unsaved for 8s — long enough to lose it by
         // locking the phone. A photo without a location still saves.
         const geo = await getCurrentGeo({ timeout: 1200 });
-        const photo = { dataUrl, ts: Date.now(), id: newPhotoId(), ...(geo ? { geo } : {}) };
+        const photo = { dataUrl, ts: Date.now(), id: newPhotoId(), ...(meta?.thumb ? { thumb: meta.thumb } : {}), ...(geo ? { geo } : {}) };
         const pin = geo ? {
           id: `pin_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
           lat: geo.lat, lng: geo.lng, acc: geo.acc,
@@ -1213,15 +1244,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
         if (cameraSection === "addon") setAddonPhotos(prev => sortPhotosByTs([...prev, photo]));
         else setScopePhotos(prev => sortPhotosByTs([...prev, photo]));
         if (pin) setMapPins(prev => [...prev, pin]);
-        markStopForPhotoSync(s.id); // queue for Drive upload
-        // IMMEDIATE Drive sync so photos can't be lost if the user closes the
-        // app before the 3-sec auto-save timer fires. Serialized + coalesced
-        // per stop so rapid captures can't race and overwrite each other with
-        // a stale snapshot — reads fresh IDB at execution time.
-        if (token) queueFieldDriveSync(token, s.id);
-      }}
-      onClose={() => setShowCamera(false)}
-    />;
+        markStopForPhotoSync(s.id); // queued for Drive upload (runs once the camera closes)
   }
 
   if (markupIdx !== null) {
@@ -1305,7 +1328,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
           // instead of stepping through three. Prefer the Drive rendition:
           // decoding a dozen full-size local captures for 52px thumbnails is
           // real memory on a phone.
-          strip={photos.map(ph => ({ key: photoKey(ph), src: ph.url || ph.dataUrl }))}
+          strip={photos.map(ph => ({ key: photoKey(ph), src: ph.thumb || ph.url || ph.dataUrl }))}
           index={markupIdx}
           onJump={(dataUrl, hasEdits, i) => { if (hasEdits) saveMarkupOnly(dataUrl); setMarkupIdx(i); }}
         />
@@ -1834,7 +1857,7 @@ ${combined}`);
             {scopePhotos.map((p, i) => (
               <div key={photoKey(p)||i} style={{display:"flex",flexDirection:"column",gap:3}}>
                 <div style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
-                  <img src={p.url || p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("scope");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
+                  <img src={p.thumb || p.url || p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("scope");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
                   <button onClick={e=>{e.stopPropagation();removeScopePhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} color="#ff6666"/></button>
                   <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
                     <div onClick={()=>{setMarkupIdx(i);setMarkupSection("scope");}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
@@ -2203,7 +2226,8 @@ function _processPhoto(file, section, stopId) {
         const c = document.createElement("canvas");
         c.width = w; c.height = h;
         c.getContext("2d").drawImage(img, 0, 0, w, h);
-        const photo = { dataUrl: c.toDataURL("image/jpeg", PHOTO_QUALITY), ts: Date.now(), id: newPhotoId() };
+        const thumb = makeThumb(c);
+        const photo = { dataUrl: c.toDataURL("image/jpeg", PHOTO_QUALITY), ts: Date.now(), id: newPhotoId(), ...(thumb ? { thumb } : {}) };
         // updateField is queued per-stop in fieldStore, so this composes
         // safely with concurrent text saves and other photo ops.
         try {

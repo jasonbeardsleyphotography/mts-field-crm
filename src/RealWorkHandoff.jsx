@@ -256,7 +256,7 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease, sendClip
                 background: "#141a29", border: "1px solid #253049", cursor: busyKey ? "default" : "pointer",
                 opacity: busyKey && !busy ? 0.4 : 1,
               }}>
-                <img src={p.url ? smallThumb(p.url) : p.dataUrl} alt="" draggable={false}
+                <img src={p.thumb || (p.url ? smallThumb(p.url) : p.dataUrl)} alt="" draggable={false}
                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                 {busy && (
                   <div style={{

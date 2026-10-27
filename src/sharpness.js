@@ -36,6 +36,7 @@ export function scoreSharpness(source, targetWidth = 400) {
     }
   }
 
+  scratch.width = 0; scratch.height = 0;   // free the pixel buffer now, not at GC
   if (n === 0) return 0;
   const mean = sum / n;
   return sumSq / n - mean * mean;

@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { IconX } from "./icons";
 import { useCoverVideo } from "./coverVideo";
 import { scoreSharpness } from "./sharpness";
+import { PHOTO_MAX_DIM, PHOTO_QUALITY, makeThumb } from "./imageUtils";
+import { setPhotoSyncPaused } from "./photoSync";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Camera View
@@ -74,6 +76,36 @@ async function grabBurst(video, vw, vh, count, mountedRef) {
 
 const haptic = (ms = 10) => { try { navigator.vibrate?.(ms); } catch {} };
 
+// Turn the chosen frame into the stored JPEG in ONE step, at the final size.
+// It used to be encoded at full 4K with toDataURL (a long, blocking encode),
+// then decoded and re-encoded at 3200px by the caller — two big bitmaps and
+// two encodes per shot, which piled up over several photos until the camera
+// froze. toBlob encodes off the main thread. Frees every canvas it touches.
+async function encodeFrame(src) {
+  let c = src;
+  const scale = Math.min(1, PHOTO_MAX_DIM / Math.max(src.width, src.height));
+  if (scale < 1) {
+    c = document.createElement("canvas");
+    c.width = Math.round(src.width * scale); c.height = Math.round(src.height * scale);
+    c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
+    releaseCanvas(src);
+  }
+  try {
+    const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", PHOTO_QUALITY));
+    if (blob) {
+      return await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = () => rej(r.error);
+        r.readAsDataURL(blob);
+      });
+    }
+    return c.toDataURL("image/jpeg", PHOTO_QUALITY);   // toBlob unavailable
+  } finally {
+    releaseCanvas(c);
+  }
+}
+
 // Which physical edge of the device the portrait-bottom edge currently sits
 // on. Rotating the phone counterclockwise (angle 90) puts that edge on the
 // right; clockwise (angle 270 / -90) puts it on the left. The shutter strip
@@ -95,6 +127,10 @@ export default function CameraView({ onPhoto, onClose }) {
   const containerRef       = useRef(null);
   const mountedRef         = useRef(true);
   const captureInFlightRef = useRef(false);
+  const pendingShotRef     = useRef(false);   // one press remembered while a shot is in progress
+  const captureRef         = useRef(null);
+  // Hold background photo uploads while the camera is open (see photoSync).
+  useEffect(() => { setPhotoSyncPaused(true); return () => setPhotoSyncPaused(false); }, []);
 
   // Stream readiness
   const [ready, setReady] = useState(false);
@@ -279,7 +315,10 @@ export default function CameraView({ onPhoto, onClose }) {
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw || !vh) return;
 
-    if (captureInFlightRef.current) return; // reject overlapping presses, don't queue
+    // One shot at a time. A press during a shot is remembered (once) and taken
+    // right after, so a quick second tap isn't lost — but presses can't stack
+    // up work faster than the phone can finish it.
+    if (captureInFlightRef.current) { pendingShotRef.current = true; return; }
     captureInFlightRef.current = true;
 
     // Immediate felt-response — fires on tap regardless of how long scoring takes.
@@ -291,15 +330,21 @@ export default function CameraView({ onPhoto, onClose }) {
     try {
       const best = await grabBurst(video, vw, vh, BURST_FRAME_COUNT, mountedRef);
       if (best && mountedRef.current) {
-        onPhoto(best.bitmap.toDataURL("image/jpeg", 0.9));
-      }
-      if (best) releaseCanvas(best.bitmap); // free the full-res buffer once encoded
+        const thumb = makeThumb(best.bitmap);
+        const dataUrl = await encodeFrame(best.bitmap);   // frees best.bitmap
+        if (mountedRef.current && dataUrl && dataUrl.length > 100) onPhoto(dataUrl, { sized: true, thumb });
+      } else if (best) releaseCanvas(best.bitmap);
     } catch (e) {
       console.warn("Burst capture failed:", e);
     } finally {
       captureInFlightRef.current = false;
+      if (pendingShotRef.current && mountedRef.current) {
+        pendingShotRef.current = false;
+        setTimeout(() => captureRef.current?.(), 0);
+      }
     }
   }, [ready, onPhoto]);
+  captureRef.current = capture;
 
   // ── VOLUME-UP → SHUTTER ────────────────────────────────────────────────────
   // Works on Android Chrome. iOS doesn't expose volume keys to web pages

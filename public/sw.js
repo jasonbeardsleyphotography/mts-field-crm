@@ -1,3 +1,6 @@
+// v77: camera debug — one encode per shot at final size (async), shots stored
+//      one at a time, uploads/Drive pushes held until the camera closes, small
+//      thumbnails for photo tiles.
 // v76: camera responsiveness — viewfinder sizing event-driven only (no timer,
 //      no container units/transform); removed the full re-upload reconcile and
 //      the re-upload-everything on the cloud button.
@@ -102,7 +105,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v76";
+const CACHE = "mts-field-v77";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

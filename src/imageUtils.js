@@ -21,6 +21,23 @@ export const PHOTO_QUALITY = 0.88;
 // huge legacy 4K originals (> ~3 MB base64) still get shrunk to the cap.
 export const OVERSIZE_DATAURL_LEN = 3_200_000;
 
+// A small JPEG for photo tiles. Tiles used to draw the full 3200px photo, so
+// opening a card after a burst of shots made the phone decode every one of
+// them at full size at once (~20 MB each) — enough to freeze it. ~15 KB each.
+export function makeThumb(source, max = 360) {
+  try {
+    const w = source.width || source.naturalWidth, h = source.height || source.naturalHeight;
+    if (!w || !h) return null;
+    const k = Math.min(1, max / Math.max(w, h));
+    const c = document.createElement("canvas");
+    c.width = Math.round(w * k); c.height = Math.round(h * k);
+    c.getContext("2d").drawImage(source, 0, 0, c.width, c.height);
+    const out = c.toDataURL("image/jpeg", 0.72);
+    c.width = 0; c.height = 0;
+    return out;
+  } catch { return null; }
+}
+
 // ── PHOTO IDENTITY ───────────────────────────────────────────────────────────
 // Every photo gets a globally-unique `id` at creation. This is the PRIMARY
 // merge/dedup key everywhere photos are unioned (hydration, cross-device pull,
