@@ -1,3 +1,6 @@
+// v79: Drive pull no longer re-downloads every visit (its bookkeeping key was
+//      being overwritten as a "visit"); one pull at a time, paced, paused
+//      while the camera is open; old visits fetched on open; sweep paced.
 // v78: no iOS text auto-zoom (text-size-adjust always 100%); pull no longer
 //      loads every visit record; Pipeline summary hydrates once per session.
 // v77: camera debug — one encode per shot at final size (async), shots stored
@@ -107,7 +110,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v78";
+const CACHE = "mts-field-v79";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

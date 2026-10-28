@@ -551,13 +551,19 @@ const SWEEP_LAST_KEY = "mts-photo-sweep-last";
 const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000; // once a day
 
 export async function sweepAllPhotos() {
+  // Marked at the START: it reads every visit record, and if the app closed
+  // mid-sweep the old end-of-sweep stamp meant it re-ran on every launch.
+  try { localStorage.setItem(SWEEP_LAST_KEY, String(Date.now())); } catch {}
   const ids = await listFieldIds();
   let stopsScanned = 0, photosEvicted = 0;
   for (const id of ids) {
+    // Paced, and never while the camera is open — a straight run over 1,400
+    // records competed with everything else on screen.
+    while (window.__mtsCameraOpen) await new Promise(r => setTimeout(r, 1000));
+    if (stopsScanned % 10 === 0) await new Promise(r => setTimeout(r, 40));
     stopsScanned++;
     photosEvicted += (await promoteStop(id)) || 0;
   }
-  try { localStorage.setItem(SWEEP_LAST_KEY, String(Date.now())); } catch {}
   return { stopsScanned, photosEvicted };
 }
 

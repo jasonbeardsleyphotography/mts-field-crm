@@ -6,7 +6,7 @@ import OnsiteWindow from "./OnsiteWindow";
 import UniversalSearch from "./UniversalSearch";
 import Pipeline, { savePipeline, loadPipeline, pushCalendarColor } from "./Pipeline";
 import { saveAppState, loadAppState, loadFieldFromDrive, listFieldFiles, onSyncStatus, onAuthError, queueFieldDriveSync } from "./driveSync";
-import { loadField, listFieldIds, updateField, getDirtyFieldIds, deleteFieldDB } from "./fieldStore";
+import { loadField, listFieldIds, updateField, getDirtyFieldIds, deleteFieldDB, deleteField } from "./fieldStore";
 import { startPhotoSyncWatcher } from "./photoSync";
 import { photoKey } from "./imageUtils";
 import { startVideoQueueWatcher, pendingCount as videoPendingCount, onQueueChange as onVideoQueueChange, deleteVideoQueueDB } from "./videoQueue";
@@ -133,6 +133,23 @@ async function fetchGoogleAccountId(token) {
     return primary?.value ? primary.value.toLowerCase() : null;
   } catch { return null; }
 }
+
+// The Drive pull's record of which visit files it has already downloaded
+// (file name → Drive modifiedTime). It used to be stored at
+// "mts-field-remote-seen" — inside the prefix fieldStore treats as visit
+// records, so a sweep over "every visit" loaded it as one and overwrote it
+// with an empty visit summary. The pull then forgot everything and
+// re-downloaded every visit, again and again: the source of the freezes.
+const REMOTE_SEEN_KEY = "mts-remote-seen";
+function loadRemoteSeen() {
+  const cur = lsGet(REMOTE_SEEN_KEY, null);
+  if (cur && typeof cur === "object") return cur;
+  // One-time move from the old key, if it still holds the real map.
+  const old = lsGet("mts-field-remote-seen", null);
+  const looksReal = old && typeof old === "object" && Object.values(old).some(v => typeof v === "number" && v > 1e12);
+  return looksReal ? { ...old } : {};
+}
+function saveRemoteSeen(seen) { lsSet(REMOTE_SEEN_KEY, seen); }
 
 // Work captured on this device that hasn't reached Drive yet. A switch to a
 // different account must not delete it.
@@ -1241,8 +1258,21 @@ export default function App() {
   // fires even if iOS freezes JS mid-fetch (AbortController signals handle the
   // common case; this catches the rare full-freeze scenario).
   const _pullWatchdog = useRef(null);
+  // One-time tidy-up of the old download-record key (see REMOTE_SEEN_KEY):
+  // move it, then delete the bogus "remote-seen" visit it was mistaken for.
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(REMOTE_SEEN_KEY) == null) saveRemoteSeen(loadRemoteSeen());
+      if (localStorage.getItem("mts-field-remote-seen") != null) deleteField("remote-seen").catch(() => {});
+    } catch {}
+  }, []);
+  const _pullRunning = useRef(false);
   const pullFromDrive = useCallback(async (force = false) => {
     if (!token) return;
+    // One pull at a time. Every visibility change and the 5-minute timer used
+    // to start another full pull alongside any still running.
+    if (_pullRunning.current) return;
+    _pullRunning.current = true;
     // Clear any prior watchdog before starting a fresh pull.
     if (_pullWatchdog.current) clearTimeout(_pullWatchdog.current);
     setSyncPulling(true);
@@ -1287,8 +1317,9 @@ export default function App() {
       // re-stamped to "now" on every merge. (The old gate compared Drive's
       // server clock against this device's local clock, which could wrongly
       // skip a genuinely-updated remote file.)
-      const seen = lsGet("mts-field-remote-seen", {});
+      const seen = loadRemoteSeen();
       let seenChanged = false;
+      let downloads = 0;
       // Which visits exist on this device — one key-only read, instead of
       // loading every visit record in full (1,400+ of them, photos included)
       // on every pull just to see whether it's empty.
@@ -1303,7 +1334,19 @@ export default function App() {
         // MERGE photo/audio/video arrays by key (union) rather than overwriting
         // — photos captured locally that haven't synced yet must never be
         // erased by a stale Drive snapshot.
+        // A visit this device has never had, untouched for 60+ days: don't
+        // fetch it now — opening its card fetches it. On a fresh install this
+        // is the difference between downloading every visit ever (1,400+,
+        // minutes of a frozen phone) and just the recent ones.
+        if (!force && localEmpty && remoteTs && Date.now() - remoteTs > 60 * 86400e3) continue;
         if (force || localEmpty || remoteTs > lastSeen) {
+          // Stay out of the camera's way, and give the screen a breath
+          // between downloads so the app never locks up during a big pull.
+          while (window.__mtsCameraOpen) await new Promise(r => setTimeout(r, 1000));
+          if (++downloads % 5 === 0) await new Promise(r => setTimeout(r, 60));
+          // Save progress as it goes: an interrupted pull used to lose all of
+          // it and start from scratch next launch.
+          if (downloads % 20 === 0 && seenChanged) saveRemoteSeen(seen);
           const data = await loadFieldFromDrive(token, id);
           if (data) {
             await updateField(id, (existing) => {
@@ -1395,11 +1438,12 @@ export default function App() {
           }
         }
       }
-      if (seenChanged) lsSet("mts-field-remote-seen", seen);
+      if (seenChanged) saveRemoteSeen(seen);
       setLastSyncTime(Date.now());
       window.dispatchEvent(new CustomEvent("mts-field-synced"));
     } catch(e) { console.warn("Pull failed:", e); }
     finally {
+      _pullRunning.current = false;
       if (_pullWatchdog.current) { clearTimeout(_pullWatchdog.current); _pullWatchdog.current = null; }
       setSyncPulling(false);
     }

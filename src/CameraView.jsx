@@ -130,7 +130,11 @@ export default function CameraView({ onPhoto, onClose }) {
   const pendingShotRef     = useRef(false);   // one press remembered while a shot is in progress
   const captureRef         = useRef(null);
   // Hold background photo uploads while the camera is open (see photoSync).
-  useEffect(() => { setPhotoSyncPaused(true); return () => setPhotoSyncPaused(false); }, []);
+  // __mtsCameraOpen also holds the Drive pull's downloads (App.jsx).
+  useEffect(() => {
+    setPhotoSyncPaused(true); window.__mtsCameraOpen = true;
+    return () => { setPhotoSyncPaused(false); window.__mtsCameraOpen = false; };
+  }, []);
 
   // Stream readiness
   const [ready, setReady] = useState(false);

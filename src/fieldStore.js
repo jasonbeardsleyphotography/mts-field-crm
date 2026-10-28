@@ -21,6 +21,8 @@ const DB_NAME  = "mts-field";
 const DB_VER   = 1;
 const STORE    = "fields";
 const LS_PREFIX = "mts-field-";
+// localStorage keys under the prefix above that are NOT visit records.
+const NOT_FIELDS = new Set(["remote-seen"]);
 
 let dbPromise = null;
 
@@ -363,7 +365,9 @@ export async function listFieldIds() {
       const k = localStorage.key(i);
       if (k && k.startsWith(LS_PREFIX)) lsKeys.push(k.slice(LS_PREFIX.length));
     }
-    return [...new Set([...keys, ...lsKeys])];
+    // "remote-seen" is not a visit: the Drive pull's bookkeeping used to live
+    // at "mts-field-remote-seen", which this prefix scan mistook for one.
+    return [...new Set([...keys, ...lsKeys])].filter(id => !NOT_FIELDS.has(id));
   } catch {
     return [];
   }
