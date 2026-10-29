@@ -143,10 +143,28 @@ export default function CameraView({ onPhoto, onClose }) {
   };
   const realign = useCallback((why, rebuild) => {
     if (shifted()) { flog("cam: view was shifted — reset", `${why} · ${shiftDesc()}`); try { window.scrollTo(0, 0); } catch {} rebuild = true; }
-    if (rebuild) setLayoutKey(k => k + 1);
+    if (rebuild) {
+      setLayoutKey(k => k + 1);
+      // Make iOS re-place the whole full-screen camera layer too, not just the
+      // controls: briefly give it a new compositing transform, then drop it.
+      const root = containerRef.current;
+      if (root) {
+        root.style.transform = "translateZ(0)";
+        void root.offsetHeight;
+        requestAnimationFrame(() => { root.style.transform = ""; });
+      }
+    }
   }, []);
   useEffect(() => {
-    const onChange = () => { realign("screen change", true); setTimeout(() => realign("after screen change", true), 400); };
+    // Reports showed the misalignment right after turning back to portrait;
+    // iOS can settle the screen a moment after the rotation events, so
+    // rebuild a few times over the next two seconds.
+    let timers = [];
+    const onChange = () => {
+      realign("screen change", true);
+      timers.forEach(clearTimeout);
+      timers = [300, 800, 1500, 2500].map(ms => setTimeout(() => realign("after screen change", true), ms));
+    };
     const onVis = () => { if (document.visibilityState === "visible") onChange(); };
     window.addEventListener("resize", onChange);
     window.addEventListener("orientationchange", onChange);
@@ -165,6 +183,7 @@ export default function CameraView({ onPhoto, onClose }) {
       window.removeEventListener("pageshow", onChange);
       document.removeEventListener("visibilitychange", onVis);
       clearInterval(iv);
+      timers.forEach(clearTimeout);
     };
   }, [realign]);
   const onStripMiss = (e) => {
