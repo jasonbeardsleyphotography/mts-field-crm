@@ -39,6 +39,7 @@ import { uploadPhotoToDrive, queueFieldDriveSync } from "./driveSync";
 import { downscaleDataUrl, OVERSIZE_DATAURL_LEN, photoKey } from "./imageUtils";
 import { logError, logWarn, logInfo } from "./debugLog";
 import { createWakeLockHandle } from "./wakeLock";
+import { flog } from "./freezeLog";
 
 // Keeps the screen on during an active photo upload, same as video uploads —
 // otherwise a glance-length upload can lose to the screen auto-locking and
@@ -500,6 +501,7 @@ export async function processPhotoQueue(token) {
     _processing = false;
   }
   if (!navigator.onLine) return;
+  flog("bg: photo uploads check");
 
   // First: upload pending photos
   const queue = getQueue();
@@ -555,6 +557,7 @@ export async function sweepAllPhotos() {
   // mid-sweep the old end-of-sweep stamp meant it re-ran on every launch.
   try { localStorage.setItem(SWEEP_LAST_KEY, String(Date.now())); } catch {}
   const ids = await listFieldIds();
+  flog("bg: daily photo check started", `${ids.length} visits`);
   let stopsScanned = 0, photosEvicted = 0;
   for (const id of ids) {
     // Paced, and never while the camera is open — a straight run over 1,400
@@ -564,6 +567,7 @@ export async function sweepAllPhotos() {
     stopsScanned++;
     photosEvicted += (await promoteStop(id)) || 0;
   }
+  flog("bg: daily photo check finished", `${photosEvicted} freed`);
   return { stopsScanned, photosEvicted };
 }
 

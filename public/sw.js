@@ -1,3 +1,4 @@
+// v81: freeze recorder — Settings → Copy freeze report.
 // v80: camera stays responsive on the first open of the day (reused frame
 //      buffers, 2-frame burst, no App re-render storm, contacts wait for the
 //      camera); Done copies the client name for RealWork.
@@ -113,7 +114,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v80";
+const CACHE = "mts-field-v81";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

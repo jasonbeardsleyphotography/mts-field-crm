@@ -42,6 +42,7 @@ import {
   IconCloud, IconCloudOff, IconCheckCircle, IconEdit, IconPhone, IconMail, IconClock, IconCalendar,
   IconNoSymbol, IconDatabase, IconVideo, IconImage
 } from "./icons";
+import { flog, freezeReport } from "./freezeLog";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS FIELD ROUTE — Main App
@@ -1273,6 +1274,8 @@ export default function App() {
     // to start another full pull alongside any still running.
     if (_pullRunning.current) return;
     _pullRunning.current = true;
+    const _pt = Date.now();
+    flog("bg: Drive sync started", force ? "full" : "");
     // Clear any prior watchdog before starting a fresh pull.
     if (_pullWatchdog.current) clearTimeout(_pullWatchdog.current);
     setSyncPulling(true);
@@ -1441,8 +1444,9 @@ export default function App() {
       if (seenChanged) saveRemoteSeen(seen);
       setLastSyncTime(Date.now());
       window.dispatchEvent(new CustomEvent("mts-field-synced"));
-    } catch(e) { console.warn("Pull failed:", e); }
+    } catch(e) { console.warn("Pull failed:", e); flog("bg: Drive sync failed", e?.message); }
     finally {
+      flog("bg: Drive sync finished", `${Date.now() - _pt}ms`);
       _pullRunning.current = false;
       if (_pullWatchdog.current) { clearTimeout(_pullWatchdog.current); _pullWatchdog.current = null; }
       setSyncPulling(false);
@@ -1600,6 +1604,7 @@ export default function App() {
           else rest.push(stop);
         }
         if (!rest.length) return;
+        flog("bg: contacts job started", `${rest.length} to check`);
         let index;
         const cached = contactIndexRef.current;
         if (cached.index && Date.now() - cached.at < 10 * 60 * 1000) index = cached.index;
@@ -1624,6 +1629,7 @@ export default function App() {
           await new Promise(r => setTimeout(r, 400));
         }
       } finally {
+        flog("bg: contacts job finished");
         contactPushRunning.current = false;
         if (pushedAny) setContactsPushed(contactsPushedRef.current);
       }
@@ -1750,6 +1756,17 @@ export default function App() {
   const [driveCleanupOpen, setDriveCleanupOpen] = useState(false);
   const [accountCheckOpen, setAccountCheckOpen] = useState(false);
   const [mediaRecoverOpen, setMediaRecoverOpen] = useState(false);
+  const [freezeReportText, setFreezeReportText] = useState(null);
+  // Freeze report: note when the whole app is redrawing unusually often.
+  const _renders = useRef(0);
+  _renders.current++;
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (_renders.current > 25) flog("app: busy redrawing", `${_renders.current} redraws in 5s`);
+      _renders.current = 0;
+    }, 5000);
+    return () => clearInterval(iv);
+  }, []);
   const [, setMyNameTick] = useState(0);   // re-render after the name is edited
   const [contactCleanupOpen, setContactCleanupOpen] = useState(false);
   const [realworkSetupOpen, setRealworkSetupOpen] = useState(false);
@@ -2798,6 +2815,15 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
                 label="Account & connection check"
                 sub="Test sign-in, Calendar, Drive and Contacts for this account"
                 onClick={()=>{ setAccountCheckOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#FF8A80"
+                icon={<IconClipboard size={17} color="#FF8A80"/>}
+                label="Copy freeze report"
+                sub="After a freeze: reopen the app, tap this, paste it to support"
+                onClick={()=>{
+                  const txt = freezeReport();
+                  try { navigator.clipboard?.writeText(txt).catch(() => {}); } catch {}
+                  setFreezeReportText(txt); setSettingsOpen(false);
+                }} />
               <Row accent="#F6BF26"
                 icon={<IconImage size={17} color="#F6BF26"/>}
                 label="Recover photos & videos"
@@ -3146,6 +3172,25 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
             <button onClick={signOutEverywhereHere} style={{marginTop:16,width:"100%",padding:"12px 0",borderRadius:10,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.5)",color:"#34d399",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:.5,textTransform:"uppercase"}}>Sign out — I'll switch back</button>
             <button onClick={() => { if (window.confirm(`Permanently delete the unsent work from ${acctConflict.prev} on this phone and continue as ${acctConflict.next}?`)) clearLocalDataForAccountSwitch(acctConflict.next); }} style={{marginTop:8,width:"100%",padding:"10px 0",borderRadius:10,background:"transparent",border:"1px solid #4a2a2a",color:"#ff8a80",fontSize:12,fontWeight:700,cursor:"pointer"}}>Delete it and continue as {acctConflict.next}</button>
           </div>
+        </div>
+      )}
+
+      {freezeReportText != null && (
+        <div style={{position:"fixed",inset:0,zIndex:360,background:"#0a0b10",display:"flex",flexDirection:"column",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,padding:"max(14px, var(--safe-top)) 16px 12px",borderBottom:"1px solid #1a2030"}}>
+            <div style={{flex:1}}>
+              <div style={{fontSize:15,fontWeight:800,color:"#fff",fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>Freeze report</div>
+              <div style={{fontSize:11.5,color:"#8a9ab0",marginTop:2}}>Copied — paste it into your chat with Claude.</div>
+            </div>
+            <button onClick={() => setFreezeReportText(null)} aria-label="Close" style={{width:38,height:38,borderRadius:19,background:"transparent",border:"1px solid #253049",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={16} color="#9aadc8"/></button>
+          </div>
+          <div style={{display:"flex",gap:8,padding:"10px 16px"}}>
+            <button onClick={() => { try { navigator.clipboard?.writeText(freezeReportText).catch(() => {}); } catch {} }} style={{flex:1,padding:"11px 0",borderRadius:10,background:"rgba(16,185,129,.15)",border:"1px solid rgba(16,185,129,.5)",color:"#34d399",fontSize:12.5,fontWeight:800,fontFamily:"'Oswald',sans-serif",letterSpacing:.5,textTransform:"uppercase",cursor:"pointer"}}>Copy again</button>
+            {typeof navigator !== "undefined" && navigator.share && (
+              <button onClick={() => { navigator.share({ title: "MTS Field freeze report", text: freezeReportText }).catch(() => {}); }} style={{flex:1,padding:"11px 0",borderRadius:10,background:"rgba(26,115,232,.15)",border:"1px solid rgba(26,115,232,.45)",color:"#7db4ff",fontSize:12.5,fontWeight:800,fontFamily:"'Oswald',sans-serif",letterSpacing:.5,textTransform:"uppercase",cursor:"pointer"}}>Share…</button>
+            )}
+          </div>
+          <pre style={{flex:1,overflow:"auto",margin:0,padding:"8px 16px max(16px, env(safe-area-inset-bottom))",color:"#c8d4e4",fontSize:10.5,lineHeight:1.45,whiteSpace:"pre-wrap",wordBreak:"break-word",fontFamily:"ui-monospace,Menlo,monospace"}}>{freezeReportText}</pre>
         </div>
       )}
 

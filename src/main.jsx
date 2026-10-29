@@ -4,6 +4,7 @@ import App from './App.jsx'
 import VideoWatch from './VideoWatch.jsx'
 import PlanView from './PlanView.jsx'
 import { vlogError } from './videoLog'
+import { startFreezeLog, flog } from './freezeLog'
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Error Boundary — catches uncaught render errors and shows them on screen
@@ -25,6 +26,7 @@ class AppErrorBoundary extends React.Component {
   componentDidCatch(error, info) {
     this.setState({ info });
     try { console.error("[AppErrorBoundary]", error, info); } catch {}
+    try { flog("CRASH (screen error)", error?.message || String(error)); } catch {}
     // Also write to videoLog so the diagnostic panel can pick it up later
     try {
       vlogError("app.boundary", { msg: error?.message || String(error), stack: (error?.stack || "").slice(0, 800) });
@@ -122,6 +124,9 @@ const watchMatch = window.location.pathname.match(/^\/watch\/([a-zA-Z0-9_-]+)\/?
 // with their own live position. Same deal as /watch: matched before App mounts
 // so nobody needs to sign in (or install anything) to open it.
 const planMatch = window.location.pathname.match(/^\/plan\/([a-zA-Z0-9_-]+)\/?$/);
+
+// The freeze recorder runs for the app itself (not the public /watch and /plan pages).
+if (!watchMatch && !planMatch) startFreezeLog();
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

@@ -51,6 +51,12 @@ tell him something is "safe" unless you checked.
   (a 1,400-visit simulation of the camera/idle load was the way the freeze was finally found) and say clearly
   what only the owner's phone can confirm.
 
+## Freeze report
+`src/freezeLog.js` records camera steps, background jobs, stalls (heartbeat gaps) and errors to localStorage
+(`mts-freeze-log`, last 4 sessions) as they happen. The owner sends it via Settings → Copy freeze report.
+Read the last lines of the session that froze: the step with no matching "done"/"finished" is the one that hung.
+Keep logging out of tight loops; log slow/failed cases, not every success.
+
 ## Known open items
 - No saved copy of the route: opening the app offline with an expired sign-in shows only the sign-in screen.
 - Deleted photos can come back after a cross-device union merge (no deletion markers).

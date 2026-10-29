@@ -17,6 +17,8 @@
    state when data arrives.
    ═══════════════════════════════════════════════════════════════════════════ */
 
+import { flog } from "./freezeLog";
+
 const DB_NAME  = "mts-field";
 const DB_VER   = 1;
 const STORE    = "fields";
@@ -155,6 +157,7 @@ export async function saveField(id, data, { keepSavedAt = false } = {}) {
   // also listen for async transaction abort, not just the request onerror,
   // since iOS surfaces eviction as an abort after the put "succeeds".
   let idbOk = false;
+  const _st = Date.now();
   for (let attempt = 0; attempt < 4 && !idbOk; attempt++) {
     try {
       const store = await tx("readwrite");
@@ -171,6 +174,9 @@ export async function saveField(id, data, { keepSavedAt = false } = {}) {
       else console.warn("fieldStore save failed after retries:", e);
     }
   }
+  // Only the unusual cases — the freeze report needs signal, not noise.
+  if (!idbOk) flog("storage: save FAILED", id);
+  else if (Date.now() - _st > 700) flog("storage: slow save", `${id} ${Date.now() - _st}ms`);
   // Mirror a *lightweight slice* to localStorage so legacy code (Drive sync
   // key-iteration, App.jsx pullFromDrive) still sees entries exist. Strips
   // base64 photo/audio dataURLs to stay under the 5 MB cap. Full data is

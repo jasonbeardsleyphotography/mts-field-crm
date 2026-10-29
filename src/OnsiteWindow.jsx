@@ -12,6 +12,7 @@ import { downscaleDataUrl, newPhotoId, photoKey, PHOTO_MAX_DIM, PHOTO_QUALITY, m
 import { startGeoWarm, stopGeoWarm, getCurrentGeo } from "./geoCapture";
 import { buildShareUrl, buildStreamUrl } from "./driveUpload";
 import DriveVideo from "./DriveVideo";
+import { flog } from "./freezeLog";
 
 function _driveFileId(url) {
   const m = (url || "").match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
@@ -1189,9 +1190,11 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
         // full-size image in memory at once, which is how a quick series of
         // photos froze the camera.
         shotsThisCameraRef.current++;
-        photoChainRef.current = photoChainRef.current.then(() => storeCameraPhoto(rawDataUrl, meta)).catch(() => {});
+        flog("card: photo queued to save", `#${shotsThisCameraRef.current}`);
+        photoChainRef.current = photoChainRef.current.then(() => storeCameraPhoto(rawDataUrl, meta)).catch((e) => flog("card: photo save error", e?.message));
       }}
       onClose={() => {
+        flog("card: camera closing", `${shotsThisCameraRef.current} shots this time`);
         setShowCamera(false);
         // One Drive push for the whole session, once the last shot is stored
         // (instead of a push after every photo while still shooting).
@@ -1206,6 +1209,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
   async function storeCameraPhoto(rawDataUrl, meta) {
         // The camera now hands over a photo already at the size budget; only
         // anything else is downscaled here.
+        flog("card: saving photo …");
         const dataUrl = meta?.sized ? rawDataUrl : await downscaleDataUrl(rawDataUrl);
         // Stamp the shot with where the phone was standing. This comes from the
         // warm fix held while the card is open, so it costs no shutter delay.
@@ -1216,7 +1220,9 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
         // Capped short: with no warm fix (indoors, first shot) a full GPS lock
         // could hold the photo unsaved for 8s — long enough to lose it by
         // locking the phone. A photo without a location still saves.
+        const tg = Date.now();
         const geo = await getCurrentGeo({ timeout: 1200 });
+        flog("card: location", geo ? `±${Math.round(geo.acc || 0)}m in ${Date.now() - tg}ms` : `none (${Date.now() - tg}ms)`);
         const photo = { dataUrl, ts: Date.now(), id: newPhotoId(), ...(meta?.thumb ? { thumb: meta.thumb } : {}), ...(geo ? { geo } : {}) };
         const pin = geo ? {
           id: `pin_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -1229,6 +1235,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
         // write with the auto-save's mergeField and any other photo ops,
         // so concurrent writes can't read the same "before" state and
         // clobber each other.
+        const ts0 = Date.now();
         try {
           await updateField(s.id, (existing) => {
             const existingPhotos = existing[key] || existing.photos || [];
@@ -1238,8 +1245,10 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
             if (pin) patch.mapPins = [...(existing.mapPins || []), pin];
             return patch;
           }, { throwOnFail: true });
+          flog("card: photo stored", `${Date.now() - ts0}ms`);
         } catch (e) {
           console.warn("Camera photo IDB save failed:", e);
+          flog("card: photo store FAILED", `${Date.now() - ts0}ms ${e?.message}`);
           setStorageError(
             /quota|storage|full/i.test(e?.name + " " + e?.message)
               ? "This device is out of storage — that photo could not be saved. Clear space in Settings → Storage usage, then take it again."
@@ -1855,7 +1864,7 @@ ${combined}`);
             <button onClick={iphoneVideo} title="Copy the address and open the iPhone camera in Video mode" style={{padding:"8px 0",borderRadius:8,background:"rgba(255,59,48,.06)",border:"1px dashed rgba(255,107,94,.45)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
               <IconVideo size={14} color="#FF8A80"/><span style={{fontSize:12,color:"#FFA49C",fontWeight:700}}>iPhone Video</span>
             </button>
-            <button onClick={()=>{setCameraSection("scope");setShowCamera(true);}} style={{padding:"10px 0",borderRadius:8,background:"#121829",border:"1px dashed #34466a",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
+            <button onClick={()=>{flog("card: Camera button tapped", `${scopePhotos.length} photos on card`);setCameraSection("scope");setShowCamera(true);}} style={{padding:"10px 0",borderRadius:8,background:"#121829",border:"1px dashed #34466a",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
               <IconCamera size={17} color="#b8cbe2"/><span style={{fontSize:12,color:"#d4e1f0",fontWeight:700}}>Camera</span>
             </button>
             <button onClick={() => setShowVideoRecorder(true)} style={{padding:"10px 0",borderRadius:8,background:"rgba(255,59,48,.06)",border:"1px dashed rgba(255,59,48,.3)",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>

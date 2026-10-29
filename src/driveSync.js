@@ -6,6 +6,7 @@
 import { loadField, markFieldDirty, clearFieldDirty } from "./fieldStore";
 import { logError, logWarn, logInfo } from "./debugLog";
 import { waitForAccount } from "./accountGate";
+import { flog } from "./freezeLog";
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -517,6 +518,7 @@ export function queueFieldDriveSync(token, id) {
       setSyncStatus("success");
       setTimeout(() => setSyncStatus("idle"), 3000);
     } catch (e) {
+      flog("bg: visit upload failed", `${id} ${e?.message || ""}`);
       // Leave the id dirty so the periodic flush retries it.
       logError("driveSync", `queueFieldDriveSync failed for ${id}: ${e.message}`, { status: e?.status });
       setSyncStatus(e?.isAuthError ? "auth-error" : "error");

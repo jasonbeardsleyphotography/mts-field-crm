@@ -4,6 +4,7 @@ import { useCoverVideo } from "./coverVideo";
 import { scoreSharpness } from "./sharpness";
 import { PHOTO_MAX_DIM, PHOTO_QUALITY, makeThumb } from "./imageUtils";
 import { setPhotoSyncPaused } from "./photoSync";
+import { flog } from "./freezeLog";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Camera View
@@ -57,11 +58,15 @@ async function grabBurst(video, pair, count, mountedRef) {
     if (!mountedRef.current) break;
     const target = pair[0] === best ? pair[1] : pair[0];
     try {
+      flog(`cam: grab frame ${i + 1}`, `${target.width}x${target.height}`);
+      const t0 = performance.now();
       target.getContext("2d").drawImage(video, 0, 0, target.width, target.height);
+      const t1 = performance.now();
       let score = -Infinity;
       try { score = scoreSharpness(target); } catch {}
+      flog(`cam: frame ${i + 1} done`, `draw ${Math.round(t1 - t0)}ms, score ${Math.round(performance.now() - t1)}ms`);
       if (!best || score > bestScore) { best = target; bestScore = score; }
-    } catch {}
+    } catch (e) { flog(`cam: frame ${i + 1} failed`, e?.message || String(e)); }
   }
   return best;
 }
@@ -71,16 +76,18 @@ const haptic = (ms = 10) => { try { navigator.vibrate?.(ms); } catch {} };
 // The chosen frame -> the stored JPEG, in one step: it is already at the
 // final size, and toBlob encodes off the main thread.
 async function encodeFrame(c) {
+  flog("cam: encode (toBlob) …");
   const blob = await new Promise((res) => {
     // A toBlob that never calls back would leave the shutter locked for good.
-    const t = setTimeout(() => res(null), 8000);
+    const t = setTimeout(() => { flog("cam: toBlob TIMED OUT (8s)"); res(null); }, 8000);
     try { c.toBlob((bl) => { clearTimeout(t); res(bl); }, "image/jpeg", PHOTO_QUALITY); }
-    catch { clearTimeout(t); res(null); }
+    catch (e) { clearTimeout(t); flog("cam: toBlob threw", e?.message); res(null); }
   });
+  flog("cam: encode done", blob ? `${Math.round(blob.size / 1024)}KB` : "no blob");
   if (blob) {
     return await new Promise((res) => {
       const r = new FileReader();
-      const t = setTimeout(() => res(null), 8000);
+      const t = setTimeout(() => { flog("cam: FileReader TIMED OUT (8s)"); res(null); }, 8000);
       r.onload = () => { clearTimeout(t); res(r.result); };
       r.onerror = () => { clearTimeout(t); res(null); };
       r.readAsDataURL(blob);
@@ -112,13 +119,15 @@ export default function CameraView({ onPhoto, onClose }) {
   const captureInFlightRef = useRef(false);
   const pendingShotRef     = useRef(false);   // one press remembered while a shot is in progress
   const captureRef         = useRef(null);
-  const framePairRef       = useRef(null);   // the two reusable frame buffers (see grabBurst)
+  const framePairRef       = useRef(null);
+  const shotStartRef       = useRef(0);   // the two reusable frame buffers (see grabBurst)
   useEffect(() => () => { framePairRef.current?.forEach(releaseCanvas); framePairRef.current = null; }, []);
   // Hold background photo uploads while the camera is open (see photoSync).
   // __mtsCameraOpen also holds the Drive pull's downloads (App.jsx).
   useEffect(() => {
     setPhotoSyncPaused(true); window.__mtsCameraOpen = true;
-    return () => { setPhotoSyncPaused(false); window.__mtsCameraOpen = false; };
+    flog("cam: OPEN");
+    return () => { setPhotoSyncPaused(false); window.__mtsCameraOpen = false; flog("cam: closed"); };
   }, []);
 
   // Stream readiness
@@ -193,6 +202,7 @@ export default function CameraView({ onPhoto, onClose }) {
 
       if (!stream) {
         if (!dead) {
+          flog("cam: could not start", lastErr?.name || String(lastErr));
           setError(lastErr?.name === "NotAllowedError"
             ? "Camera permission denied. Enable it in Settings → Safari → Camera."
             : "Camera unavailable.");
@@ -204,6 +214,7 @@ export default function CameraView({ onPhoto, onClose }) {
       if (dead) { stream.getTracks().forEach(t => t.stop()); return; }
 
       streamRef.current = stream;
+      try { const st = stream.getVideoTracks()[0]?.getSettings?.() || {}; flog("cam: stream on", `${st.width}x${st.height} @${Math.round(st.frameRate || 0)}fps`); } catch {}
       const track = stream.getVideoTracks()[0];
       trackRef.current = track;
 
@@ -226,6 +237,7 @@ export default function CameraView({ onPhoto, onClose }) {
         videoRef.current.srcObject = stream;
         try { await videoRef.current.play(); } catch {}
         setReady(true);
+        flog("cam: ready");
       }
     })();
 
@@ -244,7 +256,9 @@ export default function CameraView({ onPhoto, onClose }) {
     const clamped = Math.max(zoomCaps.min, Math.min(zoomCaps.max, val));
     setZoom(clamped);
     if (trackRef.current) {
-      try { await trackRef.current.applyConstraints({ advanced: [{ zoom: clamped }] }); } catch {}
+      const tz = performance.now();
+      try { await trackRef.current.applyConstraints({ advanced: [{ zoom: clamped }] }); } catch (e) { flog("cam: zoom failed", e?.message); }
+      if (performance.now() - tz > 300) flog("cam: zoom slow", `${clamped.toFixed(1)}x took ${Math.round(performance.now() - tz)}ms`);
     }
     setZoomPillOn(true);
     if (zoomPillHideRef.current) clearTimeout(zoomPillHideRef.current);
@@ -276,7 +290,9 @@ export default function CameraView({ onPhoto, onClose }) {
     if (caps.focusMode?.includes?.("single-shot"))    advanced.push({ focusMode: "single-shot" });
     if (caps.exposureMode?.includes?.("single-shot")) advanced.push({ exposureMode: "single-shot" });
     if (advanced.length) {
+      const tf = performance.now();
       try { await track.applyConstraints({ advanced }); } catch {}
+      if (performance.now() - tf > 300) flog("cam: focus slow", `${Math.round(performance.now() - tf)}ms`);
     }
     haptic(6);
   };
@@ -300,15 +316,21 @@ export default function CameraView({ onPhoto, onClose }) {
   // of frames and keep whichever scores sharpest.
   const capture = useCallback(async () => {
     const video = videoRef.current;
-    if (!video || !ready) return;
+    if (!video || !ready) { flog("cam: shutter tap ignored", ready ? "no video" : "camera not ready"); return; }
     const vw = video.videoWidth, vh = video.videoHeight;
-    if (!vw || !vh) return;
+    if (!vw || !vh) { flog("cam: shutter tap ignored", "video has no size"); return; }
 
     // One shot at a time. A press during a shot is remembered (once) and taken
     // right after, so a quick second tap isn't lost — but presses can't stack
     // up work faster than the phone can finish it.
-    if (captureInFlightRef.current) { pendingShotRef.current = true; return; }
+    if (captureInFlightRef.current) {
+      pendingShotRef.current = true;
+      flog("cam: shutter tap while busy", `previous shot running ${Date.now() - shotStartRef.current}ms`);
+      return;
+    }
     captureInFlightRef.current = true;
+    shotStartRef.current = Date.now();
+    flog("cam: SHUTTER", `video ${vw}x${vh}, paused=${video.paused}, readyState=${video.readyState}`);
 
     // Immediate felt-response — fires on tap regardless of how long scoring takes.
     setCount(c => c + 1);
@@ -330,12 +352,15 @@ export default function CameraView({ onPhoto, onClose }) {
       if (best && mountedRef.current) {
         const thumb = makeThumb(best);
         const dataUrl = await encodeFrame(best);
+        flog("cam: photo ready", dataUrl ? `${Math.round(dataUrl.length / 1024)}KB` : "EMPTY");
         if (mountedRef.current && dataUrl && dataUrl.length > 100) onPhoto(dataUrl, { sized: true, thumb });
       }
     } catch (e) {
       console.warn("Burst capture failed:", e);
+      flog("cam: shot failed", e?.message || String(e));
     } finally {
       captureInFlightRef.current = false;
+      flog("cam: shot finished", `${Date.now() - shotStartRef.current}ms`);
       if (pendingShotRef.current && mountedRef.current) {
         pendingShotRef.current = false;
         setTimeout(() => captureRef.current?.(), 0);
@@ -365,6 +390,7 @@ export default function CameraView({ onPhoto, onClose }) {
 
   // ── CLOSE ──────────────────────────────────────────────────────────────────
   const close = () => {
+    flog("cam: X (close) tapped");
     if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     onClose();
   };
