@@ -38,6 +38,12 @@ tell him something is "safe" unless you checked.
 - **Camera:** keep per-shot work minimal (one async encode at final size, photos stored one at a time, uploads and
   Drive pulls paused while `window.__mtsCameraOpen`). Anything that runs repeatedly while the camera is open
   or walks every visit record will freeze an iPhone — there are ~1,400 visit records.
+- **The App component re-renders often** (syncs, contact pushes, timers) and the camera sits inside it. Never do
+  heavy work during App render (e.g. parsing the 1,400-card pipeline from localStorage), and never setState once
+  per item in a background loop — batch it. Background jobs should wait while `window.__mtsCameraOpen`.
+- Test the camera path end to end before shipping (open camera, take photos, close): `check-undef.mjs` only
+  catches missing SCREAMING_CASE names, so a deleted camelCase helper crashes at runtime unnoticed by the build.
+  The "morning" Playwright simulation (4x CPU throttle, 1,400 visits, 3,000 contacts) is the realistic load test.
 - React: never define components inside render, keep hooks above early returns, guard async results with a
   generation counter, and don't run inline callback refs that re-fire every render.
 - Service worker: network-first navigation; opaque responses are never cached; `/api/` bypasses the cache.
