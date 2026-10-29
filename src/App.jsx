@@ -1577,16 +1577,21 @@ export default function App() {
     if (contactPushRunning.current) return;
     contactPushRunning.current = true;
     let dead = false;
+    let pushedAny = false;
     (async () => {
       try {
         // Read the actual contact list once for this run. If it can't be read,
         // stop here — this run would otherwise be guessing.
         // Stops this device has already matched need no list at all.
+        // Recorded immediately (ref + storage) so a reload never redoes work,
+        // but React state is updated once at the end: setting it per contact
+        // re-rendered the whole app after every one — 100+ full re-renders on
+        // the first open of a day, while the camera was in use.
         const markPushed = (id) => {
           const next = { ...contactsPushedRef.current, [id]: Date.now() };
           contactsPushedRef.current = next;
           lsSet("mts-contacts-pushed-v2", next);
-          setContactsPushed(next);
+          pushedAny = true;
         };
         const rest = [];
         for (const stop of unpushed) {
@@ -1604,6 +1609,7 @@ export default function App() {
         }
         for (const stop of rest) {
           if (dead) return;
+          while (window.__mtsCameraOpen && !dead) await new Promise(r => setTimeout(r, 1000));
           // Re-check against the live record: an earlier iteration, or a run
           // that was interrupted, may already have handled this stop.
           if (contactsPushedRef.current[stop.id]) continue;
@@ -1619,6 +1625,7 @@ export default function App() {
         }
       } finally {
         contactPushRunning.current = false;
+        if (pushedAny) setContactsPushed(contactsPushedRef.current);
       }
     })();
     return () => { dead = true; };
@@ -2285,7 +2292,25 @@ export default function App() {
   // With a long day list, plain dates get hard to scan — call out today and
   // tomorrow by name, and mark the start of each new week so the list reads
   // clearly when scrolling a month out.
-  const dayLabels = businessDays.map((d, i) => {
+  // Memoized: toLocaleDateString for 30 days on every App render was a real
+  // cost — the App re-renders constantly during a sync, camera open or not.
+  // Hot-card count for the Pipeline tab. Was computed during EVERY render by
+  // parsing the whole 1,400-card pipeline from storage; now refreshed on a
+  // timer and when the view changes.
+  const [hotCount, setHotCount] = useState(0);
+  useEffect(() => {
+    const read = () => {
+      try {
+        const pl = JSON.parse(localStorage.getItem("mts-pipeline") || "{}");
+        setHotCount(Object.values(pl).filter(c => c.hot && c.stage !== "declined" && c.stage !== "sold").length);
+      } catch {}
+    };
+    read();
+    const iv = setInterval(read, 30000);
+    return () => clearInterval(iv);
+  }, [view]);
+
+  const dayLabels = useMemo(() => businessDays.map((d, i) => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
     const base = d.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
@@ -2295,7 +2320,7 @@ export default function App() {
     const prev = businessDays[i - 1];
     const newWeek = prev && d.getDay() < prev.getDay();
     return newWeek ? `— ${base}` : base;
-  });
+  }), [businessDays]);
 
   // Flips the weekend opt-in, persists it, and reloads the day list/events
   // from scratch — the day-index meanings shift once weekends are added to
@@ -2450,13 +2475,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
           <button onClick={()=>setView("route")} style={{padding:"5px 12px",borderRadius:8,background:view==="route"?"#1a2035":"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:12,letterSpacing:1.5,textTransform:"uppercase",color:view==="route"?"#f0f4fa":"#607591",transition:"all .15s"}}>Route</button>
           <button onClick={()=>setView("pipeline")} style={{padding:"5px 12px",borderRadius:8,background:view==="pipeline"?"#1a2035":"transparent",border:"none",cursor:"pointer",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:12,letterSpacing:1.5,textTransform:"uppercase",color:view==="pipeline"?"#10B981":"#607591",transition:"all .15s",display:"flex",alignItems:"center",gap:4}}>
             Pipeline
-            {(() => {
-              try {
-                const pl = JSON.parse(localStorage.getItem("mts-pipeline") || "{}");
-                const hot = Object.values(pl).filter(c => c.hot && c.stage !== "declined" && c.stage !== "sold").length;
-                return hot > 0 ? <span style={{fontSize:9,padding:"1px 5px",borderRadius:999,background:"rgba(255,179,0,.2)",color:"#FFB300",fontWeight:800}}>{hot}🔥</span> : null;
-              } catch { return null; }
-            })()}
+            {hotCount > 0 && <span style={{fontSize:9,padding:"1px 5px",borderRadius:999,background:"rgba(255,179,0,.2)",color:"#FFB300",fontWeight:800}}>{hotCount}🔥</span>}
           </button>
         </div>
         {token && <button onClick={async () => {

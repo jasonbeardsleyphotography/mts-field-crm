@@ -159,6 +159,13 @@ function CatalogPicker({ value, onChange, placeholder = "Search catalog…" }) {
 // points Pipeline uses to layer its own chrome (stage-move bar, repeat-client
 // banner, etc. — concepts that don't exist in Route) around the identical
 // shared editor beneath.
+// Copy a client's name during a tap (iOS allows clipboard writes only then).
+function copyClientName(cn) {
+  const name = String(cn || "").trim();
+  if (!name) return;
+  try { navigator.clipboard?.writeText(name).catch(() => {}); } catch {}
+}
+
 export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDone = false, onDecline, onMarkReject, onEditDetails, token, backLabel = "Route", topBar = null, belowScopePhotosSlot = null, bottomExtra = null }) {
   const s = stop;
   // Synchronous peek for initial state — returns {} or the localStorage
@@ -1602,6 +1609,10 @@ ${combined}`);
     // Only where Done leads to the RealWork hand-off (the route screen) —
     // elsewhere, e.g. Pipeline, this would just overwrite the clipboard.
     if (sendToRealWorkOnDone && firstPhoto && isSendReady()) sendClip = copyPhotoToClipboard(firstPhoto, token);
+    // Otherwise put the client's name on the clipboard, ready to paste into
+    // RealWork. Saving a photo through the share sheet doesn't touch the
+    // clipboard, so the name is still there when RealWork opens.
+    else if (sendToRealWorkOnDone) copyClientName(s.cn);
 
     await updateField(s.id, (existing) => {
       const ex = existing || {};

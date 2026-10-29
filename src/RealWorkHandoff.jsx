@@ -122,6 +122,10 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease, sendClip
 
   const pick = useCallback(async (p, n) => {
     if (busyKey) return;
+    // The client's name goes on the clipboard with this tap (iOS only allows a
+    // copy during one), ready to paste once RealWork opens. Saving the photo
+    // goes to Photos, not the clipboard, so the name survives.
+    try { if (cn) navigator.clipboard?.writeText(String(cn).trim()).catch(() => {}); } catch {}
     const key = p.id || p.ts || n;
     setBusyKey(key); setNote(null);
     try {
@@ -199,6 +203,7 @@ export default function RealWorkHandoff({ stopId, cn, token, onRelease, sendClip
               always honour, and it is what lets the RealWork app claim the
               address if it has registered for it. */}
           <a href={mode === "send" ? sendShortcutHref() : realworkHref()}
+             onClick={() => { if (mode !== "send" && cn) { try { navigator.clipboard?.writeText(String(cn).trim()).catch(() => {}); } catch {} } }}
              {...(mode === "send" || isShortcutReady() ? {} : { target: "_blank", rel: "noopener noreferrer" })}
              style={bigBtn("#7db4ff")}>
             <IconLinkExternal size={16} color="#7db4ff" /> Open RealWork

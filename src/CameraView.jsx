@@ -36,39 +36,31 @@ const PRESET_TOLERANCE    = 0.05;
 const TAP_MOVE_THRESHOLD  = 12;   // px — above this, treat as drag not tap
 const ZOOM_PILL_HIDE_MS   = 1500;
 const FOCUS_INDICATOR_MS  = 800;
-const BURST_FRAME_COUNT   = 3;    // frames grabbed per shutter press; sharpest wins
+const BURST_FRAME_COUNT   = 2;    // frames grabbed per shutter press; sharpest wins (2: each frame is real work on a phone)
 
 // Free a canvas's backing store immediately (0×0 releases the pixel buffer)
 // rather than waiting for GC — important at full sensor resolution.
 function releaseCanvas(c) { try { c.width = 0; c.height = 0; } catch {} }
 
 // Grabs `count` frames from `video` a rAF tick apart, scoring each for
-// sharpness and keeping ONLY the sharpest so far — losing frames are released
-// the instant they lose. Never throws — a bad frame is skipped, not fatal.
-// Returns the single best { bitmap, score } or null.
+// sharpness, and returns the canvas holding the sharpest one.
 //
-// Keeping only one frame alive matters: at 4K each canvas backing store is
-// ~33 MB, so accumulating all `count` frames (the old behavior) briefly pinned
-// ~100 MB per shutter tap and could spike the renderer into a white-screen
-// reload on an older device — losing the capture mid-shoot.
-async function grabBurst(video, vw, vh, count, mountedRef) {
-  let best = null; // { bitmap, score }
+// Frames are drawn straight at the FINAL photo size into two canvases that
+// live for as long as the camera is open (`pair`), swapping which one holds
+// the best frame. The old version allocated a fresh full-sensor (4K, ~33 MB)
+// canvas for every frame — three per tap — and repeated big allocations like
+// that are what run Safari out of canvas memory and stall it.
+async function grabBurst(video, pair, count, mountedRef) {
+  let best = null, bestScore = -Infinity;
   for (let i = 0; i < count; i++) {
     await new Promise((r) => requestAnimationFrame(r));
     if (!mountedRef.current) break;
+    const target = pair[0] === best ? pair[1] : pair[0];
     try {
-      const canvas = document.createElement("canvas");
-      canvas.width = vw;
-      canvas.height = vh;
-      canvas.getContext("2d").drawImage(video, 0, 0, vw, vh);
+      target.getContext("2d").drawImage(video, 0, 0, target.width, target.height);
       let score = -Infinity;
-      try { score = scoreSharpness(canvas); } catch {}
-      if (!best || score > best.score) {
-        if (best) releaseCanvas(best.bitmap); // previous best just lost — free it
-        best = { bitmap: canvas, score };
-      } else {
-        releaseCanvas(canvas); // this frame lost — free it now
-      }
+      try { score = scoreSharpness(target); } catch {}
+      if (!best || score > bestScore) { best = target; bestScore = score; }
     } catch {}
   }
   return best;
@@ -76,34 +68,25 @@ async function grabBurst(video, vw, vh, count, mountedRef) {
 
 const haptic = (ms = 10) => { try { navigator.vibrate?.(ms); } catch {} };
 
-// Turn the chosen frame into the stored JPEG in ONE step, at the final size.
-// It used to be encoded at full 4K with toDataURL (a long, blocking encode),
-// then decoded and re-encoded at 3200px by the caller — two big bitmaps and
-// two encodes per shot, which piled up over several photos until the camera
-// froze. toBlob encodes off the main thread. Frees every canvas it touches.
-async function encodeFrame(src) {
-  let c = src;
-  const scale = Math.min(1, PHOTO_MAX_DIM / Math.max(src.width, src.height));
-  if (scale < 1) {
-    c = document.createElement("canvas");
-    c.width = Math.round(src.width * scale); c.height = Math.round(src.height * scale);
-    c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
-    releaseCanvas(src);
+// The chosen frame -> the stored JPEG, in one step: it is already at the
+// final size, and toBlob encodes off the main thread.
+async function encodeFrame(c) {
+  const blob = await new Promise((res) => {
+    // A toBlob that never calls back would leave the shutter locked for good.
+    const t = setTimeout(() => res(null), 8000);
+    try { c.toBlob((bl) => { clearTimeout(t); res(bl); }, "image/jpeg", PHOTO_QUALITY); }
+    catch { clearTimeout(t); res(null); }
+  });
+  if (blob) {
+    return await new Promise((res) => {
+      const r = new FileReader();
+      const t = setTimeout(() => res(null), 8000);
+      r.onload = () => { clearTimeout(t); res(r.result); };
+      r.onerror = () => { clearTimeout(t); res(null); };
+      r.readAsDataURL(blob);
+    });
   }
-  try {
-    const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", PHOTO_QUALITY));
-    if (blob) {
-      return await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(r.result);
-        r.onerror = () => rej(r.error);
-        r.readAsDataURL(blob);
-      });
-    }
-    return c.toDataURL("image/jpeg", PHOTO_QUALITY);   // toBlob unavailable
-  } finally {
-    releaseCanvas(c);
-  }
+  try { return c.toDataURL("image/jpeg", PHOTO_QUALITY); } catch { return null; }
 }
 
 // Which physical edge of the device the portrait-bottom edge currently sits
@@ -129,6 +112,8 @@ export default function CameraView({ onPhoto, onClose }) {
   const captureInFlightRef = useRef(false);
   const pendingShotRef     = useRef(false);   // one press remembered while a shot is in progress
   const captureRef         = useRef(null);
+  const framePairRef       = useRef(null);   // the two reusable frame buffers (see grabBurst)
+  useEffect(() => () => { framePairRef.current?.forEach(releaseCanvas); framePairRef.current = null; }, []);
   // Hold background photo uploads while the camera is open (see photoSync).
   // __mtsCameraOpen also holds the Drive pull's downloads (App.jsx).
   useEffect(() => {
@@ -332,12 +317,21 @@ export default function CameraView({ onPhoto, onClose }) {
     setTimeout(() => setFlash(false), 90);
 
     try {
-      const best = await grabBurst(video, vw, vh, BURST_FRAME_COUNT, mountedRef);
+      // Two frame buffers at the final photo size, made once and reused.
+      const k = Math.min(1, PHOTO_MAX_DIM / Math.max(vw, vh));
+      const fw = Math.round(vw * k), fh = Math.round(vh * k);
+      let pair = framePairRef.current;
+      if (!pair || pair[0].width !== fw || pair[0].height !== fh) {
+        if (pair) pair.forEach(releaseCanvas);
+        pair = [0, 1].map(() => { const c = document.createElement("canvas"); c.width = fw; c.height = fh; return c; });
+        framePairRef.current = pair;
+      }
+      const best = await grabBurst(video, pair, BURST_FRAME_COUNT, mountedRef);
       if (best && mountedRef.current) {
-        const thumb = makeThumb(best.bitmap);
-        const dataUrl = await encodeFrame(best.bitmap);   // frees best.bitmap
+        const thumb = makeThumb(best);
+        const dataUrl = await encodeFrame(best);
         if (mountedRef.current && dataUrl && dataUrl.length > 100) onPhoto(dataUrl, { sized: true, thumb });
-      } else if (best) releaseCanvas(best.bitmap);
+      }
     } catch (e) {
       console.warn("Burst capture failed:", e);
     } finally {

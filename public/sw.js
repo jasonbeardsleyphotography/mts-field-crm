@@ -1,3 +1,6 @@
+// v80: camera stays responsive on the first open of the day (reused frame
+//      buffers, 2-frame burst, no App re-render storm, contacts wait for the
+//      camera); Done copies the client name for RealWork.
 // v79: Drive pull no longer re-downloads every visit (its bookkeeping key was
 //      being overwritten as a "visit"); one pull at a time, paced, paused
 //      while the camera is open; old visits fetched on open; sweep paced.
@@ -110,7 +113,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v79";
+const CACHE = "mts-field-v80";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
