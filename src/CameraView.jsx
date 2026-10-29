@@ -120,7 +120,59 @@ export default function CameraView({ onPhoto, onClose }) {
   const pendingShotRef     = useRef(false);   // one press remembered while a shot is in progress
   const captureRef         = useRef(null);
   const framePairRef       = useRef(null);
-  const shotStartRef       = useRef(0);   // the two reusable frame buffers (see grabBurst)
+  const shotStartRef       = useRef(0);
+
+  // ── KEEP WHAT YOU SEE AND WHAT YOU TAP LINED UP ──────────────────────────
+  // A freeze report showed the camera "frozen" while the app was fine: taps
+  // landed ~50px beside the buttons, on the bar behind them. iOS can leave
+  // the page shifted (scrolled / viewport offset) after rotation or the status
+  // bar coming and going, so what's drawn and where taps land drift apart.
+  // Undo any shift, and rebuild the controls, whenever that might happen —
+  // and immediately when a tap lands on the bar but misses every button.
+  const shutterRef  = useRef(null);
+  const closeBtnRef = useRef(null);
+  const [layoutKey, setLayoutKey] = useState(0);
+  const shifted = () => {
+    const vv = window.visualViewport;
+    return !!(window.scrollX || window.scrollY || (vv && (Math.round(vv.offsetTop) || Math.round(vv.offsetLeft) || Math.round(vv.pageTop) || Math.round(vv.pageLeft))));
+  };
+  const shiftDesc = () => {
+    const vv = window.visualViewport;
+    return `scroll ${Math.round(window.scrollX)},${Math.round(window.scrollY)}` +
+      (vv ? ` vv off ${Math.round(vv.offsetLeft)},${Math.round(vv.offsetTop)} page ${Math.round(vv.pageLeft)},${Math.round(vv.pageTop)} ${Math.round(vv.width)}x${Math.round(vv.height)} zoom ${vv.scale.toFixed(2)}` : "");
+  };
+  const realign = useCallback((why, rebuild) => {
+    if (shifted()) { flog("cam: view was shifted — reset", `${why} · ${shiftDesc()}`); try { window.scrollTo(0, 0); } catch {} rebuild = true; }
+    if (rebuild) setLayoutKey(k => k + 1);
+  }, []);
+  useEffect(() => {
+    const onChange = () => { realign("screen change", true); setTimeout(() => realign("after screen change", true), 400); };
+    const onVis = () => { if (document.visibilityState === "visible") onChange(); };
+    window.addEventListener("resize", onChange);
+    window.addEventListener("orientationchange", onChange);
+    window.visualViewport?.addEventListener("resize", onChange);
+    window.visualViewport?.addEventListener("scroll", onChange);
+    window.addEventListener("scroll", onChange);
+    window.addEventListener("pageshow", onChange);
+    document.addEventListener("visibilitychange", onVis);
+    const iv = setInterval(() => realign("check", false), 2000);
+    return () => {
+      window.removeEventListener("resize", onChange);
+      window.removeEventListener("orientationchange", onChange);
+      window.visualViewport?.removeEventListener("resize", onChange);
+      window.visualViewport?.removeEventListener("scroll", onChange);
+      window.removeEventListener("scroll", onChange);
+      window.removeEventListener("pageshow", onChange);
+      document.removeEventListener("visibilitychange", onVis);
+      clearInterval(iv);
+    };
+  }, [realign]);
+  const onStripMiss = (e) => {
+    if (e.target.closest?.("button")) return;
+    const r = (el) => { const b = el?.getBoundingClientRect?.(); return b ? `${Math.round(b.left)},${Math.round(b.top)} ${Math.round(b.width)}x${Math.round(b.height)}` : "none"; };
+    flog("cam: tap MISSED the buttons", `tap ${Math.round(e.clientX)},${Math.round(e.clientY)} · shutter at ${r(shutterRef.current)} · close at ${r(closeBtnRef.current)} · ${window.innerWidth}x${window.innerHeight} · ${shiftDesc()}`);
+    realign("missed tap", true);
+  };   // the two reusable frame buffers (see grabBurst)
   useEffect(() => () => { framePairRef.current?.forEach(releaseCanvas); framePairRef.current = null; }, []);
   // Hold background photo uploads while the camera is open (see photoSync).
   // __mtsCameraOpen also holds the Drive pull's downloads (App.jsx).
@@ -162,9 +214,11 @@ export default function CameraView({ onPhoto, onClose }) {
   // Orientation — drives where the shutter strip is anchored
   const [ctrlEdge, setCtrlEdge] = useState(portraitBottomEdge);
   useEffect(() => {
+    let last = portraitBottomEdge();
     const update = () => {
       const edge = portraitBottomEdge();
-      setCtrlEdge(prev => { if (prev !== edge) flog("cam: controls moved", `${prev} → ${edge} edge`); return edge; });
+      if (edge !== last) { flog("cam: controls moved", `${last} → ${edge} edge`); last = edge; }
+      setCtrlEdge(edge);
     };
     window.addEventListener("orientationchange", update);
     window.addEventListener("resize", update);
@@ -554,6 +608,7 @@ export default function CameraView({ onPhoto, onClose }) {
         top:   "max(12px, var(--safe-top))",
         right: "max(12px, env(safe-area-inset-right))",
         display: "flex", gap: 8,
+        zIndex: 3,   // above the shutter strip, which spans the full height in landscape
       }}>
         {torchSupported && (
           <button onClick={toggleTorch} style={fab(torchOn, "yellow")} aria-label="Torch">
@@ -642,7 +697,7 @@ export default function CameraView({ onPhoto, onClose }) {
               paddingRight: "max(16px, env(safe-area-inset-right))",
             };
         return (
-          <div data-cam-ctl style={stripStyle}>
+          <div data-cam-ctl key={layoutKey} style={{ ...stripStyle, zIndex: 2 }} onPointerDown={onStripMiss}>
             {/* Lens preset pills */}
             {presets.length > 1 && (
               <div style={sideways
@@ -686,12 +741,13 @@ export default function CameraView({ onPhoto, onClose }) {
             }}>
 
               {/* Close — stays beside the shutter on every rotation */}
-              <button onClick={close} style={fab()} aria-label="Close camera">
+              <button ref={closeBtnRef} onClick={close} style={fab()} aria-label="Close camera">
                 <IconX size={22} color="#fff" />
               </button>
 
               {/* Shutter */}
               <button
+                ref={shutterRef}
                 onClick={capture}
                 disabled={!ready}
                 aria-label="Capture photo"

@@ -1223,6 +1223,10 @@ export default function App() {
   const _flushingDirty = useRef(false);
   const flushDirtyFields = useCallback(async () => {
     if (!token || _flushingDirty.current) return;
+    // Not while the camera is open: the visit being photographed carries its
+    // not-yet-uploaded photos in full, so its upload is ~20 MB — it timed out
+    // and was rebuilt and retried every couple of minutes mid-shoot.
+    if (window.__mtsCameraOpen) return;
     const ids = getDirtyFieldIds();
     if (!ids.length) return;
     _flushingDirty.current = true;

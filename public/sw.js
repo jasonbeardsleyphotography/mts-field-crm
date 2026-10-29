@@ -1,3 +1,6 @@
+// v83: camera re-aligns its controls (page shift reset + rebuild) after rotation,
+//      resume or a tap that misses every button; torch/grid usable in landscape;
+//      no visit re-upload while the camera is open.
 // v82: freeze report also logs touches (what is under the finger), rotation,
 //      screen size and page zoom.
 // v81: freeze recorder — Settings → Copy freeze report.
@@ -116,7 +119,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v82";
+const CACHE = "mts-field-v83";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
