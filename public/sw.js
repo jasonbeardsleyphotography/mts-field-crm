@@ -1,3 +1,5 @@
+// v82: freeze report also logs touches (what is under the finger), rotation,
+//      screen size and page zoom.
 // v81: freeze recorder — Settings → Copy freeze report.
 // v80: camera stays responsive on the first open of the day (reused frame
 //      buffers, 2-frame burst, no App re-render storm, contacts wait for the
@@ -114,7 +116,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v81";
+const CACHE = "mts-field-v82";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

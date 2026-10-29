@@ -162,7 +162,10 @@ export default function CameraView({ onPhoto, onClose }) {
   // Orientation — drives where the shutter strip is anchored
   const [ctrlEdge, setCtrlEdge] = useState(portraitBottomEdge);
   useEffect(() => {
-    const update = () => setCtrlEdge(portraitBottomEdge());
+    const update = () => {
+      const edge = portraitBottomEdge();
+      setCtrlEdge(prev => { if (prev !== edge) flog("cam: controls moved", `${prev} → ${edge} edge`); return edge; });
+    };
     window.addEventListener("orientationchange", update);
     window.addEventListener("resize", update);
     try { screen.orientation?.addEventListener?.("change", update); } catch {}

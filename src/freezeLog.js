@@ -73,6 +73,7 @@ export function startFreezeLog(version) {
   data.sessions.push(cur);
   if (data.sessions.length > MAX_SESSIONS) data.sessions = data.sessions.slice(-MAX_SESSIONS);
   flog("app start", prev ? `previous session last alive ${new Date(prev.lastBeat).toLocaleTimeString()}` : "");
+  try { flog("screen", `${window.innerWidth}x${window.innerHeight} · zoom ${(window.visualViewport?.scale || 1).toFixed(2)}`); } catch {}
   try {
     caches.keys().then(ks => {
       const v = ks.filter(k => k.startsWith("mts-field-v")).sort((a, b) => parseInt(a.slice(11)) - parseInt(b.slice(11))).pop();
@@ -92,6 +93,35 @@ export function startFreezeLog(version) {
   }, BEAT_MS);
 
   document.addEventListener("visibilitychange", () => flog(`app ${document.visibilityState}`));
+
+  // ── Touch & screen diagnostics ───────────────────────────────────────────
+  // A real report showed the camera's buttons "frozen" while the app itself
+  // was running fine — taps simply never reached them, right after the phone
+  // was rotated. So: log every touch (where, and what element is actually on
+  // top at that spot), every rotation/resize, and the page's zoom level.
+  const scr = () => {
+    const vv = window.visualViewport;
+    const ang = (() => { try { return screen.orientation?.angle ?? window.orientation ?? 0; } catch { return "?"; } })();
+    return `${window.innerWidth}x${window.innerHeight} rot ${ang}°` + (vv ? ` zoom ${vv.scale.toFixed(2)}${vv.scale !== 1 ? ` @${Math.round(vv.offsetLeft)},${Math.round(vv.offsetTop)}` : ""}` : "");
+  };
+  const desc = (el) => {
+    if (!el || !el.tagName) return "nothing";
+    const lab = el.getAttribute?.("aria-label") || (el.closest?.("button")?.getAttribute("aria-label"));
+    const txt = (el.textContent || "").trim().slice(0, 18).replace(/\s+/g, " ");
+    return `${el.tagName.toLowerCase()}${lab ? `[${lab}]` : ""}${!lab && txt ? `"${txt}"` : ""}`;
+  };
+  document.addEventListener("touchstart", (e) => {
+    const t = e.touches[0]; if (!t) return;
+    const top = document.elementFromPoint(t.clientX, t.clientY);
+    flog("touch", `${e.touches.length}f at ${Math.round(t.clientX)},${Math.round(t.clientY)} → on top: ${desc(top)} · target: ${desc(e.target)} · ${scr()}`);
+  }, { capture: true, passive: true });
+  document.addEventListener("click", (e) => flog("click", desc(e.target)), { capture: true, passive: true });
+  document.addEventListener("gesturestart", () => flog("page pinch started", scr()), { capture: true, passive: true });
+  let rz = null;
+  const onResize = () => { clearTimeout(rz); rz = setTimeout(() => flog("screen changed", scr()), 250); };
+  window.addEventListener("resize", onResize);
+  window.addEventListener("orientationchange", onResize);
+  window.visualViewport?.addEventListener("resize", onResize);
   window.addEventListener("pagehide", () => flog("app closing"));
   window.addEventListener("error", (e) => flog("ERROR", `${e.message} @${(e.filename || "").split("/").pop()}:${e.lineno}`));
   window.addEventListener("unhandledrejection", (e) => flog("ERROR (async)", String(e.reason?.message || e.reason || "")));
