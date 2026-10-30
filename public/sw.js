@@ -1,3 +1,4 @@
+// v87: marked-up photos show their marks on the card tiles again.
 // v86: camera closes itself when iOS stops it, when the phone locks / app is
 //      backgrounded, or after 4 minutes untouched.
 // v85: page shift after rotation reset app-wide (cause of the "frozen" screens);
@@ -125,7 +126,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v86";
+const CACHE = "mts-field-v87";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

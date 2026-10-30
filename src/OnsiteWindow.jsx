@@ -8,7 +8,7 @@ import { loadField, peekField, primeField, mergeField, updateField, saveFieldSyn
 import { loadPipeline } from "./Pipeline";
 import { incUpload, decUpload } from "./uploadStatus";
 import { markStopForPhotoSync, lastNameOf } from "./photoSync";
-import { downscaleDataUrl, newPhotoId, photoKey, PHOTO_MAX_DIM, PHOTO_QUALITY, makeThumb } from "./imageUtils";
+import { downscaleDataUrl, newPhotoId, photoKey, PHOTO_MAX_DIM, PHOTO_QUALITY, makeThumb, thumbFromDataUrl, tileSrc } from "./imageUtils";
 import { startGeoWarm, stopGeoWarm, getCurrentGeo } from "./geoCapture";
 import { buildShareUrl, buildStreamUrl } from "./driveUpload";
 import DriveVideo from "./DriveVideo";
@@ -919,7 +919,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
     // editor can offer "Revert to original" later (e.g. to undo accidental
     // pocket marks). Only set once — never overwrite with an annotated frame.
     const update = (p, i) => i === markupIdx
-      ? { ...p, originalDataUrl: p.originalDataUrl || p.dataUrl, dataUrl, url: undefined }
+      ? { ...p, originalDataUrl: p.originalDataUrl || p.dataUrl, dataUrl, url: undefined, thumb: undefined }
       : p;
     if (markupSection === "addon") setAddonPhotos(prev => prev.map(update));
     else setScopePhotos(prev => prev.map(update));
@@ -929,12 +929,33 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
       const arrKey = markupSection === "addon" ? "addonPhotos" : "scopePhotos";
       updateField(s.id, (existing) => ({
         [arrKey]: (existing[arrKey] || existing.photos || []).map(p =>
-          photoKey(p) === key ? { ...p, originalDataUrl: p.originalDataUrl || p.dataUrl, dataUrl, url: undefined } : p
+          photoKey(p) === key ? { ...p, originalDataUrl: p.originalDataUrl || p.dataUrl, dataUrl, url: undefined, thumb: undefined } : p
         ),
       })).catch(() => {});
     }
     markStopForPhotoSync(s.id);
+    refreshThumb(key, markupSection, dataUrl);
     setMarkupIdx(null);
+  };
+
+  // A marked-up photo needs a new tile picture: the card shows the small
+  // thumbnail, and the old one still showed the photo without its marks.
+  // The save above clears it (the tile falls back to the full photo); this
+  // makes a fresh small one from the marked-up version.
+  const refreshThumb = (key, section, dataUrl) => {
+    if (key == null) return;
+    thumbFromDataUrl(dataUrl).then((thumb) => {
+      if (!thumb) return;
+      const setThumb = (p) => (photoKey(p) === key && p.dataUrl === dataUrl ? { ...p, thumb, thumbMarked: true } : p);
+      if (mountedRef.current) {
+        if (section === "addon") setAddonPhotos(prev => prev.map(setThumb));
+        else setScopePhotos(prev => prev.map(setThumb));
+      }
+      const arrKey = section === "addon" ? "addonPhotos" : "scopePhotos";
+      updateField(s.id, (existing) => ({
+        [arrKey]: (existing[arrKey] || existing.photos || []).map(setThumb),
+      })).catch(() => {});
+    });
   };
 
   // URL type helpers — kept for backward compat with legacy YouTube links on older cards
@@ -1308,7 +1329,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
         const target = photos[markupIdx];
         const key = target ? photoKey(target) : null;
         const update = (p, i) => i === markupIdx
-          ? { ...p, originalDataUrl: p.originalDataUrl || p.dataUrl, dataUrl, url: undefined }
+          ? { ...p, originalDataUrl: p.originalDataUrl || p.dataUrl, dataUrl, url: undefined, thumb: undefined }
           : p;
         if (markupSection === "addon") setAddonPhotos(prev => prev.map(update));
         else setScopePhotos(prev => prev.map(update));
@@ -1316,13 +1337,14 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
           const arrKey = markupSection === "addon" ? "addonPhotos" : "scopePhotos";
           updateField(s.id, (existing) => ({
             [arrKey]: (existing[arrKey] || existing.photos || []).map(p =>
-              photoKey(p) === key ? { ...p, originalDataUrl: p.originalDataUrl || p.dataUrl, dataUrl, url: undefined } : p
+              photoKey(p) === key ? { ...p, originalDataUrl: p.originalDataUrl || p.dataUrl, dataUrl, url: undefined, thumb: undefined } : p
             ),
           })).catch(() => {});
         }
         // The cached download for this photo is now the pre-edit picture.
         markupCache.current.delete(wantKey);
         markStopForPhotoSync(s.id);
+        refreshThumb(key, markupSection, dataUrl);
       };
       return (
         <PhotoMarkup
@@ -1344,7 +1366,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
           // instead of stepping through three. Prefer the Drive rendition:
           // decoding a dozen full-size local captures for 52px thumbnails is
           // real memory on a phone.
-          strip={photos.map(ph => ({ key: photoKey(ph), src: ph.thumb || ph.url || ph.dataUrl }))}
+          strip={photos.map(ph => ({ key: photoKey(ph), src: tileSrc(ph) }))}
           index={markupIdx}
           onJump={(dataUrl, hasEdits, i) => { if (hasEdits) saveMarkupOnly(dataUrl); setMarkupIdx(i); }}
         />
@@ -1877,7 +1899,7 @@ ${combined}`);
             {scopePhotos.map((p, i) => (
               <div key={photoKey(p)||i} style={{display:"flex",flexDirection:"column",gap:3}}>
                 <div style={{position:"relative",width:140,height:140,borderRadius:10,overflow:"hidden",border:"1px solid #1a2540"}}>
-                  <img src={p.thumb || p.url || p.dataUrl} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("scope");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
+                  <img src={tileSrc(p)} alt="" onClick={() => {setMarkupIdx(i);setMarkupSection("scope");}} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} />
                   <button onClick={e=>{e.stopPropagation();removeScopePhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} color="#ff6666"/></button>
                   <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
                     <div onClick={()=>{setMarkupIdx(i);setMarkupSection("scope");}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>

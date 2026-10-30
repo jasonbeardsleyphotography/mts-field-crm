@@ -9,6 +9,7 @@ import { getCurrentGeo, peekGeo } from "./geoCapture";
 import { geocode } from "./RouteMap";
 import { IconDownload, IconMapPin, IconX, IconPlus, IconTrash, IconImage,
          IconChevronUp, IconChevronDown, IconReorder } from "./icons";
+import { tileSrc } from "./imageUtils";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Site Map
@@ -749,7 +750,7 @@ export default function SitePlanPanel({ stop, pins = [], photos = [], token, onP
                         border: on ? "2.5px solid #F6BF26" : "1px solid #253049",
                         opacity: ph.planOff ? 0.35 : 1,
                       }}>
-                        <img src={ph.thumb || ph.url || ph.dataUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                        <img src={tileSrc(ph)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                       </button>
                     );
                   })}

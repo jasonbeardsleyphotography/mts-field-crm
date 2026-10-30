@@ -21,6 +21,34 @@ export const PHOTO_QUALITY = 0.88;
 // huge legacy 4K originals (> ~3 MB base64) still get shrunk to the cap.
 export const OVERSIZE_DATAURL_LEN = 3_200_000;
 
+/** The picture a photo TILE should show.
+ *  - A thumbnail rebuilt after markup (thumbMarked) is always current.
+ *  - Once uploaded, the Drive copy is the latest version (marks included);
+ *    an older thumbnail may predate marks made before thumbnails were
+ *    refreshed on save, so the Drive copy wins.
+ *  - Not uploaded yet (e.g. just taken): the small thumbnail — drawing several
+ *    full-size local photos as tiles is what used to freeze the phone — unless
+ *    the photo was marked up with no fresh thumbnail, then the photo itself. */
+export function tileSrc(p) {
+  if (!p) return "";
+  if (p.thumb && p.thumbMarked) return p.thumb;
+  if (p.url) return p.url;
+  if (p.originalDataUrl) return p.dataUrl || p.thumb || "";
+  return p.thumb || p.dataUrl || "";
+}
+
+/** makeThumb for a stored photo (data: URL) — decodes it first. Resolves null on failure. */
+export function thumbFromDataUrl(dataUrl, max = 360) {
+  return new Promise((resolve) => {
+    if (!dataUrl || !String(dataUrl).startsWith("data:image")) { resolve(null); return; }
+    const img = new Image();
+    const t = setTimeout(() => resolve(null), 15000);
+    img.onload = () => { clearTimeout(t); resolve(makeThumb(img, max)); try { img.src = ""; } catch {} };
+    img.onerror = () => { clearTimeout(t); resolve(null); };
+    img.src = dataUrl;
+  });
+}
+
 // A small JPEG for photo tiles. Tiles used to draw the full 3200px photo, so
 // opening a card after a burst of shots made the phone decode every one of
 // them at full size at once (~20 MB each) — enough to freeze it. ~15 KB each.
