@@ -777,7 +777,7 @@ export default function PhotoMarkup({
     if (direction === "next" && onNext) onNext(dataUrl, hasEdits);
   };
 
-  // Keyboard: arrow keys step through the photos, Escape backs out. On a
+  // Keyboard: arrow keys step through the photos, Up / Ctrl+Z undo, Escape backs out. On a
   // laptop, reaching for the on-screen chevrons for every photo is the slow
   // way to review a card's worth of pictures.
   useEffect(() => {
@@ -785,8 +785,12 @@ export default function PhotoMarkup({
       // Never steal a keystroke from a text field.
       const t = e.target;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      // Ctrl+Z (Cmd+Z on a Mac) undoes the last mark.
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === "z" || e.key === "Z")) { e.preventDefault(); undo(); return; }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === "ArrowLeft" && hasPrev) { e.preventDefault(); handleNav("prev"); }
+      // Up undoes the last mark — with left/right (walk photos) and down (save).
+      if (e.key === "ArrowUp") { e.preventDefault(); undo(); }
+      else if (e.key === "ArrowLeft" && hasPrev) { e.preventDefault(); handleNav("prev"); }
       else if (e.key === "ArrowRight" && hasNext) { e.preventDefault(); handleNav("next"); }
       // Down = save a copy. Left/right walk the photos, down takes the one
       // you're looking at — the whole keyboard shape of reviewing a card.

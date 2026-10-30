@@ -189,6 +189,17 @@ export default function CameraView({ onPhoto, onClose }) {
   const onStripMiss = (e) => {
     if (e.target.closest?.("button")) return;
     const r = (el) => { const b = el?.getBoundingClientRect?.(); return b ? `${Math.round(b.left)},${Math.round(b.top)} ${Math.round(b.width)}x${Math.round(b.height)}` : "none"; };
+    // Reports showed taps landing just below the shutter (thumbs reach low).
+    // A tap within ~30pt of its edge counts as a shutter press.
+    const sb = shutterRef.current?.getBoundingClientRect?.();
+    if (sb && !shifted()) {
+      const dx = e.clientX - (sb.left + sb.width / 2), dy = e.clientY - (sb.top + sb.height / 2);
+      if (Math.hypot(dx, dy) <= sb.width / 2 + 30) {
+        flog("cam: near-miss counted as shutter", `${Math.round(Math.hypot(dx, dy))}pt from centre`);
+        captureRef.current?.();
+        return;
+      }
+    }
     flog("cam: tap MISSED the buttons", `tap ${Math.round(e.clientX)},${Math.round(e.clientY)} · shutter at ${r(shutterRef.current)} · close at ${r(closeBtnRef.current)} · ${window.innerWidth}x${window.innerHeight} · ${shiftDesc()}`);
     realign("missed tap", true);
   };   // the two reusable frame buffers (see grabBurst)

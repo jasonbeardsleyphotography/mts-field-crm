@@ -5,6 +5,7 @@ import VideoWatch from './VideoWatch.jsx'
 import PlanView from './PlanView.jsx'
 import { vlogError } from './videoLog'
 import { startFreezeLog, flog } from './freezeLog'
+import { pinViewport } from './pinViewport'
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Error Boundary — catches uncaught render errors and shows them on screen
@@ -126,7 +127,7 @@ const watchMatch = window.location.pathname.match(/^\/watch\/([a-zA-Z0-9_-]+)\/?
 const planMatch = window.location.pathname.match(/^\/plan\/([a-zA-Z0-9_-]+)\/?$/);
 
 // The freeze recorder runs for the app itself (not the public /watch and /plan pages).
-if (!watchMatch && !planMatch) startFreezeLog();
+if (!watchMatch && !planMatch) { startFreezeLog(); pinViewport(); }
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

@@ -25,6 +25,10 @@ tell him something is "safe" unless you checked.
   app cannot lock rotation. `apple-mobile-web-app-status-bar-style` is read only when the app is added to
   the Home Screen. Since iOS 26.1 a `black-translucent` status bar gets a system blur over the top ~40pt that
   no CSS removes; the owner rejected padding the whole app down to dodge it (screen space matters).
+- **Rotating back to portrait leaves the whole page scrolled up 59pt (the status bar height)** on the owner's
+  iPhone (confirmed in freeze reports: `scroll 0,59`). Drawn UI and tap targets then disagree and every tap
+  misses — it looks like a freeze. `src/pinViewport.js` resets any page scroll app-wide (skipping while a text
+  field is focused); the camera also rebuilds its controls after rotation. The app must never page-scroll.
 - **NEVER tell the user to remove/re-add the Home Screen app** without first confirming nothing is waiting to
   upload (Settings → Photo uploads / Video uploads). It wipes the phone's local storage; unsent photos, videos and
   per-phone settings are lost. Per-phone Shortcut settings are now backed up to Drive (`src/devicePrefs.js`).

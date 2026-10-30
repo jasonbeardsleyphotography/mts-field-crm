@@ -1,3 +1,5 @@
+// v85: page shift after rotation reset app-wide (cause of the "frozen" screens);
+//      near-miss shutter taps count; markup Up / Ctrl+Z undo.
 // v84: after a rotation the camera rebuilds its controls several times over 2.5s
 //      and nudges the whole camera layer so iOS re-places it.
 // v83: camera re-aligns its controls (page shift reset + rebuild) after rotation,
@@ -121,7 +123,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v84";
+const CACHE = "mts-field-v85";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
