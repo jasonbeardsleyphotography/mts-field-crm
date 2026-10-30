@@ -304,6 +304,15 @@ export default function CameraView({ onPhoto, onClose }) {
       try { const st = stream.getVideoTracks()[0]?.getSettings?.() || {}; flog("cam: stream on", `${st.width}x${st.height} @${Math.round(st.frameRate || 0)}fps`); } catch {}
       const track = stream.getVideoTracks()[0];
       trackRef.current = track;
+      // iOS can stop the camera itself — e.g. "Stop camera recording?" → OK,
+      // which pocket touches on the camera indicator can trigger. The stream
+      // is gone then: close back to the card instead of sitting on a black,
+      // dead camera screen.
+      try {
+        track.addEventListener("ended", () => { if (mountedRef.current) closeForRef.current?.("camera stopped by the iPhone"); });
+        track.addEventListener("mute",   () => flog("cam: iPhone paused the camera"));
+        track.addEventListener("unmute", () => flog("cam: camera resumed"));
+      } catch {}
 
       const caps = track.getCapabilities?.() || {};
 
@@ -481,6 +490,37 @@ export default function CameraView({ onPhoto, onClose }) {
     if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     onClose();
   };
+
+  // Close the camera without a tap: when iOS stops it, when the phone locks
+  // or the app goes to the background, or after 4 minutes untouched. A live
+  // camera left on in a pocket keeps the screen awake and its "in use"
+  // indicator gets pressed, which brings up iOS's "Stop camera recording?"
+  // over a screen that then ignores every tap until it's answered.
+  // Photos already taken are saved; tap Camera to start again.
+  const closeForRef = useRef(null);
+  closeForRef.current = (why) => {
+    if (closedRef.current) return;
+    closedRef.current = true;
+    flog("cam: closed automatically", why);
+    try { streamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+    onClose();
+  };
+  const closedRef = useRef(false);
+  const lastTouchRef = useRef(Date.now());
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === "hidden") closeForRef.current?.("phone locked / app in background"); };
+    const touched = () => { lastTouchRef.current = Date.now(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pointerdown", touched, { capture: true, passive: true });
+    const iv = setInterval(() => {
+      if (Date.now() - lastTouchRef.current > 4 * 60 * 1000) closeForRef.current?.("untouched for 4 minutes");
+    }, 15000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pointerdown", touched, { capture: true });
+      clearInterval(iv);
+    };
+  }, []);
 
   // ── POINTER HANDLERS ───────────────────────────────────────────────────────
   const onPointerDown = (e) => {
