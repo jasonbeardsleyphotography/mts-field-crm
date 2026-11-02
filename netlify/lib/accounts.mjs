@@ -27,7 +27,9 @@ async function sha256(text) {
 export async function isAllowedEmail(email) {
   const e = String(email || "").trim().toLowerCase();
   if (!e || !e.includes("@")) return false;
-  const extra = String(process.env.ALLOWED_GOOGLE_EMAILS || "")
+  // Works in regular functions (process.env) and edge functions (Netlify.env).
+  const env = (k) => globalThis.Netlify?.env?.get?.(k) ?? globalThis.process?.env?.[k] ?? "";
+  const extra = String(env("ALLOWED_GOOGLE_EMAILS") || "")
     .split(",").map(x => x.trim().toLowerCase()).filter(Boolean);
   if (extra.includes(e)) return true;
   return BUILT_IN.has(await sha256(e));

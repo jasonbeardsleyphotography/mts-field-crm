@@ -590,6 +590,29 @@ export default function App() {
   const [moving, setMoving] = useState(null);
   const [ordIds, setOrdIds] = useState(() => lsGet("mts-route-order", {}));
   useEffect(() => { lsSet("mts-route-order", ordIds); }, [ordIds]);
+  // When each day's order was last set BY HAND (not the automatic AM/PM
+  // order). Only hand-set orders sync between devices, newest wins — so the
+  // laptop's default order can never override the order set on the phone.
+  const [orderAt, setOrderAt] = useState(() => lsGet("mts-route-order-at", {}));
+  useEffect(() => { lsSet("mts-route-order-at", orderAt); }, [orderAt]);
+  const ordIdsRef = useRef(ordIds); ordIdsRef.current = ordIds;
+  const orderAtRef = useRef(orderAt); orderAtRef.current = orderAt;
+  const markOrderSet = (day) => setOrderAt(prev => ({ ...prev, [day]: Date.now() }));
+  // A day's order set on another device more recently than here: adopt it.
+  // (The merge effect then folds in any stops this device has that the other
+  // didn't, the same way it does for a newly added stop.)
+  const adoptRouteOrder = (routeOrder) => {
+    if (!routeOrder) return;
+    const adopt = {};
+    for (const [day, v] of Object.entries(routeOrder)) {
+      if (v && Array.isArray(v.ids) && (v.at || 0) > (orderAtRef.current[day] || 0)) adopt[day] = v;
+    }
+    if (!Object.keys(adopt).length) return;
+    orderAtRef.current = { ...orderAtRef.current, ...Object.fromEntries(Object.entries(adopt).map(([d, v]) => [d, v.at])) };
+    setOrdIds(prev => { const n = { ...prev }; for (const [d, v] of Object.entries(adopt)) n[d] = v.ids; return n; });
+    setOrderAt(prev => { const n = { ...prev }; for (const [d, v] of Object.entries(adopt)) n[d] = v.at; return n; });
+    flog("bg: visit order updated from another device", Object.keys(adopt).join(", "));
+  };
 
   // ── ONSITE WINDOW ──────────────────────────────────────────────────────
   const [onsiteStop, setOnsiteStop] = useState(null); // stop object when onsite window open
@@ -1148,6 +1171,7 @@ export default function App() {
       try {
         const cloud = await loadAppState(token);
         if (cloud) {
+          adoptRouteOrder(cloud.routeOrder);
           // Merge pipeline: cloud wins
           if (cloud.pipeline && Object.keys(cloud.pipeline).length > 0) {
             const local = loadPipeline();
@@ -1207,13 +1231,20 @@ export default function App() {
   // records with this device's clock, corrupting the cross-device merge.
   const triggerCloudSync = useCallback(async (immediate = false) => {
     if (!token) return;
-    const run = () => saveAppState(token, loadPipeline(), dismissed, lastContact).catch(() => {});
+    const run = () => {
+      const routeOrder = {};
+      for (const [day, at] of Object.entries(orderAtRef.current)) {
+        const ids = ordIdsRef.current[day];
+        if (Array.isArray(ids) && ids.length) routeOrder[day] = { ids, at };
+      }
+      return saveAppState(token, loadPipeline(), dismissed, lastContact, routeOrder).catch(() => {});
+    };
     if (immediate) { await run(); return; }
     if (cloudSyncTimer.current) clearTimeout(cloudSyncTimer.current);
     cloudSyncTimer.current = setTimeout(run, 2000);
   }, [token, dismissed, lastContact]);
 
-  useEffect(() => { triggerCloudSync(); }, [dismissed, lastContact, triggerCloudSync]);
+  useEffect(() => { triggerCloudSync(); }, [dismissed, lastContact, orderAt, triggerCloudSync]);
 
   // ── DIRTY-FIELD FLUSH ───────────────────────────────────────────────────
   // Re-push only the field records whose Drive sync hasn't been confirmed
@@ -1297,6 +1328,7 @@ export default function App() {
         }
         savePipeline(merged);
       }
+      adoptRouteOrder(state?.routeOrder);
       if (state?.dismissed) {
         setDismissed(prev => {
           const m = { ...prev };
@@ -1680,7 +1712,10 @@ export default function App() {
       merged.splice(amInsert, 0, ...newAM);
       setOrdIds(prev => ({...prev, [dayKey]: merged}));
     }
-  }, [dayKey, allParsed]);
+    // Also re-run when the day's order changes underneath (e.g. adopted from
+    // another device) so stops only this device knows about get folded in.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dayKey, allParsed, (ordIds[dayKey] || []).join(",")]);
 
   const stopMap = useMemo(() => {
     const overrides = stopOverridesGet();
@@ -2153,7 +2188,7 @@ export default function App() {
     setUndoStack(u => u.slice(0,-1));
     if (last.type === "dismiss") setDismissed(p => { const n={...p}; delete n[last.id]; return n; });
     if (last.type === "restore") setDismissed(p => ({...p, [last.id]: Date.now()}));
-    if (last.type === "reorder") setOrdIds(prev => ({...prev, [dayKey]: last.prevOrder}));
+    if (last.type === "reorder") { setOrdIds(prev => ({...prev, [dayKey]: last.prevOrder})); markOrderSet(dayKey); }
   };
   const navigate = addr => {
     if (!addr) return;
@@ -2297,6 +2332,7 @@ export default function App() {
       fullOrder.splice(moving < idx ? toIdx + 1 : toIdx, 0, fromId);
       setUndoStack(u => [...u, {type:"reorder", prevOrder}]);
       setOrdIds(prev => ({...prev, [dayKey]: fullOrder}));
+      markOrderSet(dayKey);
       setMoving(null);
     }
   };

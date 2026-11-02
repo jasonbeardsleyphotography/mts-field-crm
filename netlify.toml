@@ -6,6 +6,12 @@
   path = "/api/video-stream"
   function = "video-stream"
 
+# AI summary of a card video: Drive -> Gemini, streamed progress back.
+# An edge function because it can stream for as long as Gemini takes.
+[[edge_functions]]
+  path = "/api/video-summary"
+  function = "video-summary"
+
 # Server-side Google OAuth (authorization-code flow). These MUST come before
 # the SPA catch-all below, or "/*" would swallow them and serve index.html.
 # The refresh token lives server-side (Netlify Blobs), so token renewal no

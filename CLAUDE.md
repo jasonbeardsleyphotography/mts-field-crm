@@ -61,6 +61,14 @@ tell him something is "safe" unless you checked.
 Read the last lines of the session that froze: the step with no matching "done"/"finished" is the one that hung.
 Keep logging out of tight loops; log slow/failed cases, not every success.
 
+## Sync notes
+- Visit order per day: `mts-route-order` (ids) + `mts-route-order-at` (when set BY HAND). Only hand-set orders
+  sync, inside app-state.json as `routeOrder`, newest per day wins; saveAppState merges with Drive's copy first.
+- AI video summary: edge function `netlify/edge-functions/video-summary.js` (Drive → Gemini file upload → streamed
+  NDJSON progress + result). An edge function, not a background function: the Netlify plan may not include
+  background functions, and an unsupported one could break deploys. Results are saved on the card as
+  `videoSummaries[driveFileId]`.
+
 ## Known open items
 - No saved copy of the route: opening the app offline with an expired sign-in shows only the sign-in screen.
 - Deleted photos can come back after a cross-device union merge (no deletion markers).

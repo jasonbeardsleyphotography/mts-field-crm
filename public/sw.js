@@ -1,3 +1,5 @@
+// v88: AI summary button under each uploaded card video; hand-set visit order
+//      syncs between devices.
 // v87: marked-up photos show their marks on the card tiles again.
 // v86: camera closes itself when iOS stops it, when the phone locks / app is
 //      backgrounded, or after 4 minutes untouched.
@@ -126,7 +128,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v87";
+const CACHE = "mts-field-v88";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

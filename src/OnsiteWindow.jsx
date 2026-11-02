@@ -12,6 +12,7 @@ import { downscaleDataUrl, newPhotoId, photoKey, PHOTO_MAX_DIM, PHOTO_QUALITY, m
 import { startGeoWarm, stopGeoWarm, getCurrentGeo } from "./geoCapture";
 import { buildShareUrl, buildStreamUrl } from "./driveUpload";
 import DriveVideo from "./DriveVideo";
+import VideoSummary from "./VideoSummary";
 import { flog } from "./freezeLog";
 
 function _driveFileId(url) {
@@ -191,6 +192,8 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
   // Written through updateField (atomic per card, and synced to Drive), so it
   // isn't part of the autosave field list and can't be clobbered by it.
   const [iphoneVideoLog, setIphoneVideoLog] = useState(fd.iphoneVideoLog || []);
+  // AI summaries of this card's videos, by Drive file id (see VideoSummary).
+  const [videoSummaries, setVideoSummaries] = useState(fd.videoSummaries || {});
   const [showIphoneSetup, setShowIphoneSetup] = useState(false);
   // Tree/location pins plotted on the parcel map. Sources: a photo capture
   // (stamped with the phone's position), a tap on the map, or the GPS button.
@@ -650,6 +653,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
         if (data.aiScopeSummary)  setAiScopeResult(prev => prev || data.aiScopeSummary);
         if ((data.mapPins || []).length) setMapPins(prev => prev.length ? prev : data.mapPins);
         if ((data.iphoneVideoLog || []).length) setIphoneVideoLog(prev => prev.length ? prev : data.iphoneVideoLog);
+        if (data.videoSummaries && Object.keys(data.videoSummaries).length) setVideoSummaries(prev => ({ ...data.videoSummaries, ...prev }));
         if (data.aiAddonEmail)    setAiAddonResult(prev => prev || data.aiAddonEmail);
 
         // Arrays: merge by ts/timestamp/url so anything captured during the
@@ -1177,6 +1181,10 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
         const fd = await loadField(s.id);
         if (!fd || !mountedRef.current) return;
         const inLog = Array.isArray(fd.iphoneVideoLog) ? fd.iphoneVideoLog : [];
+        if (fd.videoSummaries) setVideoSummaries(prev => {
+          const ks = Object.keys(fd.videoSummaries);
+          return ks.some(k => (fd.videoSummaries[k]?.at || 0) > (prev[k]?.at || 0)) ? { ...prev, ...fd.videoSummaries } : prev;
+        });
         setIphoneVideoLog(prev =>
           prev.length === inLog.length && prev.every((e, i) => e.ts === inLog[i]?.ts) ? prev : inLog);
         const incoming = fd.videoUrls || (fd.videoUrl ? [fd.videoUrl] : []);
@@ -2030,6 +2038,14 @@ ${combined}`);
                   <div key={url || idx} style={{borderRadius:8,background:"#0e1120",border:"1px solid #1a2540",overflow:"hidden"}}>
                     {ytId && <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" style={{width:"100%",height:90,objectFit:"cover"}} />}
                     {driveId && <DriveVideo fileId={driveId} frameHeight={160} style={{width:"100%",height:160}} />}
+                    {driveId && <VideoSummary fileId={driveId} client={s.cn} token={token}
+                      saved={videoSummaries[driveId] || null}
+                      onSave={(r) => {
+                        setVideoSummaries(prev => ({ ...prev, [driveId]: r }));
+                        updateField(s.id, (ex) => ({ videoSummaries: { ...((ex && ex.videoSummaries) || {}), [driveId]: r } }))
+                          .then(() => { if (token) queueFieldDriveSync(token, s.id); }).catch(() => {});
+                      }}
+                      onAddToNotes={(text) => setScopeNotes(prev => (prev && prev.trim() ? prev.trim() + "\n\n" : "") + "From video:\n" + text)} />}
                     <div style={{padding:"6px 8px",display:"flex",alignItems:"center",gap:6}}>
                       <div style={{fontSize:9,color:"#717fa6",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{shareLink}</div>
                       {typeof navigator !== "undefined" && navigator.share && (

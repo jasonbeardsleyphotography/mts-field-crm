@@ -291,11 +291,35 @@ async function loadJson(token, fileName, folderId) {
 
 // ── APP STATE: pipeline + dismissed ──────────────────────────────────────────
 
-export async function saveAppState(token, pipeline, dismissed, lastContact) {
+// Newest per day wins: { [dayKey]: { ids, at } }.
+export function mergeRouteOrder(a = {}, b = {}) {
+  const out = { ...(a || {}) };
+  for (const [day, v] of Object.entries(b || {})) {
+    if (v && Array.isArray(v.ids) && (!out[day] || (v.at || 0) > (out[day].at || 0))) out[day] = v;
+  }
+  return out;
+}
+
+export async function saveAppState(token, pipeline, dismissed, lastContact, routeOrder) {
   setSyncStatus("syncing");
   try {
     const rootId = await findOrCreateFolder(token, FOLDER_NAME);
-    await saveJson(token, STATE_FILE, rootId, { pipeline, dismissed, lastContact: lastContact || {}, savedAt: Date.now() });
+    // The day's visit order is the one part of this file that two devices
+    // edit independently, so it's merged with what's already on Drive rather
+    // than overwritten — otherwise a save from the laptop would wipe out an
+    // order just set on the phone before the laptop had pulled it.
+    let mergedOrder = routeOrder || {};
+    try {
+      const remote = await loadAppState(token);
+      mergedOrder = mergeRouteOrder(remote?.routeOrder, mergedOrder);
+    } catch {}
+    const cutoff = Date.now() - 21 * 86400e3;   // keep three weeks
+    for (const [day, v] of Object.entries(mergedOrder)) {
+      const t = Date.parse(day);
+      if (!isNaN(t) && t < cutoff) delete mergedOrder[day];
+      else if (!v?.ids) delete mergedOrder[day];
+    }
+    await saveJson(token, STATE_FILE, rootId, { pipeline, dismissed, lastContact: lastContact || {}, routeOrder: mergedOrder, savedAt: Date.now() });
     setSyncStatus("success");
     setTimeout(() => setSyncStatus("idle"), 3000);
   } catch(e) {
