@@ -12,6 +12,10 @@ tell him something is "safe" unless you checked.
 4. Do not open a pull request unless asked. Do not put model names in commits or code comments.
 5. Before shipping: `npm run build` (it runs `scripts/check-undef.mjs`, which fails on a SCREAMING_CASE name that is used but never declared).
 
+## Pending for the next release (committed on the branch, NOT yet merged to main)
+- Weekly "Sales / Ops meeting" leads the day's automatic order (App.jsx order effect, `isMeeting`). The owner asked
+  for it to ship with the next update — merge the branch to main with the next release, then delete this section.
+
 ## Who uses it
 - Phone: iPhone, installed to the Home Screen (iOS 26+). Also a Chromebook/laptop.
 - Accounts: sign-in is Google. Server-side approved list is `netlify/lib/accounts.mjs` (SHA-256 of lowercase

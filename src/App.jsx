@@ -1679,17 +1679,33 @@ export default function App() {
     const saved = ordIds[dayKey] || [];
     const parsedIds = allParsed.map(s => s.id);
 
-    // Default order: AM tasks → PM tasks → TDs
+    // The weekly sales / ops meeting is the first thing on its day, so it
+    // leads the automatic order (it's not a client visit, so it would
+    // otherwise fall to the bottom with the to-dos).
+    const isMeeting = (s) => !s.isTask && /\b(sales\s*(\/|&|and)?\s*ops|ops|sales)\s*meeting\b/i.test(`${s.raw || ""} ${s.cn || ""}`);
+    const meetingIds = allParsed.filter(isMeeting).map(s => s.id);
+
+    // Default order: meeting → AM tasks → PM tasks → TDs
     const buildDefault = () => {
       const amTasks = allParsed.filter(s => s.isTask && (s.window||"").startsWith("AM"));
       const pmTasks = allParsed.filter(s => s.isTask && !(s.window||"").startsWith("AM"));
-      const tds = allParsed.filter(s => !s.isTask);
-      return [...amTasks, ...pmTasks, ...tds].map(s => s.id);
+      const tds = allParsed.filter(s => !s.isTask && !isMeeting(s));
+      return [...meetingIds, ...[...amTasks, ...pmTasks, ...tds].map(s => s.id)];
     };
 
     if (!saved.length) {
       setOrdIds(prev => ({...prev, [dayKey]: buildDefault()}));
       return;
+    }
+    // A day ordered automatically (never rearranged by hand): make sure the
+    // meeting is first — also fixes days already ordered before this rule.
+    if (!orderAtRef.current[dayKey] && meetingIds.length) {
+      const front = saved.slice(0, meetingIds.length);
+      if (meetingIds.some(id => !front.includes(id))) {
+        const rest = saved.filter(id => !meetingIds.includes(id));
+        setOrdIds(prev => ({ ...prev, [dayKey]: [...meetingIds, ...rest] }));
+        return;
+      }
     }
     const newIds = parsedIds.filter(id => !saved.includes(id));
     const validSaved = saved.filter(id => parsedIds.includes(id));
@@ -1697,7 +1713,8 @@ export default function App() {
       // New stops get inserted in AM/PM order, not just appended
       const newAM = allParsed.filter(s => newIds.includes(s.id) && s.isTask && (s.window||"").startsWith("AM")).map(s => s.id);
       const newPM = allParsed.filter(s => newIds.includes(s.id) && s.isTask && !(s.window||"").startsWith("AM")).map(s => s.id);
-      const newTD = allParsed.filter(s => newIds.includes(s.id) && !s.isTask).map(s => s.id);
+      const newMeeting = meetingIds.filter(id => newIds.includes(id));
+      const newTD = allParsed.filter(s => newIds.includes(s.id) && !s.isTask && !isMeeting(s)).map(s => s.id);
       // Find insertion points: AM goes before first PM in saved, PM before first TD, TDs at end
       const firstPMIdx = validSaved.findIndex(id => { const s = allParsed.find(x => x.id === id); return s && s.isTask && !(s.window||"").startsWith("AM"); });
       const firstTDIdx = validSaved.findIndex(id => { const s = allParsed.find(x => x.id === id); return s && !s.isTask; });
@@ -1710,6 +1727,9 @@ export default function App() {
       // Insert new AM before PM
       const amInsert = firstPMIdx >= 0 ? firstPMIdx : pmInsert;
       merged.splice(amInsert, 0, ...newAM);
+      // A meeting that just appeared goes first even on a hand-ordered day —
+      // it's new, so the hand order never placed it.
+      merged.unshift(...newMeeting);
       setOrdIds(prev => ({...prev, [dayKey]: merged}));
     }
     // Also re-run when the day's order changes underneath (e.g. adopted from
