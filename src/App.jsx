@@ -18,6 +18,7 @@ import DriveCleanup from "./DriveCleanup";
 import ContactCleanup from "./ContactCleanup";
 import { loadContactIndex, clientKeyFor, phone10, CLIENT_KEY_FIELD, saveClientContact } from "./googleContacts";
 import RealWorkHandoff from "./RealWorkHandoff";
+import { isPhoneLike } from "./device";
 import RealWorkSetup from "./RealWorkSetup";
 import IphoneVideoSetup from "./IphoneVideoSetup";
 import { isIphoneVideoReady } from "./iphoneVideo";
@@ -2157,7 +2158,9 @@ export default function App() {
         totalStops: allTasks.length,
       };
     }
-    if (stop?.isTask) {
+    // RealWork (and its iPhone Shortcuts) is a phone step. On a computer, Done
+    // just saves the visit and moves on to the next stop.
+    if (stop?.isTask && isPhoneLike()) {
       // The visit is saved and filed above, so it is safe to leave the app from
       // here. Park the next stop first: if iOS closes the app while you are in
       // RealWork, it comes back on relaunch.
@@ -3116,7 +3119,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
         token={token}
         onBack={() => setOnsiteStop(null)}
         onDone={(opts) => markDone(onsiteStop.id, opts)}
-        sendToRealWorkOnDone={!!onsiteStop?.isTask}
+        sendToRealWorkOnDone={!!onsiteStop?.isTask && isPhoneLike()}
         onDecline={() => { decline(onsiteStop.id); setOnsiteStop(null); }}
         onEditDetails={(edits) => {
           const overrides = stopOverridesGet();

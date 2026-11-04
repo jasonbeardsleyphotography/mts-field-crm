@@ -1,3 +1,5 @@
+// v89: Done on a computer skips RealWork/Shortcuts; Sales / Ops meeting leads
+//      its day.
 // v88: AI summary button under each uploaded card video; hand-set visit order
 //      syncs between devices.
 // v87: marked-up photos show their marks on the card tiles again.
@@ -128,7 +130,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v88";
+const CACHE = "mts-field-v89";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

@@ -12,10 +12,6 @@ tell him something is "safe" unless you checked.
 4. Do not open a pull request unless asked. Do not put model names in commits or code comments.
 5. Before shipping: `npm run build` (it runs `scripts/check-undef.mjs`, which fails on a SCREAMING_CASE name that is used but never declared).
 
-## Pending for the next release (committed on the branch, NOT yet merged to main)
-- Weekly "Sales / Ops meeting" leads the day's automatic order (App.jsx order effect, `isMeeting`). The owner asked
-  for it to ship with the next update — merge the branch to main with the next release, then delete this section.
-
 ## Who uses it
 - Phone: iPhone, installed to the Home Screen (iOS 26+). Also a Chromebook/laptop.
 - Accounts: sign-in is Google. Server-side approved list is `netlify/lib/accounts.mjs` (SHA-256 of lowercase
@@ -64,6 +60,10 @@ tell him something is "safe" unless you checked.
 (`mts-freeze-log`, last 4 sessions) as they happen. The owner sends it via Settings → Copy freeze report.
 Read the last lines of the session that froze: the step with no matching "done"/"finished" is the one that hung.
 Keep logging out of tight loops; log slow/failed cases, not every success.
+
+## Phone vs computer
+`src/device.js` `isPhoneLike()` = primary pointer is coarse. Phone-only steps (RealWork hand-off after Done, its
+clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even one with a touchscreen.
 
 ## Sync notes
 - Visit order per day: `mts-route-order` (ids) + `mts-route-order-at` (when set BY HAND). Only hand-set orders
