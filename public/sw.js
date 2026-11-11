@@ -1,3 +1,5 @@
+// v90: shared map links expire after 2 years; video player only streams the
+//      app's own videos.
 // v89: Done on a computer skips RealWork/Shortcuts; Sales / Ops meeting leads
 //      its day.
 // v88: AI summary button under each uploaded card video; hand-set visit order
@@ -130,7 +132,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v89";
+const CACHE = "mts-field-v90";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

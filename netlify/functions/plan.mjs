@@ -8,8 +8,10 @@
                       app install.
 
    Plans are stored in Netlify Blobs (same mechanism as the OAuth sessions in
-   oauth-callback.mjs / token.mjs) and never expire — a link Jason texts to a
-   crew keeps working.
+   oauth-callback.mjs / token.mjs). A link expires 2 years after it was made
+   (long enough for any job it was sent for); after that it reads as expired
+   and the stored plan is deleted. Plans saved before expiry existed carry no
+   date, so they get one the first time they're opened.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { getStore } from "@netlify/blobs";
@@ -18,6 +20,7 @@ import { authorizeRequest } from "../lib/accounts.mjs";
 const STORE = "mts-plans";
 const MAX_BODY = 256 * 1024;              // plans are small: coords + labels + URLs
 const ID_RE = /^[a-zA-Z0-9_-]{1,40}$/;
+const LIFETIME_MS = 2 * 365 * 24 * 60 * 60 * 1000;   // 2 years
 
 const json = (obj, status = 200, extra = {}) =>
   new Response(JSON.stringify(obj), {
@@ -39,8 +42,21 @@ export default async (req) => {
     const id = url.searchParams.get("id") || "";
     if (!ID_RE.test(id)) return json({ error: "bad_id" }, 400);
     try {
-      const raw = await getStore(STORE).get(id);
+      const store = getStore(STORE);
+      let raw = await store.get(id);
       if (!raw) return json({ error: "not_found" }, 404);
+      let plan = null;
+      try { plan = JSON.parse(raw); } catch {}
+      if (plan && !plan.createdAt) {
+        // Made before links expired: start its 2 years now.
+        plan.createdAt = Date.now();
+        raw = JSON.stringify(plan);
+        try { await store.set(id, raw); } catch {}
+      }
+      if (plan && Date.now() - plan.createdAt > LIFETIME_MS) {
+        try { await store.delete(id); } catch {}
+        return json({ error: "expired" }, 410, { "Cache-Control": "no-store" });
+      }
       return new Response(raw, {
         status: 200,
         headers: {

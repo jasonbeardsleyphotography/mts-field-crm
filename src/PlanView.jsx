@@ -66,6 +66,7 @@ export default function PlanView({ planId }) {
         const r = await fetch(`/api/plan?id=${encodeURIComponent(planId)}`);
         if (dead) return;
         if (r.status === 404) { setState("missing"); return; }
+        if (r.status === 410) { setState("expired"); return; }
         if (!r.ok) { setState("error"); return; }
         const data = await r.json();
         if (dead) return;
@@ -131,6 +132,7 @@ export default function PlanView({ planId }) {
   );
   if (state === "loading") return shell("Loading site plan…");
   if (state === "missing") return shell("Site plan not found", "This link may be incorrect or the plan may have been removed.");
+  if (state === "expired") return shell("This link has expired", "Site plan links last two years. Ask Monster Tree Service for a new one.");
   if (state === "error") return shell("Couldn't load the site plan", "Check your connection and try again.");
 
   const photoCount = plan.pins.filter(p => p.photo).length;

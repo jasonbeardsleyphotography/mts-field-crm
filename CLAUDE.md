@@ -74,10 +74,23 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   `videoSummaries[driveFileId]`.
 
 ## Known open items
+- **TO DO (owner): rotate the Gemini API key.** The old key shipped in early public builds. Make a new key in
+  Google AI Studio, delete the old one, set `GEMINI_API_KEY` in Netlify, redeploy. Until then, watch its usage.
 - No saved copy of the route: opening the app offline with an expired sign-in shows only the sign-in screen.
 - Deleted photos can come back after a cross-device union merge (no deletion markers).
-- Remaining security items: the video-stream edge function is an open proxy for public Drive files; shared
-  plan links never expire; uploaded photos are "anyone with the link". The old Gemini API key was exposed in
-  early builds — rotate it and set `GEMINI_API_KEY` in Netlify (AI calls go through `/api/ai`).
+- Uploaded photos/videos are "anyone with the link" (needed for crew/client links and in-app Drive thumbnails).
+  Making them private means routing every view through our server with stored Google credentials — a big change
+  the owner hasn't asked for. Done instead: plan links expire after 2 years (plan.mjs, 410 → "expired" page);
+  video-stream only serves video files owned by an approved account (else 404; allows on a Drive outage).
 - In-app recordings from newer iOS may be WebM, which iPhones often cannot play; the recorder now asks for MP4
   first and the players fall back to Drive's own player.
+
+## Future expansion — ON HOLD (owner's decision; don't start without being asked)
+- **Client history:** one large CSV of every line item for every job the company has ever completed. Must show
+  per client: jobs with their line items, targets and prices, plus soil samples. Stored separately from visit
+  records, but tied to the client: tapping a name (e.g. "Ed Short") shows his history AND his app visits/pipeline
+  status together. Both salespeople must see exactly the same history (so it needs a shared home, not one Drive).
+- **Soil reports:** upload a lab PDF → AI extracts values → owner reviews → place sample pins on the property →
+  public client page (unguessable link) with nutrient gradient overlays on the map and "why it matters"
+  infographics; kept on the client's record. Owner has a starter HTML file built elsewhere.
+- Video snapshot button (photo from the live video view, with GPS + site-map pin) — explored, not built.
