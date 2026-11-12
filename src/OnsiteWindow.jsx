@@ -54,7 +54,7 @@ import { dataUrlToFile, sharePhotoFile, prefersShareSheet, copyPhotoToClipboard 
 import { isSendReady } from "./realwork";
 import { isIphoneVideoReady, runIphoneVideo, fmtCaptured } from "./iphoneVideo";
 import IphoneVideoSetup from "./IphoneVideoSetup";
-import { SINGLEOPS_ITEMS, SINGLEOPS_JOB_TAGS, SINGLEOPS_JOB_TAG_GROUPS, SINGLEOPS_JOB_TAG_COLORS, jobTagColor } from "./singleOpsCatalog";
+import { SINGLEOPS_ITEMS, SINGLEOPS_JOB_TAGS, SINGLEOPS_JOB_TAG_GROUPS, SINGLEOPS_JOB_TAG_COLORS, jobTagColor, SINGLEOPS_TEMPLATES } from "./singleOpsCatalog";
 import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin } from "./icons";
 
 // AI requests go through /api/ai, so the Gemini key never reaches this page.
@@ -187,6 +187,9 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
   // Per-JOB tags (equipment/crew/access/scheduling) — matches SingleOps's own
   // tag list, applied once to the whole visit, not per line item.
   const [jobTags, setJobTags] = useState(fd.jobTags || []);
+  // Proposal templates picked for this visit: { GTC: [..], PHC: [..], LC: [..] }
+  // — one or more per category ("" = a dropdown with nothing chosen yet).
+  const [templates, setTemplates] = useState(fd.templates || {});
   // Times the iPhone Video button opened the Camera app for this visit. The
   // recording itself lives in Photos; this is the record that it happened.
   // Written through updateField (atomic per card, and synced to Drive), so it
@@ -410,6 +413,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
       audioClips,
       lineItems,
       jobTags,
+      templates,
       mapPins,
       aiScopeSummary: aiScopeResult,
       aiAddonEmail: aiAddonResult,
@@ -456,6 +460,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
           audioClips: latest.audioClips,
           lineItems: latest.lineItems,
           jobTags: latest.jobTags,
+          templates: latest.templates,
           mapPins: latest.mapPins,
           aiScopeSummary: latest.aiScopeSummary,
           aiAddonEmail: latest.aiAddonEmail,
@@ -490,7 +495,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
     // changing — without them here the effect kept a stale closure and saved the
     // OLD name/job#, so the photo/video uploader named Drive files with the
     // pre-edit client name.
-  }, [hydrated, scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, lineItems, jobTags, mapPins, aiScopeResult, aiAddonResult, s.id, s.cn, s.jn, token, showCamera]);
+  }, [hydrated, scopeNotes, addonNotes, scopePhotos, addonPhotos, videoUrls, audioClips, lineItems, jobTags, templates, mapPins, aiScopeResult, aiAddonResult, s.id, s.cn, s.jn, token, showCamera]);
 
   // Keep a warm GPS fix while this card is open. A cold lock takes seconds —
   // far too slow to sit between the shutter and the saved photo — so we hold a
@@ -558,6 +563,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
         audioClips: d.audioClips,
         lineItems: d.lineItems,
         jobTags: d.jobTags,
+        templates: d.templates,
         aiScopeSummary: d.aiScopeSummary,
         aiAddonEmail: d.aiAddonEmail,
       }).catch(() => {});
@@ -601,6 +607,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
           audioClips: d.audioClips,
           lineItems: d.lineItems,
           jobTags: d.jobTags,
+          templates: d.templates,
           aiScopeSummary: d.aiScopeSummary,
           aiAddonEmail: d.aiAddonEmail,
         }).catch(() => {});
@@ -652,6 +659,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
         if (data.addonNotes)      setAddonNotes(prev => prev || data.addonNotes);
         if (data.aiScopeSummary)  setAiScopeResult(prev => prev || data.aiScopeSummary);
         if ((data.mapPins || []).length) setMapPins(prev => prev.length ? prev : data.mapPins);
+        if (data.templates && Object.keys(data.templates).length) setTemplates(prev => Object.keys(prev).length ? prev : data.templates);
         if ((data.iphoneVideoLog || []).length) setIphoneVideoLog(prev => prev.length ? prev : data.iphoneVideoLog);
         if (data.videoSummaries && Object.keys(data.videoSummaries).length) setVideoSummaries(prev => ({ ...data.videoSummaries, ...prev }));
         if (data.aiAddonEmail)    setAiAddonResult(prev => prev || data.aiAddonEmail);
@@ -778,6 +786,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
         if (merged.audioClips?.length) setAudioClips(prev => mergeByKey(merged.audioClips, prev, a => a.ts || a.timestamp || a.url));
         if (merged.lineItems?.length) setLineItems(prev => mergeByKey(merged.lineItems, prev, li => li.id));
         if (merged.jobTags?.length) setJobTags(prev => Array.from(new Set([...merged.jobTags, ...prev])));
+        if (cloud.templates && Object.keys(cloud.templates).length) setTemplates(prev => Object.keys(prev).length ? prev : cloud.templates);
         if (cloud.aiScopeSummary) setAiScopeResult(prev => prev || cloud.aiScopeSummary);
         if (cloud.aiAddonEmail) setAiAddonResult(prev => prev || cloud.aiAddonEmail);
         // Route through the per-stop write queue so this can't clobber
@@ -1667,7 +1676,7 @@ ${combined}`);
         return [...map.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0));
       };
       return {
-        scopeNotes, addonNotes, videoUrls, audioClips, lineItems, jobTags, mapPins,
+        scopeNotes, addonNotes, videoUrls, audioClips, lineItems, jobTags, templates, mapPins,
         aiScopeSummary: aiScopeResult, aiAddonEmail: aiAddonResult,
         scopePhotos: mergePhotos(scopePhotos, ex.scopePhotos || ex.photos || []),
         addonPhotos: mergePhotos(addonPhotos, ex.addonPhotos || []),
@@ -2186,6 +2195,48 @@ ${combined}`);
             list exactly — equipment, crew size, access/site conditions,
             scheduling flags. Tap to toggle; "Suggest" is the same cheap,
             manual-only AI pattern as Line Items. */}
+        {/* ── TEMPLATE ─────────────────────────────────────────────────
+            The SingleOps proposal template(s) for this visit, one dropdown
+            per category; "+" adds another dropdown in that category when a
+            job needs more than one. Saved with the visit like job tags. */}
+        <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#38bdf8",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>Template</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {Object.entries(SINGLEOPS_TEMPLATES).map(([cat, options]) => {
+              const picks = (templates[cat] && templates[cat].length) ? templates[cat] : [""];
+              const setPick = (i, v) => setTemplates(prev => {
+                const list = [...((prev[cat] && prev[cat].length) ? prev[cat] : [""])];
+                list[i] = v;
+                return { ...prev, [cat]: list };
+              });
+              const addPick = () => setTemplates(prev => ({ ...prev, [cat]: [...((prev[cat] && prev[cat].length) ? prev[cat] : [""]), ""] }));
+              const removePick = (i) => setTemplates(prev => {
+                const list = [...(prev[cat] || [])]; list.splice(i, 1);
+                return { ...prev, [cat]: list };
+              });
+              return (
+                <div key={cat} style={{display:"flex",alignItems:"flex-start",gap:8}}>
+                  <div style={{width:38,flexShrink:0,paddingTop:10,fontSize:12,fontWeight:800,color:"#aac0d5",fontFamily:F,letterSpacing:0.6}}>{cat}</div>
+                  <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",gap:6}}>
+                    {picks.map((v, i) => (
+                      <div key={i} style={{display:"flex",gap:6,alignItems:"center"}}>
+                        <select value={v} onChange={e => setPick(i, e.target.value)} style={{flex:1,minWidth:0,height:36,padding:"0 10px",borderRadius:8,background:v ? "rgba(56,189,248,.1)" : "#0e1120",border:`1px solid ${v ? "rgba(56,189,248,.45)" : "#1a2540"}`,color:v ? "#e6f6ff" : "#8a9ab0",fontSize:12.5,fontWeight:v ? 700 : 500,outline:"none",appearance:"auto"}}>
+                          <option value="">Choose {cat} template…</option>
+                          {options.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                        {picks.length > 1 && (
+                          <button onClick={() => removePick(i)} aria-label={`Remove this ${cat} template`} style={{width:32,height:36,flexShrink:0,borderRadius:8,background:"transparent",border:"1px solid #2a2030",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} color="#c98a8a"/></button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={addPick} aria-label={`Add another ${cat} template`} style={{width:36,height:36,flexShrink:0,borderRadius:8,background:"rgba(56,189,248,.1)",border:"1px solid rgba(56,189,248,.35)",color:"#38bdf8",fontSize:20,fontWeight:700,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
             <div style={{fontSize:11,fontWeight:700,color:"#8B5CF6",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,flex:1}}>Job Tags</div>

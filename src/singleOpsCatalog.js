@@ -798,3 +798,38 @@ export function jobTagColor(tag) {
   return (t && SINGLEOPS_JOB_TAG_COLORS[t.group]) || "#8e9bb7";
 }
 
+
+// Proposal templates, picked per visit in the onsite card's TEMPLATE section.
+// Grouped GTC (general tree care) / PHC (plant health care) / LC (lawn care).
+export const SINGLEOPS_TEMPLATES = {
+  GTC: [
+    "01GTC:RMVL Existing Debris",
+    "01GTC:RMVL Without Wood",
+    "01GTC:RMVL/GRND",
+    "01GTC:RMVL/GRND/DEBRIS",
+    "01GTC:RMVL/GRND/DEBRIS/SEED",
+    "01GTC:Stump300",
+    "01GTC:Stump50",
+    "02GTC:Clearance",
+    "02GTC:Risk",
+    "02GTC:Shape",
+    "02GTC:Structural",
+    "03GTC:Emergency Service",
+    "03GTC:HMI",
+    "03GTC:Priority Service",
+  ],
+  PHC: [
+    "PHC - Blank",
+    "PHC - Boxwood4",
+    "PHC - BTM4",
+    "PHC - Canker",
+    "PHC - Disease3",
+    "PHC - Needlecast3",
+    "TICK + MOSQUITO - MARCH - NOV",
+    "TICK + MOSQUITO - MAY - SEPTEMBER",
+  ],
+  LC: [
+    "LC 6 + A&C",
+    "LC Pesticide Free",
+  ],
+};

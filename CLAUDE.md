@@ -65,6 +65,11 @@ Keep logging out of tight loops; log slow/failed cases, not every success.
 `src/device.js` `isPhoneLike()` = primary pointer is coarse. Phone-only steps (RealWork hand-off after Done, its
 clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even one with a touchscreen.
 
+## Onsite card data for proposals
+- `jobTags` (SingleOps' 71 tags, colours in `singleOpsCatalog.js`) and `templates` ({ GTC, PHC, LC } → arrays of
+  template names, "" = unchosen dropdown) are saved on each visit record and sync like notes. Template lists live
+  in `SINGLEOPS_TEMPLATES`; the two TICK + MOSQUITO templates were filed under PHC (owner may move them to LC).
+
 ## Sync notes
 - Visit order per day: `mts-route-order` (ids) + `mts-route-order-at` (when set BY HAND). Only hand-set orders
   sync, inside app-state.json as `routeOrder`, newest per day wins; saveAppState merges with Drive's copy first.
