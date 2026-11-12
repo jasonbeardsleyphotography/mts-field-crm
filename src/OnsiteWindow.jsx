@@ -2210,13 +2210,13 @@ ${combined}`);
 
           {/* Chosen tags — each in its SingleOps colour; tap to remove. */}
           {jobTags.length > 0 && (
-            <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:12}}>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
               {jobTags.map(tag => {
                 const c = jobTagColor(tag);
                 return (
-                  <button key={tag} onClick={() => toggleJobTag(tag)} style={{minHeight:40,padding:"8px 12px",borderRadius:999,background:`${c}2e`,border:`1.5px solid ${c}`,color:"#f0f4fa",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{width:12,height:12,borderRadius:6,background:c,flexShrink:0,boxShadow:"0 0 0 1px rgba(255,255,255,.25)"}}/>
-                    {tag}<IconX size={13} color="#d4e1f0"/>
+                  <button key={tag} onClick={() => toggleJobTag(tag)} style={{minHeight:32,padding:"5px 10px",borderRadius:999,background:`${c}2e`,border:`1.5px solid ${c}`,color:"#f0f4fa",fontSize:11.5,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{width:10,height:10,borderRadius:5,background:c,flexShrink:0,boxShadow:"0 0 0 1px rgba(255,255,255,.25)"}}/>
+                    {tag}<IconX size={11} color="#d4e1f0"/>
                   </button>
                 );
               })}
@@ -2225,18 +2225,18 @@ ${combined}`);
 
           {/* Full picker, in SingleOps' colour groups and order. Finger-sized:
               the old 9px chips were hard to hit in the field. */}
-          <div style={{display:"flex",flexDirection:"column",gap:10,maxHeight:420,overflowY:"auto",padding:"10px",borderRadius:10,background:"#0a0c14",border:"1px solid #1a2540"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:380,overflowY:"auto",padding:"8px 9px",borderRadius:10,background:"#0a0c14",border:"1px solid #1a2540"}}>
             {Object.entries(SINGLEOPS_JOB_TAG_GROUPS).map(([groupKey, groupLabel]) => {
               const inGroup = SINGLEOPS_JOB_TAGS.filter(t => t.group === groupKey && !jobTags.includes(t.tag));
               if (!inGroup.length) return null;
               const c = SINGLEOPS_JOB_TAG_COLORS[groupKey] || "#8e9bb7";
               return (
                 <div key={groupKey}>
-                  <div style={{fontSize:10,color:"#95a5bb",fontWeight:800,letterSpacing:0.8,textTransform:"uppercase",marginBottom:5,fontFamily:F}}>{groupLabel}</div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:7}}>
+                  <div style={{fontSize:9.5,color:"#95a5bb",fontWeight:800,letterSpacing:0.8,textTransform:"uppercase",marginBottom:3,fontFamily:F}}>{groupLabel}</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
                     {inGroup.map(t => (
-                      <button key={t.tag} onClick={() => toggleJobTag(t.tag)} style={{minHeight:40,padding:"8px 13px",borderRadius:999,background:"#121829",border:`1px solid ${c}66`,color:"#d4e1f0",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:8}}>
-                        <span style={{width:12,height:12,borderRadius:6,background:c,flexShrink:0,boxShadow:"0 0 0 1px rgba(255,255,255,.25)"}}/>
+                      <button key={t.tag} onClick={() => toggleJobTag(t.tag)} style={{minHeight:32,padding:"5px 10px",borderRadius:999,background:"#121829",border:`1px solid ${c}66`,color:"#d4e1f0",fontSize:11.5,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{width:10,height:10,borderRadius:5,background:c,flexShrink:0,boxShadow:"0 0 0 1px rgba(255,255,255,.25)"}}/>
                         {t.tag}
                       </button>
                     ))}

@@ -6,9 +6,39 @@
 const STAGE_COLORS = { "10":"#0B8043","3":"#8E24AA","7":"#039BE5","1":"#7986CB","5":"#F6BF26","4":"#E67C73","2":"#33B679","11":"#D50000","9":"#3F51B5","8":"#616161" };
 export function stageColor(colorId) { return STAGE_COLORS[colorId] || "#039BE5"; }
 
+// SingleOps writes calendar text as HTML, so apostrophes, quotes and dashes
+// arrive as codes ("there&rsquo;s", "&ldquo;", "&#39;"). Only &nbsp; and &amp;
+// used to be translated, so the rest showed up as garbled text on the cards.
+// Translates every named and numeric code, twice over for text that was
+// encoded twice ("&amp;rsquo;").
+const NAMED = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
+  rsquo: "\u2019", lsquo: "\u2018", rdquo: "\u201D", ldquo: "\u201C", sbquo: "\u201A", bdquo: "\u201E",
+  ndash: "\u2013", mdash: "\u2014", hellip: "\u2026", bull: "\u2022", middot: "\u00B7",
+  prime: "\u2032", Prime: "\u2033", deg: "\u00B0", frac12: "\u00BD", frac14: "\u00BC", frac34: "\u00BE",
+  times: "\u00D7", divide: "\u00F7", plusmn: "\u00B1", copy: "\u00A9", reg: "\u00AE", trade: "\u2122",
+  cent: "\u00A2", pound: "\u00A3", euro: "\u20AC", sect: "\u00A7", para: "\u00B6", laquo: "\u00AB", raquo: "\u00BB",
+  eacute: "\u00E9", egrave: "\u00E8", aacute: "\u00E1", ntilde: "\u00F1", ouml: "\u00F6", uuml: "\u00FC",
+  ensp: " ", emsp: " ", thinsp: " ", zwj: "", zwnj: "", shy: "",
+};
+export function decodeEntities(text) {
+  let out = String(text || "");
+  for (let pass = 0; pass < 2 && out.includes("&"); pass++) {
+    out = out.replace(/&(#x[0-9a-f]+|#\d+|[a-z][a-z0-9]*);/gi, (m, code) => {
+      if (code[0] === "#") {
+        const n = code[1] === "x" || code[1] === "X" ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
+        try { return n > 0 && n < 0x110000 ? String.fromCodePoint(n) : m; } catch { return m; }
+      }
+      return Object.prototype.hasOwnProperty.call(NAMED, code) ? NAMED[code] : m;
+    });
+  }
+  return out;
+}
+const htmlToText = (t) => decodeEntities(String(t || "").replace(/<br\s*\/?>/gi, " ").replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+
 export function parseEvent(ev) {
-  const s = ev.summary || "", rd = ev.description || "";
-  const desc = rd.replace(/<[^>]*>/g," ").replace(/&nbsp;/g," ").replace(/&amp;/g,"&").replace(/\s+/g," ").trim();
+  const s = decodeEntities(ev.summary || ""), rd = ev.description || "";
+  const desc = htmlToText(rd);
 
   // Filter: skip MTS NOTE and ***NOTE!*** events
   if (/MTS NOTE/i.test(s) || /\*{2,}NOTE[!]*\*{2,}/i.test(s)) return null;
@@ -75,7 +105,7 @@ export function parseEvent(ev) {
 
   // Address: prefer Google Calendar location field, fall back to parsed address segments
   const parsedAddr = addrSegments.join(", ");
-  const address = ev.location || parsedAddr;
+  const address = decodeEntities(ev.location || "") || parsedAddr;
 
   const mobileMatch = desc.match(/Mobile:\s*([\d\-(). +]+?)(?:\s*$|\s*(?:Email|Notes|Callout):)/);
   const phoneMatch = desc.match(/Phone:\s*([\d\-(). +]+?)(?:\s*$|\s*(?:Mobile|Email|Notes|Callout):)/);
@@ -83,7 +113,7 @@ export function parseEvent(ev) {
   const emailMatch = desc.match(/Email:\s*(\S+@\S+)/);
   const email = emailMatch ? emailMatch[1].trim() : "";
   const notesMatch = desc.match(/Notes:\s*([\s\S]*)/);
-  const notes = notesMatch ? notesMatch[1].replace(/<[^>]*>/g," ").replace(/&nbsp;/g," ").replace(/&amp;/g,"&").replace(/\s+/g," ").trim() : "";
+  const notes = notesMatch ? htmlToText(notesMatch[1]) : "";
 
   const isDriveBy = /drive[\s-]?by/i.test(s);
   const isTask = /^Task\b/i.test(s);

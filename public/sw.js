@@ -1,3 +1,5 @@
+// v92: calendar text decodes every HTML code (no more "&rsquo;"); job tags a
+//      size down and tighter.
 // v91: job tags = SingleOps' full tag list with its colours, finger-sized.
 // v90: shared map links expire after 2 years; video player only streams the
 //      app's own videos.
@@ -133,7 +135,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v91";
+const CACHE = "mts-field-v92";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
