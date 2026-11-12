@@ -1,3 +1,4 @@
+// v94: TEMPLATE = three compact dropdowns in a row; picks listed below.
 // v93: TEMPLATE section (GTC / PHC / LC dropdowns, + for more) above job tags.
 // v92: calendar text decodes every HTML code (no more "&rsquo;"); job tags a
 //      size down and tighter.
@@ -136,7 +137,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v93";
+const CACHE = "mts-field-v94";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

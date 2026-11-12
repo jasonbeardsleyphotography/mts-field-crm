@@ -2196,45 +2196,43 @@ ${combined}`);
             scheduling flags. Tap to toggle; "Suggest" is the same cheap,
             manual-only AI pattern as Line Items. */}
         {/* ── TEMPLATE ─────────────────────────────────────────────────
-            The SingleOps proposal template(s) for this visit, one dropdown
-            per category; "+" adds another dropdown in that category when a
-            job needs more than one. Saved with the visit like job tags. */}
-        <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>
-          <div style={{fontSize:11,fontWeight:700,color:"#38bdf8",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:8}}>Template</div>
-          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            SingleOps proposal template(s) for this visit. Three compact
+            dropdowns across the screen (GTC / PHC / LC); picking one adds it
+            to the list below, where each choice stands on its own with an ×,
+            and the dropdown goes back to its label so another can be added.
+            Saved with the visit as { GTC: [..], PHC: [..], LC: [..] }. */}
+        <div style={{padding:"10px 16px",borderBottom:"1px solid #1a1f2e"}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#38bdf8",letterSpacing:1.5,textTransform:"uppercase",fontFamily:F,marginBottom:6}}>Template</div>
+          <div style={{display:"flex",gap:6}}>
             {Object.entries(SINGLEOPS_TEMPLATES).map(([cat, options]) => {
-              const picks = (templates[cat] && templates[cat].length) ? templates[cat] : [""];
-              const setPick = (i, v) => setTemplates(prev => {
-                const list = [...((prev[cat] && prev[cat].length) ? prev[cat] : [""])];
-                list[i] = v;
-                return { ...prev, [cat]: list };
-              });
-              const addPick = () => setTemplates(prev => ({ ...prev, [cat]: [...((prev[cat] && prev[cat].length) ? prev[cat] : [""]), ""] }));
-              const removePick = (i) => setTemplates(prev => {
-                const list = [...(prev[cat] || [])]; list.splice(i, 1);
-                return { ...prev, [cat]: list };
-              });
+              const chosen = (templates[cat] || []).filter(Boolean);
               return (
-                <div key={cat} style={{display:"flex",alignItems:"flex-start",gap:8}}>
-                  <div style={{width:38,flexShrink:0,paddingTop:10,fontSize:12,fontWeight:800,color:"#aac0d5",fontFamily:F,letterSpacing:0.6}}>{cat}</div>
-                  <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",gap:6}}>
-                    {picks.map((v, i) => (
-                      <div key={i} style={{display:"flex",gap:6,alignItems:"center"}}>
-                        <select value={v} onChange={e => setPick(i, e.target.value)} style={{flex:1,minWidth:0,height:36,padding:"0 10px",borderRadius:8,background:v ? "rgba(56,189,248,.1)" : "#0e1120",border:`1px solid ${v ? "rgba(56,189,248,.45)" : "#1a2540"}`,color:v ? "#e6f6ff" : "#8a9ab0",fontSize:12.5,fontWeight:v ? 700 : 500,outline:"none",appearance:"auto"}}>
-                          <option value="">Choose {cat} template…</option>
-                          {options.map(o => <option key={o} value={o}>{o}</option>)}
-                        </select>
-                        {picks.length > 1 && (
-                          <button onClick={() => removePick(i)} aria-label={`Remove this ${cat} template`} style={{width:32,height:36,flexShrink:0,borderRadius:8,background:"transparent",border:"1px solid #2a2030",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} color="#c98a8a"/></button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <button onClick={addPick} aria-label={`Add another ${cat} template`} style={{width:36,height:36,flexShrink:0,borderRadius:8,background:"rgba(56,189,248,.1)",border:"1px solid rgba(56,189,248,.35)",color:"#38bdf8",fontSize:20,fontWeight:700,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
-                </div>
+                <select key={cat} value="" aria-label={`Add a ${cat} template`}
+                  onChange={e => {
+                    const v = e.target.value;
+                    if (v && !chosen.includes(v)) setTemplates(prev => ({ ...prev, [cat]: [...(prev[cat] || []).filter(Boolean), v] }));
+                  }}
+                  style={{flex:1,minWidth:0,height:36,padding:"0 8px",borderRadius:8,background:"#0e1120",border:"1px solid rgba(56,189,248,.35)",color:"#e6f6ff",fontSize:13,fontWeight:800,fontFamily:F,letterSpacing:0.8,outline:"none",appearance:"auto",textAlign:"center",textAlignLast:"center"}}>
+                  <option value="" disabled hidden>{cat}</option>
+                  {options.map(o => <option key={o} value={o} disabled={chosen.includes(o)}>{o}</option>)}
+                </select>
               );
             })}
           </div>
+          {Object.entries(SINGLEOPS_TEMPLATES).some(([cat]) => (templates[cat] || []).some(Boolean)) && (
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:8}}>
+              {Object.keys(SINGLEOPS_TEMPLATES).flatMap(cat => (templates[cat] || []).filter(Boolean).map(t => (
+                <div key={cat + t} style={{display:"flex",alignItems:"center",gap:6,minHeight:32,padding:"4px 6px 4px 11px",borderRadius:8,background:"rgba(56,189,248,.12)",border:"1px solid rgba(56,189,248,.5)"}}>
+                  <span style={{fontSize:9.5,fontWeight:800,color:"#38bdf8",fontFamily:F,letterSpacing:0.6}}>{cat}</span>
+                  <span style={{fontSize:12.5,fontWeight:700,color:"#f0f8ff"}}>{t}</span>
+                  <button onClick={() => setTemplates(prev => ({ ...prev, [cat]: (prev[cat] || []).filter(x => x && x !== t) }))}
+                    aria-label={`Remove ${t}`} style={{width:26,height:26,borderRadius:6,background:"transparent",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    <IconX size={12} color="#9fc3dd"/>
+                  </button>
+                </div>
+              )))}
+            </div>
+          )}
         </div>
 
         <div style={{padding:"12px 16px",borderBottom:"1px solid #1a1f2e"}}>

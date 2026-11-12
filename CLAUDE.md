@@ -67,7 +67,7 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
 
 ## Onsite card data for proposals
 - `jobTags` (SingleOps' 71 tags, colours in `singleOpsCatalog.js`) and `templates` ({ GTC, PHC, LC } → arrays of
-  template names, "" = unchosen dropdown) are saved on each visit record and sync like notes. Template lists live
+  template names; older records may contain "" entries, which are ignored) are saved on each visit record and sync like notes. Template lists live
   in `SINGLEOPS_TEMPLATES`; the two TICK + MOSQUITO templates were filed under PHC (owner may move them to LC).
 
 ## Sync notes
