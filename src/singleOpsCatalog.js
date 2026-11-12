@@ -465,19 +465,46 @@ export const SINGLEOPS_ITEMS = [
 
 // Per-JOB tags (not per-line-item) — equipment, crew size, access/site conditions,
 // scheduling flags, season, and staff markers applied once to the whole job in
-// SingleOps. Grouped for a scannable tap-to-select UI.
+// SingleOps. Same names and colour groups as SingleOps' own tag list, in its
+// order, so the tap-to-select picker reads like the screen it mirrors.
 export const SINGLEOPS_JOB_TAG_GROUPS = {
-  "crew": "Crew Size",
-  "02": "Equipment",
+  "crew": "Crew size",
+  "02": "Access",
+  "02r": "Required",
   "03": "Equipment",
-  "04": "Priority",
-  "05": "Site Conditions",
-  "06": "Equipment",
+  "04": "Utility lines",
+  "05": "Site conditions",
+  "06": "Gear",
+  "07u": "Urgent",
   "07": "Scheduling",
+  "07s": "Stumps",
   "08": "Season",
-  "09": "Site Conditions",
-  "10": "Billing",
-  "misc": "Other"
+  "09": "On site",
+  "10c": "Call back",
+  "10b": "Billing",
+  "phc": "PHC",
+  "adj": "Adjust",
+  "staff": "Staff"
+};
+// Dot colour per group (SingleOps' tag colours).
+export const SINGLEOPS_JOB_TAG_COLORS = {
+  "crew": "#ff1f8f",
+  "02": "#33cc33",
+  "02r": "#10e0a0",
+  "03": "#a0522d",
+  "04": "#ffe600",
+  "05": "#ff4a12",
+  "06": "#1f9e1f",
+  "07u": "#ff38e0",
+  "07": "#9a00d6",
+  "07s": "#880088",
+  "08": "#9c9c1c",
+  "09": "#1f3dff",
+  "10c": "#f07070",
+  "10b": "#b0605a",
+  "phc": "#7090b0",
+  "adj": "#ffffff",
+  "staff": "#0a8a8a"
 };
 export const SINGLEOPS_JOB_TAGS = [
   {
@@ -513,15 +540,19 @@ export const SINGLEOPS_JOB_TAGS = [
     "group": "02"
   },
   {
-    "tag": "02 LIFT TALL",
+    "tag": "02 LIFT TALL!",
     "group": "02"
   },
   {
     "tag": "02 REQUIRED",
-    "group": "02"
+    "group": "02r"
   },
   {
     "tag": "03 AVANT",
+    "group": "03"
+  },
+  {
+    "tag": "03 AVANT_BIG",
     "group": "03"
   },
   {
@@ -614,19 +645,19 @@ export const SINGLEOPS_JOB_TAGS = [
   },
   {
     "tag": "07 **EMERGENCY**",
-    "group": "07"
+    "group": "07u"
   },
   {
     "tag": "07 **PRIORITY**",
-    "group": "07"
+    "group": "07u"
   },
   {
     "tag": "07 *PARTIAL*",
-    "group": "07"
+    "group": "07u"
   },
   {
     "tag": "07 *STORM*",
-    "group": "07"
+    "group": "07u"
   },
   {
     "tag": "07 ADJACENT",
@@ -666,11 +697,11 @@ export const SINGLEOPS_JOB_TAGS = [
   },
   {
     "tag": "07 STUMP CLEANUP",
-    "group": "07"
+    "group": "07s"
   },
   {
     "tag": "07 STUMPS",
-    "group": "07"
+    "group": "07s"
   },
   {
     "tag": "08 FALL",
@@ -678,6 +709,10 @@ export const SINGLEOPS_JOB_TAGS = [
   },
   {
     "tag": "08 OAK",
+    "group": "08"
+  },
+  {
+    "tag": "08 OAK 2027",
     "group": "08"
   },
   {
@@ -722,27 +757,44 @@ export const SINGLEOPS_JOB_TAGS = [
   },
   {
     "tag": "10 *CALL BACK*",
-    "group": "10"
+    "group": "10c"
   },
   {
     "tag": "10 OLD RATE",
-    "group": "10"
+    "group": "10b"
+  },
+  {
+    "tag": "99 PHC 2027",
+    "group": "phc"
+  },
+  {
+    "tag": "99 PHC 2028",
+    "group": "phc"
   },
   {
     "tag": "ADJUST",
-    "group": "misc"
+    "group": "adj"
   },
   {
     "tag": "Liz",
-    "group": "misc"
+    "group": "staff"
+  },
+  {
+    "tag": "Max",
+    "group": "staff"
   },
   {
     "tag": "Sarah - Off",
-    "group": "misc"
+    "group": "staff"
   },
   {
     "tag": "Sarah - On",
-    "group": "misc"
+    "group": "staff"
   }
 ];
+/** Colour for a tag name (falls back to a neutral grey for tags no longer in the list). */
+export function jobTagColor(tag) {
+  const t = SINGLEOPS_JOB_TAGS.find(x => x.tag === tag);
+  return (t && SINGLEOPS_JOB_TAG_COLORS[t.group]) || "#8e9bb7";
+}
 
