@@ -2212,7 +2212,7 @@ ${combined}`);
                     const v = e.target.value;
                     if (v && !chosen.includes(v)) setTemplates(prev => ({ ...prev, [cat]: [...(prev[cat] || []).filter(Boolean), v] }));
                   }}
-                  style={{flex:1,minWidth:0,height:36,padding:"0 8px",borderRadius:8,background:"#0e1120",border:"1px solid rgba(56,189,248,.35)",color:"#e6f6ff",fontSize:13,fontWeight:800,fontFamily:F,letterSpacing:0.8,outline:"none",appearance:"auto",textAlign:"center",textAlignLast:"center"}}>
+                  style={{flex:1,minWidth:0,height:36,padding:"0 10px",borderRadius:8,background:"#0e1120",border:"1px solid rgba(56,189,248,.35)",color:"#e6f6ff",fontSize:14,fontWeight:700,fontFamily:"'DM Sans',system-ui,sans-serif",letterSpacing:0.3,outline:"none",appearance:"auto",textAlign:"left",textAlignLast:"left"}}>
                   <option value="" disabled hidden>{cat}</option>
                   {options.map(o => <option key={o} value={o} disabled={chosen.includes(o)}>{o}</option>)}
                 </select>
