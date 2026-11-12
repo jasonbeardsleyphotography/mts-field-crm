@@ -1,3 +1,4 @@
+// v96: every photo download is named after the client (laptop too).
 // v95: template dropdowns use the body font, left-aligned.
 // v94: TEMPLATE = three compact dropdowns in a row; picks listed below.
 // v93: TEMPLATE section (GTC / PHC / LC dropdowns, + for more) above job tags.
@@ -138,7 +139,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v95";
+const CACHE = "mts-field-v96";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

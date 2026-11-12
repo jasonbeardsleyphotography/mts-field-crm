@@ -45,6 +45,7 @@ import { downscaleDataUrl, stripPhotoDataUrls, OVERSIZE_DATAURL_LEN, photoKey } 
 import { listAll as listAllQueue, onQueueChange } from "./videoQueue";
 import { saveClientContact } from "./googleContacts";
 import { fillMyName } from "./myName";
+import { photoFileName } from "./photoSync";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Pipeline
@@ -234,10 +235,10 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
   // On desktop (no file-sharing support) it downloads each file individually
   // to the Downloads folder, one after another.
   const downloadAllPhotos = useCallback(async (card, scopePhotos, addonPhotos) => {
-    const cleanName = card.cn.replace(/[^a-z0-9_\- ]/gi, "_");
+    // Same client-named files as every other download (photoFileName).
     const all = [
-      ...scopePhotos.map((p, i) => ({ p, name: `${cleanName}_scope_${String(i + 1).padStart(2, "0")}.jpg` })),
-      ...addonPhotos.map((p, i) => ({ p, name: `${cleanName}_addon_${String(i + 1).padStart(2, "0")}.jpg` })),
+      ...scopePhotos.map((p, i) => ({ p, name: photoFileName(card.cn, p, i + 1) })),
+      ...addonPhotos.map((p, i) => ({ p, name: photoFileName(card.cn, p, scopePhotos.length + i + 1) })),
     ].filter(x => x.p.dataUrl || x.p.url);
     if (!all.length) return;
 

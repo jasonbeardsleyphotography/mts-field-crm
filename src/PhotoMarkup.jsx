@@ -828,7 +828,7 @@ export default function PhotoMarkup({
       if (!blob) return;
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = blobUrl; a.download = `photo_markup_${Date.now()}.jpg`;
+      a.href = blobUrl; a.download = shareName;   // the client-named file, like every other download
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
     }, "image/jpeg", 0.9);

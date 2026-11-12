@@ -7,7 +7,7 @@ import { loadFieldFromDrive, queueFieldDriveSync } from "./driveSync";
 import { loadField, peekField, primeField, mergeField, updateField, saveFieldSync, getFieldSlim, getDirtyFieldIds } from "./fieldStore";
 import { loadPipeline } from "./Pipeline";
 import { incUpload, decUpload } from "./uploadStatus";
-import { markStopForPhotoSync, lastNameOf } from "./photoSync";
+import { markStopForPhotoSync, photoFileName } from "./photoSync";
 import { downscaleDataUrl, newPhotoId, photoKey, PHOTO_MAX_DIM, PHOTO_QUALITY, makeThumb, thumbFromDataUrl, tileSrc } from "./imageUtils";
 import { startGeoWarm, stopGeoWarm, getCurrentGeo } from "./geoCapture";
 import { buildShareUrl, buildStreamUrl } from "./driveUpload";
@@ -316,22 +316,19 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
     if (shareNoteTimer.current) clearTimeout(shareNoteTimer.current);
     shareNoteTimer.current = setTimeout(() => setShareNote(null), ms);
   };
-  const shareFileName = (n) => {
-    const last = lastNameOf(s.cn) || "Photo";
-    const d = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }).replace(/\//g, "-");
-    return `${last} ${d} ${String(n).padStart(2, "0")}.jpg`;
-  };
+  // Same name on every device and every download path (see photoFileName).
+  const shareFileName = (n, p) => photoFileName(s.cn, p, n);
   const sharePhoto = async (p, n, key) => {
     const k = photoKey(p);
     let file = shareFileCache.current.get(k);
     if (!file && p.dataUrl) {
-      try { file = dataUrlToFile(p.dataUrl, shareFileName(n)); } catch {}
+      try { file = dataUrlToFile(p.dataUrl, shareFileName(n, p)); } catch {}
     }
     if (!file) {
       setDlSet(set => new Set([...set, key]));
       try {
         const blob = await _fetchPhotoBlob(p, token);
-        file = new File([blob], shareFileName(n), { type: blob.type || "image/jpeg" });
+        file = new File([blob], shareFileName(n, p), { type: blob.type || "image/jpeg" });
         shareFileCache.current.set(k, file);
       } catch (e) {
         console.warn("Photo share: could not load photo", e);
@@ -1376,7 +1373,7 @@ export default function OnsiteWindow({ stop, onBack, onDone, sendToRealWorkOnDon
           onNext={(dataUrl, hasEdits) => { if (hasEdits) saveMarkupOnly(dataUrl); setMarkupIdx(i => i + 1); }}
           // Same opt-out flag the card's pin button writes, so flipping it here
           // and flipping it there are the one setting.
-          shareName={shareFileName(markupIdx + 1)}
+          shareName={shareFileName(markupIdx + 1, photos[markupIdx])}
           onPlan={!photos[markupIdx]?.planOff}
           onTogglePlan={() => togglePhotoOnPlan(markupSection, markupIdx)}
           // Every photo in this section, so you can jump to the fourth one
@@ -1920,7 +1917,7 @@ ${combined}`);
                   <button onClick={e=>{e.stopPropagation();removeScopePhoto(i);}} style={{position:"absolute",top:4,right:4,width:24,height:24,borderRadius:12,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={12} color="#ff6666"/></button>
                   <div style={{position:"absolute",bottom:4,left:4,display:"flex",gap:4}}>
                     <div onClick={()=>{setMarkupIdx(i);setMarkupSection("scope");}} style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",cursor:"pointer"}}><IconPen size={12} color="#ccc"/></div>
-                    <button onClick={e=>{e.stopPropagation(); if (prefersShareSheet()) sharePhoto(p,i+1,`scope_${i}`); else downloadPhoto(p,`scope_${i+1}.jpg`,`scope_${i}`);}} disabled={dlSet.has(`scope_${i}`)} title="Download photo" style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`scope_${i}`)?0.5:1}}><IconDownload size={13} color="#ccc"/></button>
+                    <button onClick={e=>{e.stopPropagation(); if (prefersShareSheet()) sharePhoto(p,i+1,`scope_${i}`); else downloadPhoto(p,shareFileName(i+1, p),`scope_${i}`);}} disabled={dlSet.has(`scope_${i}`)} title="Download photo" style={{padding:"5px 10px",borderRadius:6,background:"rgba(0,0,0,.7)",border:"none",cursor:"pointer",opacity:dlSet.has(`scope_${i}`)?0.5:1}}><IconDownload size={13} color="#ccc"/></button>
                     {/* On/off for the exported Site Plan */}
                     <button onClick={e=>{e.stopPropagation();togglePhotoOnPlan("scope", i);}}
                       title={p.planOff ? "Not on the site plan — tap to include" : "On the site plan — tap to leave it off"}

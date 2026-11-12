@@ -123,6 +123,19 @@ export function lastNameOf(full) {
   }
   return clean;
 }
+/** The name every photo download and upload uses: the client's last name, the
+ *  date the photo was taken, and its number on the card — "Wood 06-30-2026 01.jpg". */
+export function photoFileName(cn, p, n, ext = "jpg") {
+  const name = lastNameOf(cn) || "Photo";
+  let datePart = "";
+  try {
+    datePart = " " + new Date(p?.ts || Date.now())
+      .toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
+      .replace(/\//g, "-");
+  } catch {}
+  return `${name}${datePart} ${String(n).padStart(2, "0")}.${ext}`;
+}
+
 function buildPhotoFilename(data, p, seq, ext) {
   // Last name + the date the photo was taken, e.g. "Wood 06-30-2026 01.jpg".
   // Naming happens at UPLOAD time, and an already-uploaded photo is skipped
