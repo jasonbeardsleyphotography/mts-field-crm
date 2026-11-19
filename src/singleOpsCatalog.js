@@ -833,3 +833,7 @@ export const SINGLEOPS_TEMPLATES = {
     "LC Pesticide Free",
   ],
 };
+
+/** SingleOps' global search for a job number — opens straight onto the job. */
+export const singleOpsJobUrl = (jn) =>
+  `https://app.singleops.com/search/full_global_search?search_string=${encodeURIComponent(String(jn || "").trim())}`;

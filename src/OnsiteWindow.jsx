@@ -54,11 +54,10 @@ import { dataUrlToFile, sharePhotoFile, prefersShareSheet, copyPhotoToClipboard 
 import { isSendReady } from "./realwork";
 import { isIphoneVideoReady, runIphoneVideo, fmtCaptured } from "./iphoneVideo";
 import IphoneVideoSetup from "./IphoneVideoSetup";
-import { SINGLEOPS_ITEMS, SINGLEOPS_JOB_TAGS, SINGLEOPS_JOB_TAG_GROUPS, SINGLEOPS_JOB_TAG_COLORS, jobTagColor, SINGLEOPS_TEMPLATES } from "./singleOpsCatalog";
+import { SINGLEOPS_ITEMS, SINGLEOPS_JOB_TAGS, SINGLEOPS_JOB_TAG_GROUPS, SINGLEOPS_JOB_TAG_COLORS, jobTagColor, SINGLEOPS_TEMPLATES, singleOpsJobUrl } from "./singleOpsCatalog";
 import { IconArrowLeft, IconRefresh, IconCamera, IconImage, IconDownload, IconPen, IconEraser, IconSparkles, IconVideo, IconMail, IconX, IconZap, IconClipboard, IconPhone, IconMessageSquare, IconNavigation, IconCheckCircle, IconSend, IconNoSymbol, IconMapPin } from "./icons";
 
 // AI requests go through /api/ai, so the Gemini key never reaches this page.
-const SINGLEOPS_URL = "https://app.singleops.com/";
 // The Line Items panel is switched off but kept: flip this back to true to show
 // it again. Nothing about how line items are stored or synced depends on it.
 const SHOW_LINE_ITEMS = false;
@@ -1854,7 +1853,7 @@ ${combined}`);
               Site Map panel below, on one map instead of two. */}
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginTop:10}}>
             {s.jn ? (
-              <button onClick={() => { navigator.clipboard?.writeText(s.jn).catch(() => {}); window.open(SINGLEOPS_URL, "_blank"); }} title="Copy job # and open SingleOps" style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(96,181,255,.12)",border:"1px solid rgba(96,181,255,.4)",color:"#7ec4ff",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer",flexShrink:0,boxShadow:"0 0 12px rgba(96,181,255,.35)"}}>
+              <button onClick={() => { if (s.cn) navigator.clipboard?.writeText(s.cn).catch(() => {}); window.open(singleOpsJobUrl(s.jn), "_blank", "noopener"); }} title="Open this job in SingleOps (copies the client's name)" style={{display:"flex",alignItems:"center",gap:5,padding:"6px 14px",borderRadius:8,background:"rgba(96,181,255,.12)",border:"1px solid rgba(96,181,255,.4)",color:"#7ec4ff",fontSize:11,fontWeight:700,fontFamily:F,letterSpacing:0.5,textTransform:"uppercase",cursor:"pointer",flexShrink:0,boxShadow:"0 0 12px rgba(96,181,255,.35)"}}>
                 <IconClipboard size={13} color="#7ec4ff"/>#{s.jn}
               </button>
             ) : <div />}

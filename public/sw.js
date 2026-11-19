@@ -1,3 +1,4 @@
+// v97: job # button opens SingleOps' search for that job; copies the client name.
 // v96: every photo download is named after the client (laptop too).
 // v95: template dropdowns use the body font, left-aligned.
 // v94: TEMPLATE = three compact dropdowns in a row; picks listed below.
@@ -139,7 +140,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v96";
+const CACHE = "mts-field-v97";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

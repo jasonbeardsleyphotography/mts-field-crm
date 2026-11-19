@@ -111,8 +111,6 @@ const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
 const FIVE_DAYS  = 5 * 24 * 60 * 60 * 1000;
 const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
 
-// SingleOps — open the base URL and copy the job number to clipboard for quick paste
-const SINGLEOPS_URL = "https://app.singleops.com/";
 
 const EMAIL_TEMPLATES = [
   { id: "checkin", label: "Quick check-in", subject: "Quick question about your estimate — {myName} @ Monster Tree",
@@ -646,13 +644,6 @@ export default function Pipeline({ onSwitchToRoute, search = "", onCloudSync, to
     const ago = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : mins < 1440 ? `${Math.floor(mins/60)}h ago` : `${Math.floor(mins/1440)}d ago`;
     const kind = lc.kind === "sms" ? "Texted" : lc.kind === "call" ? "Called" : lc.kind === "email" ? "Emailed" : "Contacted";
     return `${kind} · ${ago}`;
-  };
-
-  // Open SingleOps and copy job number to clipboard for quick paste
-  const openSingleOps = (jn) => {
-    if (!jn) return;
-    navigator.clipboard?.writeText(jn).catch(() => {});
-    window.open(SINGLEOPS_URL, "_blank");
   };
 
   // Desktop drag
