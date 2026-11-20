@@ -4,8 +4,23 @@
    Tries the Google Maps app first (comgooglemaps://). If the app isn't
    installed — a new user's phone, or any laptop/Chromebook — that link does
    nothing at all, so if the page is still in front a moment later, open
-   Google Maps on the web instead, which works everywhere.
+   Google Maps on the web instead, which works everywhere. On an iPhone/iPad,
+   Apple Maps can be chosen instead (Settings → Account & connection check).
    ═══════════════════════════════════════════════════════════════════════════ */
+
+// Which app Navigate opens on an iPhone/iPad: "google" (default) or "apple".
+// Per device; set on Settings → Account & connection check.
+const NAV_KEY = "mts-nav-app";
+export function getNavApp() {
+  try { return localStorage.getItem(NAV_KEY) === "apple" ? "apple" : "google"; } catch { return "google"; }
+}
+export function setNavApp(app) {
+  try { app === "apple" ? localStorage.setItem(NAV_KEY, "apple") : localStorage.removeItem(NAV_KEY); } catch {}
+}
+const isApple = () => {
+  try { return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1); }
+  catch { return false; }
+};
 
 const isTouchPhone = () => {
   try { return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent); } catch { return false; }
@@ -21,6 +36,13 @@ export function openDirections(addrs) {
   const web = `https://www.google.com/maps/dir/?api=1&destination=${dest}${waypoints ? `&waypoints=${waypoints}` : ""}&travelmode=driving`;
 
   if (!isTouchPhone()) { window.open(web, "_blank", "noopener"); return; }
+
+  // Apple Maps (iPhone/iPad, when chosen): always installed, so no fallback
+  // needed. Its links take one destination; the trip starts where you are.
+  if (getNavApp() === "apple" && isApple()) {
+    window.location.href = `https://maps.apple.com/?daddr=${dest}&dirflg=d`;
+    return;
+  }
 
   const app = list.length === 1
     ? `comgooglemaps://?daddr=${dest}&directionsmode=driving`

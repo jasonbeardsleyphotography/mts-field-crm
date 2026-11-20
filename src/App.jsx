@@ -2379,14 +2379,6 @@ export default function App() {
     }
   };
 
-  // ── NAV ALL — with waypoints + current location as origin ──────────────
-  const navAll = useCallback(() => {
-    const addrs = mapStops.filter(s=>s.addr).map(s=>s.addr);
-    if (!addrs.length) return;
-    if (addrs.length === 1) { navigate(addrs[0]); return; }
-    openDirections(addrs);   // starts from the phone's current location
-  }, [mapStops]);
-  const hasStopsWithAddr = mapStops.some(s => s.addr);
 
   // With a long day list, plain dates get hard to scan — call out today and
   // tomorrow by name, and mark the start of each new week so the list reads

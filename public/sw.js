@@ -1,3 +1,4 @@
+// v99: Navigation app setting (Google / Apple Maps) on Account & connection check; removed unused "navigate all stops" code.
 // v98: Settings → Route calendar (choose which calendar(s) the route reads).
 // v97: job # button opens SingleOps' search for that job; copies the client name.
 // v96: every photo download is named after the client (laptop too).
@@ -141,7 +142,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v98";
+const CACHE = "mts-field-v99";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

@@ -3,6 +3,7 @@ import { getDriveStorage } from "./driveSync";
 import { IconX, IconRefresh } from "./icons";
 import { getMyName } from "./myName";
 import { getRouteCalendars, listCalendarsWithToday } from "./calendarSource";
+import { getNavApp, setNavApp } from "./openMaps";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Account & connection check
@@ -123,6 +124,8 @@ async function runChecks(token, onServerSignIn, onPickCalendar) {
 export default function AccountCheck({ token, onClose, onServerSignIn, onPickCalendar }) {
   const [rows, setRows] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [navApp, setNavAppState] = useState(getNavApp);
+  const chooseNav = (app) => { setNavApp(app); setNavAppState(app); };
 
   const run = useCallback(async () => {
     setBusy(true);
@@ -190,9 +193,30 @@ export default function AccountCheck({ token, onClose, onServerSignIn, onPickCal
             </div>
           );
         })}
+        {/* Navigation app — the one setting on this screen (per device). */}
+        <div style={{ padding: "14px 0", borderBottom: "1px solid #141a28" }}>
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: "#e6ecf5" }}>Navigation app</div>
+          <div style={{ fontSize: 12.5, color: "#a9b8cc", marginTop: 3, lineHeight: 1.45 }}>
+            Which app the Navigate buttons open on this phone. On a computer, Google Maps opens in the browser.
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            {[["google", "Google Maps"], ["apple", "Apple Maps"]].map(([id, label]) => {
+              const on = navApp === id;
+              return (
+                <button key={id} onClick={() => chooseNav(id)} style={{
+                  flex: 1, padding: "11px 0", borderRadius: 10, cursor: "pointer",
+                  background: on ? "rgba(16,185,129,.15)" : "transparent",
+                  border: `1px solid ${on ? "rgba(16,185,129,.6)" : "#253049"}`,
+                  color: on ? "#34d399" : "#a9b8cc", fontSize: 13, fontWeight: 800,
+                }}>{on ? "✓ " : ""}{label}</button>
+              );
+            })}
+          </div>
+        </div>
+
         {rows && (
           <div style={{ fontSize: 11.5, color: "#818fa4", lineHeight: 1.5, padding: "14px 0" }}>
-            Checks only read — nothing is created or changed. Each person signs in with
+            The checks only read — nothing is created or changed. Each person signs in with
             their own Google account and sees their own calendar, Drive and contacts.
           </div>
         )}
