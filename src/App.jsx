@@ -31,8 +31,10 @@ import Linkify from "./Linkify";
 import AddStopModal from "./AddStopModal";
 import AccountCheck from "./AccountCheck";
 import MediaRecover from "./MediaRecover";
+import RouteCalendarPicker from "./RouteCalendarPicker";
 import { startPrefsBackup } from "./devicePrefs";
 import { openDirections } from "./openMaps";
+import { getRouteCalendars, calendarBase, rememberEventCalendar, fetchCalendarEvent, primaryRouteCalendar } from "./calendarSource";
 import { getMyName, setMyName, ensureMyName } from "./myName";
 import { openAccountGate, closeAccountGate } from "./accountGate";
 import { buildClientIndex } from "./clientIndex";
@@ -51,7 +53,6 @@ import { flog, freezeReport } from "./freezeLog";
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-const CAL_BASE = "https://www.googleapis.com/calendar/v3/calendars/primary";
 // NOTE: no youtube scope. The app uploads videos to Drive now (not YouTube),
 // so youtube is dead weight — and Google rejects youtube + drive.file in the
 // same authorization request ("scopes that cannot be requested together",
@@ -76,21 +77,38 @@ function getBusinessDays(n, includeWeekends = false) {
 }
 
 // ── GOOGLE CALENDAR API ──────────────────────────────────────────────────────
+// Reads every calendar chosen in Settings → Route calendar (the primary one by
+// default), remembers which calendar each event came from (so changes go back
+// to it), and returns them merged in time order.
 async function fetchEvents(token, dayStart, dayEnd) {
-  const url = `${CAL_BASE}/events?timeMin=${dayStart.toISOString()}&timeMax=${dayEnd.toISOString()}&singleEvents=true&orderBy=startTime&maxResults=250&timeZone=America/New_York`;
-  // Give up on a request after 20s: on a weak signal it could otherwise hang
-  // for minutes behind the full-screen "Loading…" (the caller retries).
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 20000);
-  let res;
-  try { res = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: ac.signal }); }
-  finally { clearTimeout(timer); }
-  if (!res.ok) {
-    const err = new Error(`API ${res.status}`);
-    err.status = res.status;
-    throw err;
+  const all = [];
+  const seen = new Set();
+  for (const calId of getRouteCalendars()) {
+    const url = `${calendarBase(calId)}/events?timeMin=${dayStart.toISOString()}&timeMax=${dayEnd.toISOString()}&singleEvents=true&orderBy=startTime&maxResults=250&timeZone=America/New_York`;
+    // Give up on a request after 20s: on a weak signal it could otherwise hang
+    // for minutes behind the full-screen "Loading…" (the caller retries).
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 20000);
+    let res;
+    try { res = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: ac.signal }); }
+    finally { clearTimeout(timer); }
+    if (!res.ok) {
+      // A chosen calendar that's gone (unshared, deleted) mustn't blank the
+      // whole route — skip it, unless it's the only one.
+      if ((res.status === 404 || res.status === 403) && getRouteCalendars().length > 1) continue;
+      const err = new Error(`API ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
+    for (const ev of ((await res.json()).items || [])) {
+      if (!ev?.id || seen.has(ev.id)) continue;
+      seen.add(ev.id);
+      rememberEventCalendar(ev.id, calId);
+      all.push(ev);
+    }
   }
-  return ((await res.json()).items || []);
+  const t = (ev) => new Date(ev.start?.dateTime || ev.start?.date || 0).getTime();
+  return all.sort((a, b) => t(a) - t(b));
 }
 
 // ── LOCALSTORAGE HELPERS ─────────────────────────────────────────────────────
@@ -1795,9 +1813,9 @@ export default function App() {
     // Grey out the event in Google Calendar for TDs with real event ids
     const stop = stopMap[id];
     if (token && id && !id.startsWith("local-") && stop && !stop.isTask) {
-      fetch(`${CAL_BASE}/events/${encodeURIComponent(id)}`, {
+      fetchCalendarEvent(token, id, {
         method: "PATCH",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ colorId: "8" }),
       }).catch(e => console.warn("Calendar color push (delete TD) failed:", e));
     }
@@ -1816,6 +1834,7 @@ export default function App() {
   const [driveCleanupOpen, setDriveCleanupOpen] = useState(false);
   const [accountCheckOpen, setAccountCheckOpen] = useState(false);
   const [mediaRecoverOpen, setMediaRecoverOpen] = useState(false);
+  const [routeCalOpen, setRouteCalOpen] = useState(false);
   const [freezeReportText, setFreezeReportText] = useState(null);
   // Freeze report: note when the whole app is redrawing unusually often.
   const _renders = useRef(0);
@@ -2033,9 +2052,9 @@ export default function App() {
 
     // Push to Google
     try {
-      const res = await fetch(`${CAL_BASE}/events/${encodeURIComponent(id)}`, {
+      const res = await fetchCalendarEvent(token, id, {
         method: "PATCH",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patchBody),
       });
       if (!res.ok) {
@@ -2878,6 +2897,11 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
                 label="Account & connection check"
                 sub="Test sign-in, Calendar, Drive and Contacts for this account"
                 onClick={()=>{ setAccountCheckOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#38bdf8"
+                icon={<IconCalendar size={17} color="#38bdf8"/>}
+                label="Route calendar"
+                sub={getRouteCalendars().length === 1 && getRouteCalendars()[0] === "primary" ? "Reading this account's main calendar — tap to choose another" : `Reading ${getRouteCalendars().length} chosen calendar${getRouteCalendars().length === 1 ? "" : "s"} — tap to change`}
+                onClick={()=>{ setRouteCalOpen(true); setSettingsOpen(false); }} />
               <Row accent="#FF8A80"
                 icon={<IconClipboard size={17} color="#FF8A80"/>}
                 label="Copy freeze report"
@@ -3030,7 +3054,8 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
             if (token) {
               (async () => {
                 try {
-                  const res = await fetch(`${CAL_BASE}/events`, {
+                  // New stops go on the route's (first) chosen calendar.
+                  const res = await fetch(`${calendarBase(primaryRouteCalendar())}/events`, {
                     method: "POST",
                     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
                     body: JSON.stringify({
@@ -3257,12 +3282,17 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
         </div>
       )}
 
+      {routeCalOpen && (
+        <RouteCalendarPicker token={token} onClose={() => setRouteCalOpen(false)} onSaved={() => load(true)} />
+      )}
+
       {mediaRecoverOpen && (
         <MediaRecover token={token} onClose={() => setMediaRecoverOpen(false)} />
       )}
 
       {accountCheckOpen && (
-        <AccountCheck token={token} onServerSignIn={serverSignIn} onClose={() => setAccountCheckOpen(false)} />
+        <AccountCheck token={token} onServerSignIn={serverSignIn} onClose={() => setAccountCheckOpen(false)}
+          onPickCalendar={() => { setAccountCheckOpen(false); setRouteCalOpen(true); }} />
       )}
 
       {iphoneSetupOpen && (

@@ -17,7 +17,10 @@ tell him something is "safe" unless you checked.
 - Accounts: sign-in is Google. Server-side approved list is `netlify/lib/accounts.mjs` (SHA-256 of lowercase
   emails + optional `ALLOWED_GOOGLE_EMAILS` env var). The Google Cloud OAuth consent screen is in
   **Testing** mode: every new user must also be added under Test users, and refresh tokens expire after 7 days.
-- The route comes from the signed-in user's own primary Google Calendar. Photos/notes live in that user's Drive
+- The route comes from the calendar(s) chosen in Settings → Route calendar (`src/calendarSource.js`, per device,
+  localStorage `mts-route-calendars`; default = the account's primary calendar). Writes to an event (colour, move)
+  go to the calendar it was loaded from (`fetchCalendarEvent`); new stops go on the first chosen calendar.
+  Account identity still uses `calendars/primary` (its id is the email). Photos/notes live in that user's Drive
   (`drive.file` scope, folder "MTS Field"). Contacts go to that user's Google Contacts.
 
 ## Hard-won rules (each one came from a real bug)

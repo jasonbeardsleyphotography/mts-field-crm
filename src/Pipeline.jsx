@@ -46,6 +46,7 @@ import { listAll as listAllQueue, onQueueChange } from "./videoQueue";
 import { saveClientContact } from "./googleContacts";
 import { fillMyName } from "./myName";
 import { photoFileName } from "./photoSync";
+import { fetchCalendarEvent } from "./calendarSource";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Pipeline
@@ -87,11 +88,9 @@ async function pushCalendarColor(eventId, stage, token) {
   const colorId = STAGE_CAL_COLOR[stage];
   if (!colorId) return;
   try {
-    await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
-      { method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ colorId }) }
-    );
+    // On whichever chosen calendar the appointment lives (see calendarSource).
+    await fetchCalendarEvent(token, eventId,
+      { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ colorId }) });
   } catch(e) { console.warn("Calendar color push failed:", e); }
 }
 

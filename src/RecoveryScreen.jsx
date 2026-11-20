@@ -15,7 +15,7 @@ import {
    (photos, notes) straight from Drive regardless of age or pipeline status.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const CAL_BASE = "https://www.googleapis.com/calendar/v3/calendars/primary";
+import { getRouteCalendars, calendarBase } from "./calendarSource";
 
 // ── HELPERS ──────────────────────────────────────────────────────────────────
 function formatDate(d) {
@@ -299,21 +299,25 @@ export default function RecoveryScreen({ token, onBack }) {
     setError(null);
     setResults(null);
     try {
-      let url;
+      let query_;
       if (mode === "search") {
         // Full-text search across all calendar events (past and future).
         // No timeMin = no lower bound, so old events are included.
-        url = `${CAL_BASE}/events?q=${encodeURIComponent(query.trim())}&maxResults=50&singleEvents=true`;
+        query_ = `q=${encodeURIComponent(query.trim())}&maxResults=50&singleEvents=true`;
       } else {
         // All events on a specific calendar date
         const d = new Date(date + "T12:00:00"); // noon to avoid TZ edge
         const dayStart = new Date(d); dayStart.setHours(0, 0, 0, 0);
         const dayEnd   = new Date(d); dayEnd.setHours(23, 59, 59, 999);
-        url = `${CAL_BASE}/events?timeMin=${dayStart.toISOString()}&timeMax=${dayEnd.toISOString()}&singleEvents=true&orderBy=startTime&maxResults=100`;
+        query_ = `timeMin=${dayStart.toISOString()}&timeMax=${dayEnd.toISOString()}&singleEvents=true&orderBy=startTime&maxResults=100`;
       }
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) throw new Error(`Calendar API ${res.status} — try signing out and back in`);
-      const data = await res.json();
+      // Every calendar the route reads (Settings → Route calendar).
+      const data = { items: [] };
+      for (const calId of getRouteCalendars()) {
+        const res = await fetch(`${calendarBase(calId)}/events?${query_}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) throw new Error(`Calendar API ${res.status} — try signing out and back in`);
+        data.items.push(...((await res.json()).items || []));
+      }
       const stops = (data.items || [])
         .map(ev => {
           const p = parseEvent(ev);

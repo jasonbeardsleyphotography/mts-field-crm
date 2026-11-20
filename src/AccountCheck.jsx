@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { getDriveStorage } from "./driveSync";
 import { IconX, IconRefresh } from "./icons";
 import { getMyName } from "./myName";
+import { getRouteCalendars, listCalendarsWithToday } from "./calendarSource";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS — Account & connection check
@@ -26,7 +27,7 @@ function freshToken(fallback) {
 
 const gb = (n) => (n / 1024 ** 3).toFixed(n >= 10 * 1024 ** 3 ? 0 : 1) + " GB";
 
-async function runChecks(token, onServerSignIn) {
+async function runChecks(token, onServerSignIn, onPickCalendar) {
   const tok = freshToken(token);
   const auth = { headers: { Authorization: `Bearer ${tok}` } };
   const out = [];
@@ -57,19 +58,26 @@ async function runChecks(token, onServerSignIn) {
       onServerSignIn ? { label: "Turn on lasting sign-in", run: onServerSignIn } : null);
   } catch { add("Stays signed in", "warn", "Couldn't reach the app's server — check your signal."); }
 
-  // 3. Calendar (where the route comes from)
+  // 3. Calendar(s) the route reads — and, if they're empty today, whether
+  //    another calendar on this account has the visits.
   try {
-    const s = new Date(); s.setHours(0, 0, 0, 0);
-    const e = new Date(); e.setHours(23, 59, 59, 999);
-    const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&timeMin=${s.toISOString()}&timeMax=${e.toISOString()}&maxResults=250&fields=items(id)`, auth);
-    if (!r.ok) add("Calendar", "bad", `Couldn't read this account's calendar (error ${r.status}). Sign out and back in, and allow Calendar access.`);
-    else {
-      const n = ((await r.json())?.items || []).length;
-      add("Calendar", n ? "ok" : "warn", n
-        ? `${n} event${n === 1 ? "" : "s"} on this account's calendar today.`
-        : "Nothing on this account's calendar today. The route reads THIS account's own calendar — if visits are booked on a different account, they won't show here.");
+    const cals = await listCalendarsWithToday(tok);
+    const route = getRouteCalendars();
+    const onRoute = cals.filter(c => route.includes(c.id));
+    const routeToday = onRoute.reduce((n, c) => n + (c.today || 0), 0);
+    const names = onRoute.map(c => c.primary ? `${c.name} (main)` : c.name).join(", ") || "main calendar";
+    const others = cals.filter(c => !route.includes(c.id) && c.today > 0);
+    const pick = onPickCalendar ? { label: "Choose route calendar", run: onPickCalendar } : null;
+    if (routeToday) {
+      add("Calendar", "ok", `${routeToday} event${routeToday === 1 ? "" : "s"} today on the route's calendar: ${names}.`);
+    } else if (others.length) {
+      add("Calendar", "warn",
+        `Nothing today on the route's calendar (${names}), but ${others.map(c => `"${c.name}" has ${c.today}`).join(", ")} today. If your visits are booked there, choose it as the route calendar.`, pick);
+    } else {
+      add("Calendar", "warn",
+        `Nothing today on the route's calendar (${names}) or any other calendar on this account. If visits are booked on a different Google account, share that calendar with this account, then choose it here.`, pick);
     }
-  } catch { add("Calendar", "bad", "Couldn't reach Google Calendar — check your signal."); }
+  } catch { add("Calendar", "bad", "Couldn't read this account's calendars. Sign out and back in, and allow Calendar access."); }
 
   // 4. Drive (photos, notes, sync between devices)
   try {
@@ -112,13 +120,13 @@ async function runChecks(token, onServerSignIn) {
   return out;
 }
 
-export default function AccountCheck({ token, onClose, onServerSignIn }) {
+export default function AccountCheck({ token, onClose, onServerSignIn, onPickCalendar }) {
   const [rows, setRows] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const run = useCallback(async () => {
     setBusy(true);
-    try { setRows(await runChecks(token, onServerSignIn)); }
+    try { setRows(await runChecks(token, onServerSignIn, onPickCalendar)); }
     finally { setBusy(false); }
   }, [token, onServerSignIn]);
 
