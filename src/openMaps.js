@@ -37,16 +37,24 @@ export function openDirections(addrs) {
 
   if (!isTouchPhone()) { window.open(web, "_blank", "noopener"); return; }
 
-  // Apple Maps (iPhone/iPad, when chosen): always installed, so no fallback
-  // needed. Its links take one destination; the trip starts where you are.
+  // Apple Maps (iPhone/iPad, when chosen). The maps:// link opens the Maps
+  // app itself; an https://maps.apple.com link from the Home Screen app opened
+  // a browser page instead. Its links take one destination; the trip starts
+  // where you are. Maps comes with every iPhone, so no web fallback (one
+  // could fire while iOS is still asking "Open in Maps?").
   if (getNavApp() === "apple" && isApple()) {
-    window.location.href = `https://maps.apple.com/?daddr=${dest}&dirflg=d`;
+    window.location.href = `maps://?daddr=${dest}&dirflg=d`;
     return;
   }
 
-  const app = list.length === 1
+  tryApp(list.length === 1
     ? `comgooglemaps://?daddr=${dest}&directionsmode=driving`
-    : `comgooglemaps://?saddr=&daddr=${enc.join("+to:")}&directionsmode=driving`;
+    : `comgooglemaps://?saddr=&daddr=${enc.join("+to:")}&directionsmode=driving`, web);
+}
+
+// Open an app link; if the page is still in front 1.5 s later (app not
+// installed), open the web link instead.
+function tryApp(app, web) {
   let left = false;
   const onHide = () => { if (document.visibilityState === "hidden") left = true; };
   document.addEventListener("visibilitychange", onHide);

@@ -1,3 +1,4 @@
+// v102: Apple Maps opens the Maps app (maps://) instead of a browser page.
 // v101: Photos & videos submenu in Settings; account check shows every row at once with spinners.
 // v100: Settings menu tidied — account settings moved into Account & connection check; new Photos & Videos group.
 // v99: Navigation app setting (Google / Apple Maps) on Account & connection check; removed unused "navigate all stops" code.
@@ -144,7 +145,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v101";
+const CACHE = "mts-field-v102";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
