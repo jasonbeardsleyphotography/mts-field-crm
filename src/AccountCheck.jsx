@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { getDriveStorage } from "./driveSync";
 import { IconX, IconRefresh } from "./icons";
-import { getMyName } from "./myName";
+import { getMyName, setMyName } from "./myName";
+import { isShortcutReady, isSendReady } from "./realwork";
+import { isPhoneLike } from "./device";
 import { getRouteCalendars, listCalendarsWithToday } from "./calendarSource";
 import { getNavApp, setNavApp } from "./openMaps";
 
@@ -14,6 +16,8 @@ import { getNavApp, setNavApp } from "./openMaps";
    "it's not syncing" moments after that.
 
    Each check is read-only: nothing here creates, changes or deletes anything.
+   The per-account settings live here too (route calendar, your name, RealWork,
+   weekends, navigation app, duplicate contacts) so each is next to its check.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const F = "'Oswald',sans-serif";
@@ -28,11 +32,12 @@ function freshToken(fallback) {
 
 const gb = (n) => (n / 1024 ** 3).toFixed(n >= 10 * 1024 ** 3 ? 0 : 1) + " GB";
 
-async function runChecks(token, onServerSignIn, onPickCalendar) {
+async function runChecks(token, h) {
+  const { onServerSignIn, onPickCalendar, onEditName, onRealWork, onContactCleanup } = h;
   const tok = freshToken(token);
   const auth = { headers: { Authorization: `Bearer ${tok}` } };
   const out = [];
-  const add = (label, state, detail, action) => out.push({ label, state, detail, action });
+  const add = (label, state, detail, action) => out.push({ label, state, detail, actions: [action].flat().filter(Boolean) });
 
   if (!tok) {
     add("Signed in", "bad", "No Google sign-in on this device. Sign in first, then run this again.");
@@ -68,9 +73,9 @@ async function runChecks(token, onServerSignIn, onPickCalendar) {
     const routeToday = onRoute.reduce((n, c) => n + (c.today || 0), 0);
     const names = onRoute.map(c => c.primary ? `${c.name} (main)` : c.name).join(", ") || "main calendar";
     const others = cals.filter(c => !route.includes(c.id) && c.today > 0);
-    const pick = onPickCalendar ? { label: "Choose route calendar", run: onPickCalendar } : null;
+    const pick = onPickCalendar ? { label: "Choose route calendar", run: onPickCalendar } : null;  // always offered, even when it works
     if (routeToday) {
-      add("Calendar", "ok", `${routeToday} event${routeToday === 1 ? "" : "s"} today on the route's calendar: ${names}.`);
+      add("Calendar", "ok", `${routeToday} event${routeToday === 1 ? "" : "s"} today on the route's calendar: ${names}.`, pick);
     } else if (others.length) {
       add("Calendar", "warn",
         `Nothing today on the route's calendar (${names}), but ${others.map(c => `"${c.name}" has ${c.today}`).join(", ")} today. If your visits are booked there, choose it as the route calendar.`, pick);
@@ -78,7 +83,7 @@ async function runChecks(token, onServerSignIn, onPickCalendar) {
       add("Calendar", "warn",
         `Nothing today on the route's calendar (${names}) or any other calendar on this account. If visits are booked on a different Google account, share that calendar with this account, then choose it here.`, pick);
     }
-  } catch { add("Calendar", "bad", "Couldn't read this account's calendars. Sign out and back in, and allow Calendar access."); }
+  } catch { add("Calendar", "bad", "Couldn't read this account's calendars. Sign out and back in, and allow Calendar access.", onPickCalendar ? { label: "Choose route calendar", run: onPickCalendar } : null); }
 
   // 4. Drive (photos, notes, sync between devices)
   try {
@@ -90,18 +95,32 @@ async function runChecks(token, onServerSignIn, onPickCalendar) {
   } catch { add("Google Drive", "bad", "Couldn't reach Google Drive. Sign out and back in, and allow Drive access."); }
 
   // 5. Contacts (caller ID for clients)
-  try {
-    const r = await fetch("https://people.googleapis.com/v1/people/me/connections?pageSize=1&personFields=names", auth);
-    add("Contacts", r.ok ? "ok" : "bad", r.ok
-      ? "Connected — new clients are added to this account's contacts."
-      : `Couldn't read contacts (error ${r.status}). Sign out and back in, and allow Contacts access.`);
-  } catch { add("Contacts", "bad", "Couldn't reach Google Contacts — check your signal."); }
+  {
+    const dup = onContactCleanup ? { label: "Remove duplicate contacts", run: onContactCleanup } : null;
+    try {
+      const r = await fetch("https://people.googleapis.com/v1/people/me/connections?pageSize=1&personFields=names", auth);
+      add("Contacts", r.ok ? "ok" : "bad", r.ok
+        ? "Connected — new clients are added to this account's contacts."
+        : `Couldn't read contacts (error ${r.status}). Sign out and back in, and allow Contacts access.`, r.ok ? dup : null);
+    } catch { add("Contacts", "bad", "Couldn't reach Google Contacts — check your signal."); }
+  }
 
   // 6. Name used in messages to customers
   {
     const n = getMyName();
     add("Your name in customer texts", n ? "ok" : "warn",
-      n ? `Texts and follow-up emails are signed “${n}”.` : "Not set — texts would say “your Monster Tree estimator”. Set it in Settings → Your name.");
+      n ? `Texts and follow-up emails are signed “${n}”.` : "Not set — texts would say “your Monster Tree estimator”.",
+      onEditName ? { label: n ? "Change name" : "Set your name", run: onEditName } : null);
+  }
+
+  // 6b. RealWork app hand-off (iPhone Shortcuts) — a phone step.
+  {
+    const open = isShortcutReady(), send = isSendReady();
+    const act = onRealWork ? { label: open ? "RealWork settings" : "Set up RealWork app", run: onRealWork } : null;
+    if (!isPhoneLike()) add("RealWork app", "ok", "Phone only — on a computer, Done goes straight to the next stop.", act);
+    else add("RealWork app", open ? "ok" : "warn",
+      open ? `On — RealWork opens the app, not the browser${send ? ", and photos are sent with it" : ""}.`
+           : "Not set up — RealWork opens in the browser instead of the app.", act);
   }
 
   // 7. Anything stuck on this device?
@@ -121,19 +140,35 @@ async function runChecks(token, onServerSignIn, onPickCalendar) {
   return out;
 }
 
-export default function AccountCheck({ token, onClose, onServerSignIn, onPickCalendar }) {
+export default function AccountCheck({ token, onClose, onServerSignIn, onPickCalendar, onRealWork, onContactCleanup,
+  onNameChanged, includeWeekends, onToggleWeekends, refreshKey }) {
   const [rows, setRows] = useState(null);
   const [busy, setBusy] = useState(false);
   const [navApp, setNavAppState] = useState(getNavApp);
   const chooseNav = (app) => { setNavApp(app); setNavAppState(app); };
 
+  // Latest handlers, so the checks don't re-run every time App re-renders.
+  const h = useRef({});
+  h.current = { onServerSignIn, onPickCalendar, onRealWork, onContactCleanup, onEditName: () => {
+    const n = window.prompt("Your first name, as customers should see it in texts and emails:", getMyName());
+    if (n != null) { setMyName(n); onNameChanged?.(); run(); }
+  } };
+  const wrap = (k) => h.current[k] ? () => h.current[k]() : null;
+  const gen = useRef(0);
   const run = useCallback(async () => {
+    const g = ++gen.current;
     setBusy(true);
-    try { setRows(await runChecks(token, onServerSignIn, onPickCalendar)); }
-    finally { setBusy(false); }
-  }, [token, onServerSignIn]);
+    try {
+      const out = await runChecks(token, {
+        onServerSignIn: wrap("onServerSignIn"), onPickCalendar: wrap("onPickCalendar"), onEditName: wrap("onEditName"),
+        onRealWork: wrap("onRealWork"), onContactCleanup: wrap("onContactCleanup"),
+      });
+      if (g === gen.current) setRows(out);
+    } finally { if (g === gen.current) setBusy(false); }
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { run(); }, [run]);
+  // Runs on open, and again when a screen opened from here closes (refreshKey).
+  useEffect(() => { run(); }, [run, refreshKey]);
 
   const mark = { ok: ["✓", "#10B981"], warn: ["!", "#F6BF26"], bad: ["✕", "#ff6b6b"] };
   const allGood = rows && rows.every(r => r.state === "ok");
@@ -181,19 +216,46 @@ export default function AccountCheck({ token, onClose, onServerSignIn, onPickCal
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: "#e6ecf5" }}>{r.label}</div>
                 <div style={{ fontSize: 12.5, color: "#b2bfd1", marginTop: 3, lineHeight: 1.45, overflowWrap: "anywhere" }}>{r.detail}</div>
-                {r.action && (
-                  <button onClick={r.action.run} style={{
-                    marginTop: 8, padding: "8px 12px", borderRadius: 8,
-                    background: "rgba(26,115,232,.15)", border: "1px solid rgba(26,115,232,.4)",
-                    color: "#7db4ff", fontSize: 11.5, fontWeight: 800, fontFamily: F,
-                    letterSpacing: 0.5, textTransform: "uppercase", cursor: "pointer",
-                  }}>{r.action.label}</button>
+                {r.actions.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                    {r.actions.map((a, j) => (
+                      <button key={j} onClick={a.run} style={{
+                        padding: "8px 12px", borderRadius: 8,
+                        background: "rgba(26,115,232,.15)", border: "1px solid rgba(26,115,232,.4)",
+                        color: "#7db4ff", fontSize: 11.5, fontWeight: 800, fontFamily: F,
+                        letterSpacing: 0.5, textTransform: "uppercase", cursor: "pointer",
+                      }}>{a.label}</button>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>
           );
         })}
-        {/* Navigation app — the one setting on this screen (per device). */}
+        {/* Weekends (per device) */}
+        {onToggleWeekends && (
+          <div style={{ padding: "14px 0", borderBottom: "1px solid #141a28" }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: "#e6ecf5" }}>Weekends</div>
+            <div style={{ fontSize: 12.5, color: "#a9b8cc", marginTop: 3, lineHeight: 1.45 }}>
+              Whether Saturdays and Sundays show in the day picker.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+              {[[false, "Weekdays only"], [true, "Include weekends"]].map(([val, label]) => {
+                const on = !!includeWeekends === val;
+                return (
+                  <button key={label} onClick={() => { if (!on) onToggleWeekends(); }} style={{
+                    flex: 1, padding: "11px 0", borderRadius: 10, cursor: "pointer",
+                    background: on ? "rgba(16,185,129,.15)" : "transparent",
+                    border: `1px solid ${on ? "rgba(16,185,129,.6)" : "#253049"}`,
+                    color: on ? "#34d399" : "#a9b8cc", fontSize: 13, fontWeight: 800,
+                  }}>{on ? "✓ " : ""}{label}</button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Navigation app (per device) */}
         <div style={{ padding: "14px 0", borderBottom: "1px solid #141a28" }}>
           <div style={{ fontSize: 13.5, fontWeight: 700, color: "#e6ecf5" }}>Navigation app</div>
           <div style={{ fontSize: 12.5, color: "#a9b8cc", marginTop: 3, lineHeight: 1.45 }}>
@@ -216,7 +278,7 @@ export default function AccountCheck({ token, onClose, onServerSignIn, onPickCal
 
         {rows && (
           <div style={{ fontSize: 11.5, color: "#818fa4", lineHeight: 1.5, padding: "14px 0" }}>
-            The checks only read — nothing is created or changed. Each person signs in with
+            The checks only read — nothing is created or changed unless you tap a button. Each person signs in with
             their own Google account and sees their own calendar, Drive and contacts.
           </div>
         )}

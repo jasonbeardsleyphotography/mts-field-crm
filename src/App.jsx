@@ -22,7 +22,6 @@ import { isPhoneLike } from "./device";
 import RealWorkSetup from "./RealWorkSetup";
 import IphoneVideoSetup from "./IphoneVideoSetup";
 import { isIphoneVideoReady } from "./iphoneVideo";
-import { isShortcutReady } from "./realwork";
 import NextStopCard from "./NextStopCard";
 import VideoUploads from "./VideoUploads";
 import StoragePanel from "./StoragePanel";
@@ -35,7 +34,7 @@ import RouteCalendarPicker from "./RouteCalendarPicker";
 import { startPrefsBackup } from "./devicePrefs";
 import { openDirections } from "./openMaps";
 import { getRouteCalendars, calendarBase, rememberEventCalendar, fetchCalendarEvent, primaryRouteCalendar } from "./calendarSource";
-import { getMyName, setMyName, ensureMyName } from "./myName";
+import { getMyName, ensureMyName } from "./myName";
 import { openAccountGate, closeAccountGate } from "./accountGate";
 import { buildClientIndex } from "./clientIndex";
 import {
@@ -1833,6 +1832,7 @@ export default function App() {
   const [photoUploadsOpen, setPhotoUploadsOpen] = useState(false);
   const [driveCleanupOpen, setDriveCleanupOpen] = useState(false);
   const [accountCheckOpen, setAccountCheckOpen] = useState(false);
+  const [accountCheckKey, setAccountCheckKey] = useState(0);
   const [mediaRecoverOpen, setMediaRecoverOpen] = useState(false);
   const [routeCalOpen, setRouteCalOpen] = useState(false);
   const [freezeReportText, setFreezeReportText] = useState(null);
@@ -2887,13 +2887,48 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
               <Row accent="#10B981"
                 icon={<IconCheckCircle size={17} color="#10B981"/>}
                 label="Account & connection check"
-                sub="Test sign-in, Calendar, Drive and Contacts for this account"
+                sub="Sign-in, route calendar, your name, RealWork, contacts, weekends, maps app"
                 onClick={()=>{ setAccountCheckOpen(true); setSettingsOpen(false); }} />
-              <Row accent="#38bdf8"
-                icon={<IconCalendar size={17} color="#38bdf8"/>}
-                label="Route calendar"
-                sub={getRouteCalendars().length === 1 && getRouteCalendars()[0] === "primary" ? "Reading this account's main calendar — tap to choose another" : `Reading ${getRouteCalendars().length} chosen calendar${getRouteCalendars().length === 1 ? "" : "s"} — tap to change`}
-                onClick={()=>{ setRouteCalOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#5a8ab0"
+                icon={<IconRefresh size={17} color="#9aadc8" style={{animation:loading?"spin 1s linear infinite":undefined}}/>}
+                label="Sync now" sub="Reload today's stops from the calendar"
+                onClick={()=>{ load(true); setSettingsOpen(false); }} />
+              <div style={{fontSize:10.5,fontWeight:800,color:"#607591",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif",margin:"14px 6px 4px"}}>Photos &amp; Videos</div>
+              <Row accent={photoQueueCount>0?"#F6BF26":"#5a8ab0"}
+                icon={<IconImage size={17} color={photoQueueCount>0?"#F6BF26":"#8aa0c0"}/>}
+                label="Photo uploads"
+                sub={photoQueueCount>0
+                  ? `${photoQueueCount} stop${photoQueueCount===1?"":"s"} still waiting — tap to see why`
+                  : "All photos on this device have reached Drive"}
+                onClick={()=>{ setPhotoUploadsOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#FF6B5E"
+                icon={<IconVideo size={17} color="#FF6B5E"/>}
+                label="Video uploads" sub="Queued, uploading, or failed videos"
+                onClick={()=>{ setUploadsOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#F6BF26"
+                icon={<IconImage size={17} color="#F6BF26"/>}
+                label="Recover photos & videos"
+                sub="Find a card's photos and videos in your Drive and put them back"
+                onClick={()=>{ setMediaRecoverOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#818cf8"
+                icon={<IconClock size={17} color="#818cf8"/>}
+                label="Find old job photos" sub="Search past visits by name or date"
+                onClick={()=>{ setRecoveryOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#FF8A80"
+                icon={<IconVideo size={17} color="#FF8A80"/>}
+                label="iPhone Video button"
+                sub={isIphoneVideoReady() ? "On — opens the Camera app in Video mode" : "Set up so it opens the Camera app in Video mode"}
+                onClick={()=>{ setIphoneSetupOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#F6BF26"
+                icon={<IconTrash size={17} color="#F6BF26"/>}
+                label="Free up Drive space"
+                sub="Google Drive: remove duplicate photos this app left there"
+                onClick={()=>{ setDriveCleanupOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#818cf8"
+                icon={<IconDatabase size={17} color="#818cf8"/>}
+                label="Phone storage" sub="Space used on this device by photos and unsent videos"
+                onClick={()=>{ setStorageOpen(true); setSettingsOpen(false); }} />
+              <div style={{fontSize:10.5,fontWeight:800,color:"#607591",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif",margin:"14px 6px 4px"}}>Help</div>
               <Row accent="#FF8A80"
                 icon={<IconClipboard size={17} color="#FF8A80"/>}
                 label="Copy freeze report"
@@ -2903,64 +2938,6 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
                   try { navigator.clipboard?.writeText(txt).catch(() => {}); } catch {}
                   setFreezeReportText(txt); setSettingsOpen(false);
                 }} />
-              <Row accent="#F6BF26"
-                icon={<IconImage size={17} color="#F6BF26"/>}
-                label="Recover photos & videos"
-                sub="Find a card's photos and videos in your Drive and put them back"
-                onClick={()=>{ setMediaRecoverOpen(true); setSettingsOpen(false); }} />
-              <Row accent="#5a8ab0"
-                icon={<IconRefresh size={17} color="#9aadc8" style={{animation:loading?"spin 1s linear infinite":undefined}}/>}
-                label="Sync now" sub="Reload today's stops from the calendar"
-                onClick={()=>{ load(true); setSettingsOpen(false); }} />
-              <Row accent={includeWeekends?"#F6BF26":"#5a6580"}
-                icon={<IconCalendar size={17} color={includeWeekends?"#F6BF26":"#8aa0c0"}/>}
-                label={includeWeekends?"Weekends: On":"Weekends: Off"}
-                sub={includeWeekends?"Saturdays & Sundays are selectable days":"Tap to include Saturdays & Sundays"}
-                onClick={()=>{ toggleIncludeWeekends(); }} />
-              <Row accent="#FF6B5E"
-                icon={<IconVideo size={17} color="#FF6B5E"/>}
-                label="Video uploads" sub="Queued, uploading, or failed videos"
-                onClick={()=>{ setUploadsOpen(true); setSettingsOpen(false); }} />
-              <Row accent={photoQueueCount>0?"#F6BF26":"#5a8ab0"}
-                icon={<IconImage size={17} color={photoQueueCount>0?"#F6BF26":"#8aa0c0"}/>}
-                label="Photo uploads"
-                sub={photoQueueCount>0
-                  ? `${photoQueueCount} stop${photoQueueCount===1?"":"s"} still waiting — tap to see why`
-                  : "All photos on this device have reached Drive"}
-                onClick={()=>{ setPhotoUploadsOpen(true); setSettingsOpen(false); }} />
-              <Row accent="#F6BF26"
-                icon={<IconTrash size={17} color="#F6BF26"/>}
-                label="Free up Drive space"
-                sub="Remove duplicate photos this app left in Drive"
-                onClick={()=>{ setDriveCleanupOpen(true); setSettingsOpen(false); }} />
-              <Row accent="#B39DDB"
-                icon={<IconEdit size={17} color="#B39DDB"/>}
-                label={`Your name: ${getMyName() || "not set"}`}
-                sub="Used in “on my way” texts and follow-up emails to customers"
-                onClick={()=>{ const n = window.prompt("Your first name, as customers should see it in texts and emails:", getMyName()); if (n != null) { setMyName(n); setMyNameTick(t => t + 1); } }} />
-              <Row accent="#FF8A80"
-                icon={<IconVideo size={17} color="#FF8A80"/>}
-                label="iPhone Video button"
-                sub={isIphoneVideoReady() ? "On — opens the Camera app in Video mode" : "Set up so it opens the Camera app in Video mode"}
-                onClick={()=>{ setIphoneSetupOpen(true); setSettingsOpen(false); }} />
-              <Row accent="#7db4ff"
-                icon={<IconPhone size={17} color="#7db4ff"/>}
-                label="RealWork app"
-                sub={isShortcutReady() ? "On — RealWork opens the app, not the browser" : "Set up so RealWork opens the app instead of the browser"}
-                onClick={()=>{ setRealworkSetupOpen(true); setSettingsOpen(false); }} />
-              <Row accent="#F6BF26"
-                icon={<IconPhone size={17} color="#F6BF26"/>}
-                label="Duplicate contacts"
-                sub="Remove repeat CLIENT entries from your phone contacts"
-                onClick={()=>{ setContactCleanupOpen(true); setSettingsOpen(false); }} />
-              <Row accent="#818cf8"
-                icon={<IconClock size={17} color="#818cf8"/>}
-                label="Find old job photos" sub="Search past visits by name or date"
-                onClick={()=>{ setRecoveryOpen(true); setSettingsOpen(false); }} />
-              <Row accent="#818cf8"
-                icon={<IconDatabase size={17} color="#818cf8"/>}
-                label="Storage usage" sub="Photo/video storage on this device"
-                onClick={()=>{ setStorageOpen(true); setSettingsOpen(false); }} />
               <Row danger accent="#FF6B6B"
                 icon={<svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>}
                 label={signOutConfirm?"Tap again to confirm sign out":"Sign out"}
@@ -3274,17 +3251,24 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
         </div>
       )}
 
-      {routeCalOpen && (
-        <RouteCalendarPicker token={token} onClose={() => setRouteCalOpen(false)} onSaved={() => load(true)} />
-      )}
-
       {mediaRecoverOpen && (
         <MediaRecover token={token} onClose={() => setMediaRecoverOpen(false)} />
       )}
 
+      {/* Screens opened from the account check render after it, so they sit on
+          top of it; closing one returns to the check, which runs again. */}
       {accountCheckOpen && (
         <AccountCheck token={token} onServerSignIn={serverSignIn} onClose={() => setAccountCheckOpen(false)}
-          onPickCalendar={() => { setAccountCheckOpen(false); setRouteCalOpen(true); }} />
+          refreshKey={accountCheckKey}
+          onPickCalendar={() => setRouteCalOpen(true)}
+          onRealWork={() => setRealworkSetupOpen(true)}
+          onContactCleanup={() => setContactCleanupOpen(true)}
+          onNameChanged={() => setMyNameTick(t => t + 1)}
+          includeWeekends={includeWeekends} onToggleWeekends={toggleIncludeWeekends} />
+      )}
+
+      {routeCalOpen && (
+        <RouteCalendarPicker token={token} onClose={() => { setRouteCalOpen(false); setAccountCheckKey(k => k + 1); }} onSaved={() => load(true)} />
       )}
 
       {iphoneSetupOpen && (
@@ -3300,11 +3284,11 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
       )}
 
       {realworkSetupOpen && (
-        <div onClick={() => setRealworkSetupOpen(false)} style={{position:"fixed",inset:0,zIndex:360,background:"rgba(0,0,0,.6)",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
+        <div onClick={() => { setRealworkSetupOpen(false); setAccountCheckKey(k => k + 1); }} style={{position:"fixed",inset:0,zIndex:360,background:"rgba(0,0,0,.6)",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
           <div onClick={e => e.stopPropagation()} style={{background:"#0d0f18",borderTop:"1px solid #1a2030",borderTopLeftRadius:18,borderTopRightRadius:18,padding:"16px 18px",paddingBottom:"max(18px,env(safe-area-inset-bottom))",maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{display:"flex",alignItems:"center",marginBottom:12}}>
               <div style={{flex:1,fontSize:14,fontWeight:800,color:"#fff",fontFamily:"'Oswald',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>Open the RealWork app</div>
-              <button onClick={() => setRealworkSetupOpen(false)} aria-label="Close" style={{width:34,height:34,borderRadius:17,background:"transparent",border:"1px solid #253049",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={15} color="#9aadc8"/></button>
+              <button onClick={() => { setRealworkSetupOpen(false); setAccountCheckKey(k => k + 1); }} aria-label="Close" style={{width:34,height:34,borderRadius:17,background:"transparent",border:"1px solid #253049",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconX size={15} color="#9aadc8"/></button>
             </div>
             <RealWorkSetup />
           </div>
@@ -3312,7 +3296,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
       )}
 
       {contactCleanupOpen && (
-        <ContactCleanup token={token} onClose={() => setContactCleanupOpen(false)} />
+        <ContactCleanup token={token} onClose={() => { setContactCleanupOpen(false); setAccountCheckKey(k => k + 1); }} />
       )}
 
       {/* ── DEBUG PANEL (5-tap on header spacer) ─────────────────── */}
