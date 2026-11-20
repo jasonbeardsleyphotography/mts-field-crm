@@ -1829,6 +1829,8 @@ export default function App() {
   const [storageOpen, setStorageOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false); // route "hamburger" settings sheet
+  const [mediaMenuOpen, setMediaMenuOpen] = useState(false); // Photos & videos page of that sheet
+  useEffect(() => { if (!settingsOpen) setMediaMenuOpen(false); }, [settingsOpen]);
   const [photoUploadsOpen, setPhotoUploadsOpen] = useState(false);
   const [driveCleanupOpen, setDriveCleanupOpen] = useState(false);
   const [accountCheckOpen, setAccountCheckOpen] = useState(false);
@@ -2883,17 +2885,12 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
           <div onClick={()=>setSettingsOpen(false)} style={{position:"fixed",inset:0,zIndex:350,background:"rgba(0,0,0,.55)",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
             <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",borderTop:"1px solid #1a2030",borderTopLeftRadius:18,borderTopRightRadius:18,padding:"8px 16px",paddingBottom:"max(16px,env(safe-area-inset-bottom))",boxShadow:"0 -14px 44px rgba(0,0,0,.55)",maxHeight:"74dvh",overflowY:"auto",WebkitOverflowScrolling:"touch",overscrollBehavior:"contain"}}>
               <div style={{width:42,height:4,borderRadius:2,background:"#2a3550",margin:"4px auto 12px"}}/>
-              <div style={{fontSize:11,fontWeight:800,color:"#607591",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif",margin:"0 6px 6px"}}>Settings &amp; Tools</div>
-              <Row accent="#10B981"
-                icon={<IconCheckCircle size={17} color="#10B981"/>}
-                label="Account & connection check"
-                sub="Sign-in, route calendar, your name, RealWork, contacts, weekends, maps app"
-                onClick={()=>{ setAccountCheckOpen(true); setSettingsOpen(false); }} />
-              <Row accent="#5a8ab0"
-                icon={<IconRefresh size={17} color="#9aadc8" style={{animation:loading?"spin 1s linear infinite":undefined}}/>}
-                label="Sync now" sub="Reload today's stops from the calendar"
-                onClick={()=>{ load(true); setSettingsOpen(false); }} />
-              <div style={{fontSize:10.5,fontWeight:800,color:"#607591",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif",margin:"14px 6px 4px"}}>Photos &amp; Videos</div>
+              {!mediaMenuOpen &&               <div style={{fontSize:11,fontWeight:800,color:"#607591",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif",margin:"0 6px 6px"}}>Settings &amp; Tools</div>}
+              {mediaMenuOpen ? (<>
+              <div style={{display:"flex",alignItems:"center",gap:8,margin:"0 0 6px"}}>
+                <button onClick={()=>setMediaMenuOpen(false)} aria-label="Back" style={{width:34,height:34,borderRadius:17,background:"transparent",border:"1px solid #253049",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconArrowLeft size={15} color="#9aadc8"/></button>
+                <div style={{fontSize:11,fontWeight:800,color:"#607591",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif"}}>Photos &amp; Videos</div>
+              </div>
               <Row accent={photoQueueCount>0?"#F6BF26":"#5a8ab0"}
                 icon={<IconImage size={17} color={photoQueueCount>0?"#F6BF26":"#8aa0c0"}/>}
                 label="Photo uploads"
@@ -2919,6 +2916,23 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
                 label="iPhone Video button"
                 sub={isIphoneVideoReady() ? "On — opens the Camera app in Video mode" : "Set up so it opens the Camera app in Video mode"}
                 onClick={()=>{ setIphoneSetupOpen(true); setSettingsOpen(false); }} />
+              </>) : (<>
+              <Row accent="#10B981"
+                icon={<IconCheckCircle size={17} color="#10B981"/>}
+                label="Account & connection check"
+                sub="Sign-in, route calendar, your name, RealWork, contacts, weekends, maps app"
+                onClick={()=>{ setAccountCheckOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#5a8ab0"
+                icon={<IconRefresh size={17} color="#9aadc8" style={{animation:loading?"spin 1s linear infinite":undefined}}/>}
+                label="Sync now" sub="Reload today's stops from the calendar"
+                onClick={()=>{ load(true); setSettingsOpen(false); }} />
+              <Row accent={photoQueueCount>0?"#F6BF26":"#FF6B5E"}
+                icon={<IconImage size={17} color={photoQueueCount>0?"#F6BF26":"#FF6B5E"}/>}
+                label="Photos & videos"
+                sub={photoQueueCount>0
+                  ? `${photoQueueCount} stop${photoQueueCount===1?"":"s"} with photos still uploading`
+                  : "Uploads, recover, old job photos, iPhone Video button"}
+                onClick={()=>setMediaMenuOpen(true)} />
               <Row accent="#F6BF26"
                 icon={<IconTrash size={17} color="#F6BF26"/>}
                 label="Free up Drive space"
@@ -2943,6 +2957,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
                 label={signOutConfirm?"Tap again to confirm sign out":"Sign out"}
                 sub={signOutConfirm?"Your data is safe in Drive and re-syncs on next sign in":null}
                 onClick={()=>{ if(signOutConfirm){ signOutEverywhereHere(); setSignOutConfirm(false); setSettingsOpen(false); } else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }} />
+              </>)}
             </div>
           </div>
         );

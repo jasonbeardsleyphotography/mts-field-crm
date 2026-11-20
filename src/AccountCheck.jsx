@@ -32,12 +32,17 @@ function freshToken(fallback) {
 
 const gb = (n) => (n / 1024 ** 3).toFixed(n >= 10 * 1024 ** 3 ? 0 : 1) + " GB";
 
-async function runChecks(token, h) {
+// Every row the check shows, in order — drawn straight away with a spinner,
+// then filled in as each check finishes.
+const ROW_LABELS = ["Signed in as", "Stays signed in", "Calendar", "Google Drive", "Contacts",
+  "Your name in customer texts", "RealWork app", "Photo uploads", "App version"];
+
+async function runChecks(token, h, emit) {
   const { onServerSignIn, onPickCalendar, onEditName, onRealWork, onContactCleanup } = h;
   const tok = freshToken(token);
   const auth = { headers: { Authorization: `Bearer ${tok}` } };
   const out = [];
-  const add = (label, state, detail, action) => out.push({ label, state, detail, actions: [action].flat().filter(Boolean) });
+  const add = (label, state, detail, action) => { out.push({ label, state, detail, actions: [action].flat().filter(Boolean) }); emit?.([...out]); };
 
   if (!tok) {
     add("Signed in", "bad", "No Google sign-in on this device. Sign in first, then run this again.");
@@ -155,15 +160,20 @@ export default function AccountCheck({ token, onClose, onServerSignIn, onPickCal
   } };
   const wrap = (k) => h.current[k] ? () => h.current[k]() : null;
   const gen = useRef(0);
+  const hasRows = useRef(false);
+  const [partial, setPartial] = useState(null);
   const run = useCallback(async () => {
     const g = ++gen.current;
     setBusy(true);
+    // First run: fill rows in as they finish. Re-runs keep the old rows until
+    // the new set is ready, so nothing flashes.
+    const first = !hasRows.current;
     try {
       const out = await runChecks(token, {
         onServerSignIn: wrap("onServerSignIn"), onPickCalendar: wrap("onPickCalendar"), onEditName: wrap("onEditName"),
         onRealWork: wrap("onRealWork"), onContactCleanup: wrap("onContactCleanup"),
-      });
-      if (g === gen.current) setRows(out);
+      }, first ? (part) => { if (g === gen.current) setPartial(part); } : null);
+      if (g === gen.current) { setRows(out); setPartial(null); hasRows.current = true; }
     } finally { if (g === gen.current) setBusy(false); }
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -202,8 +212,18 @@ export default function AccountCheck({ token, onClose, onServerSignIn, onPickCal
         }}><IconX size={16} color="#9aadc8" /></button>
       </div>
 
+      <style>{`@keyframes acspin{to{transform:rotate(360deg)}}`}</style>
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 16px max(20px, env(safe-area-inset-bottom))" }}>
-        {(rows || []).map((r, i) => {
+        {(rows || ROW_LABELS.map(l => (partial || []).find(r => r.label === l) || { label: l, pending: true })).map((r, i) => {
+          if (r.pending) return (
+            <div key={i} style={{ display: "flex", gap: 12, padding: "13px 0", borderBottom: "1px solid #141a28", alignItems: "center" }}>
+              <span style={{
+                width: 20, height: 20, margin: "0 2px", borderRadius: 10, flexShrink: 0,
+                border: "2px solid #253049", borderTopColor: "#7db4ff", animation: "acspin .8s linear infinite",
+              }} />
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: "#8a9ab0" }}>{r.label}</div>
+            </div>
+          );
           const [glyph, color] = mark[r.state];
           return (
             <div key={i} style={{ display: "flex", gap: 12, padding: "13px 0", borderBottom: "1px solid #141a28" }}>
