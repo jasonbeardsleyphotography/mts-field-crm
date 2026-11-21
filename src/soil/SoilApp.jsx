@@ -4,6 +4,7 @@ import { CSS } from "./theme";
 import SitePage from "./SitePage.jsx";
 import { readSitePackage, uploadSitePackage, uploadArchive } from "./importPackage";
 import { fmtDate } from "./soilData";
+import AppMenu from "../dispatch/AppMenu.jsx";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS Soil — /soil (staff) and /soil/c/<token> (a client's private page).
@@ -127,6 +128,11 @@ function StaffView() {
   }, [open, allowed]);
 
   const go = (id) => { location.hash = id ? `site=${id}` : ""; };
+  const signOut = async () => {
+    try { await fetch("/api/dispatch/logout", { method: "POST", credentials: "same-origin" }); } catch {}
+    location.reload();
+  };
+  const menu = <AppMenu me={me} current="soil" onSignOut={signOut} />;
 
   if (me === undefined) return <div className="gate t-sub">Opening Soil…</div>;
   if (!me) return (
@@ -143,18 +149,18 @@ function StaffView() {
 
   if (open) {
     if (site === undefined) return <div className="gate t-sub">Opening the property…</div>;
-    if (site) return <SitePage site={site} mode="staff" canEdit={canEdit} onBack={() => { go(null); loadSites(); }} />;
+    if (site) return <SitePage site={site} mode="staff" canEdit={canEdit} onBack={() => { go(null); loadSites(); }}
+      menu={<AppMenu me={me} current="soil" onSignOut={signOut} buttonStyle={{ position: "absolute", left: 10, bottom: 30, zIndex: 950 }} />} />;
   }
 
   return (
     <div className="home">
+      {menu}
       <header className="sp-hd">
         <div style={{ flex: 1 }}>
           <div className="t-h">Soil</div>
           <div className="t-sub">Monster Tree Service of Rochester · soil tests by property</div>
         </div>
-        <a className="b-sec" href="/dispatch/">Dispatch</a>
-        <a className="b-sec" href="/">Field app</a>
       </header>
       <div className="home-b">
         {err && <div className="err">{err}</div>}

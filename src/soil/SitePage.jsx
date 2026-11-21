@@ -151,7 +151,7 @@ function findings(samples, test) {
   return out;
 }
 
-export default function SitePage({ site: initial, mode = "staff", canEdit = false, token, onBack }) {
+export default function SitePage({ site: initial, mode = "staff", canEdit = false, token, onBack, menu }) {
   const [site, setSite] = useState(initial);
   useEffect(() => setSite(initial), [initial]);
   const tests = site.tests || [];
@@ -244,6 +244,7 @@ export default function SitePage({ site: initial, mode = "staff", canEdit = fals
                    draft={draft} drawMode={drawMode} center={site.center}
                    onMapClick={(p) => (drawMode === "place" ? placeAt(p) : setDraft((d) => [...d, p]))}
                    selected={selected} onSelect={(k) => { setSelected(k); }} onParcelStatus={setParcelStatus} />
+          {menu}
           {placedCount === 0 && !placing && test?.type !== "F" && <div className="sp-banner" style={{ top: "auto", bottom: 90, right: 80 }}>
             These samples haven't been placed on the map yet{canEdit && mode === "staff" ? " — use “Place samples” on the Map tab." : "."}</div>}
           {test?.type === "F" && <div className="sp-banner" style={{ top: "auto", bottom: 90, right: 80 }}>This is a leaf test, so it has no map colours. See Samples and Findings.</div>}

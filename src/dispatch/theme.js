@@ -46,7 +46,7 @@ export const CSS = `
 .card-h { display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid ${C.edgeSoft};
           font-size:11px; letter-spacing:.14em; color:${C.inkFaint}; flex-wrap:wrap; }
 .card-b { padding:12px; }
-.wrap { padding:12px 16px 40px; max-width:1500px; margin:0 auto; }
+.wrap { padding:12px 16px 90px; max-width:1500px; margin:0 auto; }
 .lbl { font-size:9.5px; letter-spacing:.16em; color:${C.inkFaint}; }
 .hint { font-size:11.5px; color:${C.inkFaint}; line-height:1.5; }
 .err { color:#ff9a8f; font-size:12.5px; line-height:1.5; }

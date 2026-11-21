@@ -1,3 +1,4 @@
+// v107: Field / Dispatch / Soil switcher at the top of the ☰ menu (Admin as a menu item).
 // v106: Soil: import the soil test archive (other labs, leaf tests), place sample pins on the map.
 // v105: Soil (/soil) added as its own page; offline it falls back to its own page.
 // v104: Dispatch: both owner accounts are admins; clearer "no tools" message.
@@ -149,7 +150,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v106";
+const CACHE = "mts-field-v107";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

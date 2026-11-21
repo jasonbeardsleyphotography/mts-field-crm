@@ -133,8 +133,11 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   check). Tests may carry their own `fields`, per-sample lab `ratings` words, `recs`/`recText`/`comment`; leaf tests are
   `type: "F"` (no map colours). Non-Morgan methods only colour pH and organic matter. Staff-only notes live under
   `site.internal` (stripped for clients). Admins place sample pins by tapping the map ("Place samples").
-- Agreed next: the Field / Dispatch / Soil switcher in every app's ☰ menu (Shop Board lives in
-  Dispatch; Admin = an item in the ☰ menu for admins), then Shop Board, then Schedule.
+- App switcher (Field · Dispatch · Soil) sits at the top of every app's ☰ menu. Field app: `src/AppSwitcher.jsx`
+  (asks `/api/dispatch/me`; shows nothing if that fails, so the field app is never affected; warns before leaving
+  with photos uploading). Dispatch/Soil: `src/dispatch/AppMenu.jsx` (fixed bottom-left ☰; on a Soil property page it
+  sits in the map's bottom-left corner; never on client links). Admin is a menu item (opens `/dispatch/#admin`), not a
+  tab. Shop Board lives inside Dispatch. Agreed next: Shop Board, then Schedule.
 
 ## Future expansion — ON HOLD (owner's decision; don't start without being asked)
 - **Client history:** one large CSV of every line item for every job the company has ever completed. Must show

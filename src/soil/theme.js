@@ -87,7 +87,7 @@ export const CSS = `
 .leaflet-control-attribution { font-size:10px; }
 
 .home { min-height:100vh; }
-.home-b { padding:16px; max-width:1000px; margin:0 auto; }
+.home-b { padding:16px 16px 90px; max-width:1000px; margin:0 auto; }
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:10px; }
 .site { text-align:left; padding:14px; cursor:pointer; }
 `;

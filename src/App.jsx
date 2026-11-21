@@ -30,6 +30,7 @@ import Linkify from "./Linkify";
 import AddStopModal from "./AddStopModal";
 import AccountCheck from "./AccountCheck";
 import MediaRecover from "./MediaRecover";
+import AppSwitcher from "./AppSwitcher";
 import RouteCalendarPicker from "./RouteCalendarPicker";
 import { startPrefsBackup } from "./devicePrefs";
 import { openDirections } from "./openMaps";
@@ -2885,6 +2886,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
           <div onClick={()=>setSettingsOpen(false)} style={{position:"fixed",inset:0,zIndex:350,background:"rgba(0,0,0,.55)",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
             <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",borderTop:"1px solid #1a2030",borderTopLeftRadius:18,borderTopRightRadius:18,padding:"8px 16px",paddingBottom:"max(16px,env(safe-area-inset-bottom))",boxShadow:"0 -14px 44px rgba(0,0,0,.55)",maxHeight:"74dvh",overflowY:"auto",WebkitOverflowScrolling:"touch",overscrollBehavior:"contain"}}>
               <div style={{width:42,height:4,borderRadius:2,background:"#2a3550",margin:"4px auto 12px"}}/>
+              {!mediaMenuOpen && <AppSwitcher pendingUploads={photoQueueCount} />}
               {!mediaMenuOpen &&               <div style={{fontSize:11,fontWeight:800,color:"#607591",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif",margin:"0 6px 6px"}}>Settings &amp; Tools</div>}
               {mediaMenuOpen ? (<>
               <div style={{display:"flex",alignItems:"center",gap:8,margin:"0 0 6px"}}>
