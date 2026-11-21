@@ -155,6 +155,12 @@ export default async (req) => {
     return json({ error: "not_found" }, 404);
   }
 
+  // ── Shop Board (needs Shop Board or Admin) ───────────────────────────────
+  if (route.startsWith("shop/")) {
+    if (!me.perms.shop && !me.perms.admin) return json({ error: "no_shop_access" }, 403);
+    return shopRoute(route.slice(5), req, url, me);
+  }
+
   // ── dispatch data ────────────────────────────────────────────────────────
   if (!me.perms.dispatch && !me.perms.admin) return json({ error: "no_dispatch_access" }, 403);
 
@@ -207,3 +213,111 @@ export default async (req) => {
 
   return json({ error: "not_found" }, 404);
 };
+
+/* ═══ Shop Board storage ═══════════════════════════════════════════════════
+   Blobs store "mts-shop". Keys: core | day.YYYY-MM-DD | week.YYYY-MM-DD |
+   presence. Clients send only what they changed ("patches"); the server
+   merges them here, item by item, so two managers working at once don't
+   undo each other:
+     core:  assets / crews / people / rigs — newer "at" wins per item; log merged
+     day:   crews by "at"; pos / stacks per key (null = remove)
+     week:  cells by "at"
+   A unit's spec (drawing, family, what it tows) is never stored — the board
+   re-applies it from its code on every read. */
+const SH = () => getStore("mts-shop");
+const SHOP_KEY = /^(core|day\.\d{4}-\d{2}-\d{2}|week\.\d{4}-\d{2}-\d{2})$/;
+const byAt = (cur = {}, inc = {}) => {
+  const out = { ...cur };
+  for (const [k, v] of Object.entries(inc || {})) {
+    if (!v || typeof v !== "object") continue;
+    if (!out[k] || (v.at || 0) >= (out[k].at || 0)) out[k] = v;
+  }
+  return out;
+};
+const perKey = (cur = {}, inc = {}) => {
+  const out = { ...cur };
+  for (const [k, v] of Object.entries(inc || {})) { if (v === null) delete out[k]; else out[k] = v; }
+  return out;
+};
+function mergeShop(key, cur, patch, replace, t) {
+  if (replace || !cur) cur = key === "core" ? { assets: {}, crews: {}, people: {}, rigs: {}, log: [] } : key.startsWith("day.") ? { crews: {}, stacks: {}, pos: {}, keyAt: {} } : { cells: {} };
+  if (key === "core") {
+    const log = new Map();
+    [...(cur.log || []), ...(patch.log || [])].forEach((e) => e && e.id && log.set(e.id, e));
+    return {
+      assets: byAt(cur.assets, patch.assets), crews: byAt(cur.crews, patch.crews),
+      people: byAt(cur.people, patch.people), rigs: byAt(cur.rigs, patch.rigs),
+      log: [...log.values()].sort((a, b) => b.at - a.at).slice(0, 40),
+    };
+  }
+  if (key.startsWith("day.")) {
+    // pos / stacks have no time stamps of their own, so the server remembers
+    // when it last set each key; an older request never overwrites a newer one.
+    const keyAt = { ...(cur.keyAt || {}) };
+    const apply = (map, inc, tag) => {
+      const out = { ...(map || {}) };
+      for (const [k, v] of Object.entries(inc || {})) {
+        if ((keyAt[tag + k] || 0) > t) continue;
+        if (v === null) delete out[k]; else out[k] = v;
+        keyAt[tag + k] = t;
+      }
+      return out;
+    };
+    return { crews: byAt(cur.crews, patch.crews), stacks: apply(cur.stacks, patch.stacks, "s:"), pos: apply(cur.pos, patch.pos, "p:"), keyAt, at: Date.now() };
+  }
+  return { cells: byAt(cur.cells, patch.cells) };
+}
+/** Is this patch (sent at server time t) reflected in the stored value — or overtaken by something newer? */
+function landed(key, v, patch, t) {
+  if (!v) return false;
+  const ent = (cur, inc) => Object.entries(inc || {}).every(([id, x]) => !x || typeof x !== "object" || ((cur || {})[id]?.at || 0) >= (x.at || 0));
+  if (key === "core") return ["assets", "crews", "people", "rigs"].every((c) => ent(v[c], patch[c])) && (patch.log || []).every((e) => (v.log || []).some((x) => x.id === e.id) || (v.log || []).length >= 40);
+  if (key.startsWith("day.")) {
+    const keys = (inc, tag) => Object.keys(inc || {}).every((k) => ((v.keyAt || {})[tag + k] || 0) >= t);
+    return ent(v.crews, patch.crews) && keys(patch.pos, "p:") && keys(patch.stacks, "s:");
+  }
+  return ent(v.cells, patch.cells);
+}
+
+async function shopRoute(sub, req, url, me) {
+  const method = req.method;
+  if (sub === "get" && method === "GET") {
+    const key = url.searchParams.get("key") || "";
+    if (!SHOP_KEY.test(key)) return json({ error: "bad_key" }, 400);
+    const raw = await SH().get(key);
+    return json({ key, value: raw ? JSON.parse(raw) : null, now: Date.now() });
+  }
+  if (sub === "days" && method === "GET") {
+    const { blobs } = await SH().list({ prefix: "day." });
+    return json({ days: blobs.map((b) => b.key.slice(4)), now: Date.now() });
+  }
+  if (sub === "patch" && method === "POST") {
+    let b; try { b = await req.json(); } catch { return json({ error: "bad_data" }, 400); }
+    if (!SHOP_KEY.test(b?.key || "") || typeof b.patch !== "object") return json({ error: "bad_data" }, 400);
+    if (b.replace && b.key === "core" && !me.perms.admin) return json({ error: "admins_only" }, 403);
+    // Blobs has no "write only if unchanged", so two saves at the same instant
+    // could overwrite each other. Write, look again a moment later, and
+    // re-apply this patch if a simultaneous save wiped it (never over newer edits).
+    const t = Date.now();
+    let merged = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const raw = await SH().get(b.key);
+      const cur = raw ? JSON.parse(raw) : null;
+      if (attempt > 0 && landed(b.key, cur, b.patch, t)) { merged = cur; break; }
+      merged = mergeShop(b.key, cur, b.patch, !!b.replace && attempt === 0, t);
+      await SH().set(b.key, JSON.stringify(merged));
+      await new Promise((ok) => setTimeout(ok, 80 + Math.random() * 160));
+    }
+    return json({ ok: true, value: merged, now: Date.now() });
+  }
+  if (sub === "presence" && method === "POST") {
+    let b; try { b = await req.json(); } catch { b = {}; }
+    let p = {}; try { p = JSON.parse((await SH().get("presence")) || "{}"); } catch {}
+    const now = Date.now();
+    for (const k of Object.keys(p)) if (now - (p[k].at || 0) > 120000) delete p[k];
+    if (b.uid && /^[a-z0-9]{4,16}$/.test(b.uid)) p[b.uid] = { name: me.name || me.email.split("@")[0], at: now };
+    await SH().set("presence", JSON.stringify(p));
+    return json({ presence: p, now });
+  }
+  return json({ error: "not_found" }, 404);
+}

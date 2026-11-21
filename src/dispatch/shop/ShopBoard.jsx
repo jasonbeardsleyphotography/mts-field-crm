@@ -1,0 +1,3115 @@
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { shopGet, shopDays, shopPatch, shopPresence, stampNow, changed, changedKeys } from "./shopApi";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Shop Board — the owner's ShopBoard.jsx, moved into Dispatch.
+   Changes from the original (everything else is the owner's design):
+   • Saved on the site's server (/api/dispatch/shop) instead of the Claude
+     page's storage. Each edit sends only what changed; the server merges it
+     item by item, so two managers working at once don't undo each other.
+   • Who you are comes from your sign-in, not a typed name.
+   • Moving a person or a load to a bin takes it off its crew directly. (The
+     original rebuilt every crew from what sat near what on screen, which
+     could empty crews built by dropping onto their boxes.)
+   • Undo reverts only what you changed; "Copy to rest of week" only fills
+     days nobody has planned yet; Reset is for admins only.
+   • Time stamps use the server's clock.
+   The rule kept: a unit's spec (drawing, family, name, what it tows) comes
+   from SEED_ASSETS in this file and is re-applied on every read.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ============================ SEED (from Fleetio export, 08/26/2026) ======= */
+const SEED_ASSETS = [{"id":"a01","name":"F750 BUCKET","spec":"2017 F750 Bucket Truck","cat":"AERIAL","shape":"BUCKET","ops":["GTC"],"status":"running","yard":"Brighton","plate":"25633MM","note":"","tag":"Bucket","hc":"truck","pull":["flatbed"],"fam":"AERIAL","code":"BKT","top":"bucket","vl":"F750 BUCKET"},{"id":"a02","name":"F650 CHIP","spec":"2018 F650 Chip Truck - 4X2 2dr Regular Cab 158","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Brighton","plate":"25634MM","note":"","tag":"Chip Truck","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"F650","top":"chipbody","vl":"F650 CHIP"},{"id":"a03","name":"F250 LIFT TRUCK","spec":"2019 F250 - Lift Truck","cat":"SERVICE","shape":"PICKUP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"95009MM","note":"","tag":"Lift Truck","hc":"truck","pull":["lift"],"fam":"SERVICE","code":"F250","top":"flatbed","vl":"F250"},{"id":"a04","name":"F350 LIFT TRUCK","spec":"2019 F350 Lift Truck","cat":"SERVICE","shape":"PICKUP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"65099NA","note":"","tag":"Lift Truck","hc":"truck","pull":["lift"],"fam":"SERVICE","code":"F350","top":"flatbed","vl":"F350"},{"id":"a05","name":"F750 CHIP '19","spec":"2019 F750 Chip Truck - 4X2 4dr SuperCab 179-28","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Brighton","plate":"31108MN","note":"","tag":"Chip Truck","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"F750","top":"chipbody","vl":"F750 '19"},{"id":"a06","name":"BELMONT 10K","spec":"2020 Belmont Dump Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CD 70633","note":"","tag":"Dump Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"BEL","top":"flattrailer","vl":"BELMONT"},{"id":"a07","name":"TEXAS","spec":"2021 F750 Chip Truck","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Off-site","plate":"74251NE","note":"","tag":"Texas","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"TEX","top":"chipbody","vl":"TEXAS"},{"id":"a08","name":"WOOD TRUCK","spec":"2021 F750 Dump Truck 4X2 4dr SuperCab 179-281","cat":"DUMP TRUCK","shape":"DUMP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"99168NE","note":"","tag":"Wood Truck","hc":"truck","pull":["flatbed"],"fam":"WOOD","code":"WOOD","top":"rolloff","vl":"WOOD TRUCK"},{"id":"a09","name":"CMC 83HD+ '21","spec":"2021 Lift - CMC 83HD+","cat":"SPIDER LIFT","shape":"SPIDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Lift","hc":"carried","rides":["lift"],"fam":"AERIAL","code":"83+","top":"spider","vl":"CMC 83HD+"},{"id":"a10","name":"LIFT TRAILER '21","spec":"2021 Lift Trailer - No Ramp","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CA86310","note":"","tag":"Lift Trailer","hc":"trailer","tt":"lift","fam":"LIFTTR","code":"LT21","top":"lifttrailer","vl":"LT '21"},{"id":"a11","name":"AVANT '21","spec":"2021 Avant","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Avant","hc":"carried","rides":["flatbed"],"fam":"AVANT","code":"A21","top":"avant","vl":"AVANT 21"},{"id":"a12","name":"RAV4 '21","spec":"2021 Rav 4 - Sales - AWD XLE 4dr SUV","cat":"SALES","shape":"CAR","ops":["SALES"],"status":"running","yard":"Brighton","plate":"KKJ2683","note":"","tag":"Rav4","hc":"truck","fam":"SALES","code":"R21","top":"car","vl":"RAV4 21"},{"id":"a13","name":"REISER 20FT","spec":"2021 Reiser 20 ft. 2-Axle Platform/Flatbed Tra","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CJ58195","note":"","tag":"Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"R20","top":"flattrailer","vl":"REISER 20"},{"id":"a14","name":"DARTH","spec":"2022 F250 PHC Pickup - Black","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC"],"status":"running","yard":"Rush Scottsville","plate":"76997 ML","note":"","tag":"Darth","hc":"truck","fam":"PHC","code":"DRTH","top":"flatbed","vl":"DARTH"},{"id":"a15","name":"BRIDGETTE","spec":"2022 F550 Chip Truck","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Brighton","plate":"51734NC","note":"","tag":"Bridgette","hc":"truck","pull":["chipper","grinder"],"fam":"CHIP","code":"BRDG","top":"chipbody","vl":"BRIDGETTE"},{"id":"a16","name":"CMC 83HD '22","spec":"2022 Lift CMC 83HD","cat":"SPIDER LIFT","shape":"SPIDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Lift","hc":"carried","rides":["lift"],"fam":"AERIAL","code":"83","top":"spider","vl":"CMC 83HD"},{"id":"a17","name":"RATTLIN LOG","spec":"2023 F750 Dump Truck","cat":"DUMP TRUCK","shape":"DUMP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"38858 ND","note":"","tag":"Rattlin Log","hc":"truck","pull":["flatbed"],"fam":"WOOD","code":"RTL","top":"rolloff","vl":"RATTLIN LOG"},{"id":"a18","name":"ISUZU PHC","spec":"2023 Isuzu PHC Rig","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC"],"status":"running","yard":"Rush Scottsville","plate":"95112ND","note":"","tag":"PHC Rig","hc":"truck","fam":"PHC","code":"ISZ","top":"cabover","vl":"ISUZU"},{"id":"a19","name":"LIFT TRAILER '23","spec":"2023 Lift Trailer - No Ramp","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"cd 71509","note":"","tag":"Lift Trailer","hc":"trailer","tt":"lift","fam":"LIFTTR","code":"LT23","top":"lifttrailer","vl":"LT '23"},{"id":"a20","name":"REISER '23","spec":"2023 Reiser Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CD70287","note":"","tag":"Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"R23","top":"flattrailer","vl":"REISER 23"},{"id":"a21","name":"BANDIT 19XPC '24","spec":"2024 Bandit 19XPC Big Chipper","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"19A","top":"chipper","vl":"19XPC '24"},{"id":"a22","name":"COROLLA","spec":"2024 Toyota Corolla","cat":"SALES","shape":"CAR","ops":["SALES"],"status":"running","yard":"Brighton","plate":"HYH8990","note":"","tag":"Corolla","hc":"truck","fam":"SALES","code":"COR","top":"car","vl":"COROLLA"},{"id":"a23","name":"CMC 100HD","spec":"2025 CMC 100HD Lift","cat":"SPIDER LIFT","shape":"SPIDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Lift","hc":"carried","rides":["lift"],"fam":"AERIAL","code":"100","top":"spider","vl":"CMC 100HD"},{"id":"a24","name":"LIFT TRAILER '25","spec":"2025 NoRamp Lift Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CJ58425","note":"","tag":"Lift Trailer","hc":"trailer","tt":"lift","fam":"LIFTTR","code":"LT25","top":"lifttrailer","vl":"LT '25"},{"id":"a25","name":"HOPPER","spec":"2025 PHC Rig \"Hopper\"","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC"],"status":"running","yard":"Rush Scottsville","plate":"27575NG","note":"","tag":"Hopper","hc":"truck","fam":"PHC","code":"HOP","top":"cabover","vl":"HOPPER"},{"id":"a26","name":"RED REISER TILT","spec":"2025 Red Reiser Tilt Bed Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC","LC"],"status":"running","yard":"Brighton","plate":"CH71811","note":"","tag":"Tilt Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"TILT","top":"flattrailer","vl":"TILT"},{"id":"a27","name":"RAV4 '26","spec":"2026 Rav 4","cat":"SALES","shape":"CAR","ops":["SALES"],"status":"running","yard":"Brighton","plate":"MCK9239","note":"","tag":"Rav4","hc":"truck","fam":"SALES","code":"R26","top":"car","vl":"RAV4 26"},{"id":"a28","name":"BANDIT 18XP YELLOW","spec":"Bandit 18xp Yellow Chipper","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Off-site","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"18Y","top":"chipper","vl":"18XP YEL"},{"id":"a29","name":"BANDIT 15XPC","spec":"Bandit 15xpc","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"15","top":"chipper","vl":"15XPC"},{"id":"a30","name":"BANDIT 19XPC '22","spec":"Bandit 19XPC","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"19B","top":"chipper","vl":"19XPC '22"},{"id":"a31","name":"MORBARK 15R","spec":"Morbark 15R","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"parked","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"M15","top":"chipper","vl":"MORBARK 15R"},{"id":"a32","name":"MORBARK 1621","spec":"Morbark 1621","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"M16","top":"chipper","vl":"MORBARK 1621"},{"id":"a33","name":"F550 LAWN","spec":"F550 Lawn Truck Ford 2025","cat":"LAWN","shape":"LANDSCAPE","ops":["LC","PHC"],"status":"running","yard":"Rush Scottsville","plate":"32100NG","note":"","tag":"Lawn Truck","hc":"truck","pull":["flatbed"],"fam":"LAWN","code":"LAWN","top":"landscape","vl":"F550 LAWN"},{"id":"a34","name":"KUBOTA SPRAY","spec":"Kubota Spray Rig","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC","LC"],"status":"running","yard":"Rush Scottsville","plate":"","note":"","tag":"Spray Rig","hc":"carried","rides":["flatbed"],"fam":"PHC","code":"KUB","top":"utv","vl":"KUBOTA"},{"id":"a35","name":"AVANT '18","spec":"Avant 2018","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"parked","yard":"Brighton","plate":"","note":"","tag":"Avant","hc":"carried","rides":["flatbed"],"fam":"AVANT","code":"A18","top":"avant","vl":"AVANT 18"},{"id":"a36","name":"AVANT VIRGINIA","spec":"Avant Virginia","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"running","yard":"Off-site","plate":"","note":"","tag":"Avant","hc":"carried","rides":["flatbed"],"fam":"AVANT","code":"AVA","top":"avant","vl":"AVANT VA"},{"id":"a37","name":"RAYCO RG45X","spec":"Rayco Stump Grinder and Trailer","cat":"STUMP GRINDER","shape":"GRINDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"ck79362","note":"","tag":"Grinder","hc":"towed","tt":"grinder","fam":"GRINDER","code":"RG45","top":"grinder","vl":"RG45X"},{"id":"a38","name":"WESTCHESTER F750","spec":"Westchester F750 Chip Truck","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Off-site","plate":"27638NG","note":"","tag":"Chip Truck","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"WCH","top":"chipbody","vl":"WESTCHESTER"}];
+
+const SEED_PEOPLE = [{"id":"p01","name":"James","d":"JAMES","c":"#DC4520"},{"id":"p02","name":"James B","d":"JAMES B","c":"#DEB89A"},{"id":"p03","name":"Jason Beardsley","d":"JASON BEARDSLEY","c":"#8CC220"},{"id":"p04","name":"Jay H","d":"JAY H","c":"#0E7C86"},{"id":"p05","name":"Jeff Royston","d":"JEFF ROYSTON","c":"#66DFC0"},{"id":"p06","name":"Joe G","d":"JOE G","c":"#7A7A7A"},{"id":"p07","name":"Kevin V","d":"KEVIN V","c":"#2E4258"},{"id":"p08","name":"Kory H","d":"KORY H","c":"#9EC0DE"},{"id":"p09","name":"Liz DeMay","d":"LIZ DEMAY","c":"#A8D149"},{"id":"p10","name":"Luke","d":"LUKE","c":"#3B9DE8"},{"id":"p11","name":"Max","d":"MAX","c":"#A88C8C"},{"id":"p12","name":"Mike L","d":"MIKE L","c":"#FFC800"},{"id":"p13","name":"Mike T","d":"MIKE T","c":"#5A6670"},{"id":"p14","name":"Rebecca V","d":"REBECCA V","c":"#5A6670"},{"id":"p15","name":"Robert L","d":"ROBERT L","c":"#B02000"},{"id":"p16","name":"Sarah","d":"SARAH","c":"#00ACA0"},{"id":"p17","name":"Shawn","d":"SHAWN","c":"#A32B7C"},{"id":"p18","name":"Trevor","d":"TREVOR","c":"#A85BC8"}];
+
+const SEED_CREWS = [
+  { id: "c01", name: "CREW 1", ops: "GTC", people: ["p18", "p06", "p07"],
+    iron: ["a03", "a10", "a09", "a02", "a21", "a08", "a13", "a11"] },
+  { id: "c02", name: "CREW 2", ops: "GTC", people: ["p12", "p15", "p17"],
+    iron: ["a04", "a19", "a16", "a15", "a30", "a17", "a20", "a36"] },
+  { id: "c03", name: "CREW 3", ops: "GTC", people: ["p11", "p10"],
+    iron: ["a01", "a06", "a05", "a29"] },
+  { id: "c04", name: "CREW 4", ops: "GTC", people: ["p05", "p02"],
+    iron: ["a07", "a32"] },
+  { id: "c05", name: "PHC", ops: "PHC", people: ["p16", "p01"],
+    iron: ["a14", "a18", "a25"] },
+  { id: "c06", name: "LAWNS", ops: "LC", people: ["p08"],
+    iron: ["a33", "a26", "a34"] },
+  { id: "c07", name: "SHOP", ops: "SHOP", people: ["p13", "p14"], iron: [] },
+  { id: "c08", name: "SALES", ops: "SALES", people: ["p03"],
+    iron: ["a12", "a22", "a27"] },
+];
+
+const SEED_RIGS = [
+  { id: "r01", name: "LIFT RIG 1", members: ["a03", "a10", "a09"] },
+  { id: "r02", name: "LIFT RIG 2", members: ["a04", "a19", "a16"] },
+];
+
+/* ============================ STATUS SYSTEM ===============================
+   One rule on this board: color only ever means machine condition.
+   Nothing else is allowed to be colored, so a red tile always means one thing.
+   Semantics borrowed from tag-out practice, not invented.                    */
+
+const ST = {
+  running: { key: "running", label: "Running",    short: "RUN",  color: "#17A05B", note: "Safe to operate" },
+  watch:   { key: "watch",   label: "Watch",      short: "WCH",  color: "#E5A100", note: "Operable — flagged" },
+  shop:    { key: "shop",    label: "In shop",    short: "SHOP", color: "#3A8DD8", note: "Being serviced" },
+  tagged:  { key: "tagged",  label: "Tagged out", short: "OUT",  color: "#D93B2B", note: "Do not operate" },
+  parked:  { key: "parked",  label: "Parked",     short: "PRK",  color: "#6E7A83", note: "Off the schedule" },
+};
+const ST_ORDER = ["running", "watch", "shop", "tagged", "parked"];
+
+const DAY = {
+  on:    { key: "on",    label: "On the board", short: "ON",    color: "#17A05B" },
+  vac:   { key: "vac",   label: "Vacation",     short: "VAC",   color: "#3A8DD8" },
+  sick:  { key: "sick",  label: "Out sick",     short: "SICK",  color: "#D93B2B" },
+  train: { key: "train", label: "Training",     short: "TRN",   color: "#E5A100" },
+  light: { key: "light", label: "Light duty",   short: "LIGHT", color: "#6E7A83" },
+};
+const DAY_ORDER = ["on", "vac", "sick", "train", "light"];
+
+/* Fleet and Week ahead are parked, not deleted — flip them back on here. */
+const TABS = [["crews", "The yard"]];
+// const TABS = [["crews", "The yard"], ["fleet", "Fleet"], ["week", "Week ahead"]];
+
+const C = {
+  bg: "#14181C", panel: "#1B2126", tile: "#232B31", tileHi: "#293339",
+  edge: "#313C44", edgeSoft: "#242D34",
+  ink: "#E7E2D6", inkDim: "#98A3AB", inkFaint: "#6B767E",
+};
+
+
+/* ============================ MACHINE SILHOUETTES =========================
+   Side profiles on one shared scale, all sitting on a common ground line, so
+   an Avant reads visibly smaller than an F750 without anyone reading a label.
+   viewBox is 200 wide for every shape; height varies by machine class.      */
+
+const W = ({ x, y, r }) => (
+  <g>
+    <circle cx={x} cy={y} r={r} fill="#101418" />
+    <circle cx={x} cy={y} r={r * 0.42} fill="var(--mach-lo)" />
+  </g>
+);
+
+const MACH = {
+  CHIPBOX: { h: 72, w: 176, art: (
+    <g>
+      <rect x="16" y="50" width="152" height="4" fill="var(--mach-lo)" />
+      <path d="M54 50V12h116v38z" fill="var(--mach)" />
+      <rect x="52" y="9" width="120" height="4" fill="var(--mach-lo)" />
+      <path d="M60 20h100v3H60zm0 9h100v3H60z" fill="var(--mach-lo)" opacity=".55" />
+      <path d="M18 50V28l12-4h18l4 8v18z" fill="var(--mach)" />
+      <path d="M31 28h15l3 5H31z" fill="var(--mach-hi)" />
+      <W x={40} y={56} r={9} /><W x={146} y={56} r={9} />
+    </g>) },
+
+  DUMP: { h: 72, w: 176, art: (
+    <g>
+      <rect x="16" y="50" width="152" height="4" fill="var(--mach-lo)" />
+      <path d="M56 50l6-30h104l4 30z" fill="var(--mach)" />
+      <path d="M60 22h108v4H60z" fill="var(--mach-lo)" />
+      <path d="M18 50V28l12-4h18l4 8v18z" fill="var(--mach)" />
+      <path d="M31 28h15l3 5H31z" fill="var(--mach-hi)" />
+      <path d="M120 44l30 8v3h-30z" fill="var(--mach-lo)" opacity=".6" />
+      <W x={40} y={56} r={9} /><W x={146} y={56} r={9} />
+    </g>) },
+
+  BUCKET: { h: 112, w: 190, art: (
+    <g>
+      <path d="M100 54l10-7 62-35 7 12-64 36z" fill="var(--mach)" />
+      <rect x="158" y="2" width="28" height="17" rx="2" fill="var(--mach)" />
+      <rect x="158" y="2" width="28" height="4" fill="var(--mach-hi)" />
+      <rect x="94" y="50" width="20" height="18" rx="2" fill="var(--mach-lo)" />
+      <rect x="16" y="88" width="152" height="4" fill="var(--mach-lo)" />
+      <rect x="54" y="64" width="114" height="24" fill="var(--mach)" />
+      <path d="M60 70h44v3H60zm52 0h44v3h-44z" fill="var(--mach-lo)" opacity=".55" />
+      <path d="M18 88V66l12-4h18l4 8v18z" fill="var(--mach)" />
+      <path d="M31 66h15l3 5H31z" fill="var(--mach-hi)" />
+      <path d="M56 88l-14 12h7l11-9z" fill="var(--mach-lo)" />
+      <W x={40} y={94} r={9} /><W x={146} y={94} r={9} />
+    </g>) },
+
+  SPIDER: { h: 104, w: 164, art: (
+    <g>
+      <path d="M78 62l8-7 58-38 7 12-60 39z" fill="var(--mach)" />
+      <rect x="140" y="8" width="24" height="15" rx="2" fill="var(--mach)" />
+      <rect x="140" y="8" width="24" height="4" fill="var(--mach-hi)" />
+      <rect x="64" y="56" width="26" height="14" rx="2" fill="var(--mach-lo)" />
+      <rect x="50" y="70" width="56" height="18" rx="2" fill="var(--mach)" />
+      <rect x="30" y="88" width="96" height="13" rx="6" fill="#101418" />
+      <circle cx="38" cy="94" r="4" fill="var(--mach-lo)" />
+      <circle cx="118" cy="94" r="4" fill="var(--mach-lo)" />
+      <path d="M30 90L12 100l3 3 18-9zm96 0l18 10-3 3-18-9z" fill="var(--mach-lo)" />
+    </g>) },
+
+  PICKUP: { h: 60, w: 132, art: (
+    <g>
+      <rect x="18" y="38" width="112" height="3" fill="var(--mach-lo)" />
+      <path d="M20 40V25l14-5h22l6 9v11z" fill="var(--mach)" />
+      <path d="M35 25h19l4 6H35z" fill="var(--mach-hi)" />
+      <rect x="62" y="27" width="62" height="13" fill="var(--mach)" />
+      <rect x="62" y="25" width="62" height="3" fill="var(--mach-lo)" />
+      <W x={38} y={44} r={8} /><W x={108} y={44} r={8} />
+    </g>) },
+
+  BOXVAN: { h: 68, w: 172, art: (
+    <g>
+      <rect x="16" y="48" width="150" height="4" fill="var(--mach-lo)" />
+      <rect x="48" y="16" width="118" height="32" fill="var(--mach)" />
+      <rect x="120" y="24" width="38" height="15" rx="7" fill="var(--mach-lo)" />
+      <path d="M18 48V26l4-4h24v26z" fill="var(--mach)" />
+      <path d="M22 26h22v8H22z" fill="var(--mach-hi)" />
+      <W x={36} y={54} r={9} /><W x={144} y={54} r={9} />
+    </g>) },
+
+  LANDSCAPE: { h: 64, w: 186, art: (
+    <g>
+      <rect x="18" y="43" width="140" height="3" fill="var(--mach-lo)" />
+      <path d="M20 44V27l14-5h20l6 9v13z" fill="var(--mach)" />
+      <path d="M35 27h17l4 6H35z" fill="var(--mach-hi)" />
+      <rect x="60" y="26" width="98" height="18" fill="var(--mach)" />
+      <path d="M64 30h90v2H64zm0 6h90v2H64z" fill="var(--mach-lo)" opacity=".6" />
+      <path d="M158 44l26 8v3h-26z" fill="var(--mach-lo)" />
+      <W x={38} y={50} r={8.5} /><W x={132} y={50} r={8.5} />
+    </g>) },
+
+  CAR: { h: 52, w: 118, art: (
+    <g>
+      <path d="M24 36l6-11 18-8h34l20 9 8 10z" fill="var(--mach)" />
+      <path d="M38 25l12-6h28l14 6z" fill="var(--mach-hi)" />
+      <W x={44} y={40} r={7.5} /><W x={96} y={40} r={7.5} />
+    </g>) },
+
+  CHIPPER: { h: 62, w: 150, art: (
+    <g>
+      <path d="M6 42l28-4v5H8z" fill="var(--mach-lo)" />
+      <rect x="34" y="20" width="64" height="24" fill="var(--mach)" />
+      <rect x="40" y="11" width="36" height="10" rx="2" fill="var(--mach-lo)" />
+      <path d="M98 26l40-13 8 17-48 12z" fill="var(--mach)" />
+      <path d="M104 28l32-10 3 6-35 9z" fill="var(--mach-hi)" opacity=".7" />
+      <W x={70} y={48} r={9} />
+    </g>) },
+
+  GRINDER: { h: 60, w: 130, art: (
+    <g>
+      <rect x="28" y="20" width="58" height="22" rx="2" fill="var(--mach)" />
+      <rect x="36" y="13" width="26" height="8" rx="2" fill="var(--mach-lo)" />
+      <path d="M84 26l18 4v8l-18 3z" fill="var(--mach-lo)" />
+      <circle cx="112" cy="34" r="13" fill="var(--mach)" />
+      <circle cx="112" cy="34" r="6" fill="var(--mach-lo)" />
+      <path d="M112 19v-4m13 19h4m-17 13v4m-13-17h-4m19-11l3-3m10 15l4-1m-13 15l2 4m-15-13l-4 2" stroke="var(--mach-hi)" strokeWidth="2.4" strokeLinecap="round" />
+      <rect x="26" y="42" width="60" height="10" rx="5" fill="#101418" />
+      <circle cx="34" cy="47" r="3" fill="var(--mach-lo)" />
+      <circle cx="78" cy="47" r="3" fill="var(--mach-lo)" />
+    </g>) },
+
+  LOADER: { h: 58, w: 118, art: (
+    <g>
+      <path d="M58 30l38-13 5 8-39 15z" fill="var(--mach)" />
+      <path d="M92 12h18v20l-18-5z" fill="var(--mach-lo)" />
+      <rect x="22" y="24" width="34" height="18" rx="2" fill="var(--mach)" />
+      <path d="M25 24V11h28v13z" fill="none" stroke="var(--mach-lo)" strokeWidth="3" />
+      <rect x="54" y="28" width="14" height="14" fill="var(--mach-lo)" />
+      <W x={33} y={45} r={7} /><W x={62} y={45} r={7} />
+    </g>) },
+
+  TRAILER: { h: 44, w: 188, deck: 25, art: (
+    <g>
+      <path d="M6 24l26-4v5H8z" fill="var(--mach-lo)" />
+      <rect x="30" y="19" width="152" height="7" fill="var(--mach)" />
+      <path d="M96 19h44v3H96z" fill="var(--mach-lo)" />
+      <path d="M98 26h40v4H98z" fill="var(--mach-lo)" opacity=".8" />
+      <W x={108} y={32} r={7.5} /><W x={130} y={32} r={7.5} />
+    </g>) },
+};
+
+const Machine = ({ shape, dim }) => {
+  const m = MACH[shape] || MACH.PICKUP;
+  return (
+    <svg viewBox={`0 0 200 ${m.h}`} width="100%" height={m.h} className="mach"
+         style={{ opacity: dim ? 0.5 : 1 }} aria-hidden="true" preserveAspectRatio="xMidYMax meet">
+      <line x1="4" y1={m.h - 1.5} x2="196" y2={m.h - 1.5} stroke="var(--edge)" strokeWidth="2" />
+      {m.art}
+    </svg>
+  );
+};
+
+/* tiny version for crew cards and lists */
+const MachineChip = ({ shape }) => {
+  const m = MACH[shape] || MACH.PICKUP;
+  return (
+    <svg viewBox={`0 0 200 ${m.h}`} width="30" height={Math.round(30 * m.h / 200)}
+         aria-hidden="true" preserveAspectRatio="xMidYMax meet" style={{ display: "block" }}>
+      {m.art}
+    </svg>
+  );
+};
+
+/* ============================ STORAGE ====================================
+   Shared key-value. Every entity carries its own `at` stamp so two people
+   editing different things never clobber each other.                        */
+
+const K_CORE = "mtsboard.core.v6";
+const K_PRES = "mtsboard.presence.v5";
+const K_ME   = "mtsboard.me.v5";
+const kWeek  = (iso) => `mtsboard.week.v5.${iso}`;
+
+const clone = (o) => JSON.parse(JSON.stringify(o));
+let logSeq = 0;
+
+const srvKey = (k) => (k === K_CORE ? "core" : k.startsWith("mtsboard.day.") ? `day.${k.slice(-10)}` : k.startsWith("mtsboard.week.") ? `week.${k.slice(-10)}` : k);
+const sSet = () => false;            // the old name gate's local save; unused now
+async function sGet(key, shared = true) {
+  if (!shared) { try { return JSON.parse(localStorage.getItem(`mts-shop-${key}`) || "null"); } catch { return null; } }
+  return shopGet(srvKey(key));
+}
+
+/* A unit's spec — its body, family, name, what it tows — belongs to the code.
+   Storage only carries what people actually change. Without this, any change
+   to the drawings breaks every board that already has saved data.          */
+const SPEC = Object.fromEntries(SEED_ASSETS.map((a) => [a.id, a]));
+const SPEC_KEYS = ["name", "spec", "cat", "shape", "top", "fam", "code", "vl", "hc", "tt", "pull", "avoid", "rides", "plate"];
+const reSpec = (assets) => {
+  const out = {};
+  for (const [id, a] of Object.entries(assets || {})) {
+    const sp = SPEC[id];
+    if (!sp) { out[id] = a; continue; }
+    const merged = { ...a };
+    SPEC_KEYS.forEach((k) => { if (sp[k] !== undefined) merged[k] = sp[k]; else delete merged[k]; });
+    out[id] = merged;
+  }
+  return out;
+};
+
+const asMap = (arr) => { const o = {}; arr.forEach((x) => { o[x.id] = { ...x, at: 0 }; }); return o; };
+
+function mergeMap(a, b) {
+  const out = { ...(a || {}) };
+  for (const [k, v] of Object.entries(b || {})) {
+    const cur = out[k];
+    if (!cur || (v.at || 0) > (cur.at || 0)) out[k] = v;
+  }
+  return out;
+}
+function mergeLog(a, b) {
+  const seen = new Map();
+  [...(a || []), ...(b || [])].forEach((e) => seen.set(e.id, e));
+  return [...seen.values()].sort((x, y) => y.at - x.at).slice(0, 40);
+}
+function mergeCore(a, b) {
+  return {
+    assets: reSpec(mergeMap(a && a.assets, b && b.assets)),
+    crews:  mergeMap(a && a.crews,  b && b.crews),
+    people: mergeMap(a && a.people, b && b.people),
+    rigs:   mergeMap(a && a.rigs,   b && b.rigs),
+    log:    mergeLog(a && a.log,    b && b.log),
+  };
+}
+const freshCore = () => ({
+  assets: asMap(SEED_ASSETS), crews: asMap(SEED_CREWS), people: asMap(SEED_PEOPLE),
+  rigs: asMap(SEED_RIGS), log: [],
+});
+const live = (map) => Object.values(map || {}).filter((x) => !x.del);
+/* keep this device's latest values for the keys an edit just sent */
+const changedKeysApply = (local, sent) => {
+  const out = {};
+  for (const k of Object.keys(sent || {})) if (local && k in local) out[k] = local[k];
+  return out;
+};
+
+
+/* ============================ HITCHED LOAD ================================
+   A truck, what it tows, and what rides on the trailer, drawn as one picture
+   on a shared ground line. This is the thing an ops manager is actually
+   allocating: not a truck and a trailer and an Avant, but that combination. */
+
+const HC = {
+  truck:   { key: "truck",   label: "Trucks",   word: "truck"   },
+  trailer: { key: "trailer", label: "Trailers", word: "trailer" },
+  towed:   { key: "towed",   label: "Towed",    word: "towed"   },
+  carried: { key: "carried", label: "Carried",  word: "carried" },
+};
+const HC_ORDER = ["truck", "trailer", "towed", "carried"];
+const canTow = (a) => a && a.hc === "truck";
+const isTowed = (a) => a && (a.hc === "towed" || a.hc === "trailer");
+const canCarry = (a) => a && a.hc === "trailer";
+
+const GAP = 9;        // hitch gap between tow vehicle and what it pulls
+const PAD = 6;
+
+function LoadArt({ members, scale = 1 }) {
+  const parts = members.map((a) => ({ a, m: MACH[a.shape] || MACH.PICKUP }));
+  const lead = parts.find((p) => p.a.hc === "truck") || parts[0];
+  const pull = parts.find((p) => p.a !== lead.a && isTowed(p.a));
+  const riders = parts.filter((p) => p.a !== lead.a && p.a !== (pull && pull.a));
+
+  const rowH = Math.max(...parts.map((p) => p.m.h), 44);
+  const deck = pull && pull.m.deck ? pull.m.deck : 0;
+  const riderScale = 0.72;
+  const riderH = riders.length ? Math.max(...riders.map((p) => p.m.h)) * riderScale : 0;
+  const H = Math.max(rowH, deck + riderH) + PAD;
+  const B = H - 2;                                   // shared ground line
+
+  let x = 0;
+  const place = [];
+  if (lead) { place.push({ ...lead, x, s: 1, base: B }); x += lead.m.w + GAP; }
+  const hitchX = pull ? x - GAP : null;
+  if (pull) {
+    place.push({ ...pull, x, s: 1, base: B });
+    let rx = x + 26;
+    riders.forEach((p) => {
+      place.push({ ...p, x: rx, s: riderScale, base: B - deck });
+      rx += p.m.w * riderScale + 6;
+    });
+    x += Math.max(pull.m.w, riders.length ? 26 + riders.reduce((t, p) => t + p.m.w * riderScale + 6, 0) : 0) + GAP;
+  } else {
+    riders.forEach((p) => { place.push({ ...p, x, s: 1, base: B }); x += p.m.w + GAP; });
+  }
+  const W = Math.max(x - GAP, 40);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={Math.round(H * scale)}
+         preserveAspectRatio="xMinYMax meet" aria-hidden="true" style={{ display: "block", overflow: "visible" }}>
+      <line x1="0" y1={B + 1.5} x2={W} y2={B + 1.5} stroke="var(--edge)" strokeWidth="2" />
+      {hitchX != null && (
+        <line x1={hitchX - 2} y1={B - 7} x2={hitchX + GAP + 2} y2={B - 7}
+              stroke="var(--mach-lo)" strokeWidth="3" strokeLinecap="round" />
+      )}
+      {place.map((p, i) => (
+        <g key={i} transform={`translate(${p.x} ${p.base - p.m.h * p.s}) scale(${p.s})`}
+           style={{ opacity: p.a.status === "parked" ? 0.5 : 1 }}>
+          {p.m.art}
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+/* ============================ PAINT =======================================
+   Colour now says what kind of machine it is, and the roof code says which
+   one. Condition is no longer a colour — it is a place: anything broken sits
+   in the repair bay. That trade is what frees the palette up.               */
+
+const FAMILY = {
+  CHIP:    { label: "Chip truck",      c: "#C07A22" },
+  WOOD:    { label: "Dump / wood",     c: "#8A6242" },
+  AERIAL:  { label: "Bucket & lifts",  c: "#2E8C93" },
+  SERVICE: { label: "Pickup",          c: "#4E6E9E" },
+  PHC:     { label: "PHC rig",         c: "#7A5AA8" },
+  LAWN:    { label: "Lawn",            c: "#5E9440" },
+  CHIPPER: { label: "Chipper",         c: "#CF4A2B" },
+  AVANT:   { label: "Avant",           c: "#E0C020" },
+  GRINDER: { label: "Grinder",         c: "#A8476E" },
+  FLATBED: { label: "Flatbed trailer", c: "#77838C" },
+  LIFTTR:  { label: "Lift trailer",    c: "#4E585F" },
+  SALES:   { label: "Sales",           c: "#5A6670" },
+};
+
+const shade = (hex, amt) => {
+  const n = parseInt(hex.slice(1), 16);
+  const f = (v) => Math.max(0, Math.min(255, Math.round(amt > 0 ? v + (255 - v) * amt : v * (1 + amt))));
+  return "#" + [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(f)
+    .map((v) => v.toString(16).padStart(2, "0")).join("");
+};
+const inkOn = (hex) => {
+  const n = parseInt(hex.slice(1), 16);
+  const L = 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255);
+  return L > 148 ? "#131820" : "#F2EEE5";
+};
+const tones = (fam) => {
+  const c = (FAMILY[fam] || FAMILY.SALES).c;
+  return { body: c, hi: shade(c, 0.3), lo: shade(c, -0.34), ink: inkOn(c) };
+};
+
+/* ============================ TOP-DOWN ART ================================
+   Fourteen bodies, not four. A chip truck carries an Arbortech box that
+   overhangs the cab; a wood truck carries a square 20-yard box with ribs like
+   a rolloff; every pickup runs a flatbed; a CMC is a tracked machine with its
+   outriggers splayed. The unit's name runs up the length of the body, which
+   is the only direction with enough room to actually read it.               */
+
+const Whl = ({ w, l, n = 2, r = 11, inset = 1.5 }) => (
+  <g fill="#0A0D10">
+    {Array.from({ length: n }).map((_, i) => {
+      const y = n === 1 ? l * 0.58 : 13 + i * (l - 32 - r);
+      return <g key={i}><rect x={-inset} y={y} width="4.6" height={r} rx="1.5" />
+        <rect x={w - 4.6 + inset} y={y} width="4.6" height={r} rx="1.5" /></g>;
+    })}
+  </g>
+);
+const Cab = ({ w, t, h = 26, inset = 4 }) => (
+  <g>
+    <rect x={inset} y="0" width={w - inset * 2} height={h} rx="3" fill={t.hi} stroke={t.lo} strokeWidth="1.2" />
+    <rect x={inset + 2.5} y="2" width={w - inset * 2 - 5} height="6" rx="1.5" fill={t.lo} opacity=".85" />
+  </g>
+);
+
+const TOP = {
+  /* chip truck — Arbortech body, wider than the cab, barn doors at the rear */
+  chipbody: { w: 34, l: 104, lab: [30, 72], art: (t) => (<g><Whl w={34} l={104} />
+    <rect x="0.5" y="29" width="33" height="73" rx="2.5" fill={t.body} stroke={t.lo} strokeWidth="1.4" />
+    <rect x="3" y="33" width="28" height="2" fill={t.lo} opacity=".6" />
+    <rect x="3" y="97" width="28" height="2" fill={t.lo} opacity=".8" />
+    <line x1="17" y1="99" x2="17" y2="102" stroke={t.lo} strokeWidth="1.4" />
+    <Cab w={34} t={t} /></g>) },
+
+  /* wood truck — square 20-yard box, ribbed like a rolloff can */
+  rolloff: { w: 34, l: 104, lab: [30, 70], art: (t) => (<g><Whl w={34} l={104} />
+    <rect x="0.5" y="29" width="33" height="72" rx="1" fill={shade(t.body, -0.3)} stroke={t.lo} strokeWidth="1.6" />
+    <rect x="3.5" y="32" width="27" height="66" rx="0.5" fill={shade(t.body, -0.55)} />
+    {[38, 50, 62, 74, 86].map((y) => <rect key={y} x="0.5" y={y} width="33" height="1.6" fill={t.lo} opacity=".55" />)}
+    <Cab w={34} t={t} /></g>) },
+
+  /* every pickup runs a flatbed — open deck, headboard, stake pockets */
+  flatbed: { w: 32, l: 86, lab: [32, 50], art: (t) => (<g><Whl w={32} l={86} />
+    <rect x="0" y="30" width="32" height="53" rx="1.5" fill={t.body} stroke={t.lo} strokeWidth="1.4" />
+    <rect x="0" y="30" width="32" height="3.5" fill={t.lo} />
+    {[42, 56, 70].map((y) => <g key={y}><rect x="-1" y={y} width="2.5" height="5" fill={t.lo} />
+      <rect x="30.5" y={y} width="2.5" height="5" fill={t.lo} /></g>)}
+    <Cab w={32} t={t} h={28} /></g>) },
+
+  /* bucket truck — compartmented utility body, boom stowed down the centre */
+  bucket: { w: 34, l: 114, lab: [32, 74], art: (t) => (<g><Whl w={34} l={114} />
+    <rect x="1" y="30" width="32" height="78" rx="2" fill={t.body} stroke={t.lo} strokeWidth="1.4" />
+    {[38, 56, 74, 92].map((y) => <g key={y}><rect x="1" y={y} width="7" height="14" rx="1" fill={t.lo} opacity=".5" />
+      <rect x="26" y={y} width="7" height="14" rx="1" fill={t.lo} opacity=".5" /></g>)}
+    <path d="M14 34h6l1.5 66h-9z" fill={t.lo} />
+    <rect x="10" y="99" width="14" height="11" rx="2" fill={t.hi} stroke={t.lo} strokeWidth="1.2" />
+    <Cab w={34} t={t} /></g>) },
+
+  /* Isuzu style cab-over — flat front, full-width body, roller door */
+  cabover: { w: 32, l: 88, lab: [28, 58], art: (t) => (<g><Whl w={32} l={88} />
+    <rect x="0" y="26" width="32" height="60" rx="2" fill={t.body} stroke={t.lo} strokeWidth="1.4" />
+    <rect x="2.5" y="79" width="27" height="4" rx="1" fill={t.lo} opacity=".8" />
+    <rect x="0.5" y="0" width="31" height="25" rx="2.5" fill={t.hi} stroke={t.lo} strokeWidth="1.2" />
+    <rect x="3" y="2" width="26" height="8" rx="1.5" fill={t.lo} opacity=".85" /></g>) },
+
+  /* F550 landscape body — high mesh sides, ramp off the back */
+  landscape: { w: 32, l: 94, lab: [32, 54], art: (t) => (<g><Whl w={32} l={94} />
+    <rect x="0" y="30" width="32" height="56" rx="1.5" fill={shade(t.body, -0.18)} stroke={t.lo} strokeWidth="1.4" />
+    {[0.5, 27.5].map((x) => <rect key={x} x={x} y="30" width="4" height="56" fill={t.lo} opacity=".55" />)}
+    <path d="M4 86h24l-3 8H7z" fill={t.lo} />
+    <Cab w={32} t={t} h={27} /></g>) },
+
+  /* Kubota spray rig — small UTV, cage and tank */
+  utv: { w: 24, l: 50, lab: [26, 20], art: (t) => (<g><Whl w={24} l={50} r={8} />
+    <rect x="1.5" y="2" width="21" height="44" rx="4" fill={t.body} stroke={t.lo} strokeWidth="1.3" />
+    <rect x="4" y="5" width="16" height="14" rx="2" fill={t.hi} />
+    <rect x="4.5" y="24" width="15" height="19" rx="6" fill={t.lo} /></g>) },
+
+  car: { w: 26, l: 62, lab: [22, 22], art: (t) => (<g><Whl w={26} l={62} r={9} />
+    <rect x="2" y="0" width="22" height="62" rx="9" fill={t.body} stroke={t.lo} strokeWidth="1.3" />
+    <rect x="5" y="12" width="16" height="15" rx="4" fill={t.hi} /></g>) },
+
+  /* CMC — tracks either side, outriggers splayed, boom stowed down the middle */
+  spider: { w: 40, l: 68, lab: [22, 26], art: (t) => (<g>
+    <path d="M4 14L-2 4l4-2 6 10zm32 0l6-10-4-2-6 10zM4 54l-6 10 4 2 6-10zm32 0l6 10-4 2-6-10z"
+          fill={t.lo} />
+    <rect x="0.5" y="12" width="8" height="44" rx="4" fill="#0A0D10" />
+    <rect x="31.5" y="12" width="8" height="44" rx="4" fill="#0A0D10" />
+    <rect x="2.5" y="16" width="4" height="36" rx="2" fill={t.lo} opacity=".7" />
+    <rect x="33.5" y="16" width="4" height="36" rx="2" fill={t.lo} opacity=".7" />
+    <rect x="10" y="15" width="20" height="38" rx="2.5" fill={t.body} stroke={t.lo} strokeWidth="1.4" />
+    <path d="M17 18h6l1 40h-8z" fill={t.lo} />
+    <rect x="13" y="55" width="14" height="9" rx="2" fill={t.hi} stroke={t.lo} strokeWidth="1.1" /></g>) },
+
+  /* Avant — articulated, loader arms forward */
+  avant: { w: 26, l: 50, lab: [30, 18], art: (t) => (<g><Whl w={26} l={50} r={8} inset={0} />
+    <path d="M6 4h5l1 12H7zm9 0h5l-1 12h-5z" fill={t.lo} />
+    <path d="M8 14h10v6H8z" fill={t.hi} />
+    <rect x="3" y="20" width="20" height="12" rx="2" fill={t.body} stroke={t.lo} strokeWidth="1.3" />
+    <rect x="1.5" y="32" width="23" height="15" rx="2.5" fill={t.body} stroke={t.lo} strokeWidth="1.3" />
+    <rect x="9" y="30" width="8" height="4" rx="1" fill={t.lo} /></g>) },
+
+  /* Bandit drum chipper — tongue, engine hood, flared infeed at the rear */
+  chipper: { w: 26, l: 64, lab: [16, 30], art: (t) => (<g>
+    <path d="M13 -10l4 11h-8z" fill={t.lo} /><Whl w={26} l={64} n={1} r={10} />
+    <rect x="2" y="1" width="22" height="46" rx="2" fill={t.body} stroke={t.lo} strokeWidth="1.4" />
+    <rect x="5" y="4" width="16" height="10" rx="2" fill={t.hi} opacity=".8" />
+    <path d="M2 47h22l4 15H-2z" fill={t.lo} />
+    <path d="M4 51h18l2 7H2z" fill={shade(t.body, -0.5)} /></g>) },
+
+  /* flatbed trailer — open deck, stake pockets, tandem axles */
+  flattrailer: { w: 30, l: 88, lab: [22, 56], art: (t) => (<g>
+    <path d="M15 -11l4.5 12h-9z" fill={t.lo} /><Whl w={30} l={88} r={10} />
+    <rect x="0.5" y="2" width="29" height="84" rx="1.5" fill={t.body} stroke={t.lo} strokeWidth="1.4" />
+    {[16, 34, 52, 70].map((y) => <g key={y}><rect x="-1" y={y} width="2.5" height="5" fill={t.lo} />
+      <rect x="28.5" y={y} width="2.5" height="5" fill={t.lo} /></g>)}
+    <rect x="4" y="5" width="22" height="1.6" fill={t.lo} opacity=".5" /></g>) },
+
+  /* lift trailer — narrower, beavertail and ramps at the rear */
+  lifttrailer: { w: 26, l: 76, lab: [20, 44], art: (t) => (<g>
+    <path d="M13 -11l4 12h-8z" fill={t.lo} /><Whl w={26} l={76} n={1} r={10} />
+    <rect x="0.5" y="2" width="25" height="60" rx="1.5" fill={t.body} stroke={t.lo} strokeWidth="1.4" />
+    <path d="M0.5 62h25l-2 12h-21z" fill={shade(t.body, -0.3)} stroke={t.lo} strokeWidth="1.2" />
+    <line x1="13" y1="63" x2="13" y2="73" stroke={t.lo} strokeWidth="1.2" /></g>) },
+
+  /* Rayco — engine forward, cutter wheel at the rear */
+  grinder: { w: 26, l: 60, lab: [18, 26], art: (t) => (<g>
+    <path d="M13 -10l4 11h-8z" fill={t.lo} /><Whl w={26} l={60} n={1} r={9} />
+    <rect x="2" y="1" width="22" height="40" rx="2" fill={t.body} stroke={t.lo} strokeWidth="1.4" />
+    <circle cx="13" cy="50" r="9" fill={t.lo} stroke={shade(t.body, -0.5)} strokeWidth="1.2" />
+    <circle cx="13" cy="50" r="3" fill={t.hi} />
+    {[0, 45, 90, 135, 180, 225, 270, 315].map((d) => (
+      <rect key={d} x="12" y="40" width="2" height="3.5" fill={t.hi}
+            transform={`rotate(${d} 13 50)`} />))}</g>) },
+};
+
+/* the name runs up the body; if it will not fit legibly, fall back to the code */
+const VName = ({ w, lab, vl, code, ink, halo }) => {
+  const [y0, len] = lab || [0, 40];
+  vl = vl || code || "—"; code = code || vl;
+  const full = Math.min(11.5, (len - 9) / (vl.length * 0.55));
+  const use = full >= 7 ? vl : code;
+  const size = full >= 7 ? full : Math.min(10.5, (len - 6) / (code.length * 0.6));
+  return (
+    <text transform={`translate(${w / 2} ${y0 + len / 2}) rotate(-90)`} textAnchor="middle"
+          dominantBaseline="central" fill={ink} stroke={halo} strokeWidth="2.6" paintOrder="stroke"
+          fontFamily="'Barlow Condensed',sans-serif" fontWeight="700"
+          fontSize={Math.max(6.5, size)} letterSpacing="0.5">{use}</text>
+  );
+};
+
+const TGAP = 7;
+/* A shape we do not recognise must degrade, never take the board down. */
+const shapeOf = (m) => (m && TOP[m.top]) || TOP.flatbed;
+
+function TopLoad({ members, scale = 1, broken }) {
+  const lead = members.find((m) => m.hc === "truck") || members[0];
+  const tow = members.find((m) => m !== lead && (m.hc === "towed" || m.hc === "trailer"));
+  const riders = members.filter((m) => m !== lead && m !== tow);
+  const L = shapeOf(lead);
+  const T = tow ? shapeOf(tow) : null;
+  const strays = T ? [] : riders;
+  const W = Math.max(L.w, T ? T.w : 0, ...strays.map((r) => shapeOf(r).w)) + 4;
+  const H = L.l + (T ? TGAP + T.l : 0) + (strays.length ? TGAP + Math.max(...strays.map((r) => shapeOf(r).l)) : 0) + 10;
+  const cx = W / 2;
+  const unit = (m, y, dim) => {
+    const S = shapeOf(m), t = tones(m.fam);
+    return (
+      <g key={m.id} transform={`translate(${cx - S.w / 2} ${y})`} opacity={dim ? 0.55 : 1}>
+        {S.art(t)}
+        <VName w={S.w} lab={S.lab} vl={m.vl} code={m.code} ink={t.ink} halo={t.body} />
+        {broken && <rect x="-3" y="-3" width={S.w + 6} height={S.l + 6} rx="4" fill="none"
+                         stroke="#D93B2B" strokeWidth="1.8" strokeDasharray="5 3" />}
+      </g>
+    );
+  };
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width={W * scale} height={H * scale}
+         style={{ display: "block", overflow: "visible" }} aria-hidden="true">
+      {unit(lead, 0, lead.status === "parked")}
+      {T && (
+        <>
+          <line x1={cx} y1={L.l} x2={cx} y2={L.l + TGAP} stroke={shade(tones(lead.fam).body, -0.45)} strokeWidth="3" />
+          {unit(tow, L.l + TGAP, tow.status === "parked")}
+          {riders.map((r) => unit(r, L.l + TGAP + (T.l - shapeOf(r).l) / 2, r.status === "parked"))}
+        </>
+      )}
+      {strays.map((r) => unit(r, L.l + TGAP, r.status === "parked"))}
+    </svg>
+  );
+}
+
+/* ============================ THE DAY =====================================
+   Crews are not a standing fact, they are what you decided for a date. Each
+   day gets its own record. Open a day with no record and you see the previous
+   day's arrangement, marked as inherited; the first edit commits it. That is
+   the "cohesive day to day" default, without anyone re-dragging every morning. */
+
+const kDay = (iso) => `mtsboard.day.v6.${iso}`;
+const DAY_PREFIX = "mtsboard.day.v6.";
+
+const listDays = () => shopDays();
+
+/* Work out what is hitched to what from the order the iron is listed in:
+   a truck claims the next towed thing, a trailer claims the next carried
+   things. Re-derivable, so an inherited day arrives already stacked.        */
+function deriveHitch(crews, assets) {
+  const hitch = {};
+  Object.values(crews || {}).forEach((c) => {
+    if (c.del) return;
+    let truck = null, trailer = null;
+    const towedBy = {};
+    (c.iron || []).forEach((id) => {
+      const a = assets[id];
+      if (!a || a.del) return;
+      if (a.hc === "truck") { truck = id; trailer = null; }
+      else if (a.hc === "trailer" || a.hc === "towed") {
+        if (truck && !towedBy[truck]) { hitch[id] = truck; towedBy[truck] = id; }
+        trailer = a.hc === "trailer" ? id : null;
+      } else if (a.hc === "carried") {
+        if (trailer) hitch[id] = trailer;
+      }
+    });
+  });
+  return hitch;
+}
+
+/* Group a crew's iron into loads: one lead per load, everything hitched under
+   it, and anything unattached standing on its own.                          */
+function loadsOf(crew, assets, hitch) {
+  const iron = (crew.iron || []).map((i) => assets[i]).filter((a) => a && !a.del);
+  const byId = Object.fromEntries(iron.map((a) => [a.id, a]));
+  const root = (id) => {
+    let cur = id, guard = 0;
+    while (hitch[cur] && byId[hitch[cur]] && guard++ < 6) cur = hitch[cur];
+    return cur;
+  };
+  const groups = new Map();
+  iron.forEach((a) => {
+    const r = root(a.id);
+    if (!groups.has(r)) groups.set(r, []);
+    if (r !== a.id) groups.get(r).push(a);
+  });
+  const out = [];
+  groups.forEach((kids, r) => {
+    const lead = byId[r]; if (!lead) return;
+    const order = { truck: 0, trailer: 1, towed: 1, carried: 2 };
+    kids.sort((x, y) => (order[x.hc] || 3) - (order[y.hc] || 3));
+    out.push({ id: r, lead, members: [lead, ...kids] });
+  });
+  const rank = { truck: 0, trailer: 1, towed: 2, carried: 3 };
+  out.sort((a, b) => (rank[a.lead.hc] || 9) - (rank[b.lead.hc] || 9) || b.members.length - a.members.length);
+  return out;
+}
+
+/* Where should a newly dropped unit attach inside this crew? */
+function placeInCrew(asset, crew, assets, hitch) {
+  if (!asset) return null;
+  const loads = loadsOf(crew, assets, hitch);
+  if (asset.hc === "towed" || asset.hc === "trailer") return pickTow(asset, loads, hitch);
+  if (asset.hc === "carried") return pickCarrier(asset, loads);
+  return null;
+}
+
+
+/* ---- what pulls what ----------------------------------------------------
+   Preferences, not rules. A chip truck almost never pulls a flatbed, but
+   "almost never" is a flag on the board, not a locked door.               */
+const TOWWORD = { chipper: "chipper", grinder: "grinder", flatbed: "flatbed trailer", lift: "lift trailer" };
+const towedOf = (load, hitch) =>
+  load.members.find((m) => m.id !== load.lead.id && hitch[m.id] === load.lead.id && (m.hc === "towed" || m.hc === "trailer"));
+
+function towScore(truck, tt) {
+  if (!tt) return 0;
+  if ((truck.avoid || []).includes(tt)) return -1;   // almost never
+  if ((truck.pull || []).includes(tt)) return 2;     // what it normally pulls
+  if (!(truck.pull || []).length) return 1;          // no habit either way
+  return 0;
+}
+
+/* the truck that should take this towed unit, best habit first */
+function pickTow(asset, loads, hitch) {
+  const free = loads.filter((l) => l.lead.hc === "truck" && !towedOf(l, hitch));
+  if (!free.length) return null;
+  const ranked = free.map((l) => ({ l, s: towScore(l.lead, asset.tt) })).sort((a, b) => b.s - a.s);
+  return ranked[0].l.lead.id;
+}
+
+/* the trailer that can actually carry this machine */
+function pickCarrier(asset, loads) {
+  const trailers = loads.flatMap((l) => l.members).filter((m) => m.hc === "trailer");
+  const fits = trailers.filter((t) => (asset.rides || []).includes(t.tt));
+  return (fits[0] || trailers[0] || {}).id || null;
+}
+
+function loadIssues(load, hitch) {
+  const out = [];
+  const lead = load.lead;
+  const towed = towedOf(load, hitch);
+  if (lead.hc === "truck" && towed && towScore(lead, towed.tt) < 0)
+    out.push(`${lead.tag} rarely pulls a ${TOWWORD[towed.tt] || towed.tag.toLowerCase()}`);
+  if (lead.hc !== "truck")
+    out.push(`${lead.tag} has no truck to pull it`);
+  load.members.filter((m) => m.hc === "carried").forEach((m) => {
+    const parent = load.members.find((x) => x.id === hitch[m.id]);
+    if (!parent || parent.hc !== "trailer") out.push(`${m.tag} has no trailer — it cannot go out`);
+    else if ((m.rides || []).length && !(m.rides || []).includes(parent.tt))
+      out.push(`${m.tag} is loaded on a ${TOWWORD[parent.tt] || parent.tag.toLowerCase()}`);
+  });
+  return out;
+}
+
+
+/* ============================ THE YARD MODEL ==============================
+   A day record now carries three things: the crews (name and operation), the
+   stacks (which units are hitched to which), and where everything is parked.
+   Crew membership is not typed in — it is read back off the yard after every
+   move, so what you see on the asphalt is what the day sheet prints.        */
+
+const NEAR = 150;
+const CW = 1400;
+const CH = 840;
+
+function stacksFrom(crews, assets) {
+  const stacks = {};
+  const claimed = new Set();
+  live(crews).forEach((c) => {
+    let lead = null, trailer = null;
+    (c.iron || []).forEach((id) => {
+      const a = assets[id]; if (!a || a.del) return;
+      claimed.add(id);
+      if (a.hc === "truck") { lead = id; stacks[id] = [id]; trailer = null; }
+      else if (a.hc === "towed" || a.hc === "trailer") {
+        const has = lead && stacks[lead].slice(1).some((x) => assets[x] && (assets[x].hc === "towed" || assets[x].hc === "trailer"));
+        if (lead && !has) stacks[lead].push(id);
+        else { lead = id; stacks[id] = [id]; }
+        trailer = a.hc === "trailer" ? id : null;
+      } else {
+        if (trailer && lead) stacks[lead].push(id);
+        else { stacks[id] = [id]; lead = null; }
+      }
+    });
+  });
+  live(assets).forEach((a) => { if (!claimed.has(a.id) && !stacks[a.id]) stacks[a.id] = [a.id]; });
+  return stacks;
+}
+
+/* lay the standing setup out so each crew lands as its own group */
+function freshDay(core) {
+  const crews = clone(core.crews);
+  const stacks = stacksFrom(crews, core.assets);
+  const pos = {};
+  live(crews).forEach((c, i) => {
+    const bx = 74 + (i % 4) * 340, by = 58 + Math.floor(i / 4) * 330;
+    pos[c.id] = { x: bx - 12, y: by - 30 };
+    (c.people || []).forEach((p, j) => { pos[p] = { x: bx + j * 84, y: by }; });
+    const mine = Object.keys(stacks).filter((k) => (c.iron || []).includes(k));
+    mine.forEach((k, j) => { pos[k] = { x: bx + j * 76, y: by + 46 }; });
+  });
+  return { crews, stacks, pos };
+}
+
+const leadOf = (day, id) => Object.keys(day.stacks || {}).find((k) => day.stacks[k].includes(id)) || id;
+
+function clusterNodes(nodes) {
+  const seen = new Set(), out = [];
+  nodes.forEach((a) => {
+    if (seen.has(a.id)) return;
+    const g = [a]; seen.add(a.id);
+    for (let i = 0; i < g.length; i++) {
+      nodes.forEach((b) => {
+        if (seen.has(b.id)) return;
+        if (Math.hypot(g[i].x - b.x, g[i].y - b.y) < NEAR) { g.push(b); seen.add(b.id); }
+      });
+    }
+    out.push(g);
+  });
+  return out;
+}
+
+function yardNodes(day, peopleIds) {
+  const pos = day.pos || {}, out = [];
+  Object.keys(day.stacks || {}).forEach((id) => pos[id] && out.push({ t: "s", id, ...pos[id] }));
+  peopleIds.forEach((id) => pos[id] && out.push({ t: "p", id, ...pos[id] }));
+  live(day.crews).forEach((c) => pos[c.id] && out.push({ t: "c", id: c.id, ...pos[c.id] }));
+  return out;
+}
+
+/* read the yard back into crew membership — this is what keeps the rest of
+   the app (day sheet, fleet labels, warnings) working off the same record */
+/* Take people / units off every crew (used when they go to a bin). */
+function pullOut(day, kind, ids, stamp) {
+  Object.values(day.crews || {}).forEach((c) => {
+    const key = kind === "person" ? "people" : "iron";
+    const n = (c[key] || []).length;
+    c[key] = (c[key] || []).filter((x) => !ids.includes(x));
+    if (c[key].length !== n) { c.at = stamp.at; c.by = stamp.by; }
+  });
+}
+
+// eslint-disable-next-line no-unused-vars
+function materialize(day, peopleIds, stamp) {
+  const before = {};
+  Object.values(day.crews).forEach((c) => { before[c.id] = JSON.stringify([c.people, c.iron]); });
+  Object.values(day.crews).forEach((c) => { c.people = []; c.iron = []; });
+  clusterNodes(yardNodes(day, peopleIds)).forEach((g) => {
+    const marker = g.find((n) => n.t === "c");
+    if (!marker) return;
+    const c = day.crews[marker.id]; if (!c || c.del) return;
+    c.people = g.filter((n) => n.t === "p").map((n) => n.id);
+    c.iron = g.filter((n) => n.t === "s").sort((a, b) => a.x - b.x).flatMap((n) => day.stacks[n.id] || []);
+  });
+  Object.values(day.crews).forEach((c) => {
+    if (before[c.id] !== JSON.stringify([c.people, c.iron])) { c.at = stamp.at; c.by = stamp.by; }
+  });
+}
+
+const rigOf = (core, assetId) =>
+  live(core.rigs || {}).find((r) => r.members.includes(assetId)) || null;
+
+/* ============================ YARD LAYOUT =================================
+   Crew boxes go where you put them. What goes inside them snaps to a grid and
+   the box grows to fit, so nothing can overlap and nothing drifts.          */
+
+const HEAD = 26;
+const BPAD = 12;
+const PL_W = 118;
+const PL_H = 34;
+const PL_COLS = 2;
+const SL_W = 50;
+const SL_GAP = 8;
+const SL_COLS = 4;
+
+function loadDims(members) {
+  const lead = members.find((m) => m.hc === "truck") || members[0];
+  const tow = members.find((m) => m !== lead && (m.hc === "towed" || m.hc === "trailer"));
+  const riders = members.filter((m) => m !== lead && m !== tow);
+  const L = shapeOf(lead), T = tow ? shapeOf(tow) : null;
+  const strays = T ? [] : riders;
+  return {
+    w: Math.max(L.w, T ? T.w : 0, ...strays.map((r) => shapeOf(r).w)) + 4,
+    h: L.l + (T ? TGAP + T.l : 0) + (strays.length ? TGAP + Math.max(...strays.map((r) => shapeOf(r).l)) : 0) + 10,
+  };
+}
+
+function layoutBox(crew, i, core, hitch, anchors) {
+  const a = anchors[crew.id] || { x: i * 10, y: 0 };
+  const ppl = (crew.people || []).map((id) => core.people[id]).filter((p) => p && !p.del);
+  const loads = loadsOf(crew, core.assets, hitch).map((l) => ({ ...l, d: loadDims(l.members) }));
+  const pRows = Math.max(1, Math.ceil(ppl.length / PL_COLS));
+  const rows = [];
+  for (let r = 0; r * SL_COLS < Math.max(loads.length, 1); r++) {
+    const row = loads.slice(r * SL_COLS, (r + 1) * SL_COLS);
+    rows.push({ row, h: row.length ? Math.max(...row.map((l) => l.d.h)) + 6 : 46 });
+  }
+  const w = BPAD * 2 + Math.max(PL_COLS * (PL_W + 6) - 6, SL_COLS * (SL_W + SL_GAP) - SL_GAP);
+  const h = HEAD + BPAD + pRows * PL_H + 4 + rows.reduce((t, r) => t + r.h, 0) + BPAD;
+
+  const pSlots = ppl.map((p, k) => ({
+    p, x: BPAD + (k % PL_COLS) * (PL_W + 6), y: HEAD + BPAD + Math.floor(k / PL_COLS) * PL_H,
+  }));
+  const lSlots = [];
+  let y = HEAD + BPAD + pRows * PL_H + 4;
+  rows.forEach(({ row, h: rh }) => {
+    row.forEach((l, k) => lSlots.push({ l, x: BPAD + k * (SL_W + SL_GAP) + (SL_W - l.d.w) / 2, y: y + rh - 6 - l.d.h }));
+    y += rh;
+  });
+  return { crew, hint: a, w, h, ppl, loads, pSlots, lSlots };
+}
+
+const snap24 = (v) => Math.round(v / 24) * 24;
+
+/* Boxes are packed into rows rather than placed at raw coordinates, so two of
+   them can never sit on top of each other. Moving a box changes where it sits
+   in the order; the packer puts it there and shuffles the rest along.       */
+function packBoxes(sized, CW) {
+  const G = 16;
+  const order = sized.slice().sort((a, b) => (a.hint.y - b.hint.y) || (a.hint.x - b.hint.x));
+  let x = G, y = G, rowH = 0;
+  return order.map((b) => {
+    if (x + b.w + G > CW && x > G) { x = G; y += rowH + G; rowH = 0; }
+    const placed = { ...b, x, y };
+    x += b.w + G;
+    rowH = Math.max(rowH, b.h);
+    return placed;
+  });
+}
+
+/* ============================ DRAG ENGINE ================================
+   Pointer-based, so it works with a mouse and with a thumb. Drop zones
+   register their DOM node; hit-testing picks the smallest matching rect.    */
+
+function useDragEngine() {
+  const zones = useRef(new Map());
+  const st = useRef(null);
+  const [drag, setDrag] = useState(null);
+
+  const registerZone = useCallback((id, el, meta) => {
+    if (el) zones.current.set(id, { el, meta });
+    else zones.current.delete(id);
+  }, []);
+
+  const hit = (x, y, kind) => {
+    let best = null, bestArea = Infinity;
+    zones.current.forEach((z, id) => {
+      if (!z.meta.accepts.includes(kind)) return;
+      const r = z.el.getBoundingClientRect();
+      if (r.width === 0) return;
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+        const area = r.width * r.height;
+        if (area < bestArea) { bestArea = area; best = { id, meta: z.meta, r }; }
+      }
+    });
+    return best;
+  };
+
+  const begin = useCallback((e, item) => {
+    if (e.button != null && e.button > 0) return;
+    const br = e.currentTarget ? e.currentTarget.getBoundingClientRect() : { left: e.clientX, top: e.clientY };
+    st.current = {
+      item, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY,
+      ox: e.clientX - br.left, oy: e.clientY - br.top,
+      active: item.instant === true, painted: null,
+      axis: item.axis || "free", ptr: e.pointerType || "mouse",
+    };
+    if (st.current.active) setDrag({ item, x: e.clientX, y: e.clientY, over: null });
+  }, []);
+
+  useEffect(() => {
+    const move = (e) => {
+      const s = st.current; if (!s) return;
+      const dx = e.clientX - s.x0, dy = e.clientY - s.y0;
+      if (!s.active) {
+        if (s.axis === "x") {
+          if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy)) return;
+        } else if (Math.hypot(dx, dy) < 6) return;
+        s.active = true;
+      }
+      s.x = e.clientX; s.y = e.clientY;
+      if (e.cancelable) e.preventDefault();
+      const over = hit(e.clientX, e.clientY, s.item.kind);
+      setDrag({ item: s.item, x: s.x, y: s.y, over: over ? over.id : null });
+      if (over && over.meta.paint && over.id !== s.painted) {
+        s.painted = over.id;
+        over.meta.onDrop(s.item, over.id);
+      }
+    };
+    const up = (e) => {
+      const s = st.current; st.current = null;
+      if (!s) return;
+      if (s.active) {
+        const over = hit(e.clientX, e.clientY, s.item.kind);
+        if (over && !over.meta.paint) {
+          over.meta.onDrop(s.item, over.id,
+            { x: e.clientX - over.r.left - (s.ox || 0), y: e.clientY - over.r.top - (s.oy || 0) });
+        }
+      }
+      setDrag(null);
+    };
+    const cancel = () => { st.current = null; setDrag(null); };
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+    };
+  }, []);
+
+  return { drag, begin, registerZone };
+}
+
+function Zone({ id, accepts, onDrop, paint, registerZone, children, style, className, onClick }) {
+  const ref = useRef(null);
+  const cb = useRef({ onDrop, accepts, paint });
+  cb.current = { onDrop, accepts, paint };
+  useEffect(() => {
+    registerZone(id, ref.current, {
+      get accepts() { return cb.current.accepts; },
+      get paint() { return cb.current.paint; },
+      onDrop: (...a) => cb.current.onDrop(...a),
+    });
+    return () => registerZone(id, null);
+  }, [id, registerZone]);
+  return <div ref={ref} className={className} style={style} onClick={onClick}>{children}</div>;
+}
+
+/* ============================ STYLES ====================================== */
+/* Every rule is prefixed with .mb so the board's classes (.btn, .tab, .chip…)
+   can't restyle the rest of Dispatch while the board is open. */
+function scopeCss(css) {
+  css = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  let out = "", buf = "", i = 0;
+  const copyBlock = () => {            // copy from the "{" at i through its matching "}"
+    let depth = 0, start = i;
+    for (; i < css.length; i++) { if (css[i] === "{") depth++; else if (css[i] === "}") { depth--; if (!depth) { i++; break; } } }
+    return css.slice(start, i);
+  };
+  const walk = (end) => {
+    while (i < end) {
+      const ch = css[i];
+      if (ch === "{") {
+        const sel = buf.trim(); buf = "";
+        if (/^@(media|supports)/.test(sel)) {
+          out += sel + "{"; i++;
+          let depth = 1, j = i;
+          for (; j < css.length; j++) { if (css[j] === "{") depth++; else if (css[j] === "}") { depth--; if (!depth) break; } }
+          walk(j); out += "}"; i = j + 1;
+        } else if (/^@/.test(sel)) {
+          out += sel + copyBlock();
+        } else {
+          out += sel.split(",").map((x) => x.trim()).filter(Boolean).map((x) => (x.startsWith(".mb") ? x : `.mb ${x}`)).join(", ") + copyBlock();
+        }
+      } else { buf += ch; i++; }
+    }
+  };
+  walk(css.length);
+  return out;
+}
+const CSS = scopeCss(`
+
+.mb *, .mb *::before, .mb *::after { box-sizing: border-box; }
+.mb {
+  --bg:${C.bg}; --panel:${C.panel}; --tile:${C.tile}; --edge:${C.edge};
+  --ink:${C.ink}; --dim:${C.inkDim}; --faint:${C.inkFaint};
+  --mach:#7E8B95; --mach-lo:#59646D; --mach-hi:#AEB9C1;
+  font-family:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;
+  background:var(--bg); color:var(--ink);
+  -webkit-font-smoothing:antialiased; padding-bottom:70px;
+}
+.mb button { font:inherit; color:inherit; background:none; border:none; cursor:pointer; }
+.mb :focus-visible { outline:2px solid ${C.ink}; outline-offset:2px; border-radius:2px; }
+.stencil { font-family:'Barlow Condensed','Arial Narrow',sans-serif; text-transform:uppercase; letter-spacing:.055em; font-weight:600; }
+.mono { font-family:'IBM Plex Mono',ui-monospace,monospace; font-variant-numeric:tabular-nums; }
+
+/* --- header: hairline chevron band, the only decorative element ---------- */
+.hd { position:relative; z-index:2; background:${C.panel}; border-bottom:1px solid var(--edge); }
+.chev { height:5px; background:repeating-linear-gradient(115deg,${C.edge} 0 9px,transparent 9px 18px); }
+.hd-in { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:11px 16px 9px; }
+.brand { font-size:19px; line-height:1; font-weight:700; letter-spacing:.09em; }
+.brand small { display:block; font-size:10.5px; color:var(--faint); letter-spacing:.14em; margin-top:4px; font-weight:500; }
+.tabs { display:flex; gap:2px; background:${C.bg}; border:1px solid var(--edge); border-radius:3px; padding:2px; }
+.tab { padding:6px 13px; font-size:12.5px; border-radius:2px; color:var(--dim); }
+.tab[aria-selected="true"] { background:${C.tileHi}; color:var(--ink); box-shadow:inset 0 1px 0 #3b464e; }
+.spacer { flex:1 1 40px; }
+.sync { display:flex; align-items:center; gap:7px; font-size:11px; color:var(--faint); letter-spacing:.04em; }
+.dot { width:6px; height:6px; border-radius:50%; background:${ST.running.color}; }
+.dot.warn { background:${ST.watch.color}; }
+.dot.err { background:${ST.tagged.color}; }
+@media (prefers-reduced-motion:no-preference){ .dot.beat { animation:beat 2.4s ease-in-out infinite; } }
+@keyframes beat { 0%,100%{opacity:1} 50%{opacity:.32} }
+.who { display:flex; gap:5px; align-items:center; }
+.who span { font-size:10px; padding:3px 7px; border:1px solid var(--edge); border-radius:2px; color:var(--dim); letter-spacing:.07em; }
+
+/* --- status ribbon: counts double as drop targets ------------------------ */
+.rib > div { flex:0 0 auto; }
+.rib { display:flex; gap:8px; padding:10px 16px; overflow-x:auto; border-bottom:1px solid ${C.edgeSoft}; background:${C.bg}; scrollbar-width:thin; }
+.rp { flex:0 0 auto; min-width:118px; text-align:left; padding:8px 12px 9px; background:${C.panel};
+      border:1px solid var(--edge); border-left-width:3px; border-radius:3px; transition:background .12s,transform .12s; }
+.rp b { display:block; font-size:23px; line-height:1; font-weight:500; }
+.rp i { display:block; font-style:normal; font-size:10.5px; letter-spacing:.1em; color:var(--dim); margin-top:5px; }
+.rp[data-on="1"] { background:${C.tileHi}; }
+.rp[data-hot="1"] { transform:translateY(-2px); background:${C.tileHi}; box-shadow:0 0 0 1px var(--ink); }
+
+/* --- toolbar ------------------------------------------------------------- */
+.tb { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:10px 16px; border-bottom:1px solid ${C.edgeSoft}; }
+.chip { font-size:11px; letter-spacing:.07em; padding:5px 10px; border:1px solid var(--edge); border-radius:2px; color:var(--dim); }
+.chip[data-on="1"] { background:${C.tileHi}; color:var(--ink); border-color:#48555e; }
+.srch { background:${C.bg}; border:1px solid var(--edge); border-radius:2px; color:var(--ink);
+        padding:6px 10px; font-size:12.5px; width:150px; font-family:inherit; }
+.srch::placeholder { color:var(--faint); }
+
+/* --- fleet columns ------------------------------------------------------- */
+.cols { display:flex; gap:11px; padding:13px 16px 26px; overflow-x:auto; align-items:flex-start; scroll-snap-type:x proximity; }
+.col { flex:0 0 254px; scroll-snap-align:start; background:${C.panel}; border:1px solid ${C.edgeSoft}; border-radius:4px; }
+.col-h { display:flex; align-items:baseline; gap:7px; padding:9px 11px; border-bottom:1px solid ${C.edgeSoft}; border-top:3px solid; border-radius:4px 4px 0 0; }
+.col-h em { font-style:normal; font-size:12px; letter-spacing:.1em; }
+.col-h u { text-decoration:none; margin-left:auto; font-size:11.5px; color:var(--faint); }
+.col-b { padding:9px; display:flex; flex-direction:column; gap:8px; min-height:104px; transition:background .12s; }
+.col-b[data-hot="1"] { background:#20282e; box-shadow:inset 0 0 0 1px #4b585f; }
+.empty { font-size:11.5px; color:var(--faint); letter-spacing:.05em; padding:16px 4px; text-align:center; line-height:1.5; }
+
+/* --- the tile: a magnet on a steel board --------------------------------- */
+.tile { display:flex; background:${C.tile}; border:1px solid var(--edge); border-radius:3px;
+        box-shadow:0 1px 0 #10151a, 0 2px 5px rgba(0,0,0,.32); overflow:hidden; text-align:left; width:100%; }
+.tile:hover { background:${C.tileHi}; }
+.grip { flex:0 0 15px; touch-action:none; cursor:grab; border-right:1px solid var(--edge);
+        background:repeating-linear-gradient(180deg,transparent 0 3px,#39444c 3px 4px); }
+.grip:active { cursor:grabbing; }
+.tile-b { flex:1; padding:8px 10px 9px; min-width:0; text-align:left; }
+.tile-t { display:flex; align-items:center; gap:7px; }
+.tile-t em { font-style:normal; font-size:13.5px; line-height:1.15; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tile-s { font-size:10.5px; color:var(--faint); margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tile-f { display:flex; align-items:center; gap:8px; margin-top:8px; padding-top:7px; border-top:1px solid ${C.edgeSoft}; }
+.tile-f .mono { font-size:10.5px; color:var(--dim); }
+.tile-f u { text-decoration:none; margin-left:auto; font-size:10px; letter-spacing:.06em; color:var(--dim);
+            border:1px solid var(--edge); padding:2px 5px; border-radius:2px; white-space:nowrap; }
+.wrench { display:inline-flex; align-items:center; gap:3px; font-size:10px; letter-spacing:.04em; }
+
+/* tagged out gets the physical treatment of a real danger tag */
+.tile[data-st="tagged"] { background:
+  repeating-linear-gradient(135deg, rgba(217,59,43,.11) 0 7px, transparent 7px 14px), ${C.tile}; }
+.tile[data-st="tagged"] .grip { background:repeating-linear-gradient(135deg,${ST.tagged.color} 0 4px,#2a1a19 4px 8px); }
+.tile[data-st="parked"] { opacity:.72; }
+.bar { flex:0 0 4px; }
+@media (prefers-reduced-motion:no-preference){ .flash { animation:flash 1.6s ease-out 1; } }
+@keyframes flash { 0%{box-shadow:0 0 0 2px ${C.ink}} 100%{box-shadow:0 1px 0 #10151a} }
+
+/* --- placard: a person, in hard-hat-sticker form ------------------------- */
+.plc { display:inline-flex; align-items:stretch; background:${C.tile}; border:1px solid var(--edge);
+       border-radius:2px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.3); max-width:100%; }
+.plc-g { flex:0 0 9px; touch-action:none; cursor:grab; background:repeating-linear-gradient(180deg,transparent 0 2px,#3b464e 2px 3px); border-right:1px solid var(--edge); }
+.plc-n { padding:4px 8px; font-size:11px; text-align:left; letter-spacing:.07em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.plc-s { flex:0 0 4px; }
+
+/* --- crews --------------------------------------------------------------- */
+.crews { display:grid; grid-template-columns:repeat(auto-fill,minmax(268px,1fr)); gap:11px; padding:13px 16px 26px; }
+.crew { background:${C.panel}; border:1px solid ${C.edgeSoft}; border-radius:4px; border-top:3px solid ${C.edge}; }
+.crew[data-down="1"] { border-top-color:${ST.tagged.color}; }
+.crew[data-thin="1"] { border-top-color:${ST.watch.color}; }
+.crew-h { display:flex; align-items:center; gap:8px; padding:9px 11px 8px; border-bottom:1px solid ${C.edgeSoft}; }
+.crew-h em { font-style:normal; font-size:14px; letter-spacing:.08em; }
+.crew-h u { text-decoration:none; font-size:9.5px; letter-spacing:.1em; color:var(--faint); border:1px solid var(--edge); padding:2px 5px; border-radius:2px; }
+.crew-w { margin-left:auto; font-size:10px; letter-spacing:.06em; color:var(--dim); text-align:right; }
+.sec { padding:9px 11px 11px; }
+.sec-l { font-size:9.5px; letter-spacing:.16em; color:var(--faint); margin-bottom:7px; }
+.drop { display:flex; flex-wrap:wrap; gap:5px; min-height:34px; padding:5px; border:1px dashed ${C.edgeSoft}; border-radius:3px; transition:background .12s; }
+.drop[data-hot="1"] { background:#20282e; border-color:#5b686f; border-style:solid; }
+.mini { display:inline-flex; align-items:center; gap:5px; background:${C.tile}; border:1px solid var(--edge);
+        border-left-width:3px; border-radius:2px; padding:3px 7px 3px 5px; font-size:10.5px; letter-spacing:.05em; max-width:100%; }
+.mini-g { touch-action:none; cursor:grab; letter-spacing:0; color:var(--faint); }
+
+/* --- week ---------------------------------------------------------------- */
+.wk-tools { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:11px 16px 0; }
+.marker { display:flex; align-items:center; gap:6px; padding:5px 10px 5px 7px; border:1px solid var(--edge);
+          border-radius:2px; font-size:11px; letter-spacing:.07em; color:var(--dim); touch-action:none; }
+.marker[data-on="1"] { background:${C.tileHi}; color:var(--ink); border-color:#4d5a62; }
+.swatch { width:11px; height:11px; border-radius:1px; }
+.wk-wrap { padding:12px 16px 26px; overflow-x:auto; }
+.wk { display:grid; min-width:660px; border:1px solid ${C.edgeSoft}; border-radius:4px; background:${C.panel}; }
+.wk-hc { padding:8px 6px; text-align:center; font-size:11px; letter-spacing:.09em; border-bottom:1px solid var(--edge); border-left:1px solid ${C.edgeSoft}; }
+.wk-hc small { display:block; font-size:9.5px; color:var(--faint); letter-spacing:.06em; margin-top:3px; font-weight:500; }
+.wk-hc[data-today="1"] { background:${C.tileHi}; }
+.wk-hn { padding:8px 10px; font-size:9.5px; letter-spacing:.16em; color:var(--faint); border-bottom:1px solid var(--edge); position:sticky; left:0; background:${C.panel}; z-index:2; }
+.wk-rn { display:flex; align-items:center; gap:6px; padding:5px 8px 5px 10px; font-size:11px; letter-spacing:.05em;
+         border-bottom:1px solid ${C.edgeSoft}; position:sticky; left:0; background:${C.panel}; z-index:2; }
+.wk-rn .pc { flex:0 0 4px; align-self:stretch; border-radius:1px; }
+.wk-rn .pn { text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.wk-rn .pn:hover { color:#fff; }
+.wk-rn .mf { margin-left:auto; font-size:9px; color:var(--faint); border:1px solid var(--edge); padding:1px 4px; border-radius:2px; flex:0 0 auto; }
+.wk-rn .mf:hover { color:var(--ink); border-color:#4d5a62; }
+.cell { border-left:1px solid ${C.edgeSoft}; border-bottom:1px solid ${C.edgeSoft}; padding:3px;
+        touch-action:pan-y; cursor:pointer; min-height:31px; display:flex; align-items:stretch; }
+.cell span { flex:1; border-radius:2px; display:flex; align-items:center; justify-content:center;
+             font-size:9.5px; letter-spacing:.09em; color:#0f1418; font-weight:600;
+             font-family:'Barlow Condensed',sans-serif; }
+.cell[data-hot="1"] { box-shadow:inset 0 0 0 1px var(--ink); }
+.cell[data-wknd="1"] { background:#181d22; }
+.legend { display:flex; gap:13px; flex-wrap:wrap; padding:0 16px 20px; font-size:10.5px; color:var(--faint); letter-spacing:.05em; }
+.legend i { display:inline-flex; align-items:center; gap:5px; font-style:normal; }
+
+/* --- sheets -------------------------------------------------------------- */
+.scrim { position:fixed; inset:0; background:rgba(8,11,14,.72); z-index:60; display:flex;
+         align-items:flex-end; justify-content:center; padding:0; }
+@media (min-width:640px){ .scrim { align-items:center; padding:24px; } }
+.sheet { background:${C.panel}; border:1px solid var(--edge); border-radius:5px 5px 0 0; width:100%;
+         max-width:520px; max-height:88vh; overflow:auto; }
+@media (min-width:640px){ .sheet { border-radius:5px; } }
+.sheet-h { display:flex; align-items:flex-start; gap:11px; padding:14px 16px; border-bottom:1px solid var(--edge); position:sticky; top:0; background:${C.panel}; }
+.sheet-h em { font-style:normal; font-size:17px; letter-spacing:.06em; display:block; }
+.sheet-h small { display:block; font-size:11px; color:var(--faint); margin-top:4px; }
+.sheet-b { padding:14px 16px 20px; }
+.fl { font-size:9.5px; letter-spacing:.16em; color:var(--faint); margin:15px 0 8px; }
+.fl:first-child { margin-top:0; }
+.opts { display:flex; flex-wrap:wrap; gap:6px; }
+.opt { display:flex; align-items:center; gap:7px; padding:7px 11px; border:1px solid var(--edge); border-radius:2px; font-size:11.5px; letter-spacing:.05em; color:var(--dim); }
+.opt[data-on="1"] { background:${C.tileHi}; color:var(--ink); border-color:#4d5a62; }
+.kv { display:grid; grid-template-columns:104px 1fr; gap:5px 11px; font-size:11.5px; }
+.kv dt { color:var(--faint); letter-spacing:.06em; }
+.kv dd { margin:0; color:var(--ink); }
+.ta { width:100%; background:${C.bg}; border:1px solid var(--edge); border-radius:2px; color:var(--ink);
+      padding:8px 10px; font-size:12.5px; font-family:inherit; resize:vertical; min-height:56px; }
+.act { display:flex; gap:8px; flex-wrap:wrap; margin-top:18px; padding-top:14px; border-top:1px solid ${C.edgeSoft}; }
+.btn { padding:8px 14px; border:1px solid var(--edge); border-radius:2px; font-size:11.5px; letter-spacing:.07em; color:var(--ink); }
+.btn:hover { background:${C.tileHi}; }
+.btn[data-danger="1"] { border-color:#5c2e2a; color:#E8867B; }
+
+/* --- log ---------------------------------------------------------------- */
+.log { padding:0 16px 30px; }
+.log h4 { font-size:9.5px; letter-spacing:.16em; color:var(--faint); margin:0 0 9px; font-weight:600; font-family:'Barlow Condensed',sans-serif; }
+.log ol { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:1px; }
+.log li { display:flex; gap:10px; font-size:11.5px; padding:6px 0; border-bottom:1px solid ${C.edgeSoft}; color:var(--dim); }
+.log li b { font-weight:500; color:var(--ink); }
+.log time { margin-left:auto; color:var(--faint); font-size:10.5px; white-space:nowrap; }
+
+/* --- ghost -------------------------------------------------------------- */
+.ghost { position:fixed; z-index:200; pointer-events:none; transform:translate(-50%,-50%) rotate(-1.4deg) scale(1.04);
+         box-shadow:0 12px 26px rgba(0,0,0,.55); opacity:.96; }
+.gate { max-width:392px; margin:14vh auto; padding:24px; background:${C.panel}; border:1px solid var(--edge); border-radius:4px; }
+.gate h2 { font-size:17px; letter-spacing:.07em; margin:0 0 8px; font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; }
+.gate p { font-size:12.5px; color:var(--dim); line-height:1.55; margin:0 0 16px; }
+.gate input { width:100%; background:${C.bg}; border:1px solid var(--edge); border-radius:2px; color:var(--ink); padding:9px 11px; font-size:13px; font-family:inherit; }
+
+/* --- operations ---------------------------------------------------------- */
+.optag { display:inline-flex; align-items:center; gap:3px; font-size:9px; letter-spacing:.09em;
+         color:var(--dim); border:1px solid var(--edge); border-radius:2px; padding:1px 4px 2px; }
+.ops { display:flex; gap:3px; flex-wrap:wrap; }
+.vr { width:1px; height:20px; background:var(--edge); margin:0 3px; flex:0 0 auto; }
+.attn { display:flex; gap:9px; align-items:center; padding:10px 16px 2px; flex-wrap:wrap; }
+.note { padding:2px 16px 22px; font-size:11px; color:var(--faint); letter-spacing:.03em; max-width:600px; line-height:1.5; }
+.hint { font-size:10.5px; color:var(--faint); padding:5px 3px; }
+
+/* --- machine tile -------------------------------------------------------- */
+.mach-wrap { padding:3px 5px 0; }
+.mach { display:block; }
+.tile-name { font-size:14px; letter-spacing:.06em; margin-top:5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tile-sub { font-size:10px; color:var(--faint); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tile-foot { display:flex; align-items:center; gap:7px; margin-top:8px; padding-top:7px; border-top:1px solid ${C.edgeSoft}; }
+.tile-foot u { text-decoration:none; margin-left:auto; font-size:9px; letter-spacing:.06em; color:var(--dim);
+               border:1px solid var(--edge); padding:2px 5px; border-radius:2px; white-space:nowrap;
+               max-width:104px; overflow:hidden; text-overflow:ellipsis; }
+.plc-c { flex:0 0 6px; }
+.crew-t { display:flex; gap:8px; align-items:center; }
+.crew-h u { display:inline-flex; align-items:center; gap:3px; }
+.mini-b { display:flex; gap:6px; align-items:center; }
+
+/* --- condition dock: big targets while a unit is in hand ----------------- */
+.dock { position:fixed; left:0; right:0; bottom:0; z-index:150; display:flex; align-items:center; gap:12px;
+        padding:10px 14px; padding-bottom:calc(10px + env(safe-area-inset-bottom));
+        background:rgba(19,23,27,.97); border-top:1px solid var(--edge);
+        transform:translateY(108%); pointer-events:none; }
+.dock[data-on="1"] { transform:translateY(0); pointer-events:auto; }
+@media (prefers-reduced-motion:no-preference){ .dock { transition:transform .16s ease-out; } }
+.dock-l { font-size:9.5px; letter-spacing:.14em; color:var(--faint); flex:0 0 auto; }
+.dock-r { display:flex; gap:7px; flex:1; }
+.dock-r > div { flex:1; }
+.dz { display:flex; align-items:center; justify-content:center; gap:6px; padding:14px 6px;
+      border:1px solid; border-radius:3px; font-size:10.5px; letter-spacing:.07em;
+      color:var(--dim); background:${C.panel}; text-align:center; }
+.dz[data-hot="1"] { background:${C.tileHi}; color:var(--ink); box-shadow:inset 0 0 0 2px currentColor; }
+
+@media (max-width:660px){
+  .dock { flex-direction:column; align-items:stretch; gap:7px; }
+  .dock-l { text-align:center; }
+  .dock-r { flex-wrap:wrap; }
+  .dock-r > div { flex:1 1 30%; }
+  .dz { padding:16px 4px; font-size:10px; }
+  .col { flex:0 0 82vw; }
+  .cols { padding-bottom:132px; }
+}
+
+/* --- day sheet ----------------------------------------------------------- */
+.btn[data-primary="1"] { border-color:#4f5c65; background:${C.tileHi}; }
+.btn[data-primary="1"]:hover { background:#333e46; }
+.note-out { min-height:132px; font-family:'IBM Plex Mono',monospace; font-size:11.5px; line-height:1.65; }
+.row-between { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; }
+.lnk { font-size:10.5px; letter-spacing:.07em; color:var(--dim); border-bottom:1px solid var(--edge); }
+.lnk:hover { color:var(--ink); }
+.flags { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; }
+.flags li { font-size:11.5px; color:var(--dim); padding:5px 9px; background:${C.bg};
+            border:1px solid ${C.edgeSoft}; border-radius:2px; }
+.okmsg { font-size:11px; letter-spacing:.07em; color:${ST.running.color}; align-self:center; }
+
+/* --- the day ------------------------------------------------------------- */
+.daybar { border-bottom:1px solid ${C.edgeSoft}; }
+.daydate { font-size:14px; letter-spacing:.09em; min-width:112px; text-align:center; }
+.inherit { font-size:10px; letter-spacing:.08em; color:${ST.watch.color}; border:1px solid #4a3d1c;
+           background:#241f10; padding:3px 8px; border-radius:2px; }
+.crew-p { display:flex; flex-wrap:wrap; gap:5px; min-height:34px; padding:8px 10px;
+          border-bottom:1px solid ${C.edgeSoft}; transition:background .12s; }
+.crew-p[data-hot="1"] { background:#20282e; box-shadow:inset 0 0 0 1px #5b686f; }
+.crew-l { display:flex; flex-direction:column; gap:7px; padding:9px 10px 11px; min-height:52px; transition:background .12s; }
+.crew-l[data-hot="1"] { background:#20282e; box-shadow:inset 0 0 0 1px #5b686f; }
+
+/* --- a load: truck, what it tows, what rides on it ---------------------- */
+.load { display:flex; background:${C.tile}; border:1px solid var(--edge); border-radius:3px; overflow:hidden;
+        box-shadow:0 1px 0 #10151a; transition:background .12s; }
+.load[data-hot="1"] { background:${C.tileHi}; box-shadow:inset 0 0 0 1px var(--ink); }
+.load[data-locked="1"] { border-left:3px solid #6f7b84; }
+.load-g { flex:0 0 14px; touch-action:none; cursor:grab; border-right:1px solid var(--edge);
+          background:repeating-linear-gradient(180deg,transparent 0 3px,#39444c 3px 4px); }
+.load-b { flex:1; min-width:0; padding:6px 9px 8px; }
+.load-t { display:flex; align-items:center; flex-wrap:wrap; gap:5px; margin-top:5px; }
+.mtag { font-size:10px; letter-spacing:.07em; color:var(--dim); border-bottom:2px solid; padding:1px 1px 2px; }
+.mtag:hover { color:var(--ink); }
+.load-a { margin-left:auto; }
+.load-warn { margin-top:5px; font-size:9.5px; letter-spacing:.09em; color:${ST.tagged.color}; }
+
+/* --- the yard ----------------------------------------------------------- */
+.yard { margin:6px 16px 28px; background:${C.panel}; border:1px solid ${C.edgeSoft}; border-radius:4px;
+        transition:background .12s; }
+.yard[data-hot="1"] { background:#20282e; box-shadow:inset 0 0 0 1px #5b686f; }
+.yard-h { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:9px 12px;
+          border-bottom:1px solid ${C.edgeSoft}; font-size:9.5px; letter-spacing:.16em; color:var(--faint); }
+.yard-row { display:flex; gap:11px; padding:8px 12px; border-bottom:1px solid ${C.edgeSoft}; }
+.yard-row:last-child { border-bottom:0; }
+.yard-l { flex:0 0 86px; font-size:9.5px; letter-spacing:.13em; color:var(--faint); padding-top:4px; }
+.yard-i { flex:1; display:flex; flex-wrap:wrap; gap:5px; min-width:0; }
+.rig { display:inline-flex; align-items:center; gap:4px; font-size:10.5px; letter-spacing:.05em;
+       background:${C.tile}; border:1px solid #4d5a62; border-left:3px solid #6f7b84;
+       border-radius:2px; padding:3px 8px 3px 5px; }
+.rig-out { opacity:.45; }
+@media (max-width:660px){
+  .yard-row { flex-direction:column; gap:5px; }
+  .yard-l { flex:none; }
+}
+
+.mchip { display:inline-flex; align-items:stretch; border:1px solid ${C.edgeSoft}; border-radius:2px; overflow:hidden; }
+.mchip-g { width:8px; touch-action:none; cursor:grab; border-right:1px solid ${C.edgeSoft};
+           background:repeating-linear-gradient(180deg,transparent 0 2px,#3b464e 2px 3px); }
+.mchip:hover { border-color:var(--edge); }
+.mtag { border-bottom-width:2px; border-bottom-style:solid; padding:2px 6px; }
+.load-odd { margin-top:4px; font-size:9.5px; letter-spacing:.07em; color:${ST.watch.color}; }
+
+/* --- calendar strip ------------------------------------------------------ */
+.wkpick { background:${C.bg}; color:var(--ink); border:1px solid var(--edge); border-radius:2px;
+          padding:6px 8px; font-size:11px; letter-spacing:.06em; font-family:'Barlow Condensed',sans-serif;
+          text-transform:uppercase; max-width:158px; }
+.cal { display:flex; align-items:center; justify-content:center; gap:5px; padding:5px 16px;
+       flex-wrap:wrap; border-bottom:1px solid ${C.edgeSoft}; }
+.calday { display:flex; align-items:baseline; gap:5px; min-width:0;
+          padding:4px 9px; border:1px solid var(--edge); border-radius:3px; color:var(--dim); }
+.calday em { font-style:normal; font-size:9px; letter-spacing:.1em; }
+.calday b { font-weight:500; font-size:13px; line-height:1; font-family:'IBM Plex Mono',monospace; }
+.calday i { width:4px; height:4px; border-radius:50%; background:transparent; align-self:center; }
+.calday i[data-saved="1"] { background:${ST.running.color}; }
+.calday[data-today="1"] { border-color:#55636c; }
+.calday[data-on="1"] { background:${C.tileHi}; color:var(--ink); border-color:#6b7880; box-shadow:inset 0 0 0 1px #6b7880; }
+.btn[disabled] { opacity:.4; cursor:default; }
+
+/* --- yard bar ------------------------------------------------------------ */
+.ybar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 16px 22px;
+        border-top:1px solid ${C.edgeSoft}; margin-top:2px; }
+.lgs { display:flex; flex-wrap:wrap; gap:3px 13px; }
+.lg { display:inline-flex; align-items:center; gap:5px; font-size:9.5px; color:var(--faint); letter-spacing:.03em; }
+.lg i { width:11px; height:11px; border-radius:2px; display:block; }
+.lg .ring { background:none; border:1.5px dashed ${ST.tagged.color}; }
+
+/* --- the yard ------------------------------------------------------------ */
+.oy-g { display:grid; grid-template-columns:186px minmax(0,1fr) 330px;
+        grid-template-areas:"left canvas right"; gap:10px; padding:10px 16px 4px; }
+.left { grid-area:left; display:flex; flex-direction:column; gap:10px; }
+.left > div { flex:1; display:flex; }
+.canvas-wrap { grid-area:canvas; overflow:auto; border:1px solid ${C.edgeSoft}; border-radius:4px; }
+.right { grid-area:right; display:flex; flex-direction:column; gap:10px; min-height:0; }
+.right > div { display:flex; min-height:0; }
+.right > div:first-child { flex:1; }        /* at the yard */
+.right > div:last-child { flex:1.45; }      /* in for repair, given more room */
+.right .bin-b { overflow:auto; align-content:flex-start; }
+@media (max-width:1100px){
+  .oy-g { grid-template-columns:186px minmax(0,1fr); grid-template-areas:"left canvas" "right right"; }
+  .right { flex-direction:row; }
+  .right > div:first-child, .right > div:last-child { flex:1; }
+}
+@media (max-width:820px){
+  .oy-g { grid-template-columns:1fr; grid-template-areas:"left" "canvas" "right"; }
+  .right { flex-direction:column; }
+}
+
+.bin { background:${C.panel}; border:1px solid ${C.edgeSoft}; border-radius:4px; display:flex;
+       flex-direction:column; min-height:104px; width:100%; transition:background .12s; }
+.bin.hot { background:#232c33; box-shadow:inset 0 0 0 1px #5b686f; }
+.bin-h { display:flex; align-items:center; gap:8px; font-family:'Barlow Condensed',sans-serif;
+         font-size:9.5px; letter-spacing:.16em; color:var(--faint); padding:9px 11px;
+         border-bottom:1px solid ${C.edgeSoft}; }
+.bin-h b { margin-left:auto; font-weight:500; color:var(--dim); font-size:11px; letter-spacing:.04em; }
+.bin-b { display:flex; flex-wrap:wrap; gap:6px; padding:9px; align-items:flex-start; flex:1; align-content:flex-start; }
+.bin-b.row { align-items:flex-end; align-content:flex-end; overflow:auto; }
+.bin.vac { border-color:#33414c; background:#191f26; }
+.bin.vac .bin-h { color:#6f8695; }
+.bin.rep { border-color:#4a2d29; background:#1e1817; }
+.bin.rep .bin-h { color:#c07a70; }
+
+.plate { display:inline-flex; align-items:stretch; background:#242C33; border:1px solid var(--edge);
+         border-radius:3px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.4);
+         cursor:grab; touch-action:none; user-select:none; }
+.plate:hover { background:#2C363E; border-color:#4a565f; }
+.plate:active { cursor:grabbing; }
+.plate-c { width:9px; flex:0 0 9px; }
+.plate-n { padding:7px 11px; font-family:'Barlow Condensed',sans-serif; text-transform:uppercase;
+           letter-spacing:.07em; font-size:12.5px; white-space:nowrap; line-height:1; align-self:center; }
+.plate-v { align-self:center; font-family:'Barlow Condensed',sans-serif; font-size:9px; letter-spacing:.1em;
+           color:#131820; background:#5F87A6; padding:2px 5px; border-radius:2px; margin:0 7px 0 -3px; }
+.plate.off { opacity:.72; }
+
+.lcard { display:inline-flex; flex-direction:column; align-items:center; gap:3px;
+         touch-action:none; cursor:grab; padding:4px; user-select:none; }
+.lcard:active { cursor:grabbing; }
+.lcard-t { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; letter-spacing:.06em;
+           font-size:9px; color:var(--faint); text-align:center; max-width:120px; line-height:1.25; }
+.lcard.broke .lcard-t { color:#C97066; }
+.lcard { position:relative; }
+.lcard-w { position:absolute; top:-2px; right:-2px; z-index:2; width:15px; height:15px; border-radius:50%;
+           background:${ST.watch.color}; color:#14181C; font-family:'Barlow Condensed',sans-serif;
+           font-weight:700; font-size:11px; display:flex; align-items:center; justify-content:center; }
+.odd { font-size:10px; letter-spacing:.07em; color:${ST.watch.color}; border:1px solid #4a3d1c;
+       background:#241f10; padding:4px 9px; border-radius:2px; cursor:help; }
+.bin-h .lnk { margin-left:6px; font-size:9.5px; }
+
+.canvas { position:relative; }
+.asphalt { position:absolute; inset:0; background:
+  repeating-linear-gradient(90deg,rgba(255,255,255,.028) 0 1px,transparent 1px 88px),
+  repeating-linear-gradient(0deg,rgba(255,255,255,.028) 0 1px,transparent 1px 88px), #191E23; }
+.pin { position:absolute; }
+.hull { position:absolute; border:1.5px dashed #4b5860; border-radius:30px; background:rgba(120,140,155,.055); }
+.hull-l { position:absolute; top:-12px; left:16px; background:${C.bg}; padding:2px 9px; border-radius:2px;
+          font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; letter-spacing:.1em;
+          font-size:10.5px; color:var(--dim); display:flex; gap:8px; align-items:center; white-space:nowrap;
+          cursor:grab; touch-action:none; }
+.hull-b { font:inherit; letter-spacing:inherit; color:var(--ink); }
+.hull-l u { text-decoration:none; display:inline-flex; align-items:center; gap:3px; font-size:9px; color:var(--faint); }
+.hull-l em { font-style:normal; color:${ST.watch.color}; font-size:9px; }
+.hull-l b { font-weight:500; color:var(--faint); font-size:9px; }
+
+/* --- crew boxes ---------------------------------------------------------- */
+.cbox { position:absolute; background:rgba(28,34,39,.92); border:1px solid #38434b; border-radius:5px;
+        box-shadow:0 2px 8px rgba(0,0,0,.4); transition:background .12s, box-shadow .12s; }
+.cbox.hot { background:#28323a; box-shadow:0 0 0 2px #7d8b94, 0 2px 10px rgba(0,0,0,.5); }
+.cbox-h { display:flex; align-items:center; gap:7px; height:26px; padding:0 9px 0 0;
+          border-bottom:1px solid #2f393f; }
+.cbox-g { width:16px; align-self:stretch; cursor:grab; touch-action:none; border-right:1px solid #2f393f;
+          border-radius:4px 0 0 0;
+          background:repeating-linear-gradient(180deg,transparent 0 3px,#454f57 3px 4px); }
+.cbox-g:active { cursor:grabbing; }
+.cbox-n { font-size:12.5px; letter-spacing:.09em; color:var(--ink); }
+.cbox-h u { text-decoration:none; display:inline-flex; align-items:center; gap:3px; font-size:8.5px;
+            letter-spacing:.1em; color:var(--faint); border:1px solid var(--edge); padding:1px 4px; border-radius:2px; }
+.cbox-h b { margin-left:auto; font-weight:500; font-size:9.5px; letter-spacing:.06em; color:var(--faint); }
+.cbox-e { position:absolute; left:12px; top:38px; font-size:10px; color:var(--faint); letter-spacing:.04em; }
+.slot { position:absolute; }
+
+.lcard-k { position:absolute; top:-3px; left:-4px; z-index:2; font-size:9px; line-height:1;
+           background:${C.panel}; border:1px solid var(--edge); border-radius:50%;
+           width:16px; height:16px; display:flex; align-items:center; justify-content:center;
+           cursor:pointer; color:var(--dim); }
+.lcard-k:hover { color:var(--ink); border-color:#5d6a73; }
+.lcard.linked { outline:1px solid #6f7b84; outline-offset:2px; border-radius:3px; }
+`);
+
+
+/* ============================ OPERATIONS ==================================
+   Service lines. A unit can serve more than one — a lawn truck helping on a
+   plant care job is normal, so nothing here is exclusive.                   */
+const OPS = {
+  GTC:   { key: "GTC",   label: "General tree care", glyph: "M6 2l4 6H8l3 5H7l3 5H1l3-5H0l3-5H1z" },
+  PHC:   { key: "PHC",   label: "Plant health care", glyph: "M6 1c3 4 4.5 6 4.5 8A4.5 4.5 0 011.5 9C1.5 7 3 5 6 1z" },
+  LC:    { key: "LC",    label: "Lawn care",         glyph: "M1 16V9m3 7V6m3.5 10V8m3.5 8V5" },
+  SALES: { key: "SALES", label: "Sales & admin",     glyph: "M1 5h10v9H1zM4 5V2h4v3" },
+};
+const OP_ORDER = ["GTC", "PHC", "LC", "SALES"];
+
+const OpGlyph = ({ op, size = 11 }) => {
+  const o = OPS[op]; if (!o) return null;
+  const stroke = op === "LC";
+  return (
+    <svg viewBox="0 0 12 18" width={size * 0.72} height={size} aria-hidden="true"
+         fill={stroke ? "none" : "currentColor"} stroke={stroke ? "currentColor" : "none"}
+         strokeWidth={stroke ? 2 : 0} strokeLinecap="round">
+      <path d={o.glyph} />
+    </svg>
+  );
+};
+const OpTag = ({ op }) => (
+  <span className="optag stencil" title={OPS[op] ? OPS[op].label : op}>
+    <OpGlyph op={op} /> {op}
+  </span>
+);
+
+/* ============================ PERSON PLACARD ==============================
+   The SingleOps colour rides on the name, never on a machine, so a colour on
+   this board can only ever mean one of two things depending on what it is
+   attached to: a person, or a machine's condition.                          */
+const Placard = ({ person, onBegin, tone, onClick, sub }) => {
+  const label = (
+    <>
+      {person ? person.d : "—"}
+      {sub && <span style={{ color: C.inkFaint, marginLeft: 6, letterSpacing: ".04em" }}>{sub}</span>}
+    </>
+  );
+  return (
+    <div className="plc">
+      {onBegin && <div className="plc-g" onPointerDown={onBegin} role="button" tabIndex={-1} aria-label="Drag" />}
+      <div className="plc-c" style={{ background: (person && person.c) || C.edge }} />
+      {onClick
+        ? <button className="plc-n stencil" onClick={onClick}>{label}</button>
+        : <div className="plc-n stencil">{label}</div>}
+      {tone && <div className="plc-s" style={{ background: tone }} />}
+    </div>
+  );
+};
+
+/* ============================ ASSET TILE ================================== */
+function AssetTile({ a, crewName, begin, onOpen, flash }) {
+  const st = ST[a.status] || ST.running;
+  return (
+    <div className={`tile${flash ? " flash" : ""}`} data-st={a.status}>
+      <div className="bar" style={{ background: st.color }} />
+      <div className="grip" onPointerDown={(e) => begin(e, { kind: "asset", id: a.id, name: a.name, shape: a.shape, instant: true })}
+           role="button" tabIndex={-1} aria-label={`Drag ${a.name}`} />
+      <button className="tile-b" onClick={onOpen}
+              onPointerDown={(e) => { if ((e.pointerType || "mouse") === "mouse") begin(e, { kind: "asset", id: a.id, name: a.name, shape: a.shape }); }}
+              aria-label={`${a.name}, ${st.label}`}>
+        <div className="mach-wrap" style={{ "--mach": tones(a.fam).body, "--mach-lo": tones(a.fam).lo, "--mach-hi": tones(a.fam).hi }}>
+          <Machine shape={a.shape} dim={a.status === "parked"} />
+        </div>
+        <div className="tile-name stencil">{a.name}</div>
+        <div className="tile-sub">{a.spec}</div>
+        <div className="tile-foot">
+          <span className="ops">{a.ops.map((o) => <OpTag key={o} op={o} />)}</span>
+          <u className="stencil">{crewName || "UNASSIGNED"}</u>
+        </div>
+      </button>
+    </div>
+  );
+}
+
+/* ============================ CONDITION DOCK ==============================
+   Appears only while a unit is in hand. Five big targets pinned to the bottom
+   of the screen, so on a phone you never have to drag across a scrolling row
+   of columns to say a machine is in the shop.                               */
+function ConditionDock({ drag, registerZone, onDrop }) {
+  const on = drag && drag.item.kind === "asset";
+  return (
+    <div className="dock" data-on={on ? 1 : 0} aria-hidden={!on}>
+      <div className="dock-l stencil">Drop to set condition</div>
+      <div className="dock-r">
+        {ST_ORDER.map((k) => {
+          const zid = `dock:${k}`;
+          return (
+            <Zone key={k} id={zid} accepts={["asset"]} registerZone={registerZone} onDrop={(item) => onDrop(item.id, k)}>
+              <div className="dz stencil" data-hot={drag && drag.over === zid ? 1 : 0}
+                   style={{ borderColor: ST[k].color }}>
+                <span className="swatch" style={{ background: ST[k].color }} />{ST[k].label}
+              </div>
+            </Zone>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ============================ FLEET ======================================= */
+function FleetView({ core, crewsMap, engine, filters, setFilters, onOpen, onStatus, flashSet }) {
+  const { begin, registerZone, drag } = engine;
+  const assets = live(core.assets);
+  const crews = live(crewsMap);
+  const crewOf = {};
+  crews.forEach((c) => c.iron.forEach((i) => { crewOf[i] = c.name; }));
+  const cats = useMemo(() => [...new Set(SEED_ASSETS.map((a) => a.cat))].sort(), []);
+  const yards = ["Brighton", "Rush Scottsville", "Off-site"];
+
+  const shown = assets.filter((a) => {
+    if (filters.op && !a.ops.includes(filters.op)) return false;
+    if (filters.cat.length && !filters.cat.includes(a.cat)) return false;
+    if (filters.yard && a.yard !== filters.yard) return false;
+    if (filters.st && a.status !== filters.st) return false;
+    const q = filters.q.trim().toLowerCase();
+    if (q && !(a.name + " " + a.spec + " " + (a.plate || "")).toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  let groups;
+  if (filters.by === "status") {
+    groups = ST_ORDER.map((k) => ({ key: k, label: ST[k].label, color: ST[k].color, drop: true, items: shown.filter((a) => a.status === k) }));
+  } else if (filters.by === "op") {
+    groups = OP_ORDER.map((k) => ({ key: k, label: OPS[k].label, badge: k, color: C.edge, items: shown.filter((a) => a.ops.includes(k)) }));
+  } else {
+    groups = cats.filter((c) => shown.some((a) => a.cat === c))
+                 .map((c) => ({ key: c, label: c, color: C.edge, items: shown.filter((a) => a.cat === c) }));
+  }
+
+  const toggle = (k, v) => setFilters((f) => {
+    const cur = f[k];
+    if (Array.isArray(cur)) return { ...f, [k]: cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v] };
+    return { ...f, [k]: cur === v ? "" : v };
+  });
+  const attention = assets.filter((a) => a.status === "tagged" || a.status === "shop");
+
+  return (
+    <>
+      <div className="tb">
+        <span className="fl stencil" style={{ margin: 0 }}>COLUMNS</span>
+        {[["status", "Condition"], ["op", "Operation"], ["cat", "Type"]].map(([v, l]) => (
+          <button key={v} className="chip stencil" data-on={filters.by === v ? 1 : 0}
+                  onClick={() => setFilters((f) => ({ ...f, by: v }))}>{l}</button>
+        ))}
+        <span className="vr" />
+        {OP_ORDER.map((o) => (
+          <button key={o} className="chip stencil" data-on={filters.op === o ? 1 : 0} onClick={() => toggle("op", o)}>
+            <OpGlyph op={o} /> {o}
+          </button>
+        ))}
+        <span className="vr" />
+        {yards.map((y) => (
+          <button key={y} className="chip stencil" data-on={filters.yard === y ? 1 : 0} onClick={() => toggle("yard", y)}>{y}</button>
+        ))}
+        <div className="spacer" />
+        <input className="srch" placeholder="Find unit or plate" value={filters.q}
+               onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))} />
+      </div>
+
+      <div className="tb" style={{ paddingTop: 0, borderBottom: `1px solid ${C.edgeSoft}` }}>
+        <span className="fl stencil" style={{ margin: 0 }}>TYPE</span>
+        {cats.map((c) => (
+          <button key={c} className="chip stencil" data-on={filters.cat.includes(c) ? 1 : 0} onClick={() => toggle("cat", c)}>{c}</button>
+        ))}
+      </div>
+
+      {attention.length > 0 && (
+        <div className="attn">
+          <span className="stencil" style={{ fontSize: 9.5, letterSpacing: ".16em", color: C.inkFaint }}>OFF THE SCHEDULE</span>
+          {attention.map((a) => (
+            <button key={a.id} className="mini stencil" style={{ borderLeftColor: ST[a.status].color }} onClick={() => onOpen(a.id)}>
+              <MachineChip shape={a.shape} />{a.name}<span style={{ color: C.inkFaint }}>{ST[a.status].short}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="cols">
+        {groups.map((g) => {
+          const zid = `col:${g.key}`;
+          const hot = drag && drag.over === zid;
+          const body = (
+            <div className="col-b" data-hot={hot ? 1 : 0}>
+              {g.items.length === 0
+                ? <div className="empty">Nothing here.<br />{g.drop ? "Drag a unit in." : "Adjust the filters."}</div>
+                : g.items.map((a) => (
+                    <AssetTile key={a.id} a={a} crewName={crewOf[a.id]} begin={begin}
+                               flash={flashSet.has(a.id)} onOpen={() => onOpen(a.id)} />
+                  ))}
+            </div>
+          );
+          return (
+            <div className="col" key={g.key}>
+              <div className="col-h" style={{ borderTopColor: g.color }}>
+                {g.badge && <span style={{ color: C.inkDim, display: "flex" }}><OpGlyph op={g.badge} size={13} /></span>}
+                <em className="stencil">{g.label}</em>
+                <u className="mono">{g.items.length}</u>
+              </div>
+              {g.drop
+                ? <Zone id={zid} accepts={["asset"]} registerZone={registerZone} onDrop={(item) => onStatus(item.id, g.key)}>{body}</Zone>
+                : body}
+            </div>
+          );
+        })}
+      </div>
+      {filters.by === "op" && (
+        <div className="note">A unit shows up under every operation it serves, so shared machines appear more than once. That is on purpose.</div>
+      )}
+    </>
+  );
+}
+
+
+/* ============================ DATE HELPERS ================================ */
+const DNAMES = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+const weekStartOf = (d) => { const x = new Date(d); x.setDate(x.getDate() - x.getDay()); x.setHours(0, 0, 0, 0); return x; };
+const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const ago = (t) => {
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 45) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+};
+
+/* ============================ YARD VIEW =================================== */
+const Plate = ({ p, onBegin, off, onClick }) => (
+  <span className={`plate${off ? " off" : ""}`} onPointerDown={onBegin} onClick={onClick}>
+    <span className="plate-c" style={{ background: p.c }} />
+    <span className="plate-n">{p.d}</span>
+    {off && <span className="plate-v">{off}</span>}
+  </span>
+);
+
+const LoadCard = ({ members, onBegin, onClick, scale = 1, label = true, broken, odd, linked, onLink }) => (
+  <span className={`lcard${broken ? " broke" : ""}${linked ? " linked" : ""}`} onPointerDown={onBegin} onClick={onClick}>
+    {odd && odd.length > 0 && <span className="lcard-w" title={odd.join("\n")}>!</span>}
+    {members.length > 1 && onLink && (
+      <span className="lcard-k" role="button" title={linked ? "Linked — click to unlink" : "Link these so they stay together"}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onLink(); }}>{linked ? "\u{1F512}" : "\u26AD"}</span>
+    )}
+    <TopLoad members={members} scale={scale} broken={broken} />
+    {label && <span className="lcard-t">{members.map((m) => m.tag).join(" · ")}</span>}
+  </span>
+);
+
+function stackIssues(members) {
+  const out = [];
+  const lead = members[0];
+  const tow = members.find((m) => m !== lead && (m.hc === "towed" || m.hc === "trailer"));
+  const trailer = members.find((m) => m.hc === "trailer");
+  if (lead && lead.hc !== "truck") out.push(`${lead.tag} has no truck to pull it`);
+  if (lead && tow && towScore(lead, tow.tt) < 0)
+    out.push(`${lead.tag} rarely pulls a ${TOWWORD[tow.tt] || tow.tag.toLowerCase()}`);
+  members.filter((m) => m.hc === "carried").forEach((m) => {
+    if (!trailer) out.push(`${m.tag} has no trailer — it cannot go out`);
+    else if ((m.rides || []).length && !(m.rides || []).includes(trailer.tt))
+      out.push(`${m.tag} is on a ${TOWWORD[trailer.tt] || trailer.tag.toLowerCase()}`);
+  });
+  return out;
+}
+
+function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setOps, onOrder,
+                   onCopy, onLink, onUnlink,
+                   onMove, onNewCrew, onCrew, onPerson, onAddPerson, onOpenAsset, onDate, undoLabel, onUndo }) {
+  const { begin, registerZone, drag } = engine;
+  const assets = core.assets;
+  const roster = live(core.people);
+  const pos = day.pos || {};
+  const stacks = day.stacks || {};
+  const mon = new Date(isoOf(weekStartOf(new Date(iso + "T00:00:00"))) + "T00:00:00");
+  const todayIso = isoOf(new Date());
+
+  const membersOf = (lead) => (stacks[lead] || [lead]).map((i) => assets[i]).filter((a) => a && !a.del);
+  const opsOfStack = (lead) => {
+    const set = new Set();
+    membersOf(lead).forEach((m) => (m.ops || []).forEach((o) => set.add(o)));
+    return [...set];
+  };
+  const stackShown = (lead) => { const o = opsOfStack(lead); return !o.length || o.some((x) => ops[x]); };
+  const broken = (lead) => membersOf(lead).some((m) => m.status === "tagged" || m.status === "shop");
+  const offToday = (pid) => {
+    const c = week.cells[`${pid}:${dayIndex}`];
+    return c && c.code !== "on" && c.code !== "light" ? DAY[c.code].short : null;
+  };
+
+  /* clusters, filtered by which operations are switched on */
+  const hitch2 = useMemo(() => deriveHitch(day.crews, core.assets), [day.crews, core.assets]);
+  const anchors = day.pos || {};
+  const boxes = packBoxes(live(day.crews)
+    .filter((c) => !c.ops || ops[c.ops] !== false)
+    .map((c, i) => layoutBox(c, i, core, hitch2, anchors)), CW);
+  /* dropped on a box: slot it in there. dropped past the end: put it last. */
+  const dropCrew = (id, at) => {
+    let target = boxes.findIndex((b) => at.x >= b.x && at.x <= b.x + b.w && at.y >= b.y && at.y <= b.y + b.h);
+    if (target < 0) target = boxes.findIndex((b) => at.y < b.y + b.h / 2);
+    const ids = boxes.map((b) => b.crew.id).filter((x) => x !== id);
+    ids.splice(target < 0 ? ids.length : Math.min(target, ids.length), 0, id);
+    onOrder(ids);
+  };
+
+  const room = roster.filter((p) => !pos[p.id] && !offToday(p.id));
+  const away = roster.filter((p) => offToday(p.id));
+  const parked = Object.keys(stacks).filter((k) => !pos[k] && stackShown(k));
+  const yard = parked.filter((k) => !broken(k));
+  const shop = parked.filter((k) => broken(k));
+  const hot = (id) => (drag && drag.over === id ? " hot" : "");
+  const outIssues = [];
+  Object.keys(stacks).forEach((k) => {
+    if (!pos[k] || !stackShown(k)) return;
+    stackIssues(membersOf(k)).forEach((t) => outIssues.push(t));
+  });
+
+  const days = [0, 1, 2, 3, 4, 5, 6].map((i) => addDays(mon, i));
+
+  return (
+    <>
+      <div className="cal">
+        <select className="wkpick stencil" value={isoOf(mon)}
+                onChange={(e) => onDate(isoOf(addDays(new Date(e.target.value + "T00:00:00"), dayIndex)))}
+                title="Jump to a week">
+          {Array.from({ length: 27 }).map((_, k) => {
+            const w = addDays(weekStartOf(new Date()), (k - 8) * 7);
+            const wi = isoOf(w);
+            return (
+              <option key={wi} value={wi}>
+                {k === 8 ? "This week" : `Week of ${w.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`}
+                {k === 8 ? "" : k === 9 ? " · next" : k === 7 ? " · last" : ""}
+              </option>
+            );
+          })}
+        </select>
+        <button className="btn stencil" onClick={() => onDate(isoOf(addDays(mon, -7)))}>‹</button>
+        {days.map((d, i) => {
+          const di = isoOf(d);
+          return (
+            <button key={i} className="calday stencil" data-on={di === iso ? 1 : 0} data-today={di === todayIso ? 1 : 0}
+                    onClick={() => onDate(di)}>
+              <em>{DNAMES[i]}</em>
+              <b>{d.getDate()}</b>
+              <i data-saved={savedDays.has(di) ? 1 : 0} />
+            </button>
+          );
+        })}
+        <button className="btn stencil" onClick={() => onDate(isoOf(addDays(mon, 7)))}>›</button>
+        <button className="btn stencil" onClick={() => onDate(todayIso)}>Today</button>
+        <div className="spacer" />
+        <button className="btn stencil" data-danger={undoLabel ? 1 : 0} disabled={!undoLabel}
+                onClick={onUndo} title={undoLabel || "Nothing to undo"}>
+          ↶ Undo{undoLabel ? ` · ${undoLabel}` : ""}
+        </button>
+      </div>
+
+      <div className="oy-g">
+        <div className="left">
+          <Zone id="room" accepts={["person"]} registerZone={registerZone} onDrop={(it) => onMove(it, "room")}>
+            <div className={`bin${hot("room")}`}>
+              <div className="bin-h">CREW ROOM
+                <button className="lnk stencil" onClick={onAddPerson}>+ name</button>
+                <b>{room.length}</b></div>
+              <div className="bin-b">
+                {room.map((p) => <Plate key={p.id} p={p} onClick={() => onPerson(p.id)}
+                                        onBegin={(e) => begin(e, { kind: "person", id: p.id, name: p.d, color: p.c, instant: true })} />)}
+                {!room.length && <span className="hint">everyone is out</span>}
+              </div>
+            </div>
+          </Zone>
+          <Zone id="vac" accepts={["person"]} registerZone={registerZone} onDrop={(it) => onMove(it, "vac")}>
+            <div className={`bin vac${hot("vac")}`}>
+              <div className="bin-h">ON VACATION<b>{away.length}</b></div>
+              <div className="bin-b">
+                {away.map((p) => <Plate key={p.id} p={p} off={offToday(p.id)} onClick={() => onPerson(p.id)}
+                                        onBegin={(e) => begin(e, { kind: "person", id: p.id, name: p.d, color: p.c, instant: true })} />)}
+                {!away.length && <span className="hint">nobody off</span>}
+              </div>
+            </div>
+          </Zone>
+        </div>
+
+        <div className="canvas-wrap">
+          <Zone id="canvas" accepts={["person", "stack", "crew"]} registerZone={registerZone}
+                onDrop={(it, _z, at) => (it.kind === "crew" ? dropCrew(it.id, at) : onMove(it, "canvas", at))}>
+            <div className="canvas" style={{ width: CW, height: CH }}>
+              <div className="asphalt" />
+              {boxes.map((b) => (
+                <Zone key={b.crew.id} id={`crew:${b.crew.id}`} accepts={["person", "stack"]}
+                      registerZone={registerZone} onDrop={(it) => onMove(it, `crew:${b.crew.id}`)}>
+                  <div className={`cbox${drag && drag.over === `crew:${b.crew.id}` ? " hot" : ""}`}
+                       style={{ left: b.x, top: b.y, width: b.w, height: b.h }}>
+                    <div className="cbox-h">
+                      <span className="cbox-g" title="Move this crew"
+                            onPointerDown={(e) => begin(e, { kind: "crew", id: b.crew.id, name: b.crew.name, instant: true })} />
+                      <button className="cbox-n stencil" onClick={() => onCrew(b.crew.id)}>{b.crew.name}</button>
+                      {b.crew.ops && <u className="stencil"><OpGlyph op={b.crew.ops} /> {b.crew.ops}</u>}
+                      <b>{b.ppl.filter((p) => !offToday(p.id)).length}p · {b.loads.length}</b>
+                    </div>
+                    {b.ppl.length === 0 && b.loads.length === 0 && <span className="cbox-e">empty — drag a name or a truck in</span>}
+                    {b.pSlots.map(({ p, x, y }) => (
+                      <div key={p.id} className="slot" style={{ left: x, top: y, width: PL_W }}>
+                        <Plate p={p} off={offToday(p.id)} onClick={() => onPerson(p.id)}
+                               onBegin={(e) => begin(e, { kind: "person", id: p.id, name: p.d, color: p.c, instant: true })} />
+                      </div>
+                    ))}
+                    {b.lSlots.map(({ l, x, y }) => (
+                      <div key={l.id} className="slot" style={{ left: x, top: y }}>
+                        <LoadCard members={l.members} broken={broken(l.id)} odd={stackIssues(l.members)}
+                                  linked={!!rigOf(core, l.lead.id)}
+                                  onLink={() => { const r = rigOf(core, l.lead.id);
+                                    r ? onUnlink(r.id) : onLink(b.crew.id, l.members.map((m) => m.id)); }}
+                                  onClick={() => onOpenAsset(l.lead.id)}
+                                  onBegin={(e) => begin(e, { kind: "stack", id: l.id,
+                                    name: l.members.map((m) => m.tag).join(" · "), instant: true })} />
+                      </div>
+                    ))}
+                  </div>
+                </Zone>
+              ))}
+            </div>
+          </Zone>
+        </div>
+
+        <div className="right">
+          <Zone id="yard" accepts={["stack"]} registerZone={registerZone} onDrop={(it) => onMove(it, "yard")}>
+            <div className={`bin${hot("yard")}`}>
+              <div className="bin-h">AT THE YARD<b>{yard.length}</b></div>
+              <div className="bin-b row">
+                {yard.map((k) => <LoadCard key={k} members={membersOf(k)} scale={0.52} onClick={() => onOpenAsset(k)}
+                                           onBegin={(e) => begin(e, { kind: "stack", id: k, name: membersOf(k).map((m) => m.tag).join(" · "), instant: true })} />)}
+                {!yard.length && <span className="hint">everything is out</span>}
+              </div>
+            </div>
+          </Zone>
+          <Zone id="rep" accepts={["stack"]} registerZone={registerZone} onDrop={(it) => onMove(it, "rep")}>
+            <div className={`bin rep${hot("rep")}`}>
+              <div className="bin-h">IN FOR REPAIR<b>{shop.length}</b></div>
+              <div className="bin-b row">
+                {shop.map((k) => <LoadCard key={k} members={membersOf(k)} scale={0.52} broken onClick={() => onOpenAsset(k)}
+                                           onBegin={(e) => begin(e, { kind: "stack", id: k, name: membersOf(k).map((m) => m.tag).join(" · "), instant: true })} />)}
+                {!shop.length && <span className="hint">nothing down</span>}
+              </div>
+            </div>
+          </Zone>
+        </div>
+      </div>
+      <div className="ybar">
+        <span className="fl stencil" style={{ margin: 0 }}>SHOW</span>
+        {OP_ORDER.map((o) => (
+          <button key={o} className="chip stencil" data-on={ops[o] ? 1 : 0}
+                  onClick={() => setOps((s) => ({ ...s, [o]: !s[o] }))}>
+            <OpGlyph op={o} /> {o}
+          </button>
+        ))}
+        <span className="vr" />
+        <span className="lgs">
+          {Object.entries(FAMILY).map(([k, v]) => (
+            <span className="lg" key={k}><i style={{ background: v.c }} />{v.label}</span>
+          ))}
+          <span className="lg"><i className="ring" />down</span>
+        </span>
+        <div className="spacer" />
+        {day.inherited && <span className="inherit stencil">
+          {day.inherited === "standing" ? "From the standing setup" : `Same as ${day.inherited}`} — not saved yet
+        </span>}
+        {outIssues.length > 0 && (
+          <span className="odd stencil" title={outIssues.join("\n")}>{outIssues.length} to check</span>
+        )}
+        <button className="btn stencil" onClick={() => onCopy("tomorrow")}>Copy to tomorrow →</button>
+        <button className="btn stencil" onClick={() => onCopy("week")}>Copy to rest of week</button>
+        <button className="btn stencil" data-primary="1" onClick={onNewCrew}>+ New crew</button>
+      </div>
+    </>
+  );
+}
+
+const OP_RANK = { GTC: 0, PHC: 1, LC: 2, SHOP: 3, SALES: 4 };
+const OP_WORD = { PHC: "PHC", LC: "Lawns", SHOP: "Shop", SALES: "Sales" };
+
+function shortNames(people) {
+  const firsts = {};
+  people.forEach((p) => { const f = p.name.split(" ")[0]; firsts[f] = (firsts[f] || 0) + 1; });
+  const out = {};
+  people.forEach((p) => { const f = p.name.split(" ")[0]; out[p.id] = firsts[f] > 1 ? p.name : f; });
+  return out;
+}
+
+function buildDaySheet(core, crewsMap, week, dayIndex, opt) {
+  const roster = live(core.people);
+  const short = shortNames(roster);
+  const label = (p) => (opt.shortNames ? short[p.id] || p.name : p.name);
+  const outCode = (pid) => {
+    const c = week.cells[`${pid}:${dayIndex}`];
+    return c ? c.code : "on";
+  };
+  const crews = live(crewsMap).slice()
+    .filter((c) => !opt.fieldOnly || ["GTC", "PHC", "LC"].includes(c.ops))
+    .sort((a, b) => (OP_RANK[a.ops] != null ? OP_RANK[a.ops] : 9) - (OP_RANK[b.ops] != null ? OP_RANK[b.ops] : 9));
+
+  const segs = [], away = [], grounded = [], bare = [];
+  crews.forEach((c) => {
+    const names = [];
+    c.people.forEach((pid) => {
+      const p = core.people[pid];
+      if (!p || p.del) return;
+      const code = outCode(pid);
+      if (code === "vac" || code === "sick" || code === "train") {
+        away.push(`${p.name} — ${DAY[code].label.toLowerCase()}`);
+        return;
+      }
+      names.push(label(p));
+    });
+
+    const gear = [];
+    (c.iron || []).map((i) => core.assets[i]).filter((a) => a && !a.del).forEach((a) => {
+      if (a.status === "tagged" || a.status === "shop") {
+        grounded.push(`${a.name} — ${ST[a.status].label.toLowerCase()} — on ${c.name}`);
+        if (opt.skipDown) return;
+      }
+      const t = (a.tag || a.name).trim();
+      if (t && !gear.includes(t)) gear.push(t);
+    });
+
+    if (!names.length && !gear.length) return;
+    if (opt.onlyStaffed && !names.length) { if (gear.length) bare.push(c.name); return; }
+
+    let paren = [];
+    if (opt.showOp && c.ops && c.ops !== "GTC" && OP_WORD[c.ops]) paren.push(OP_WORD[c.ops]);
+    if (opt.showGear) paren = paren.concat(gear);
+    segs.push(names.join(", ") + (paren.length ? ` (${paren.join(", ")})` : ""));
+  });
+
+  return { text: segs.join(opt.sep), segs, away, grounded, bare };
+}
+
+function DaySheet({ core, crewsMap, week, iso, dayIndex, onClose }) {
+  const shown = new Date(iso + "T00:00:00");
+  const day = dayIndex;
+  const [opt, setOpt] = useState({
+    showGear: true, showOp: true, skipDown: true, onlyStaffed: true,
+    shortNames: true, fieldOnly: true, sep: " ---------- ",
+  });
+  const [text, setText] = useState("");
+  const [copied, setCopied] = useState("");
+  const ta = useRef(null);
+  const built = buildDaySheet(core, crewsMap, week, day, opt);
+
+  /* regenerate when the day or a switch changes, but leave hand edits alone */
+  const sig = `${iso}|${JSON.stringify(opt)}|${JSON.stringify(Object.keys(crewsMap || {}))}`;
+  const lastSig = useRef("");
+  useEffect(() => {
+    if (lastSig.current !== sig) { lastSig.current = sig; setText(built.text); setCopied(""); }
+  }, [sig, built.text]);
+
+  const flip = (k) => setOpt((o) => ({ ...o, [k]: !o[k] }));
+  const dayName = `${DNAMES[day]} ${shown.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+
+  const copy = async () => {
+    const value = text;
+    try {
+      await window.navigator.clipboard.writeText(value);
+      setCopied("ok"); return;
+    } catch (e) { /* clipboard can be blocked; fall through */ }
+    try {
+      if (ta.current) {
+        ta.current.focus(); ta.current.select();
+        const ok = document.execCommand && document.execCommand("copy");
+        setCopied(ok ? "ok" : "manual"); return;
+      }
+    } catch (e) { /* nothing left to try */ }
+    if (ta.current) { ta.current.focus(); ta.current.select(); }
+    setCopied("manual");
+  };
+
+  return (
+    <Sheet onClose={onClose} title={`Day sheet · ${dayName}`} sub="Paste this into the SingleOps task, then add jobs and extras.">
+      <div className="fl stencil">WHAT GOES IN</div>
+      <div className="opts">
+        <button className="opt stencil" data-on={opt.showGear ? 1 : 0} onClick={() => flip("showGear")}>Equipment</button>
+        <button className="opt stencil" data-on={opt.showOp ? 1 : 0} onClick={() => flip("showOp")}>PHC / Lawns label</button>
+        <button className="opt stencil" data-on={opt.skipDown ? 1 : 0} onClick={() => flip("skipDown")}>Leave out down iron</button>
+        <button className="opt stencil" data-on={opt.onlyStaffed ? 1 : 0} onClick={() => flip("onlyStaffed")}>Only crews with people</button>
+        <button className="opt stencil" data-on={opt.fieldOnly ? 1 : 0} onClick={() => flip("fieldOnly")}>Field crews only</button>
+        <button className="opt stencil" data-on={opt.shortNames ? 1 : 0} onClick={() => flip("shortNames")}>Short first names</button>
+        <button className="opt stencil" data-on={opt.sep === "\n" ? 1 : 0}
+                onClick={() => setOpt((o) => ({ ...o, sep: o.sep === "\n" ? " ---------- " : "\n" }))}>One crew per line</button>
+      </div>
+
+      <div className="fl stencil">{dayName} · {built.segs.length} CREW{built.segs.length === 1 ? "" : "S"}</div>
+      <textarea ref={ta} className="ta note-out" value={text} spellCheck={false}
+                onChange={(e) => { setText(e.target.value); setCopied(""); }} />
+      <div className="row-between">
+        <span className="mono" style={{ fontSize: 10.5, color: C.inkFaint }}>{text.length} characters</span>
+        {text !== built.text && (
+          <button className="lnk stencil" onClick={() => { setText(built.text); setCopied(""); }}>Rebuild from the board</button>
+        )}
+      </div>
+
+      {built.away.length > 0 && (
+        <>
+          <div className="fl stencil">LEFT OUT — NOT IN {dayName.split(" ")[0]}</div>
+          <ul className="flags">{built.away.map((a, i) => <li key={i}>{a}</li>)}</ul>
+        </>
+      )}
+      {built.grounded.length > 0 && (
+        <>
+          <div className="fl stencil" style={{ color: ST.tagged.color }}>CHECK BEFORE YOU SEND THIS</div>
+          <ul className="flags">{built.grounded.map((g, i) => (
+            <li key={i} style={{ color: C.ink }}>{g}{opt.skipDown ? " · left out" : " · still in the note"}</li>
+          ))}</ul>
+        </>
+      )}
+      {built.bare.length > 0 && (
+        <>
+          <div className="fl stencil">CREWS WITH IRON BUT NOBODY ON THEM</div>
+          <ul className="flags">{built.bare.map((b, i) => <li key={i}>{b}</li>)}</ul>
+        </>
+      )}
+
+      <div className="act">
+        <button className="btn stencil" data-primary="1" onClick={copy}>Copy for SingleOps</button>
+        {copied === "ok" && <span className="okmsg stencil">Copied</span>}
+        {copied === "manual" && <span className="okmsg stencil" style={{ color: ST.watch.color }}>
+          Selected it for you — press Ctrl/Cmd+C
+        </span>}
+      </div>
+    </Sheet>
+  );
+}
+
+/* ============================ WEEK ======================================== */
+function WeekView({ core, people, engine, week, setCell, marker, setMarker, iso, shift, onDayFocus, onPerson }) {
+  const { begin, registerZone, drag } = engine;
+  const roster = live(core.people);
+  const mon = new Date(iso + "T00:00:00");
+  const days = [0, 1, 2, 3, 4, 5, 6].map((i) => addDays(mon, i));
+  const todayIso = isoOf(new Date());
+  const codeAt = (pid, di) => { const c = week.cells[`${pid}:${di}`]; return c ? c.code : "on"; };
+  const outCount = (di) => roster.filter((p) => { const c = codeAt(p.id, di); return c !== "on" && c !== "light"; }).length;
+
+  return (
+    <>
+      <div className="wk-tools">
+        <button className="btn stencil" onClick={() => shift(-7)}>‹ Prev</button>
+        <span className="stencil" style={{ fontSize: 13, letterSpacing: ".08em", minWidth: 152, textAlign: "center" }}>
+          {mon.toLocaleDateString(undefined, { month: "short", day: "numeric" })} — {addDays(mon, 6).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+        </span>
+        <button className="btn stencil" onClick={() => shift(7)}>Next ›</button>
+        <button className="btn stencil" onClick={() => shift(0)}>This week</button>
+      </div>
+
+      <div className="wk-tools" style={{ paddingTop: 12 }}>
+        <span className="fl stencil" style={{ margin: 0 }}>PICK A MARKER, THEN SWIPE THE DAYS</span>
+        {DAY_ORDER.map((k) => (
+          <button key={k} className="marker stencil" data-on={marker === k ? 1 : 0}
+                  onClick={() => setMarker(k)}
+                  onPointerDown={(e) => { setMarker(k); begin(e, { kind: "marker", code: k, name: DAY[k].label, instant: true }); }}>
+            <span className="swatch" style={{ background: DAY[k].color }} />{DAY[k].label}
+          </button>
+        ))}
+      </div>
+
+      <div className="wk-wrap">
+        <div className="wk" style={{ gridTemplateColumns: "142px repeat(7,minmax(66px,1fr))" }}>
+          <div className="wk-hn stencil">CREW MEMBER</div>
+          {days.map((d, i) => (
+            <button key={i} className="wk-hc stencil" data-today={isoOf(d) === todayIso ? 1 : 0} onClick={() => onDayFocus(i)}>
+              {DNAMES[i]} {d.getDate()}
+              <small>{outCount(i) ? `${outCount(i)} out` : "full"}</small>
+            </button>
+          ))}
+          {roster.map((p) => (
+            <React.Fragment key={p.id}>
+              <div className="wk-rn stencil">
+                <span className="pc" style={{ background: p.c || C.edge }} />
+                <button className="stencil pn" onClick={() => onPerson(p.id)}>{p.d}</button>
+                <button className="stencil mf" title={`Mark Mon–Fri as ${DAY[marker].label}`}
+                        onClick={() => [1, 2, 3, 4, 5].forEach((i) => setCell(p.id, i, marker))}>M–F</button>
+              </div>
+              {days.map((d, i) => {
+                const code = codeAt(p.id, i), zid = `wc:${p.id}:${i}`;
+                return (
+                  <Zone key={i} id={zid} accepts={["marker"]} paint registerZone={registerZone}
+                        onDrop={(item) => setCell(p.id, i, item.code)}>
+                    <div className="cell" data-hot={drag && drag.over === zid ? 1 : 0} data-wknd={i === 0 || i === 6 ? 1 : 0}
+                         onClick={() => setCell(p.id, i, marker)}
+                         onPointerDown={(e) => begin(e, { kind: "marker", code: marker, name: DAY[marker].label, axis: "x" })}>
+                      {code !== "on" && <span style={{ background: DAY[code].color }}>{DAY[code].short}</span>}
+                    </div>
+                  </Zone>
+                );
+              })}
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+      <div className="legend">
+        {DAY_ORDER.map((k) => <i key={k}><span className="swatch" style={{ background: DAY[k].color }} />{DAY[k].label}</i>)}
+        <i style={{ color: C.inkFaint }}>Tap a day heading to sort that day by hand.</i>
+      </div>
+    </>
+  );
+}
+
+/* ============================ SHEETS ====================================== */
+const Sheet = ({ onClose, title, sub, tone, children }) => (
+  <div className="scrim" onClick={onClose}>
+    <div className="sheet" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+      <div className="sheet-h">
+        {tone && <div style={{ width: 4, alignSelf: "stretch", background: tone, borderRadius: 1 }} />}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <em className="stencil">{title}</em>
+          {sub && <small>{sub}</small>}
+        </div>
+        <button className="btn stencil" onClick={onClose}>Close</button>
+      </div>
+      <div className="sheet-b">{children}</div>
+    </div>
+  </div>
+);
+
+function AssetSheet({ a, core, onClose, onStatus, onField, onToggleOp, onDelete }) {
+  const st = ST[a.status];
+  const using = live(core.crews).filter((c) => (c.iron || []).includes(a.id));
+  /* text fields commit on blur and on close, so typing is not one write per key */
+  const [tag, setTag] = useState(a.tag || "");
+  const [note, setNote] = useState(a.note || "");
+  const refs = useRef({ tag, note }); refs.current = { tag, note };
+  const commitTag = useCallback(() => {
+    const v = refs.current.tag.trim();
+    if (v !== (a.tag || "")) onField(a.id, "tag", v);
+  }, [a.id, a.tag, onField]);
+  const commitNote = useCallback(() => {
+    if (refs.current.note !== (a.note || "")) onField(a.id, "note", refs.current.note);
+  }, [a.id, a.note, onField]);
+  useEffect(() => () => { commitTag(); commitNote(); }, [commitTag, commitNote]);
+  return (
+    <Sheet onClose={onClose} title={a.name} sub={a.spec} tone={st.color}>
+      <div style={{ background: C.bg, border: `1px solid ${C.edgeSoft}`, borderRadius: 3, padding: "6px 10px 0",
+                    "--mach": tones(a.fam).body, "--mach-lo": tones(a.fam).lo, "--mach-hi": tones(a.fam).hi }}>
+        <Machine shape={a.shape} dim={a.status === "parked"} />
+      </div>
+
+      <div className="fl stencil">CONDITION</div>
+      <div className="opts">
+        {ST_ORDER.map((k) => (
+          <button key={k} className="opt stencil" data-on={a.status === k ? 1 : 0} onClick={() => onStatus(a.id, k)}>
+            <span className="swatch" style={{ background: ST[k].color }} />{ST[k].label}
+          </button>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, color: C.inkDim, marginTop: 8 }}>{st.note}</div>
+
+      <div className="fl stencil">OPERATIONS</div>
+      <div className="opts">
+        {OP_ORDER.map((o) => (
+          <button key={o} className="opt stencil" data-on={a.ops.includes(o) ? 1 : 0} onClick={() => onToggleOp(a.id, o)}>
+            <OpGlyph op={o} /> {OPS[o].label}
+          </button>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, color: C.inkDim, marginTop: 8 }}>
+        Pick more than one when a unit gets shared across service lines.
+      </div>
+
+      <div className="fl stencil">YARD</div>
+      <div className="opts">
+        {["Brighton", "Rush Scottsville", "Off-site"].map((y) => (
+          <button key={y} className="opt stencil" data-on={a.yard === y ? 1 : 0} onClick={() => onField(a.id, "yard", y)}>{y}</button>
+        ))}
+      </div>
+
+      <div className="fl stencil">ON A CREW TODAY</div>
+      {using.length === 0
+        ? <div style={{ fontSize: 11.5, color: C.inkFaint }}>Not on a crew. Assign it on the Crews tab.</div>
+        : <div className="opts">{using.map((c) => <span key={c.id} className="mini stencil" style={{ borderLeftColor: C.edge }}>{c.name}</span>)}</div>}
+
+      <div className="fl stencil">HOW IT READS IN THE DAY SHEET</div>
+      <input className="srch" style={{ width: "100%" }} value={tag} placeholder={a.name}
+             onChange={(e) => setTag(e.target.value)} onBlur={commitTag} />
+      <div style={{ fontSize: 11, color: C.inkDim, marginTop: 8 }}>
+        Short, the way the crew says it — Lift, Chip Truck, Bridgette.
+      </div>
+
+      <div className="fl stencil">NOTE</div>
+      <textarea className="ta" value={note} placeholder="Anything the next person needs to know."
+                onChange={(e) => setNote(e.target.value)} onBlur={commitNote} />
+
+      <div className="fl stencil">IDENTIFICATION</div>
+      <dl className="kv">
+        <dt>Type</dt><dd>{a.cat}</dd>
+        <dt>Plate</dt><dd className="mono">{a.plate || "—"}</dd>
+        {a.by && <><dt>Last touched</dt><dd>{a.by} · {ago(a.at)}</dd></>}
+      </dl>
+      <div style={{ fontSize: 11, color: C.inkFaint, marginTop: 9 }}>
+        Service history, meters and reminders stay in Fleetio.
+      </div>
+
+      <div className="act">
+        <button className="btn stencil" data-danger="1" onClick={() => onDelete(a.id)}>Remove from board</button>
+      </div>
+    </Sheet>
+  );
+}
+
+function CrewSheet({ c, onClose, onRename, onOps, onDelete }) {
+  const [name, setName] = useState(c.name);
+  const nameRef = useRef(name); nameRef.current = name;
+  const killed = useRef(false);
+  const commit = useCallback(() => {
+    const v = nameRef.current.trim().toUpperCase();
+    if (!killed.current && v && v !== c.name) onRename(c.id, v);
+  }, [c.id, c.name, onRename]);
+  useEffect(() => () => commit(), [commit]);   // closing the sheet saves the name
+  return (
+    <Sheet onClose={onClose} title={c.name} sub={`${c.people.length} on the crew · ${c.iron.length} units`}>
+      <div className="fl stencil">CREW NAME</div>
+      <input className="srch" style={{ width: "100%" }} value={name}
+             onChange={(e) => setName(e.target.value)} onBlur={commit}
+             onKeyDown={(e) => { if (e.key === "Enter") { commit(); onClose(); } }} />
+      <div className="fl stencil">OPERATION</div>
+      <div className="opts">
+        {[...OP_ORDER, "SHOP"].map((l) => (
+          <button key={l} className="opt stencil" data-on={c.ops === l ? 1 : 0} onClick={() => onOps(c.id, l)}>
+            {OPS[l] ? <><OpGlyph op={l} /> {OPS[l].label}</> : "Shop"}
+          </button>
+        ))}
+      </div>
+      <div className="act">
+        <button className="btn stencil" data-danger="1" onClick={() => { killed.current = true; onDelete(c.id); }}>Delete crew</button>
+      </div>
+    </Sheet>
+  );
+}
+
+function PersonSheet({ p, core, onClose, onRename, onRemove }) {
+  const [name, setName] = useState(p.name);
+  const nameRef = useRef(name); nameRef.current = name;
+  const killed = useRef(false);
+  const commit = useCallback(() => {
+    const v = nameRef.current.trim();
+    if (!killed.current && v && v !== p.name) onRename(p.id, v);
+  }, [p.id, p.name, onRename]);
+  useEffect(() => () => commit(), [commit]);
+  const crew = live(core.crews).find((c) => (c.people || []).includes(p.id));
+  const iron = crew ? crew.iron.map((i) => core.assets[i]).filter((a) => a && !a.del) : [];
+  return (
+    <Sheet onClose={onClose} title={p.d} sub={crew ? `On ${crew.name}` : "Not on a crew"}>
+      <div className="fl stencil">NAME</div>
+      <input className="srch" style={{ width: "100%" }} value={name}
+             onChange={(e) => setName(e.target.value)} onBlur={commit}
+             onKeyDown={(e) => { if (e.key === "Enter") { commit(); onClose(); } }} />
+      <div style={{ fontSize: 11, color: C.inkDim, marginTop: 8 }}>
+        Spell it the way SingleOps does, so the crew recognizes the name.
+      </div>
+      <div className="fl stencil">WITH THEM TODAY</div>
+      {iron.length === 0
+        ? <div style={{ fontSize: 11.5, color: C.inkFaint }}>No units on their crew.</div>
+        : <div className="opts">{iron.map((a) => (
+            <span key={a.id} className="mini stencil" style={{ borderLeftColor: ST[a.status].color }}>{a.name}</span>
+          ))}</div>}
+      <div className="act">
+        <button className="btn stencil" data-danger="1"
+                onClick={() => { killed.current = true; onRemove(p.id); }}>Remove from board</button>
+      </div>
+    </Sheet>
+  );
+}
+
+function DayFocus({ dayIndex, iso, core, week, setCell, engine, onClose }) {
+  const { begin, registerZone, drag } = engine;
+  const roster = live(core.people);
+  const d = addDays(new Date(iso + "T00:00:00"), dayIndex);
+  const codeAt = (pid) => { const c = week.cells[`${pid}:${dayIndex}`]; return c ? c.code : "on"; };
+  return (
+    <Sheet onClose={onClose} title={`${DNAMES[dayIndex]} ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`}
+           sub="Drag names between the groups.">
+      {DAY_ORDER.map((k) => {
+        const zid = `df:${k}`;
+        const mine = roster.filter((p) => codeAt(p.id) === k);
+        return (
+          <div key={k} style={{ marginBottom: 11 }}>
+            <div className="sec-l stencil" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span className="swatch" style={{ background: DAY[k].color }} />{DAY[k].label} · {mine.length}
+            </div>
+            <Zone id={zid} accepts={["person"]} registerZone={registerZone} onDrop={(item) => setCell(item.id, dayIndex, k)}>
+              <div className="drop" data-hot={drag && drag.over === zid ? 1 : 0}>
+                {mine.length === 0 && <span style={{ fontSize: 10.5, color: C.inkFaint, padding: "5px 3px" }}>Empty</span>}
+                {mine.map((p) => (
+                  <Placard key={p.id} person={p} tone={DAY[k].color}
+                           onBegin={(e) => begin(e, { kind: "person", id: p.id, name: p.d, instant: true })} />
+                ))}
+              </div>
+            </Zone>
+          </div>
+        );
+      })}
+    </Sheet>
+  );
+}
+
+/* ============================ APP ========================================= */
+export default function ShopBoard({ user, isAdmin = false }) {
+  const me = useMemo(() => {
+    let uid = null;
+    try { uid = localStorage.getItem("mts-shop-uid"); if (!uid) { uid = Math.random().toString(36).slice(2, 10); localStorage.setItem("mts-shop-uid", uid); } } catch { uid = "anon"; }
+    return { name: (user && (user.name || (user.email || "").split("@")[0])) || "?", uid };
+  }, [user]);
+  const setMe = () => {};
+  const [core, setCore] = useState(freshCore);
+  const [tab, setTab] = useState("crews");
+  const [sync, setSync] = useState("ok");
+  const [lastSync, setLastSync] = useState(Date.now());
+  const [presence, setPresence] = useState({});
+  const [openAsset, setOpenAsset] = useState(null);
+  const [openCrew, setOpenCrew] = useState(null);
+  const [openPerson, setOpenPerson] = useState(null);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [dayFocus, setDayFocus] = useState(null);
+  const [flashSet, setFlashSet] = useState(new Set());
+  const [filters, setFilters] = useState({ by: "status", cat: [], yard: "", st: "", q: "" });
+  const [cur, setCur] = useState(() => isoOf(new Date()));
+  const wkIso = useMemo(() => isoOf(weekStartOf(new Date(cur + "T00:00:00"))), [cur]);
+  const dayIndex = useMemo(
+    () => Math.round((new Date(cur + "T00:00:00") - new Date(wkIso + "T00:00:00")) / 86400000), [cur, wkIso]);
+  const [day, setDayArr] = useState({ crews: {}, stacks: {}, pos: {}, inherited: "standing" });
+  const [savedDays, setSavedDays] = useState(new Set());
+  const [ops, setOps] = useState({ GTC: true, PHC: true, LC: true, SALES: true });
+  const [undoLabel, setUndoLabel] = useState("");
+  const undoRef = useRef(null);
+  const [week, setWeek] = useState({ cells: {} });
+  const [marker, setMarker] = useState("vac");
+  const [booted, setBooted] = useState(false);
+
+  const engine = useDragEngine();
+  const { drag } = engine;
+  const coreRef = useRef(core); coreRef.current = core;
+  const weekRef = useRef(week); weekRef.current = week;
+  const curRef = useRef(cur); curRef.current = cur;
+  const dayRef = useRef(day); dayRef.current = day;
+  const dayQ = useRef(Promise.resolve());
+  const dayPending = useRef(0);          // day saves still on their way to the server
+  const meRef = useRef(me); meRef.current = me;
+  const tabRef = useRef(tab); tabRef.current = tab;
+  const queue = useRef(Promise.resolve());
+  const activeUntil = useRef(0);
+  const endedAt = useRef(0);
+  const wasDragging = useRef(false);
+
+  useEffect(() => {
+    if (drag) wasDragging.current = true;
+    else if (wasDragging.current) { wasDragging.current = false; endedAt.current = Date.now(); }
+  }, [drag]);
+
+  const people = core.people;
+
+  /* --- boot: who am I, then pull the board ------------------------------- */
+  useEffect(() => {
+    (async () => {
+      const remote = await sGet(K_CORE);
+      if (remote) setCore((c) => mergeCore(remote, c));
+      setSavedDays(new Set(await listDays()));
+      setBooted(true);
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!me) return;
+    (async () => {
+      const w = await sGet(kWeek(wkIso));
+      setWeek(w && w.cells ? { cells: w.cells } : { cells: {} });
+    })();
+  }, [wkIso, me]);
+
+  /* --- open a day: its own record, else yesterday's, else the standing set */
+  useEffect(() => {
+    if (!me || !booted) return;
+    let alive = true;
+    (async () => {
+      const own = await sGet(kDay(cur));
+      if (own && own.crews) {
+        if (alive) setDayArr({ crews: own.crews, stacks: own.stacks || stacksFrom(own.crews, coreRef.current.assets), pos: own.pos || {}, inherited: null });
+        return;
+      }
+      const before = (await listDays()).filter((x) => x < cur).sort();
+      for (let i = before.length - 1; i >= 0; i--) {
+        const prev = await sGet(kDay(before[i]));
+        if (prev && prev.crews) {
+          if (alive) setDayArr({ crews: clone(prev.crews), stacks: clone(prev.stacks || stacksFrom(prev.crews, coreRef.current.assets)),
+                                 pos: clone(prev.pos || {}), inherited: before[i] });
+          return;
+        }
+      }
+      if (alive) setDayArr({ ...freshDay(coreRef.current), inherited: "standing" });
+    })();
+    return () => { alive = false; };
+  }, [cur, me, booted]);
+
+  /* --- poll: quick while the board is being worked, quiet when idle ------ */
+  useEffect(() => {
+    if (!me) return;
+    let alive = true, timer = null, beat = 0;
+    const tick = async () => {
+      if (document.visibilityState === "visible") {
+        const remote = await sGet(K_CORE);
+        if (remote && alive) {
+          const mine = coreRef.current;
+          const changed = [];
+          for (const [id, v] of Object.entries(remote.assets || {})) {
+            const cur = mine.assets[id];
+            if (cur && (v.at || 0) > (cur.at || 0) && v.by !== meRef.current.name) changed.push(id);
+          }
+          // Anti-entropy: if two writes collided and the server lost one of
+          // mine, put it back. Converges in one cycle and then stays quiet.
+          const merged = mergeCore(remote, mine);
+          let behind = false;
+          for (const coll of ["assets", "crews", "people"]) {
+            for (const [id, v] of Object.entries(merged[coll])) {
+              const r = (remote[coll] || {})[id];
+              if ((v.at || 0) > 0 && (!r || (v.at || 0) > (r.at || 0))) { behind = true; break; }
+            }
+            if (behind) break;
+          }
+          if (behind) {
+            const mineNow = coreRef.current, push = {};
+            for (const coll of ["assets", "crews", "people", "rigs"]) {
+              push[coll] = {};
+              for (const [id, v] of Object.entries(mineNow[coll] || {})) {
+                const rv = (remote[coll] || {})[id];
+                if ((v.at || 0) > 0 && (!rv || (v.at || 0) > (rv.at || 0))) push[coll][id] = v;
+              }
+            }
+            queue.current = queue.current.then(() => shopPatch("core", push));
+          }
+          setCore((c) => mergeCore(remote, c));
+          if (changed.length) {
+            activeUntil.current = Date.now() + 45000;
+            setFlashSet(new Set(changed));
+            setTimeout(() => alive && setFlashSet(new Set()), 1700);
+          }
+          setLastSync(Date.now()); setSync("ok");
+        } else if (alive && !remote) setSync("warn");
+
+        {
+          const w = await sGet(kWeek(wkIso));
+          if (w && w.cells && alive) {
+            const mergedW = mergeMap(w.cells, weekRef.current.cells);
+            const behindW = Object.entries(mergedW).some(([k, v]) => {
+              const r = w.cells[k];
+              return !r || (v.at || 0) > (r.at || 0);
+            });
+            if (behindW) queue.current = queue.current.then(() => shopPatch(srvKey(kWeek(wkIso)), { cells: mergedW }));
+            setWeek((cur) => ({ cells: mergeMap(w.cells, cur.cells) }));
+          }
+        }
+
+        // The day's crews: pick up other people's moves (skipped while my own
+        // edits are still being saved, so they can't be flipped back).
+        {
+          const iso = curRef.current;
+          const rd = dayPending.current ? null : await sGet(kDay(iso));
+          if (rd && rd.crews && alive && !dayPending.current && curRef.current === iso) {
+            setDayArr((c) => ({ crews: mergeMap(rd.crews, c.crews), stacks: rd.stacks || {}, pos: rd.pos || {}, inherited: null }));
+            setSavedDays((s2) => (s2.has(iso) ? s2 : new Set(s2).add(iso)));
+          }
+        }
+        if (beat % 4 === 0) {
+          const p = await shopPresence(meRef.current.uid);
+          if (alive) setPresence(p);
+        }
+        beat++;
+      }
+      const gap = Date.now() < activeUntil.current ? 3000 : 10000;
+      if (alive) timer = setTimeout(tick, gap);
+    };
+    tick();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [me, wkIso]);
+
+  /* --- write path: read, re-apply, write --------------------------------- */
+  const snapshot = useCallback((label) => {
+    undoRef.current = {
+      label, iso: curRef.current, at: Date.now(),
+      core: clone(coreRef.current), day: clone(dayRef.current), week: clone(weekRef.current),
+      // exactly what this action touches, so Undo never reverts anyone else's edit
+      own: { core: { assets: new Set(), crews: new Set(), people: new Set(), rigs: new Set() }, crews: new Set(), pos: new Set(), stacks: new Set(), cells: new Set() },
+    };
+    setUndoLabel(label);
+  }, []);
+
+  /* Record what an edit touched on the undo snapshot taken just before it. */
+  const own = (fill) => { const u = undoRef.current; if (u && Date.now() - u.at < 2000) fill(u.own); };
+
+  const undo = useCallback(() => {
+    const u = undoRef.current; if (!u) return;
+    undoRef.current = null; setUndoLabel("");
+    clearTimeout(flushT.current); pendingCells.current = {};   // drop queued week writes
+    const at = stampNow(), by = (meRef.current && meRef.current.name) || "?";
+    // Put back only the items that changed since the snapshot, stamped now so
+    // they win the merge; other people's edits to other items are left alone.
+    const revert = (then, nowMap, ids) => {
+      const out = {};
+      ids.forEach((id) => {
+        if (then && then[id]) out[id] = { ...then[id], at, by };
+        else if (nowMap && nowMap[id]) out[id] = { ...nowMap[id], del: true, at, by };
+      });
+      return out;
+    };
+    const keysBack = (then, ids) => { const out = {}; ids.forEach((k) => { out[k] = then && k in then ? then[k] : null; }); return out; };
+    const c = coreRef.current, d = dayRef.current, o = u.own;
+    const corePatch = {};
+    ["assets", "crews", "people", "rigs"].forEach((k) => { corePatch[k] = revert(u.core[k], c[k], o.core[k]); });
+    const dayPatch = { crews: revert(u.day.crews, d.crews, o.crews), pos: keysBack(u.day.pos, o.pos), stacks: keysBack(u.day.stacks, o.stacks) };
+    const cells = {};
+    o.cells.forEach((k) => { cells[k] = u.week.cells?.[k] ? { ...u.week.cells[k], at, by } : { code: "on", at, by }; });
+    setCore((cur) => mergeCore(corePatch, cur));
+    const applyKeys = (map, back) => { const out = { ...(map || {}) }; for (const [k, v] of Object.entries(back)) { if (v === null) delete out[k]; else out[k] = v; } return out; };
+    if (u.iso === curRef.current) setDayArr((cur) => ({ ...cur, crews: mergeMap(cur.crews, dayPatch.crews), pos: applyKeys(cur.pos, dayPatch.pos), stacks: applyKeys(cur.stacks, dayPatch.stacks) }));
+    setWeek((cur) => ({ cells: mergeMap(cur.cells, cells) }));
+    queue.current = queue.current.then(async () => {
+      await shopPatch("core", corePatch);
+      await shopPatch(srvKey(kDay(u.iso)), dayPatch);
+      await shopPatch(srvKey(kWeek(isoOf(weekStartOf(new Date(u.iso + "T00:00:00"))))), { cells });
+      setLastSync(Date.now());
+    }).catch(() => setSync("err"));
+  }, []);
+
+  const apply = useCallback((mutate, logText, noSnap) => {
+    if (logText && !noSnap) snapshot(logText);
+    const stamp = { at: stampNow(), by: (meRef.current && meRef.current.name) || "?" };
+    activeUntil.current = Date.now() + 45000;
+    const logId = `${stamp.at}-${logSeq++}`;   // same id both times so the merge dedupes
+    const withLog = (d) => {
+      mutate(d, stamp);
+      if (logText) d.log = [{ id: logId, at: stamp.at, by: stamp.by, text: logText }, ...(d.log || []).filter((e) => e.id !== logId)].slice(0, 40);
+    };
+    const before = coreRef.current;
+    const after = clone(before); withLog(after);
+    coreRef.current = after;
+    setCore(after);
+    // Send only the items this edit touched; the server merges them by time stamp.
+    const patch = { log: after.log.filter((e) => e.id === logId) };
+    ["assets", "crews", "people", "rigs"].forEach((k) => { patch[k] = changed(before[k], after[k]); });
+    own((o) => ["assets", "crews", "people", "rigs"].forEach((k) => Object.keys(patch[k]).forEach((id) => o.core[k].add(id))));
+    queue.current = queue.current.then(async () => {
+      const merged = await shopPatch("core", patch);
+      setSync(merged ? "ok" : "err");
+      if (merged) { setLastSync(Date.now()); setCore((cur) => mergeCore(merged, cur)); }
+    }).catch(() => setSync("err"));
+  }, []);
+
+  /* --- week writes: coalesced, one per paint gesture --------------------- */
+  const pendingCells = useRef({});
+  const pendingIso = useRef(wkIso);
+  const flushT = useRef(null);
+  const flushCells = useCallback(() => {
+    const batch = pendingCells.current, iso = pendingIso.current;
+    pendingCells.current = {};
+    if (!Object.keys(batch).length) return;
+    queue.current = queue.current.then(async () => {
+      const merged = await shopPatch(srvKey(kWeek(iso)), { cells: batch });
+      setSync(merged ? "ok" : "err");
+      if (merged) { setLastSync(Date.now()); setWeek((cur) => ({ cells: mergeMap(merged.cells, cur.cells) })); }
+    }).catch(() => setSync("err"));
+  }, []);
+  const setCell = useCallback((pid, di, code) => {
+    const stamp = { at: stampNow(), by: (meRef.current && meRef.current.name) || "?" };
+    activeUntil.current = Date.now() + 45000;
+    const val = { code, at: stamp.at, by: stamp.by };
+    pendingCells.current[`${pid}:${di}`] = val;
+    own((o) => o.cells.add(`${pid}:${di}`));
+    pendingIso.current = wkIso;
+    setWeek((w) => ({ cells: { ...w.cells, [`${pid}:${di}`]: val } }));
+    clearTimeout(flushT.current);
+    flushT.current = setTimeout(flushCells, 380);
+  }, [wkIso, flushCells]);
+  useEffect(() => () => { clearTimeout(flushT.current); flushCells(); }, [flushCells]);
+
+  const applyDay = useCallback((mutate, logText) => {
+    if (logText) snapshot(logText);
+    const stamp = { at: stampNow(), by: (meRef.current && meRef.current.name) || "?" };
+    const iso = curRef.current;
+    activeUntil.current = Date.now() + 45000;
+    const prev = dayRef.current;
+    const d = { crews: clone(prev.crews), stacks: clone(prev.stacks || {}), pos: clone(prev.pos || {}) };
+    mutate(d, stamp);
+    const next = { ...d, inherited: null };
+    dayRef.current = next;
+    setDayArr(next);
+    // An inherited (not yet saved) day is saved whole on its first edit;
+    // after that only the crews, positions and hitches this edit touched go up.
+    const whole = !!prev.inherited;
+    const patch = whole
+      ? { crews: d.crews, stacks: changedKeys({}, d.stacks), pos: changedKeys({}, d.pos) }
+      : { crews: changed(prev.crews, d.crews), stacks: changedKeys(prev.stacks, d.stacks), pos: changedKeys(prev.pos, d.pos) };
+    own((o) => {
+      Object.keys(patch.crews).forEach((id) => o.crews.add(id));
+      Object.keys(patch.pos).forEach((k) => o.pos.add(k));
+      Object.keys(patch.stacks).forEach((k) => o.stacks.add(k));
+    });
+    dayPending.current++;
+    dayQ.current = dayQ.current.then(async () => {
+      const merged = await shopPatch(srvKey(kDay(iso)), patch);
+      dayPending.current--;
+      setSync(merged ? "ok" : "err");
+      if (merged) {
+        setLastSync(Date.now()); setSavedDays((s2) => new Set(s2).add(iso));
+        if (curRef.current === iso) setDayArr((c) => ({ crews: mergeMap(merged.crews, c.crews), stacks: { ...merged.stacks, ...changedKeysApply(c.stacks, patch.stacks) }, pos: { ...merged.pos, ...changedKeysApply(c.pos, patch.pos) }, inherited: null }));
+      }
+    }).catch(() => setSync("err"));
+    if (logText) apply(() => {}, logText, true);
+  }, [apply, snapshot]);
+
+  /* --- actions ---------------------------------------------------------- */
+  const nameOf = (id) => (coreRef.current.assets[id] || {}).name || id;
+  const setStatus = (id, code) => {
+    if ((coreRef.current.assets[id] || {}).status === code) return;
+    apply((d, s) => { const a = d.assets[id]; if (a) { a.status = code; a.at = s.at; a.by = s.by; } },
+          `${nameOf(id)} → ${ST[code].label}`);
+  };
+  const setField = (id, k, v) =>
+    apply((d, s) => { const a = d.assets[id]; if (a) { a[k] = v; a.at = s.at; a.by = s.by; } },
+          k === "note" ? null : `${nameOf(id)} · ${k} set`);
+  const toggleOp = (id, op) => {
+    const cur = (coreRef.current.assets[id] || {}).ops || [];
+    const next = cur.includes(op) ? cur.filter((x) => x !== op) : [...cur, op];
+    const ordered = OP_ORDER.filter((o) => next.includes(o));
+    // Assign the target list rather than flipping: apply() re-applies this on
+    // top of merged state, so a toggle would cancel itself out.
+    apply((d, s) => { const a = d.assets[id]; if (a) { a.ops = ordered; a.at = s.at; a.by = s.by; } },
+          `${nameOf(id)} · ${ordered.join(" ") || "no operation"}`);
+  };
+  const removeAsset = (id) => { setOpenAsset(null); apply((d, s) => { const a = d.assets[id]; if (a) { a.del = true; a.at = s.at; a.by = s.by; } }, `${nameOf(id)} removed`); };
+
+  const idsFor = (kind, id, members) => {
+    if (kind === "rig") {
+      const r = (coreRef.current.rigs || {})[id];
+      return r && !r.del ? r.members.slice() : [];
+    }
+    if (members && members.length > 1) return members.slice();
+    const rig = rigOf(coreRef.current, id);          // locked combos travel together
+    return rig ? rig.members.slice() : [id];
+  };
+
+  const dropOn = (kind, id, crewId, afterLead, members) => {
+    if (kind === "person") {
+      const label = (people[id] || {}).d;
+      applyDay((d, s) => {
+        Object.values(d.crews).forEach((c) => {
+          if (c.people.includes(id)) { c.people = c.people.filter((x) => x !== id); c.at = s.at; c.by = s.by; }
+        });
+        const c = d.crews[crewId];
+        if (c && !c.people.includes(id)) { c.people = [...c.people, id]; c.at = s.at; c.by = s.by; }
+      }, `${label} → ${(dayRef.current.crews[crewId] || {}).name || "crew"}`);
+      return;
+    }
+    const ids = idsFor(kind, id, members);
+    if (!ids.length) return;
+    const assets = coreRef.current.assets;
+    const label = ids.map((x) => (assets[x] || {}).tag).filter(Boolean).join(" · ");
+    applyDay((d, s) => {
+      Object.values(d.crews).forEach((c) => {
+        const n = c.iron.length;
+        c.iron = c.iron.filter((x) => !ids.includes(x));
+        if (c.iron.length !== n) { c.at = s.at; c.by = s.by; }
+      });
+      const c = d.crews[crewId];
+      if (!c) return;
+      let at = c.iron.length;
+      if (afterLead) {
+        // slot it in behind the load you dropped on, so the order still reads
+        // truck / what it tows / what rides on it
+        const hitch = deriveHitch(d.crews, assets);
+        const group = c.iron.filter((x) => x === afterLead || hitch[x] === afterLead
+                       || (hitch[x] && hitch[hitch[x]] === afterLead));
+        const last = group[group.length - 1];
+        const idx = c.iron.indexOf(last);
+        if (idx >= 0) at = idx + 1;
+      }
+      c.iron = [...c.iron.slice(0, at), ...ids, ...c.iron.slice(at)];
+      c.at = s.at; c.by = s.by;
+    }, `${label} → ${(dayRef.current.crews[crewId] || {}).name || "crew"}`);
+  };
+
+  const pullToYard = (kind, id, members) => {
+    if (kind === "person") {
+      applyDay((d, s) => {
+        Object.values(d.crews).forEach((c) => {
+          if (c.people.includes(id)) { c.people = c.people.filter((x) => x !== id); c.at = s.at; c.by = s.by; }
+        });
+      }, `${(people[id] || {}).d} back to the yard`);
+      return;
+    }
+    const ids = idsFor(kind, id, members);
+    applyDay((d, s) => {
+      Object.values(d.crews).forEach((c) => {
+        const n = c.iron.length;
+        c.iron = c.iron.filter((x) => !ids.includes(x));
+        if (c.iron.length !== n) { c.at = s.at; c.by = s.by; }
+      });
+    }, `${ids.map((x) => (coreRef.current.assets[x] || {}).tag).join(" · ")} back to the yard`);
+  };
+
+  const lockRig = (crewId, members) => {
+    const id = `r${Date.now().toString(36)}`;
+    const assets = coreRef.current.assets;
+    const name = (assets[members[0]] || {}).tag ? `${(assets[members[0]] || {}).tag} rig`.toUpperCase() : "RIG";
+    apply((d, s) => { d.rigs[id] = { id, name, members: members.slice(), at: s.at, by: s.by }; },
+          `Locked ${members.map((x) => (assets[x] || {}).tag).join(" · ")}`);
+  };
+  const unlockRig = (id) => {
+    const r = (coreRef.current.rigs || {})[id];
+    apply((d, s) => { const x = d.rigs[id]; if (x) { x.del = true; x.at = s.at; x.by = s.by; } },
+          `Unlocked ${(r || {}).name || "rig"}`);
+  };
+
+  const copyDay = async (which) => {
+    const base = new Date(curRef.current + "T00:00:00");
+    if (which === "prev")  { setCur(isoOf(addDays(base, -1))); return; }
+    if (which === "next")  { setCur(isoOf(addDays(base, 1)));  return; }
+    if (which === "today") { setCur(isoOf(new Date()));        return; }
+    const at = stampNow(), by = (meRef.current && meRef.current.name) || "?";
+    const src = dayRef.current;
+    const crews = {};
+    Object.entries(src.crews || {}).forEach(([id, c]) => { crews[id] = { ...clone(c), at, by }; });
+    const payload = { crews, stacks: changedKeys({}, src.stacks || {}), pos: changedKeys({}, src.pos || {}) };
+    let targets = which === "tomorrow"
+      ? [isoOf(addDays(base, 1))]
+      : [1, 2, 3, 4, 5, 6].map((n) => addDays(base, n)).filter((x) => x.getDay() !== 0 && x.getDay() !== 6 && x.getDay() > base.getDay()).map(isoOf);
+    const planned = targets.filter((t) => savedDays.has(t));
+    if (planned.length) {
+      const replace = window.confirm(`${planned.length} of these days already ${planned.length === 1 ? "has" : "have"} a saved plan (${planned.join(", ")}). Replace ${planned.length === 1 ? "it" : "them"} too? Cancel copies only to the empty days.`);
+      if (!replace) targets = targets.filter((t) => !savedDays.has(t));
+    }
+    if (!targets.length) return;
+    for (const t of targets) await shopPatch(srvKey(kDay(t)), payload, true);
+    if (src.inherited) await shopPatch(srvKey(kDay(curRef.current)), payload, true);   // pin the day you copied from
+    setSavedDays((s2) => { const n = new Set(s2); targets.forEach((t) => n.add(t)); n.add(curRef.current); return n; });
+    setDayArr((c) => ({ ...c, inherited: null }));
+    apply(() => {}, `Day copied to ${targets.length} day${targets.length > 1 ? "s" : ""}`);
+  };
+  const saveStanding = () => apply((d, s) => {
+    Object.values(dayRef.current.crews).forEach((c) => {
+      d.crews[c.id] = { ...c, at: s.at, by: s.by };
+    });
+  }, "Standing setup updated from this day");
+  const orderCrews = (ids) => applyDay((d, s) => {
+    ids.forEach((cid, k) => { d.pos[cid] = { x: k * 10, y: 0 }; });
+  }, "Crews rearranged");
+
+  const resetToStanding = () => {
+    setDayArr({ crews: clone(coreRef.current.crews), inherited: "standing" });
+  };
+
+  const peopleIds = () => live(coreRef.current.people).map((p) => p.id);
+
+  /* Drop a name or a load on open ground and a crew starts there. Do it a few
+     times and you have built the day's crews by hand. */
+  const crewAt = (item, at) => {
+    const n = live(dayRef.current.crews).filter((c) => /^CREW/.test(c.name)).length + 1;
+    const cid = `c${Date.now().toString(36)}`;
+    const hintX = Math.max(0, at ? at.x : 0), hintY = Math.max(0, at ? at.y : 0);
+    const ids = item.kind === "stack" ? (dayRef.current.stacks[item.id] || [item.id]) : [];
+    const label = item.kind === "person"
+      ? (people[item.id] || {}).d
+      : ids.map((m) => (coreRef.current.assets[m] || {}).tag).filter(Boolean).join(" · ");
+    if (item.kind === "stack") {
+      ids.forEach((m) => { const a = coreRef.current.assets[m]; if (a && (a.status === "shop" || a.status === "tagged")) setStatus(m, "running"); });
+    } else {
+      const off = (week.cells[`${item.id}:${dayIndex}`] || {}).code;
+      if (off && off !== "on") setCell(item.id, dayIndex, "on");
+    }
+    snapshot(`new crew from ${label}`);
+    applyDay((d, s) => {
+      Object.values(d.crews).forEach((c) => {
+        if (item.kind === "person") { if (c.people.includes(item.id)) { c.people = c.people.filter((x) => x !== item.id); c.at = s.at; c.by = s.by; } }
+        else { const k = c.iron.length; c.iron = c.iron.filter((x) => !ids.includes(x)); if (c.iron.length !== k) { c.at = s.at; c.by = s.by; } }
+      });
+      d.crews[cid] = {
+        id: cid, name: `CREW ${n}`, ops: "GTC",
+        people: item.kind === "person" ? [item.id] : [],
+        iron: item.kind === "stack" ? ids : [],
+        at: s.at, by: s.by,
+      };
+      d.pos[cid] = { x: hintX, y: hintY };
+    }, `CREW ${n} started with ${label}`);
+  };
+
+  const yardMove = (item, where, at) => {
+    const { kind, id } = item;
+    if (where === "canvas" && (kind === "person" || kind === "stack")) { crewAt(item, at); return; }
+    /* dropped inside a crew box: that box is now who it belongs to */
+    if (where && where.startsWith("crew:")) {
+      const cid = where.slice(5);
+      const cname = (dayRef.current.crews[cid] || {}).name || "crew";
+      if (kind === "person") {
+        const wasOff = (week.cells[`${id}:${dayIndex}`] || {}).code;
+        if (wasOff && wasOff !== "on") setCell(id, dayIndex, "on");
+        snapshot(`${(people[id] || {}).d} to ${cname}`);
+        applyDay((d, s) => {
+          Object.values(d.crews).forEach((c) => {
+            if (c.people.includes(id)) { c.people = c.people.filter((x) => x !== id); c.at = s.at; c.by = s.by; }
+          });
+          const c = d.crews[cid];
+          if (c && !c.people.includes(id)) { c.people = [...c.people, id]; c.at = s.at; c.by = s.by; }
+          delete d.pos[id];
+        }, `${(people[id] || {}).d} → ${cname}`);
+        return;
+      }
+      if (kind === "stack") {
+        let ids = (dayRef.current.stacks[id] || [id]);
+        const rg = ids.map((m) => rigOf(coreRef.current, m)).find(Boolean);
+        if (rg) ids = [...new Set([...ids, ...rg.members])];   // linked combos stay whole
+        const label = ids.map((m) => (coreRef.current.assets[m] || {}).tag).filter(Boolean).join(" · ");
+        ids.forEach((m) => { const a = coreRef.current.assets[m]; if (a && (a.status === "shop" || a.status === "tagged")) setStatus(m, "running"); });
+        snapshot(`${label} to ${cname}`);
+        applyDay((d, s) => {
+          Object.values(d.crews).forEach((c) => {
+            const n = c.iron.length;
+            c.iron = c.iron.filter((x) => !ids.includes(x));
+            if (c.iron.length !== n) { c.at = s.at; c.by = s.by; }
+          });
+          const c = d.crews[cid];
+          if (c) { c.iron = [...c.iron, ...ids]; c.at = s.at; c.by = s.by; }
+          ids.forEach((m) => { delete d.pos[m]; });
+        }, `${label} → ${cname}`);
+        return;
+      }
+      return;
+    }
+    if (kind === "person") {
+      const label = (people[id] || {}).d;
+      if (where === "vac") {
+        snapshot(`${label} off`);
+        setCell(id, dayIndex, "vac");
+        applyDay((d, s) => { delete d.pos[id]; pullOut(d, "person", [id], s); });
+        return;
+      }
+      const wasOff = (week.cells[`${id}:${dayIndex}`] || {}).code;
+      if (wasOff && wasOff !== "on") setCell(id, dayIndex, "on");
+      applyDay((d, s) => {
+        if (where === "canvas") d.pos[id] = { x: Math.max(4, Math.min(CW - 90, at.x)), y: Math.max(4, Math.min(CH - 60, at.y)) };
+        else { delete d.pos[id]; pullOut(d, "person", [id], s); }
+      }, where === "canvas" ? `${label} onto the yard` : `${label} to the crew room`);
+      return;
+    }
+    if (kind === "crew") {
+      applyDay((d, s) => {
+        if (where === "canvas") d.pos[id] = { x: Math.max(4, Math.min(CW - 130, at.x)), y: Math.max(4, Math.min(CH - 120, at.y)) };
+      }, `${(dayRef.current.crews[id] || {}).name} moved`);
+      return;
+    }
+    /* a stack: the truck plus whatever is hitched to it */
+    const mem = (dayRef.current.stacks[id] || [id]);
+    const label = mem.map((m) => (coreRef.current.assets[m] || {}).tag).filter(Boolean).join(" · ");
+    if (where === "rep") {
+      snapshot(`${label} to the shop`);
+      apply((d, s) => mem.forEach((m) => { const a = d.assets[m]; if (a) { a.status = "shop"; a.at = s.at; a.by = s.by; } }),
+            `${label} → In shop`, true);
+      applyDay((d, s) => { delete d.pos[id]; pullOut(d, "stack", mem, s); });
+      return;
+    }
+    if (where === "yard") {
+      const wasDown = mem.some((m) => ["shop", "tagged"].includes((coreRef.current.assets[m] || {}).status));
+      snapshot(`${label} back to the yard`);
+      if (wasDown) apply((d, s) => mem.forEach((m) => { const a = d.assets[m]; if (a && ["shop", "tagged"].includes(a.status)) { a.status = "running"; a.at = s.at; a.by = s.by; } }),
+                         `${label} → Running`, true);
+      applyDay((d, s) => { delete d.pos[id]; pullOut(d, "stack", mem, s); });
+      return;
+    }
+    applyDay((d) => {
+      d.pos[id] = { x: Math.max(4, Math.min(CW - 70, at.x)), y: Math.max(4, Math.min(CH - 200, at.y)) };
+    }, `${label} onto the yard`);
+  };
+
+  const addCrew = () => {
+    const n = live(dayRef.current.crews).filter((c) => /^CREW/.test(c.name)).length + 1;
+    const id = `c${Date.now().toString(36)}`;
+    applyDay((d, s) => {
+      d.crews[id] = { id, name: `CREW ${n}`, ops: "GTC", people: [], iron: [], at: s.at, by: s.by };
+      const used = Object.values(d.pos || {});
+      let spot = { x: 60, y: 40 };
+      outer:
+      for (let y = 40; y < CH - 110; y += 40) {
+        for (let x = 40; x < CW - 160; x += 40) {
+          if (used.every((u) => Math.hypot(u.x - x, u.y - y) > NEAR * 1.7)) { spot = { x, y }; break outer; }
+        }
+      }
+      d.pos[id] = spot;
+    }, `Crew ${n} added`);
+    setOpenCrew(id);
+  };
+  const renameCrew = (id, name) => applyDay((d, s) => { const c = d.crews[id]; if (c) { c.name = name; c.at = s.at; c.by = s.by; } }, `Crew renamed ${name}`);
+  const opsCrew = (id, ops) => applyDay((d, s) => { const c = d.crews[id]; if (c) { c.ops = ops; c.at = s.at; c.by = s.by; } });
+  const delCrew = (id) => { setOpenCrew(null); applyDay((d, s) => { const c = d.crews[id]; if (c) { c.del = true; c.at = s.at; c.by = s.by; } }, `${(dayRef.current.crews[id] || {}).name} deleted`); };
+  const [armed, setArmed] = useState(false);
+  const addPerson = () => {
+    const id = `p${Date.now().toString(36)}`;
+    apply((d, s) => { d.people[id] = { id, name: "New name", d: "NEW NAME", at: s.at, by: s.by }; }, "Name added");
+    setOpenPerson(id);
+  };
+  const renamePerson = (id, name) =>
+    apply((d, s) => { const p = d.people[id]; if (p) { p.name = name; p.d = name.toUpperCase(); p.at = s.at; p.by = s.by; } },
+          `Renamed ${name}`);
+  const removePerson = (id) => {
+    const gone = (coreRef.current.people[id] || {}).d;
+    setOpenPerson(null);
+    apply((d, s) => {
+      const p = d.people[id]; if (p) { p.del = true; p.at = s.at; p.by = s.by; }
+      // pull them off any crew and release whatever was signed out to them
+      Object.values(d.crews).forEach((c) => {
+        if (c.people.includes(id)) { c.people = c.people.filter((x) => x !== id); c.at = s.at; c.by = s.by; }
+      });
+
+    }, `${gone} removed`);
+  };
+  const resetBoard = async () => {
+    if (!armed) { setArmed(true); setTimeout(() => setArmed(false), 4000); return; }
+    setArmed(false);
+    if (!isAdmin) return;
+    const f = freshCore();
+    setCore(f);
+    await shopPatch("core", f, true);
+    await shopPatch(srvKey(kWeek(wkIso)), { cells: {} }, true); setWeek({ cells: {} });
+  };
+
+  /* --- name gate --------------------------------------------------------- */
+  const [gate, setGate] = useState("");
+  if (!booted) return <div className="mb" style={{ padding: 28, fontSize: 13, color: C.inkDim }}><style>{CSS}</style>Opening the board…</div>;
+  if (!me) return (
+    <div className="mb"><style>{CSS}</style>
+      <div className="gate">
+        <h2>Shop board</h2>
+        <p>Everyone here sees the same board. Put your name on it so the crew knows who moved what.</p>
+        <input value={gate} placeholder="Your name" autoFocus
+               onChange={(e) => setGate(e.target.value)}
+               onKeyDown={(e) => { if (e.key === "Enter" && gate.trim()) { const m = { name: gate.trim(), uid: Math.random().toString(36).slice(2, 9) }; sSet(K_ME, m, false); setMe(m); } }} />
+        <div className="act" style={{ borderTop: 0, marginTop: 14, paddingTop: 0 }}>
+          <button className="btn stencil" disabled={!gate.trim()}
+                  onClick={() => { const m = { name: gate.trim(), uid: Math.random().toString(36).slice(2, 9) }; sSet(K_ME, m, false); setMe(m); }}>
+            Open the board
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const assets = live(core.assets);
+  const counts = ST_ORDER.map((k) => ({ k, n: assets.filter((a) => a.status === k).length }));
+  const others = Object.entries(presence).filter(([uid, v]) => uid !== me.uid && Date.now() - v.at < 150000);
+  const asset = openAsset && core.assets[openAsset];
+  const crew = openCrew && day.crews[openCrew];
+
+  return (
+    <div className="mb">
+      <style>{CSS}</style>
+
+      <header className="hd">
+        <div className="chev" />
+        <div className="hd-in">
+          <div className="brand stencil">Shop board<small>MONSTER TREE SERVICE · ROCHESTER</small></div>
+          <div className="tabs" role="tablist" style={{ display: TABS.length > 1 ? undefined : "none" }}>
+            {TABS.map(([k, l]) => (
+              <button key={k} className="tab stencil" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>{l}</button>
+            ))}
+          </div>
+          <div className="spacer" />
+          {others.length > 0 && (
+            <div className="who">{others.slice(0, 4).map(([uid, v]) => <span key={uid} className="stencil">{v.name}</span>)}</div>
+          )}
+          <div className="sync stencil">
+            <span className={`dot beat ${sync === "err" ? "err" : sync === "warn" ? "warn" : ""}`} />
+            {sync === "err" ? "Not saving" : `Live · ${ago(lastSync)}`}
+          </div>
+          <button className="btn stencil" data-primary="1" onClick={() => setNoteOpen(true)}>Day sheet</button>
+          {isAdmin && <button className="btn stencil" onClick={resetBoard} data-danger={armed ? 1 : 0}
+                  title="Reload the Fleetio import and clear everyone's changes">
+            {armed ? "Reset everyone?" : "Reset"}
+          </button>}
+        </div>
+      </header>
+
+      {tab === "fleet" && (
+        <>
+          <FleetView core={core} crewsMap={day.crews} engine={engine} filters={filters} setFilters={setFilters}
+                     flashSet={flashSet} onOpen={setOpenAsset} onStatus={setStatus} />
+          {core.log.length > 0 && (
+            <div className="log">
+              <h4>WHAT CHANGED</h4>
+              <ol>{core.log.slice(0, 8).map((e) => (
+                <li key={e.id}><b>{e.by}</b><span>{e.text}</span><time>{ago(e.at)}</time></li>
+              ))}</ol>
+            </div>
+          )}
+        </>
+      )}
+      {tab === "crews" && (
+        <YardView onOrder={orderCrews} core={core} day={day} iso={cur} dayIndex={dayIndex} week={week} engine={engine}
+                  savedDays={savedDays} ops={ops} setOps={setOps}
+                  onMove={yardMove} onNewCrew={addCrew} onCrew={setOpenCrew} onPerson={setOpenPerson}
+                  onOpenAsset={(id) => setOpenAsset(id)} onDate={setCur} onAddPerson={addPerson}
+                  undoLabel={undoLabel} onUndo={undo}
+                  onCopy={copyDay} onLink={lockRig} onUnlink={unlockRig} />
+      )}
+      {tab === "week" && (
+        <WeekView core={core} people={people} engine={engine} week={week} setCell={setCell}
+                  marker={marker} setMarker={setMarker} iso={wkIso} onDayFocus={setDayFocus}
+                  onPerson={setOpenPerson}
+                  shift={(n) => setCur((c) => n === 0 ? isoOf(new Date()) : isoOf(addDays(new Date(c + "T00:00:00"), n)))} />
+      )}
+
+      {asset && !asset.del && (
+        <AssetSheet a={asset} core={core} onClose={() => setOpenAsset(null)} onStatus={setStatus}
+                    onField={setField} onToggleOp={toggleOp} onDelete={removeAsset} />
+      )}
+      {crew && !crew.del && (
+        <CrewSheet c={crew} onClose={() => setOpenCrew(null)} onRename={renameCrew} onOps={opsCrew} onDelete={delCrew} />
+      )}
+      {noteOpen && (
+        <DaySheet core={core} crewsMap={day.crews} week={week} iso={cur} dayIndex={dayIndex}
+                  onClose={() => setNoteOpen(false)} />
+      )}
+      {openPerson && core.people[openPerson] && !core.people[openPerson].del && (
+        <PersonSheet p={core.people[openPerson]} core={core} onClose={() => setOpenPerson(null)}
+                     onRename={renamePerson} onRemove={removePerson} />
+      )}
+      {dayFocus !== null && (
+        <DayFocus dayIndex={dayFocus} iso={wkIso} core={core} week={week} setCell={setCell}
+                  engine={engine} onClose={() => setDayFocus(null)} />
+      )}
+
+      <ConditionDock drag={drag} registerZone={engine.registerZone} onDrop={setStatus} />
+
+      {drag && (
+        <div className="ghost" style={{ left: drag.x, top: drag.y }}>
+          {drag.item.kind === "marker" ? (
+            <div className="marker stencil" data-on="1" style={{ background: C.tileHi }}>
+              <span className="swatch" style={{ background: DAY[drag.item.code].color }} />{DAY[drag.item.code].label}
+            </div>
+          ) : (
+            <div className="mini stencil" style={{ borderLeftColor: drag.item.kind === "asset" ? (ST[(core.assets[drag.item.id] || {}).status] || ST.running).color : (drag.item.color || C.ink), padding: "6px 11px", fontSize: 12, gap: 7 }}>
+              {drag.item.shape && <MachineChip shape={drag.item.shape} />}{drag.item.name}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

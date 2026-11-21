@@ -110,9 +110,17 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   text; forecast/priority tabs are a rolling 12 months — months before the sheet date mean next year). Stored on the
   server; nothing is written back to Excel. Later the same parser can take the live SharePoint file.
 - Map pins: US Census batch geocoder (server, free), then Google's browser geocoder for misses; cached by address.
-- Planned next: Schedule (drag backlog jobs onto crews/days with a map) and Shop Board (port of the owner's
-  ShopBoard.jsx onto server storage — keep its rule: a unit's spec comes from code and is re-applied on every read;
-  fix its whole-object writes for day layout, undo, copy-to-week and reset).
+- Shop Board (Dispatch tab, `src/dispatch/shop/ShopBoard.jsx` = the owner's ShopBoard.jsx, ported): storage is
+  `/api/dispatch/shop/*` (Blobs store `mts-shop`: core, day.<iso>, week.<sunday iso>, presence). Clients send PATCHES
+  (only what changed); the server merges per item (`at` stamps from the server clock via `shopApi.stampNow`), and
+  because Blobs has no conditional write it re-checks a moment later and re-applies a patch a simultaneous save wiped
+  (`landed()`, per-key times in day.keyAt — never over a newer edit). The board polls core, week AND the current day.
+  Kept rule: a unit's spec comes from SEED_ASSETS in code and is re-applied on every read (reSpec). Fixes vs original:
+  bins pull people/units off crews directly (`pullOut`; the proximity `materialize` emptied crews), Undo reverts only
+  the items its own action touched (`undoRef.own`), copy-to-week asks before replacing planned days, Reset is admin
+  only, identity = sign-in. Its CSS is scoped under `.mb` by `scopeCss`. check-undef can't see `const A = 1, B = 2`:
+  declare SCREAMING_CASE constants one per line.
+- Planned next: Schedule (drag backlog jobs onto Shop Board crews/days with a map; day sheet to include job names).
 
 ## Soil (/soil) — property soil maps (owner asked for it, Nov 2026)
 - Same separate build as Dispatch (`vite.dispatch.config.js` has inputs dispatch.html + soil.html; output
@@ -137,7 +145,7 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   (asks `/api/dispatch/me`; shows nothing if that fails, so the field app is never affected; warns before leaving
   with photos uploading). Dispatch/Soil: `src/dispatch/AppMenu.jsx` (fixed bottom-left ☰; on a Soil property page it
   sits in the map's bottom-left corner; never on client links). Admin is a menu item (opens `/dispatch/#admin`), not a
-  tab. Shop Board lives inside Dispatch. Agreed next: Shop Board, then Schedule.
+  tab. Shop Board lives inside Dispatch. Next: Schedule.
 
 ## Future expansion — ON HOLD (owner's decision; don't start without being asked)
 - **Client history:** one large CSV of every line item for every job the company has ever completed. Must show

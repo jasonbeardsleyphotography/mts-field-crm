@@ -4,6 +4,7 @@ import { CSS } from "./theme";
 import Admin from "./Admin.jsx";
 import Backlog from "./Backlog.jsx";
 import AppMenu from "./AppMenu.jsx";
+import ShopBoard from "./shop/ShopBoard.jsx";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS Dispatch — a separate tool on the field app's site (/dispatch).
@@ -14,7 +15,7 @@ import AppMenu from "./AppMenu.jsx";
 const TABS = [
   { id: "backlog", label: "Backlog", need: "dispatch" },
   { id: "schedule", label: "Schedule", need: "dispatch", soon: true },
-  { id: "shop", label: "Shop Board", need: "shop", soon: true },
+  { id: "shop", label: "Shop Board", need: "shop" },
   { id: "admin", label: "Admin", need: "admin", hidden: true },   // opened from the ☰ menu
 ];
 
@@ -49,7 +50,7 @@ export default function DispatchApp() {
   }, [loadMe]);
 
   const pick = (id) => { setTab(id); if (id !== "admin") { try { localStorage.setItem("mts-dispatch-tab", id); } catch {} } };
-  const allowed = (t) => me?.perms?.[t.need] || (t.need === "dispatch" && me?.perms?.admin);
+  const allowed = (t) => me?.perms?.[t.need] || me?.perms?.admin;
   const tabs = me ? TABS.filter(allowed) : [];
   const current = tabs.find((t) => t.id === tab) || tabs.find((t) => !t.soon);
 
@@ -102,14 +103,13 @@ export default function DispatchApp() {
         <div className="wrap" style={{ maxWidth: 640 }}>
           <div className="card"><div className="card-b" style={{ display: "grid", gap: 10 }}>
             <div className="st" style={{ fontSize: 16 }}>{current.label} — not built yet</div>
-            <div className="hint">{current.id === "shop"
-              ? "This will be your Shop Board: trucks, equipment and people on a yard board, with the day sheet for SingleOps. It's next on the list after Soil."
-              : "This will be the Schedule: drag backlog jobs onto crews and days, with a map to route them. It comes after the Shop Board, because it uses the same crews."}</div>
+            <div className="hint">This will be the Schedule: drag backlog jobs onto crews and days, with a map to route them. It uses the Shop Board's crews, and is next on the list.</div>
             <div className="hint">The tab is here so you can see where it will live. Nothing on it works yet.</div>
           </div></div>
         </div>
       )}
       {current?.id === "backlog" && <Backlog me={me} />}
+      {current?.id === "shop" && <ShopBoard user={me} isAdmin={!!me.perms.admin} />}
       {current?.id === "admin" && <Admin me={me} />}
       <AppMenu me={me} current="dispatch" onAdmin={() => pick("admin")} onSignOut={signOut} />
     </div>
