@@ -20,6 +20,12 @@ const BUILT_IN = new Set([
 ]);
 
 export const OWNER_HASH = "20e41e5a59a9e03d82b24ed1d55411705a6df86b36175a2d284345e56468cb9f";
+// The owner's accounts: personal + the main business account he signs in to the
+// app with. Both always have every app (Dispatch, Shop Board, Admin included).
+const OWNER_HASHES = new Set([
+  OWNER_HASH,
+  "5e23005b665a38a63de2d1a69d597d7c605ec51f896d3b61dd0aaf178e571c05",
+]);
 
 export async function sha256(text) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -49,7 +55,7 @@ export async function loadUserList(getStore, fresh = false) {
 export function forgetUserCache() { userCache = null; }
 export async function isOwnerEmail(email) {
   const e = String(email || "").trim().toLowerCase();
-  return !!e && (await sha256(e)) === OWNER_HASH;
+  return !!e && OWNER_HASHES.has(await sha256(e));
 }
 /** { field, dispatch, shop, admin } for this address. */
 export async function appPermissions(email, getStore) {

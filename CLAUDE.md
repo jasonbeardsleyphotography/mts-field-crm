@@ -103,7 +103,7 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   `mts_dsess`, 400 days), or the field app's Google session cookie `mts_sess` on the same browser. The owner refused to
   ask corporate for Microsoft-account permission, so no Microsoft sign-in.
 - Permissions (`appPermissions` in `netlify/lib/accounts.mjs`): field / dispatch / shop / admin per email, set on the
-  Admin tab. The owner (hash `OWNER_HASH`) always has everything. An email in the list is decided by the list (a
+  Admin tab. The owner's two accounts (personal + main business account, `OWNER_HASHES`) always have everything. An email in the list is decided by the list (a
   "removed" entry blocks even a built-in account); otherwise the field app falls back to the built-in list + env var.
   Node functions pass `getStore`; edge functions (video-stream, video-summary) still use the built-in list only.
 - Backlog: the GTC Backlog .xlsm is parsed in the browser (`parseWorkbook.js`, SheetJS `xlsx`, columns found by header

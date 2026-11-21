@@ -89,7 +89,12 @@ export default function DispatchApp() {
           {me.via === "link" && <button className="btn st" onClick={signOut}>Sign out</button>}
         </div>
       </header>
-      {!current && <div className="wrap hint">This account has no Dispatch tools switched on yet.</div>}
+      {!current && (
+        <div className="wrap hint" style={{ maxWidth: 640 }}>
+          You're signed in as <b style={{ color: "#E7E2D6" }}>{me.email}</b>, which has no Dispatch tools switched on.
+          Ask the owner to switch them on in Admin — or, if this is the wrong account, sign in to the field app with the right one.
+        </div>
+      )}
       {current?.id === "backlog" && <Backlog me={me} />}
       {current?.id === "admin" && <Admin me={me} />}
     </div>

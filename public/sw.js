@@ -1,3 +1,4 @@
+// v104: Dispatch: both owner accounts are admins; clearer "no tools" message.
 // v103: Dispatch added at /dispatch (separate page); offline it falls back to its own page, not the field app.
 // v102: Apple Maps opens the Maps app (maps://) instead of a browser page.
 // v101: Photos & videos submenu in Settings; account check shows every row at once with spinners.
@@ -146,7 +147,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v103";
+const CACHE = "mts-field-v104";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
