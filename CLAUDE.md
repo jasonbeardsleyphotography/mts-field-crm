@@ -64,6 +64,10 @@ tell him something is "safe" unless you checked.
 Read the last lines of the session that froze: the step with no matching "done"/"finished" is the one that hung.
 Keep logging out of tight loops; log slow/failed cases, not every success.
 
+## Field app ☰ menu
+The Settings sheet (and the app switcher in it) renders for both the Route and Pipeline views; Pipeline has its own
+slim bottom bar with the ☰ button. (The old "pipeline bottom bar" inside the route-view fragment is dead code.)
+
 ## Phone vs computer
 `src/device.js` `isPhoneLike()` = primary pointer is coarse. Phone-only steps (RealWork hand-off after Done, its
 clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even one with a touchscreen.
@@ -128,6 +132,11 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   crew; "Nearest to <crew>" sorts the backlog by distance to that crew's stops; jobs planned on other days of the week
   are marked/hidden. The Shop Board Day sheet appends each crew's scheduled jobs ("Jobs from the Schedule" toggle).
   Nothing is written to SingleOps or the workbook.
+  "Best order" per crew: shortest straight-line loop yard → stops → yard (every order tried up to 8 stops; nearest-next
+  + 2-opt above). Yard addresses live in `mts-shop` key `settings` ({ yards: { Brighton|Rush Scottsville: {addr,lat,lng} } },
+  "Yards" button; Census lookup on the server, Google's geocoder in the browser as fallback). Default yard by crew op
+  (PHC/LC → Rush Scottsville, else Brighton); a per-day override is stored in sched.<iso> as assign["_yard:<crewId>"]
+  (keys starting "_" are not jobs).
 
 ## Soil (/soil) — property soil maps (owner asked for it, Nov 2026)
 - Same separate build as Dispatch (`vite.dispatch.config.js` has inputs dispatch.html + soil.html; output

@@ -2876,94 +2876,6 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
         </button>
       </div>}
 
-      {/* ── ROUTE SETTINGS SHEET ─────────────────────────────────────────
-          Holds the tools that used to be loose across the route bottom bar +
-          header (sync, weekend toggle, video uploads, data recovery, storage,
-          sign out), opened from the bottom-left hamburger. */}
-      {settingsOpen && (() => {
-        const Row = SettingsRow;
-        return (
-          <div onClick={()=>setSettingsOpen(false)} style={{position:"fixed",inset:0,zIndex:350,background:"rgba(0,0,0,.55)",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
-            <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",borderTop:"1px solid #1a2030",borderTopLeftRadius:18,borderTopRightRadius:18,padding:"8px 16px",paddingBottom:"max(16px,env(safe-area-inset-bottom))",boxShadow:"0 -14px 44px rgba(0,0,0,.55)",maxHeight:"74dvh",overflowY:"auto",WebkitOverflowScrolling:"touch",overscrollBehavior:"contain"}}>
-              <div style={{width:42,height:4,borderRadius:2,background:"#2a3550",margin:"4px auto 12px"}}/>
-              {!mediaMenuOpen && <AppSwitcher pendingUploads={photoQueueCount} />}
-              {!mediaMenuOpen &&               <div style={{fontSize:11,fontWeight:800,color:"#607591",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif",margin:"0 6px 6px"}}>Settings &amp; Tools</div>}
-              {mediaMenuOpen ? (<>
-              <div style={{display:"flex",alignItems:"center",gap:8,margin:"0 0 6px"}}>
-                <button onClick={()=>setMediaMenuOpen(false)} aria-label="Back" style={{width:34,height:34,borderRadius:17,background:"transparent",border:"1px solid #253049",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconArrowLeft size={15} color="#9aadc8"/></button>
-                <div style={{fontSize:11,fontWeight:800,color:"#607591",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif"}}>Photos &amp; Videos</div>
-              </div>
-              <Row accent={photoQueueCount>0?"#F6BF26":"#5a8ab0"}
-                icon={<IconImage size={17} color={photoQueueCount>0?"#F6BF26":"#8aa0c0"}/>}
-                label="Photo uploads"
-                sub={photoQueueCount>0
-                  ? `${photoQueueCount} stop${photoQueueCount===1?"":"s"} still waiting — tap to see why`
-                  : "All photos on this device have reached Drive"}
-                onClick={()=>{ setPhotoUploadsOpen(true); setSettingsOpen(false); }} />
-              <Row accent="#FF6B5E"
-                icon={<IconVideo size={17} color="#FF6B5E"/>}
-                label="Video uploads" sub="Queued, uploading, or failed videos"
-                onClick={()=>{ setUploadsOpen(true); setSettingsOpen(false); }} />
-              <Row accent="#F6BF26"
-                icon={<IconImage size={17} color="#F6BF26"/>}
-                label="Recover photos & videos"
-                sub="Find a card's photos and videos in your Drive and put them back"
-                onClick={()=>{ setMediaRecoverOpen(true); setSettingsOpen(false); }} />
-              <Row accent="#818cf8"
-                icon={<IconClock size={17} color="#818cf8"/>}
-                label="Find old job photos" sub="Search past visits by name or date"
-                onClick={()=>{ setRecoveryOpen(true); setSettingsOpen(false); }} />
-              <Row accent="#FF8A80"
-                icon={<IconVideo size={17} color="#FF8A80"/>}
-                label="iPhone Video button"
-                sub={isIphoneVideoReady() ? "On — opens the Camera app in Video mode" : "Set up so it opens the Camera app in Video mode"}
-                onClick={()=>{ setIphoneSetupOpen(true); setSettingsOpen(false); }} />
-              </>) : (<>
-              <Row accent="#10B981"
-                icon={<IconCheckCircle size={17} color="#10B981"/>}
-                label="Account & connection check"
-                sub="Sign-in, route calendar, your name, RealWork, contacts, weekends, maps app"
-                onClick={()=>{ setAccountCheckOpen(true); setSettingsOpen(false); }} />
-              <Row accent="#5a8ab0"
-                icon={<IconRefresh size={17} color="#9aadc8" style={{animation:loading?"spin 1s linear infinite":undefined}}/>}
-                label="Sync now" sub="Reload today's stops from the calendar"
-                onClick={()=>{ load(true); setSettingsOpen(false); }} />
-              <Row accent={photoQueueCount>0?"#F6BF26":"#FF6B5E"}
-                icon={<IconImage size={17} color={photoQueueCount>0?"#F6BF26":"#FF6B5E"}/>}
-                label="Photos & videos"
-                sub={photoQueueCount>0
-                  ? `${photoQueueCount} stop${photoQueueCount===1?"":"s"} with photos still uploading`
-                  : "Uploads, recover, old job photos, iPhone Video button"}
-                onClick={()=>setMediaMenuOpen(true)} />
-              <Row accent="#F6BF26"
-                icon={<IconTrash size={17} color="#F6BF26"/>}
-                label="Free up Drive space"
-                sub="Google Drive: remove duplicate photos this app left there"
-                onClick={()=>{ setDriveCleanupOpen(true); setSettingsOpen(false); }} />
-              <Row accent="#818cf8"
-                icon={<IconDatabase size={17} color="#818cf8"/>}
-                label="Phone storage" sub="Space used on this device by photos and unsent videos"
-                onClick={()=>{ setStorageOpen(true); setSettingsOpen(false); }} />
-              <div style={{fontSize:10.5,fontWeight:800,color:"#607591",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif",margin:"14px 6px 4px"}}>Help</div>
-              <Row accent="#FF8A80"
-                icon={<IconClipboard size={17} color="#FF8A80"/>}
-                label="Copy freeze report"
-                sub="After a freeze: reopen the app, tap this, paste it to support"
-                onClick={()=>{
-                  const txt = freezeReport();
-                  try { navigator.clipboard?.writeText(txt).catch(() => {}); } catch {}
-                  setFreezeReportText(txt); setSettingsOpen(false);
-                }} />
-              <Row danger accent="#FF6B6B"
-                icon={<svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>}
-                label={signOutConfirm?"Tap again to confirm sign out":"Sign out"}
-                sub={signOutConfirm?"Your data is safe in Drive and re-syncs on next sign in":null}
-                onClick={()=>{ if(signOutConfirm){ signOutEverywhereHere(); setSignOutConfirm(false); setSettingsOpen(false); } else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }} />
-              </>)}
-            </div>
-          </div>
-        );
-      })()}
 
       {/* ── ADD STOP POPUP ─────────────────────────────────────────── */}
       <AddStopModal
@@ -3090,6 +3002,104 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
         <button onClick={()=>{setPipelineSearchOpen(false);setPipelineSearch("");}} style={{padding:"6px 8px",borderRadius:6,background:"transparent",border:"none",color:"#607591",cursor:"pointer"}}><IconX size={13} color="#607591"/></button>
       </div>}
       {view === "pipeline" && <Pipeline onSwitchToRoute={(cardId) => { setView("route"); setSelDay(0); if (cardId) { setDismissed(prev => { const n={...prev}; delete n[cardId]; return n; }); const pl=loadPipeline(); delete pl[cardId]; savePipeline(pl); } }} search={pipelineSearch} onCloudSync={triggerCloudSync} token={token} lastContact={lastContact} markContact={markContact} selectMode={pipelineSelectMode} setSelectMode={setPipelineSelectMode} onSelectCountChange={setPipelineSelectedCount} bulkEmailTick={pipelineBulkEmailTick} />}
+
+      {/* Pipeline bottom bar: the same ☰ menu as the route screen (settings + app switcher). */}
+      {view === "pipeline" && !pipelineSelectMode && <div style={{borderTop:"1px solid #0e1520",padding:"4px 8px",paddingBottom:"max(4px,env(safe-area-inset-bottom))",display:"flex",alignItems:"center",gap:5,background:"#080a10",flexShrink:0}}>
+        <button onClick={()=>setSettingsOpen(true)} title={photoQueueCount>0?`Settings — ${photoQueueCount} stop(s) with photos still uploading`:"Settings & tools"}
+          style={{position:"relative",width:34,height:34,borderRadius:8,background:"#1a2035",border:"1px solid #252d47",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#8aa0c0" strokeWidth={2} strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          {photoQueueCount>0 && <span style={{position:"absolute",top:-3,right:-3,minWidth:15,height:15,padding:"0 3px",borderRadius:8,background:"#F6BF26",color:"#1a1400",fontSize:9.5,fontWeight:800,fontFamily:"'Oswald',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",border:"1.5px solid #080a10"}}>{photoQueueCount}</span>}
+        </button>
+      </div>}
+
+      {/* ── SETTINGS SHEET (route + pipeline) ─────────────────────────────────────────
+          Holds the tools that used to be loose across the route bottom bar +
+          header (sync, weekend toggle, video uploads, data recovery, storage,
+          sign out), opened from the bottom-left hamburger. */}
+      {settingsOpen && (() => {
+        const Row = SettingsRow;
+        return (
+          <div onClick={()=>setSettingsOpen(false)} style={{position:"fixed",inset:0,zIndex:350,background:"rgba(0,0,0,.55)",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
+            <div onClick={e=>e.stopPropagation()} style={{background:"#0d0f18",borderTop:"1px solid #1a2030",borderTopLeftRadius:18,borderTopRightRadius:18,padding:"8px 16px",paddingBottom:"max(16px,env(safe-area-inset-bottom))",boxShadow:"0 -14px 44px rgba(0,0,0,.55)",maxHeight:"74dvh",overflowY:"auto",WebkitOverflowScrolling:"touch",overscrollBehavior:"contain"}}>
+              <div style={{width:42,height:4,borderRadius:2,background:"#2a3550",margin:"4px auto 12px"}}/>
+              {!mediaMenuOpen && <AppSwitcher pendingUploads={photoQueueCount} />}
+              {!mediaMenuOpen &&               <div style={{fontSize:11,fontWeight:800,color:"#607591",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif",margin:"0 6px 6px"}}>Settings &amp; Tools</div>}
+              {mediaMenuOpen ? (<>
+              <div style={{display:"flex",alignItems:"center",gap:8,margin:"0 0 6px"}}>
+                <button onClick={()=>setMediaMenuOpen(false)} aria-label="Back" style={{width:34,height:34,borderRadius:17,background:"transparent",border:"1px solid #253049",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><IconArrowLeft size={15} color="#9aadc8"/></button>
+                <div style={{fontSize:11,fontWeight:800,color:"#607591",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif"}}>Photos &amp; Videos</div>
+              </div>
+              <Row accent={photoQueueCount>0?"#F6BF26":"#5a8ab0"}
+                icon={<IconImage size={17} color={photoQueueCount>0?"#F6BF26":"#8aa0c0"}/>}
+                label="Photo uploads"
+                sub={photoQueueCount>0
+                  ? `${photoQueueCount} stop${photoQueueCount===1?"":"s"} still waiting — tap to see why`
+                  : "All photos on this device have reached Drive"}
+                onClick={()=>{ setPhotoUploadsOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#FF6B5E"
+                icon={<IconVideo size={17} color="#FF6B5E"/>}
+                label="Video uploads" sub="Queued, uploading, or failed videos"
+                onClick={()=>{ setUploadsOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#F6BF26"
+                icon={<IconImage size={17} color="#F6BF26"/>}
+                label="Recover photos & videos"
+                sub="Find a card's photos and videos in your Drive and put them back"
+                onClick={()=>{ setMediaRecoverOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#818cf8"
+                icon={<IconClock size={17} color="#818cf8"/>}
+                label="Find old job photos" sub="Search past visits by name or date"
+                onClick={()=>{ setRecoveryOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#FF8A80"
+                icon={<IconVideo size={17} color="#FF8A80"/>}
+                label="iPhone Video button"
+                sub={isIphoneVideoReady() ? "On — opens the Camera app in Video mode" : "Set up so it opens the Camera app in Video mode"}
+                onClick={()=>{ setIphoneSetupOpen(true); setSettingsOpen(false); }} />
+              </>) : (<>
+              <Row accent="#10B981"
+                icon={<IconCheckCircle size={17} color="#10B981"/>}
+                label="Account & connection check"
+                sub="Sign-in, route calendar, your name, RealWork, contacts, weekends, maps app"
+                onClick={()=>{ setAccountCheckOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#5a8ab0"
+                icon={<IconRefresh size={17} color="#9aadc8" style={{animation:loading?"spin 1s linear infinite":undefined}}/>}
+                label="Sync now" sub="Reload today's stops from the calendar"
+                onClick={()=>{ load(true); setSettingsOpen(false); }} />
+              <Row accent={photoQueueCount>0?"#F6BF26":"#FF6B5E"}
+                icon={<IconImage size={17} color={photoQueueCount>0?"#F6BF26":"#FF6B5E"}/>}
+                label="Photos & videos"
+                sub={photoQueueCount>0
+                  ? `${photoQueueCount} stop${photoQueueCount===1?"":"s"} with photos still uploading`
+                  : "Uploads, recover, old job photos, iPhone Video button"}
+                onClick={()=>setMediaMenuOpen(true)} />
+              <Row accent="#F6BF26"
+                icon={<IconTrash size={17} color="#F6BF26"/>}
+                label="Free up Drive space"
+                sub="Google Drive: remove duplicate photos this app left there"
+                onClick={()=>{ setDriveCleanupOpen(true); setSettingsOpen(false); }} />
+              <Row accent="#818cf8"
+                icon={<IconDatabase size={17} color="#818cf8"/>}
+                label="Phone storage" sub="Space used on this device by photos and unsent videos"
+                onClick={()=>{ setStorageOpen(true); setSettingsOpen(false); }} />
+              <div style={{fontSize:10.5,fontWeight:800,color:"#607591",letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Oswald',sans-serif",margin:"14px 6px 4px"}}>Help</div>
+              <Row accent="#FF8A80"
+                icon={<IconClipboard size={17} color="#FF8A80"/>}
+                label="Copy freeze report"
+                sub="After a freeze: reopen the app, tap this, paste it to support"
+                onClick={()=>{
+                  const txt = freezeReport();
+                  try { navigator.clipboard?.writeText(txt).catch(() => {}); } catch {}
+                  setFreezeReportText(txt); setSettingsOpen(false);
+                }} />
+              <Row danger accent="#FF6B6B"
+                icon={<svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>}
+                label={signOutConfirm?"Tap again to confirm sign out":"Sign out"}
+                sub={signOutConfirm?"Your data is safe in Drive and re-syncs on next sign in":null}
+                onClick={()=>{ if(signOutConfirm){ signOutEverywhereHere(); setSignOutConfirm(false); setSettingsOpen(false); } else { setSignOutConfirm(true); setTimeout(()=>setSignOutConfirm(false),3000); } }} />
+              </>)}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── TEXT SHEET ─────────────────────────────────────────────────── */}
       {textSheet && <div onClick={()=>{setTextSheet(null);setOtwMinutes(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",backdropFilter:"blur(4px)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>

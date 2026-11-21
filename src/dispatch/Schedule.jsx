@@ -3,7 +3,7 @@ import { api } from "./api";
 import { C } from "./theme";
 import { enrich, STATUS, money, hrs } from "./backlogModel";
 import { useJobPoints, loadMaps } from "./BacklogMap.jsx";
-import { shopGet, shopDays, shopPatch, shopSchedRange, stampNow } from "./shop/shopApi";
+import { shopGet, shopDays, shopPatch, shopSchedRange, stampNow, shopSettings, saveYard } from "./shop/shopApi";
 import { freshCore, mergeCore, live, isoOf, addDays, weekStartOf } from "./shop/ShopBoard.jsx";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -27,6 +27,49 @@ const km = (a, b) => {
 };
 const miles = (k) => `${(k * 0.621).toFixed(k < 16 ? 1 : 0)} mi`;
 const firstName = (p) => (p?.name || "").split(" ")[0];
+const YARD_NAMES = ["Brighton", "Rush Scottsville"];
+const defaultYard = (c) => (["PHC", "LC"].includes(c.ops) ? "Rush Scottsville" : "Brighton");
+const yardKey = (crewId) => `_yard:${crewId}`;     // per-day yard choice, stored beside the jobs
+
+/** Round-trip length (km) yard → stops in order → yard. */
+const tripKm = (yard, pts) => {
+  if (!pts.length) return 0;
+  let t = 0, prev = yard || pts[0];
+  pts.forEach((p) => { t += km(prev, p); prev = p; });
+  return t + (yard ? km(prev, yard) : 0);
+};
+/** Shortest order (straight-line) for a crew's stops, starting and ending at the yard.
+    Up to 8 stops: every order is tried. More: nearest-next, then 2-opt clean-up. */
+function bestOrder(yard, stops) {
+  const n = stops.length;
+  if (n < 2) return stops.map((_, i) => i);
+  const P = stops.map((s) => s.p);
+  const cost = (ord) => tripKm(yard, ord.map((i) => P[i]));
+  if (n <= 8) {
+    let best = null, bestC = Infinity;
+    const perm = (arr, k) => {
+      if (k === arr.length) { const c = cost(arr); if (c < bestC) { bestC = c; best = arr.slice(); } return; }
+      for (let i = k; i < arr.length; i++) { [arr[k], arr[i]] = [arr[i], arr[k]]; perm(arr, k + 1); [arr[k], arr[i]] = [arr[i], arr[k]]; }
+    };
+    perm(stops.map((_, i) => i), 0);
+    return best;
+  }
+  const left = new Set(stops.map((_, i) => i)), ord = [];
+  let cur = yard || P[0];
+  while (left.size) {
+    let bi = null, bd = Infinity;
+    left.forEach((i) => { const d = km(cur, P[i]); if (d < bd) { bd = d; bi = i; } });
+    ord.push(bi); left.delete(bi); cur = P[bi];
+  }
+  for (let improved = true, guard = 0; improved && guard < 50; guard++) {
+    improved = false;
+    for (let i = 0; i < n - 1; i++) for (let k = i + 1; k < n; k++) {
+      const cand = [...ord.slice(0, i), ...ord.slice(i, k + 1).reverse(), ...ord.slice(k + 1)];
+      if (cost(cand) + 1e-9 < cost(ord)) { ord.splice(0, n, ...cand); improved = true; }
+    }
+  }
+  return ord;
+}
 
 /** The crews on the Shop Board for a day: its own record, else the latest earlier one, else the standing setup. */
 async function crewsForDay(iso) {
@@ -40,7 +83,7 @@ async function crewsForDay(iso) {
   return { core, crews: live(crews).filter((c) => ["GTC", "PHC", "LC"].includes(c.ops || "GTC")), from: day?.crews ? from : "standing" };
 }
 
-function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick }) {
+function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick, yardOf }) {
   const el = useRef(null), map = useRef(null), layers = useRef([]), fitted = useRef(false);
   const pickRef = useRef(onPick); pickRef.current = onPick;
   const [err, setErr] = useState("");
@@ -79,17 +122,65 @@ function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick }) {
       layers.current.push(m);
       if (on || !fitted.current) { bounds.extend(p); any = true; }
     });
+    const yardsDrawn = new Set();
     Object.entries(byCrew).forEach(([crew, list]) => {
       list.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-      if (list.length > 1) layers.current.push(new g.Polyline({ map: map.current, path: list.map((x) => x.p), strokeColor: crewColor(crew), strokeOpacity: 0.9, strokeWeight: 3 }));
+      const y = yardOf?.(crew);
+      const path = list.map((x) => x.p);
+      if (y) {
+        layers.current.push(new g.Polyline({ map: map.current, path: [y, ...path, y], strokeColor: crewColor(crew), strokeOpacity: 0.35, strokeWeight: 2 }));
+        if (!yardsDrawn.has(`${y.lat},${y.lng}`)) {
+          yardsDrawn.add(`${y.lat},${y.lng}`); bounds.extend(y);
+          layers.current.push(new g.Marker({ map: map.current, position: y, zIndex: 200, title: `Yard: ${y.name}`,
+            icon: { path: "M -7 -7 L 7 -7 L 7 7 L -7 7 Z", fillColor: "#E7E2D6", fillOpacity: 1, strokeColor: "#0b0e11", strokeWeight: 1.5, scale: 1 },
+            label: { text: "Y", color: "#0b0e11", fontSize: "10px", fontWeight: "700" } }));
+        }
+      }
+      if (path.length > 1) layers.current.push(new g.Polyline({ map: map.current, path, strokeColor: crewColor(crew), strokeOpacity: 0.9, strokeWeight: 3 }));
     });
     if (any && !fitted.current) { map.current.fitBounds(bounds, 30); fitted.current = true; }
-  }, [jobs, points, assign, selected, crewColor]);
+  }, [jobs, points, assign, selected, crewColor, yardOf]);
   useEffect(() => { const p = selected && points[selected]; if (p && map.current) map.current.panTo(p); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div style={{ position: "relative", height: "100%", minHeight: 320 }}>
       <div ref={el} style={{ position: "absolute", inset: 0, background: "#1d2329" }} />
       {err && <div className="err" style={{ position: "absolute", top: 8, left: 8 }}>{err}</div>}
+    </div>
+  );
+}
+
+function YardSettings({ settings, onSaved, onClose }) {
+  const names = [...new Set([...YARD_NAMES, ...Object.keys(settings.yards || {})])];
+  const [vals, setVals] = useState(() => Object.fromEntries(names.map((n) => [n, settings.yards?.[n]?.addr || ""])));
+  const [busy, setBusy] = useState(""), [msg, setMsg] = useState("");
+  const save = async (name) => {
+    setBusy(name); setMsg("");
+    try { onSaved(await saveYard(name, vals[name])); setMsg(`${name} saved.`); }
+    catch (e) {
+      if (e.message !== "address_not_found") { setMsg(`Couldn't save (${e.message}).`); setBusy(""); return; }
+      // the free lookup missed it: try Google's, in this browser
+      try {
+        await loadMaps();
+        const res = await new Promise((ok) => new window.google.maps.Geocoder().geocode({ address: vals[name] }, (r, st) => ok(st === "OK" ? r[0].geometry.location : null)));
+        if (!res) throw new Error();
+        onSaved(await saveYard(name, vals[name], { lat: res.lat(), lng: res.lng() })); setMsg(`${name} saved.`);
+      } catch { setMsg("That address couldn't be found. Check the spelling and include the town."); }
+    }
+    setBusy("");
+  };
+  return (
+    <div className="card" style={{ padding: 12, marginBottom: 10, display: "grid", gap: 8, maxWidth: 640 }}>
+      <div className="st" style={{ fontSize: 13 }}>Yard addresses</div>
+      <div className="hint">Where crews start and finish. "Best order" plans the shortest loop from the crew's yard and back (straight-line distance, not roads).</div>
+      {names.map((n) => (
+        <div key={n} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ width: 130 }}>{n}</span>
+          <input className="inp" style={{ flex: "1 1 240px" }} placeholder="Street, town, NY zip" value={vals[n] || ""} onChange={(e) => setVals({ ...vals, [n]: e.target.value })} />
+          <button className="btn st" disabled={!vals[n]?.trim() || busy === n} onClick={() => save(n)}>{busy === n ? "Finding…" : "Save"}</button>
+        </div>
+      ))}
+      {msg && <div className="hint">{msg}</div>}
+      <div><button className="btn st" onClick={onClose}>Close</button></div>
     </div>
   );
 }
@@ -106,7 +197,10 @@ export default function Schedule({ me }) {
   const [sort, setSort] = useState("late");
   const [saving, setSaving] = useState(0);
   const [err, setErr] = useState("");
+  const [settings, setSettings] = useState({ yards: {} });
+  const [yardsOpen, setYardsOpen] = useState(false);
   const gen = useRef(0);
+  useEffect(() => { shopSettings().then(setSettings); }, []);
 
   useEffect(() => { api("backlog").then((d) => setData(d.empty ? null : d)).catch(() => setData(null)); }, []);
   const jobs = useMemo(() => (data ? enrich(data) : []), [data]);
@@ -140,13 +234,13 @@ export default function Schedule({ me }) {
   const crewColor = useCallback((id) => CREW_COLORS[(crewIdx[id] ?? 0) % CREW_COLORS.length], [crewIdx]);
   const byCrew = useMemo(() => {
     const out = {};
-    Object.entries(assign).forEach(([ref, a]) => { if (a?.crew) (out[a.crew] = out[a.crew] || []).push({ ref, ...a }); });
+    Object.entries(assign).forEach(([ref, a]) => { if (a?.crew && !ref.startsWith("_")) (out[a.crew] = out[a.crew] || []).push({ ref, ...a }); });
     Object.values(out).forEach((l) => l.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)));
     return out;
   }, [assign]);
   const plannedOn = useMemo(() => {
     const out = {};
-    Object.entries(week).forEach(([d, s]) => { if (d !== iso) Object.entries(s.assign || {}).forEach(([ref, a]) => { if (a?.crew) out[ref] = d; }); });
+    Object.entries(week).forEach(([d, s]) => { if (d !== iso) Object.entries(s.assign || {}).forEach(([ref, a]) => { if (a?.crew && !ref.startsWith("_")) out[ref] = d; }); });
     return out;
   }, [week, iso]);
 
@@ -162,6 +256,25 @@ export default function Schedule({ me }) {
     else { setErr(""); setWeek((w) => ({ ...w, [iso]: merged })); }
   };
   const label = (j) => ({ label: `${j.name} #${j.ref}`, town: j.town, hrs: j.hrs || 0 });
+  const crewYardName = useCallback((crewId) => {
+    const c = (board?.crews || []).find((x) => x.id === crewId);
+    return assign[yardKey(crewId)]?.yard || (c ? defaultYard(c) : "Brighton");
+  }, [board, assign]);
+  const yardOf = useCallback((crewId) => {
+    const name = crewYardName(crewId), y = settings.yards?.[name];
+    return y ? { lat: y.lat, lng: y.lng, name } : null;
+  }, [crewYardName, settings]);
+  const autoOrder = (crewId) => {
+    const items = byCrew[crewId] || [];
+    const yard = yardOf(crewId);
+    if (!yard) { setErr(`Set the ${crewYardName(crewId)} yard address first (Yards button, top right) so the route can start there.`); setYardsOpen(true); return; }
+    const placed = items.filter((x) => points[x.ref]), unplaced = items.filter((x) => !points[x.ref]);
+    const ord = bestOrder(yard, placed.map((x) => ({ p: points[x.ref] })));
+    const finalList = [...ord.map((i) => placed[i]), ...unplaced];
+    const entries = {};
+    finalList.forEach((x, i) => { if ((x.order ?? -1) !== i) entries[x.ref] = { ...assign[x.ref], order: i }; });
+    if (Object.keys(entries).length) save(entries);
+  };
   const addTo = (ref, crew) => {
     const j = jobBy[ref]; if (!j) return;
     const list = (byCrew[crew] || []).filter((x) => x.ref !== ref);
@@ -214,7 +327,7 @@ export default function Schedule({ me }) {
         <button className="btn st" onClick={() => setIso(isoOf(addDays(new Date(iso + "T12:00:00"), -7)))}>‹</button>
         {[0, 1, 2, 3, 4, 5, 6].map((i) => {
           const d = addDays(wkStart, i), di = isoOf(d);
-          const n = Object.values((di === iso ? { assign } : week[di]) ?.assign || {}).filter((a) => a?.crew).length;
+          const n = Object.entries((di === iso ? { assign } : week[di])?.assign || {}).filter(([k, a]) => a?.crew && !k.startsWith("_")).length;
           return (
             <button key={di} className="chip st" data-on={di === iso ? 1 : 0} onClick={() => setIso(di)}
                     style={{ borderColor: di === today ? "#6b7880" : undefined }}>
@@ -225,9 +338,11 @@ export default function Schedule({ me }) {
         <button className="btn st" onClick={() => setIso(isoOf(addDays(new Date(iso + "T12:00:00"), 7)))}>›</button>
         <button className="btn st" onClick={() => setIso(today)}>Today</button>
         <span className="spacer" />
+        <button className="btn st" onClick={() => setYardsOpen((o) => !o)}>Yards</button>
         <span className="hint">{saving ? "Saving…" : board ? (board.from === iso ? "Crews from this day's Shop Board." : board.from === "standing" ? "Crews from the standing Shop Board setup." : `Crews from the Shop Board (same as ${board.from}).`) : ""}</span>
       </div>
       {err && <div className="err" style={{ marginBottom: 8 }}>{err}</div>}
+      {yardsOpen && <YardSettings settings={settings} onSaved={setSettings} onClose={() => setYardsOpen(false)} />}
       {sel && (
         <div className="card" style={{ padding: "8px 12px", marginBottom: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderColor: "#58666f" }}>
           <b>{sel.name}</b><span className="hint">#{sel.ref} · {sel.town} · {hrs(sel.hrs)} · {money(sel.price)}{plannedOn[sel.ref] ? ` · planned ${plannedOn[sel.ref]}` : ""}</span>
@@ -246,6 +361,8 @@ export default function Schedule({ me }) {
           {(board?.crews || []).map((c) => {
             const items = byCrew[c.id] || [];
             const total = items.reduce((t, x) => t + (jobBy[x.ref]?.hrs ?? x.hrs ?? 0), 0);
+            const yard = yardOf(c.id);
+            const trip = tripKm(yard, items.map((x) => points[x.ref]).filter(Boolean));
             const ppl = (c.people || []).map((id) => board.core.people[id]).filter((p) => p && !p.del);
             return (
               <div key={c.id} className="card" onDragOver={(e) => e.preventDefault()}
@@ -256,17 +373,29 @@ export default function Schedule({ me }) {
                   <span className="spacer" />
                   <span className="mono" style={{ color: total > DAY_HRS + 1 ? C.amber : C.inkDim }}>{Math.round(total * 10) / 10} h</span>
                 </div>
+                {items.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "6px 8px 0", flexWrap: "wrap" }}>
+                    <span className="hint">From</span>
+                    <select className="inp" style={{ width: "auto", padding: "3px 6px", fontSize: 11.5 }} value={crewYardName(c.id)}
+                            onChange={(e) => save({ [yardKey(c.id)]: { yard: e.target.value } })}>
+                      {[...new Set([...YARD_NAMES, ...Object.keys(settings.yards || {})])].map((y) => <option key={y} value={y}>{y}{settings.yards?.[y] ? "" : " (no address)"}</option>)}
+                    </select>
+                    <span className="hint">{trip ? `≈ ${miles(trip)} round trip, straight-line` : ""}</span>
+                    <span className="spacer" />
+                    {items.length > 1 && <button className="btn st" onClick={() => autoOrder(c.id)} title="Shortest order from the yard and back">Best order</button>}
+                  </div>
+                )}
                 <div style={{ padding: 6, display: "grid", gap: 4, minHeight: 40 }}>
                   {items.map((x, i) => {
                     const j = jobBy[x.ref];
-                    const prev = i > 0 && points[items[i - 1].ref], here = points[x.ref];
+                    const prev = i > 0 ? points[items[i - 1].ref] : yard, here = points[x.ref];
                     return (
                       <div key={x.ref} onClick={() => setSelected(x.ref)}
                            style={{ display: "flex", gap: 6, alignItems: "center", padding: "5px 6px", background: selected === x.ref ? C.tileHi : C.tile, borderRadius: 3, cursor: "pointer" }}>
                         <span className="mono" style={{ width: 18, height: 18, borderRadius: 9, background: crewColor(c.id), color: "#0b0e11", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{i + 1}</span>
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{j ? j.name : x.label}</div>
-                          <div className="hint" style={{ fontSize: 11 }}>{j?.town || x.town} · {hrs(j?.hrs ?? x.hrs)}{prev && here ? ` · ${miles(km(prev, here))} from last` : ""}{!j ? " · no longer in the backlog" : ""}</div>
+                          <div className="hint" style={{ fontSize: 11 }}>{j?.town || x.town} · {hrs(j?.hrs ?? x.hrs)}{prev && here ? ` · ${miles(km(prev, here))} from ${i === 0 ? "yard" : "last"}` : ""}{!j ? " · no longer in the backlog" : ""}</div>
                         </span>
                         <button className="btn" style={{ padding: "2px 7px" }} title="Earlier" onClick={(e) => { e.stopPropagation(); move(c.id, i, -1); }}>↑</button>
                         <button className="btn" style={{ padding: "2px 7px" }} title="Later" onClick={(e) => { e.stopPropagation(); move(c.id, i, 1); }}>↓</button>
@@ -288,7 +417,7 @@ export default function Schedule({ me }) {
         <div className="card" style={{ position: "sticky", top: 70 }}>
           <div style={{ height: "min(70vh, 680px)" }}>
             <ScheduleMap jobs={jobs.filter((j) => assign[j.ref]?.crew || list.includes(j))} points={points} assign={assign}
-                         crewColor={crewColor} selected={selected} onPick={(r) => setSelected((s) => (s === r ? null : r))} />
+                         crewColor={crewColor} selected={selected} onPick={(r) => setSelected((s) => (s === r ? null : r))} yardOf={yardOf} />
           </div>
           <div className="hint" style={{ padding: "6px 10px" }}>{geoState || "Numbered dots = this day's stops, in order. Small dots = backlog jobs (coloured by status)."}</div>
         </div>

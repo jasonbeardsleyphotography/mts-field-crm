@@ -1,3 +1,4 @@
+// v110: ☰ menu on the Pipeline screen; Schedule "Best order" from the yard.
 // v109: Schedule tab in Dispatch (backlog jobs onto Shop Board crews, map, day sheet jobs).
 // v108: Shop Board added to Dispatch (server storage, merged edits).
 // v107: Field / Dispatch / Soil switcher at the top of the ☰ menu (Admin as a menu item).
@@ -152,7 +153,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v109";
+const CACHE = "mts-field-v110";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

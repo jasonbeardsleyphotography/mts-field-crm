@@ -52,3 +52,17 @@ export function changedKeys(before = {}, after = {}) {
 export async function shopSchedRange(from, days = 7) {
   try { return (await call(`sched-range?from=${from}&days=${days}`)).sched || {}; } catch { return {}; }
 }
+
+export async function shopSettings() {
+  try { return (await call("settings")).settings || { yards: {} }; } catch { return { yards: {} }; }
+}
+/** Save a yard address; throws with the server's reason (e.g. "address_not_found"). */
+export async function saveYard(yard, addr, fallbackPoint) {
+  const r = await fetch("/api/dispatch/shop/settings", {
+    method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ yard, addr, ...(fallbackPoint || {}) }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || `error ${r.status}`);
+  return d.settings;
+}

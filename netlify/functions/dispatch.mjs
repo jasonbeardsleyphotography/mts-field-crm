@@ -291,6 +291,26 @@ async function shopRoute(sub, req, url, me) {
     const raw = await SH().get(key);
     return json({ key, value: raw ? JSON.parse(raw) : null, now: Date.now() });
   }
+  // Yard addresses (where the Schedule's "best order" starts and ends).
+  if (sub === "settings" && method === "GET") {
+    const raw = await SH().get("settings");
+    return json({ settings: raw ? JSON.parse(raw) : { yards: {} }, now: Date.now() });
+  }
+  if (sub === "settings" && method === "POST") {
+    if (!me.perms.dispatch && !me.perms.admin) return json({ error: "no_access" }, 403);
+    let b; try { b = await req.json(); } catch { return json({ error: "bad_data" }, 400); }
+    const name = String(b?.yard || "").slice(0, 40), addr = String(b?.addr || "").trim().slice(0, 160);
+    if (!name || !addr) return json({ error: "bad_data" }, 400);
+    let pt = null;
+    try { pt = (await censusBatch([{ addr }]))[0] || null; } catch {}
+    if (!pt && isFinite(b.lat) && isFinite(b.lng)) pt = { lat: +b.lat, lng: +b.lng };   // browser fallback
+    if (!pt) return json({ error: "address_not_found" }, 422);
+    const raw = await SH().get("settings");
+    const st = raw ? JSON.parse(raw) : { yards: {} };
+    st.yards = { ...(st.yards || {}), [name]: { addr, lat: pt.lat, lng: pt.lng, by: me.name || me.email, at: Date.now() } };
+    await SH().set("settings", JSON.stringify(st));
+    return json({ settings: st, now: Date.now() });
+  }
   if (sub === "sched-range" && method === "GET") {
     // the schedules of several days at once (the Schedule marks jobs planned on other days)
     const from = url.searchParams.get("from") || "", n = Math.min(31, +url.searchParams.get("days") || 7);
