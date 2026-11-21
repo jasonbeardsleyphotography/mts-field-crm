@@ -22,5 +22,6 @@ export const APP_LABELS = {
   field: "Field app",
   dispatch: "Dispatch (backlog & schedule)",
   shop: "Shop Board",
+  soil: "Soil",
   admin: "Admin",
 };

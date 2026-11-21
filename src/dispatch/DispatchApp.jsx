@@ -47,7 +47,7 @@ export default function DispatchApp() {
   const pick = (id) => { setTab(id); try { localStorage.setItem("mts-dispatch-tab", id); } catch {} };
   const allowed = (t) => me?.perms?.[t.need] || (t.need === "dispatch" && me?.perms?.admin);
   const tabs = me ? TABS.filter(allowed) : [];
-  const current = tabs.find((t) => t.id === tab && !t.soon) || tabs.find((t) => !t.soon);
+  const current = tabs.find((t) => t.id === tab) || tabs.find((t) => !t.soon);
 
   const signOut = async () => {
     try { await api("logout", { method: "POST" }); } catch {}
@@ -79,7 +79,7 @@ export default function DispatchApp() {
           <div className="tabs" role="tablist">
             {tabs.map((t) => (
               <button key={t.id} className="tab st" role="tab" aria-selected={current?.id === t.id}
-                      disabled={t.soon} title={t.soon ? "Coming next" : undefined} onClick={() => pick(t.id)}>
+                      title={t.soon ? "Not built yet" : undefined} onClick={() => pick(t.id)}>
                 {t.label}{t.soon ? " · soon" : ""}
               </button>
             ))}
@@ -93,6 +93,17 @@ export default function DispatchApp() {
         <div className="wrap hint" style={{ maxWidth: 640 }}>
           You're signed in as <b style={{ color: "#E7E2D6" }}>{me.email}</b>, which has no Dispatch tools switched on.
           Ask the owner to switch them on in Admin — or, if this is the wrong account, sign in to the field app with the right one.
+        </div>
+      )}
+      {current?.soon && (
+        <div className="wrap" style={{ maxWidth: 640 }}>
+          <div className="card"><div className="card-b" style={{ display: "grid", gap: 10 }}>
+            <div className="st" style={{ fontSize: 16 }}>{current.label} — not built yet</div>
+            <div className="hint">{current.id === "shop"
+              ? "This will be your Shop Board: trucks, equipment and people on a yard board, with the day sheet for SingleOps. It's next on the list after Soil."
+              : "This will be the Schedule: drag backlog jobs onto crews and days, with a map to route them. It comes after the Shop Board, because it uses the same crews."}</div>
+            <div className="hint">The tab is here so you can see where it will live. Nothing on it works yet.</div>
+          </div></div>
         </div>
       )}
       {current?.id === "backlog" && <Backlog me={me} />}

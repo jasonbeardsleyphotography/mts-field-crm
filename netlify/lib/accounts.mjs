@@ -34,7 +34,7 @@ export async function sha256(text) {
 
 /* ── Admin-controlled user list ────────────────────────────────────────────
    The owner manages who may use which app (Field app, Dispatch, Shop Board,
-   Admin) on the Admin screen; the list lives in Netlify Blobs ("mts-admin" /
+   Soil, Admin) on the Admin screen; the list lives in Netlify Blobs ("mts-admin" /
    "users"). Rules:
      • The owner always has every app — nothing in the list can lock them out.
      • If an address is in the list, the list decides.
@@ -42,7 +42,7 @@ export async function sha256(text) {
        above (so nothing changed for existing accounts until the owner edits).
    Functions pass their getStore in; edge functions don't, and keep the old
    built-in behaviour. */
-export const APPS = ["field", "dispatch", "shop", "admin"];
+export const APPS = ["field", "dispatch", "shop", "soil", "admin"];
 let userCache = null, userCacheAt = 0;
 export async function loadUserList(getStore, fresh = false) {
   if (!getStore) return null;
@@ -60,9 +60,9 @@ export async function isOwnerEmail(email) {
 /** { field, dispatch, shop, admin } for this address. */
 export async function appPermissions(email, getStore) {
   const e = String(email || "").trim().toLowerCase();
-  const none = { field: false, dispatch: false, shop: false, admin: false };
+  const none = { field: false, dispatch: false, shop: false, soil: false, admin: false };
   if (!e || !e.includes("@")) return none;
-  if (await isOwnerEmail(e)) return { field: true, dispatch: true, shop: true, admin: true };
+  if (await isOwnerEmail(e)) return { field: true, dispatch: true, shop: true, soil: true, admin: true };
   if (getStore) {
     try {
       const rec = (await loadUserList(getStore))?.[e];

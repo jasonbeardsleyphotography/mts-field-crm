@@ -30,6 +30,7 @@
 
 import { getStore } from "@netlify/blobs";
 import { parseCookies, appPermissions, loadUserList, forgetUserCache, isOwnerEmail, APPS } from "../lib/accounts.mjs";
+import { caller as sessionCaller } from "../lib/session.mjs";
 
 const json = (obj, status = 200, extra = {}) =>
   new Response(JSON.stringify(obj), {
@@ -43,32 +44,7 @@ const LINK_DAYS = 14;
 const cleanEmail = (e) => String(e || "").trim().toLowerCase();
 const okEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
-async function whoAmI(req) {
-  const ck = parseCookies(req.headers.get("cookie"));
-  if (ck.mts_dsess) {
-    try {
-      const raw = await D().get(`sess/${ck.mts_dsess}`);
-      if (raw) { const s = JSON.parse(raw); if (s.email) return { email: s.email, via: "link" }; }
-    } catch {}
-  }
-  if (ck.mts_sess) {
-    try {
-      const raw = await getStore("mts-oauth").get(ck.mts_sess);
-      if (raw) { const s = JSON.parse(raw); if (s.email) return { email: s.email, via: "google" }; }
-    } catch {}
-  }
-  return null;
-}
-
-async function caller(req) {
-  const who = await whoAmI(req);
-  if (!who) return null;
-  const perms = await appPermissions(who.email, getStore);
-  const list = (await loadUserList(getStore).catch(() => null)) || {};
-  const rec = list[who.email];
-  if (rec?.removed && !(await isOwnerEmail(who.email))) return null;
-  return { ...who, perms, name: rec?.name || "", owner: await isOwnerEmail(who.email) };
-}
+const caller = (req) => sessionCaller(req, getStore);
 
 const randomCode = () => {
   const b = new Uint8Array(24); crypto.getRandomValues(b);
@@ -119,7 +95,7 @@ export default async (req) => {
     await D().delete(`link/${code}`);                       // one use only
     if (Date.now() > link.exp) return json({ error: "link_expired" }, 410);
     const perms = await appPermissions(link.email, getStore);
-    if (!perms.dispatch && !perms.shop && !perms.admin) return json({ error: "no_access" }, 403);
+    if (!perms.dispatch && !perms.shop && !perms.soil && !perms.admin) return json({ error: "no_access" }, 403);
     const sid = crypto.randomUUID();
     await D().set(`sess/${sid}`, JSON.stringify({ email: link.email, createdAt: Date.now() }));
     return json({ ok: true, email: link.email }, 200, {
@@ -171,7 +147,10 @@ export default async (req) => {
       if (!okEmail(email)) return json({ error: "bad_email" }, 400);
       const code = randomCode();
       await D().set(`link/${code}`, JSON.stringify({ email, exp: Date.now() + LINK_DAYS * 86400000, by: me.email }));
-      return json({ ok: true, url: `${url.origin}/dispatch/#signin=${code}`, days: LINK_DAYS });
+      // Send Soil-only people straight to Soil; everyone else lands in Dispatch.
+      const apps = list[email]?.apps || {};
+      const where = !apps.dispatch && !apps.shop && !apps.admin && apps.soil ? "soil" : "dispatch";
+      return json({ ok: true, url: `${url.origin}/${where}/#signin=${code}`, days: LINK_DAYS });
     }
     return json({ error: "not_found" }, 404);
   }

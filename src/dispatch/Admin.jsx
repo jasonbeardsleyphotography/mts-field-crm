@@ -8,11 +8,12 @@ import { C } from "./theme";
    changed or removed here, so there is no way to lock yourself out.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const APPS = ["field", "dispatch", "shop", "admin"];
+const APPS = ["field", "dispatch", "shop", "soil", "admin"];
 const NOTES = {
   field: "Needs a Google account. While Google sign-in is in Testing mode, also add the address under Test users in Google Cloud.",
   dispatch: "Backlog and Schedule.",
   shop: "Trucks, equipment and crews board.",
+  soil: "Soil test maps and results for every property (crew view, with internal history).",
   admin: "Can change this list.",
 };
 

@@ -1,3 +1,4 @@
+// v105: Soil (/soil) added as its own page; offline it falls back to its own page.
 // v104: Dispatch: both owner accounts are admins; clearer "no tools" message.
 // v103: Dispatch added at /dispatch (separate page); offline it falls back to its own page, not the field app.
 // v102: Apple Maps opens the Maps app (maps://) instead of a browser page.
@@ -147,7 +148,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v104";
+const CACHE = "mts-field-v105";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
@@ -201,8 +202,8 @@ self.addEventListener("fetch", (e) => {
         if (r.ok) caches.open(CACHE).then(c => c.put(e.request, r.clone()));
         return r;
       }).catch(async () => (await caches.match(e.request)) ||
-        // Dispatch is its own page; offline it must not fall back to the field app.
-        (await caches.match(new URL(e.request.url).pathname.startsWith("/dispatch") ? "/dispatch.html" : "/index.html")))
+        // Dispatch and Soil are their own pages; offline they must not fall back to the field app.
+        (await caches.match((p => p.startsWith("/dispatch") ? "/dispatch.html" : p.startsWith("/soil") ? "/soil.html" : "/index.html")(new URL(e.request.url).pathname))))
     );
     return;
   }

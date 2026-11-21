@@ -114,12 +114,28 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   ShopBoard.jsx onto server storage — keep its rule: a unit's spec comes from code and is re-applied on every read;
   fix its whole-object writes for day layout, undo, copy-to-week and reset).
 
+## Soil (/soil) — property soil maps (owner asked for it, Nov 2026)
+- Same separate build as Dispatch (`vite.dispatch.config.js` has inputs dispatch.html + soil.html; output
+  `dist/dispatch-assets/`). Code in `src/soil/`. Server `netlify/functions/soil.mjs` (`/api/soil/*`), Blobs store
+  `mts-soil`: `index`, `site/<id>`, `pdf/<site>/<file>.pdf`, `link/<token>`. Shared sign-in check: `netlify/lib/session.mjs`.
+- Access: staff need the **Soil** permission (Admin tab); editing (import, cut-outs, client links) is admin-only. Clients
+  get a private read-only link `/soil/c/<token>` made with "Make a client link" (revocable). `clientView()` strips every
+  `internal` field and the link list ON THE SERVER — never rely on hiding them in the page. `/soil/*` is noindex.
+- Map spec = the owner's prototype `BH-soil-gradient-map.html`: Esri imagery + reference labels, IDW power 2 in local
+  metres, fade 45→130 m, colour stops in `src/soil/soilData.js`, NYS tax parcel clip (empty for Monroe County), stored
+  shapes `{type: boundary|area|line, name, coords:[[lat,lon]], width}` (BH-cutouts.json format).
+- "You are here": watchPosition on the device only — position is never sent or stored; stopped when the page is hidden.
+- Client data (addresses, lab PDFs, $ history) is imported through the page (site package .zip), never committed to git.
+- Each lab is judged by its own reference ranges (labs use different methods); never mix labs on one colour scale.
+- Trees (later): separate layer; inspections stored as separate dated records, not on the tree.
+- Agreed next: OneDrive archive (12 more properties, 27 reports; transcribe non-UMass + 2 scanned reports for owner
+  review; tap-to-place sample pins), then the Field / Dispatch / Soil switcher in every app's ☰ menu (Shop Board lives in
+  Dispatch; Admin = an item in the ☰ menu for admins), then Shop Board, then Schedule.
+
 ## Future expansion — ON HOLD (owner's decision; don't start without being asked)
 - **Client history:** one large CSV of every line item for every job the company has ever completed. Must show
   per client: jobs with their line items, targets and prices, plus soil samples. Stored separately from visit
   records, but tied to the client: tapping a name (e.g. "Ed Short") shows his history AND his app visits/pipeline
   status together. Both salespeople must see exactly the same history (so it needs a shared home, not one Drive).
-- **Soil reports:** upload a lab PDF → AI extracts values → owner reviews → place sample pins on the property →
-  public client page (unguessable link) with nutrient gradient overlays on the map and "why it matters"
-  infographics; kept on the client's record. Owner has a starter HTML file built elsewhere.
+- (Soil reports moved out of ON HOLD — now being built as /soil, see above. Still to do: AI extraction from uploaded PDFs.)
 - Video snapshot button (photo from the live video view, with GPS + site-map pin) — explored, not built.
