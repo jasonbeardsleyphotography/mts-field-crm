@@ -1993,7 +1993,9 @@ function buildDaySheet(core, crewsMap, week, dayIndex, opt) {
     let paren = [];
     if (opt.showOp && c.ops && c.ops !== "GTC" && OP_WORD[c.ops]) paren.push(OP_WORD[c.ops]);
     if (opt.showGear) paren = paren.concat(gear);
-    segs.push(names.join(", ") + (paren.length ? ` (${paren.join(", ")})` : ""));
+    // jobs from the Schedule tab, in order
+    const jobs = opt.showJobs && opt.jobs ? (opt.jobs[c.id] || []) : [];
+    segs.push(names.join(", ") + (paren.length ? ` (${paren.join(", ")})` : "") + (jobs.length ? ` — ${jobs.join(", ")}` : ""));
   });
 
   return { text: segs.join(opt.sep), segs, away, grounded, bare };
@@ -2004,8 +2006,20 @@ function DaySheet({ core, crewsMap, week, iso, dayIndex, onClose }) {
   const day = dayIndex;
   const [opt, setOpt] = useState({
     showGear: true, showOp: true, skipDown: true, onlyStaffed: true,
-    shortNames: true, fieldOnly: true, sep: " ---------- ",
+    shortNames: true, fieldOnly: true, sep: " ---------- ", showJobs: true, jobs: null,
   });
+  // the day's jobs from the Schedule tab: crew id -> ["Schreck #27722-2", …] in order
+  useEffect(() => {
+    let dead = false;
+    shopGet(`sched.${iso}`).then((r) => {
+      if (dead) return;
+      const by = {};
+      Object.values(r?.assign || {}).filter((a) => a && a.crew).sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        .forEach((a) => { (by[a.crew] = by[a.crew] || []).push(a.label + (a.town ? ` (${a.town})` : "")); });
+      setOpt((o) => ({ ...o, jobs: by }));
+    });
+    return () => { dead = true; };
+  }, [iso]);
   const [text, setText] = useState("");
   const [copied, setCopied] = useState("");
   const ta = useRef(null);
@@ -2039,10 +2053,11 @@ function DaySheet({ core, crewsMap, week, iso, dayIndex, onClose }) {
   };
 
   return (
-    <Sheet onClose={onClose} title={`Day sheet · ${dayName}`} sub="Paste this into the SingleOps task, then add jobs and extras.">
+    <Sheet onClose={onClose} title={`Day sheet · ${dayName}`} sub="Paste this into the SingleOps task. Jobs come from the Schedule tab; add extras by hand.">
       <div className="fl stencil">WHAT GOES IN</div>
       <div className="opts">
         <button className="opt stencil" data-on={opt.showGear ? 1 : 0} onClick={() => flip("showGear")}>Equipment</button>
+        <button className="opt stencil" data-on={opt.showJobs ? 1 : 0} onClick={() => flip("showJobs")}>Jobs from the Schedule</button>
         <button className="opt stencil" data-on={opt.showOp ? 1 : 0} onClick={() => flip("showOp")}>PHC / Lawns label</button>
         <button className="opt stencil" data-on={opt.skipDown ? 1 : 0} onClick={() => flip("skipDown")}>Leave out down iron</button>
         <button className="opt stencil" data-on={opt.onlyStaffed ? 1 : 0} onClick={() => flip("onlyStaffed")}>Only crews with people</button>
@@ -3113,3 +3128,6 @@ export default function ShopBoard({ user, isAdmin = false }) {
     </div>
   );
 }
+
+/* Used by the Schedule tab: the same crews, people and day inheritance. */
+export { freshCore, mergeCore, live, isoOf, addDays, weekStartOf };

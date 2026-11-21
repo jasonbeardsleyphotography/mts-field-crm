@@ -157,7 +157,9 @@ export default async (req) => {
 
   // ── Shop Board (needs Shop Board or Admin) ───────────────────────────────
   if (route.startsWith("shop/")) {
-    if (!me.perms.shop && !me.perms.admin) return json({ error: "no_shop_access" }, 403);
+    // Shop Board users edit the board; Dispatch users can read it (the Schedule
+    // shows its crews) and edit only the day schedules (sched.<date>).
+    if (!me.perms.shop && !me.perms.dispatch && !me.perms.admin) return json({ error: "no_shop_access" }, 403);
     return shopRoute(route.slice(5), req, url, me);
   }
 
@@ -225,7 +227,7 @@ export default async (req) => {
    A unit's spec (drawing, family, what it tows) is never stored — the board
    re-applies it from its code on every read. */
 const SH = () => getStore("mts-shop");
-const SHOP_KEY = /^(core|day\.\d{4}-\d{2}-\d{2}|week\.\d{4}-\d{2}-\d{2})$/;
+const SHOP_KEY = /^(core|(day|week|sched)\.\d{4}-\d{2}-\d{2})$/;
 const byAt = (cur = {}, inc = {}) => {
   const out = { ...cur };
   for (const [k, v] of Object.entries(inc || {})) {
@@ -240,6 +242,7 @@ const perKey = (cur = {}, inc = {}) => {
   return out;
 };
 function mergeShop(key, cur, patch, replace, t) {
+  if (key.startsWith("sched.")) return { assign: byAt(replace || !cur ? {} : cur.assign, patch.assign) };
   if (replace || !cur) cur = key === "core" ? { assets: {}, crews: {}, people: {}, rigs: {}, log: [] } : key.startsWith("day.") ? { crews: {}, stacks: {}, pos: {}, keyAt: {} } : { cells: {} };
   if (key === "core") {
     const log = new Map();
@@ -276,6 +279,7 @@ function landed(key, v, patch, t) {
     const keys = (inc, tag) => Object.keys(inc || {}).every((k) => ((v.keyAt || {})[tag + k] || 0) >= t);
     return ent(v.crews, patch.crews) && keys(patch.pos, "p:") && keys(patch.stacks, "s:");
   }
+  if (key.startsWith("sched.")) return ent(v.assign, patch.assign);
   return ent(v.cells, patch.cells);
 }
 
@@ -287,6 +291,19 @@ async function shopRoute(sub, req, url, me) {
     const raw = await SH().get(key);
     return json({ key, value: raw ? JSON.parse(raw) : null, now: Date.now() });
   }
+  if (sub === "sched-range" && method === "GET") {
+    // the schedules of several days at once (the Schedule marks jobs planned on other days)
+    const from = url.searchParams.get("from") || "", n = Math.min(31, +url.searchParams.get("days") || 7);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return json({ error: "bad_date" }, 400);
+    const out = {};
+    for (let i = 0; i < n; i++) {
+      const d = new Date(from + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + i);
+      const iso = d.toISOString().slice(0, 10);
+      const raw = await SH().get(`sched.${iso}`);
+      if (raw) out[iso] = JSON.parse(raw);
+    }
+    return json({ sched: out, now: Date.now() });
+  }
   if (sub === "days" && method === "GET") {
     const { blobs } = await SH().list({ prefix: "day." });
     return json({ days: blobs.map((b) => b.key.slice(4)), now: Date.now() });
@@ -295,6 +312,8 @@ async function shopRoute(sub, req, url, me) {
     let b; try { b = await req.json(); } catch { return json({ error: "bad_data" }, 400); }
     if (!SHOP_KEY.test(b?.key || "") || typeof b.patch !== "object") return json({ error: "bad_data" }, 400);
     if (b.replace && b.key === "core" && !me.perms.admin) return json({ error: "admins_only" }, 403);
+    const isSched = b.key.startsWith("sched.");
+    if (isSched ? !(me.perms.dispatch || me.perms.admin) : !(me.perms.shop || me.perms.admin)) return json({ error: "no_access" }, 403);
     // Blobs has no "write only if unchanged", so two saves at the same instant
     // could overwrite each other. Write, look again a moment later, and
     // re-apply this patch if a simultaneous save wiped it (never over newer edits).

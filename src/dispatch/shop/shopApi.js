@@ -47,3 +47,8 @@ export function changedKeys(before = {}, after = {}) {
   for (const k of Object.keys(before || {})) if (!(k in (after || {}))) out[k] = null;
   return out;
 }
+
+/** Day schedules for `days` days starting at `from` (YYYY-MM-DD): { iso: { assign } }. */
+export async function shopSchedRange(from, days = 7) {
+  try { return (await call(`sched-range?from=${from}&days=${days}`)).sched || {}; } catch { return {}; }
+}

@@ -120,7 +120,14 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   the items its own action touched (`undoRef.own`), copy-to-week asks before replacing planned days, Reset is admin
   only, identity = sign-in. Its CSS is scoped under `.mb` by `scopeCss`. check-undef can't see `const A = 1, B = 2`:
   declare SCREAMING_CASE constants one per line.
-- Planned next: Schedule (drag backlog jobs onto Shop Board crews/days with a map; day sheet to include job names).
+- Schedule (Dispatch tab, `src/dispatch/Schedule.jsx`): crews for a day come from the Shop Board (that day's record,
+  else the latest earlier saved day, else the standing setup). Jobs are assigned per day in `mts-shop` key
+  `sched.<iso>` = { assign: { jobRef: { crew|null, order, label, town, hrs, at, by } } }, merged per job like the board
+  (crew null = taken off). Dispatch users may read the board and edit only sched.*; board edits need Shop Board.
+  Drag (desktop HTML5 DnD) or tap a job then "Add here" (phones); ↑↓ reorder; map shows numbered stops + route line per
+  crew; "Nearest to <crew>" sorts the backlog by distance to that crew's stops; jobs planned on other days of the week
+  are marked/hidden. The Shop Board Day sheet appends each crew's scheduled jobs ("Jobs from the Schedule" toggle).
+  Nothing is written to SingleOps or the workbook.
 
 ## Soil (/soil) — property soil maps (owner asked for it, Nov 2026)
 - Same separate build as Dispatch (`vite.dispatch.config.js` has inputs dispatch.html + soil.html; output
@@ -145,7 +152,7 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   (asks `/api/dispatch/me`; shows nothing if that fails, so the field app is never affected; warns before leaving
   with photos uploading). Dispatch/Soil: `src/dispatch/AppMenu.jsx` (fixed bottom-left ☰; on a Soil property page it
   sits in the map's bottom-left corner; never on client links). Admin is a menu item (opens `/dispatch/#admin`), not a
-  tab. Shop Board lives inside Dispatch. Next: Schedule.
+  tab. Shop Board and Schedule live inside Dispatch.
 
 ## Future expansion — ON HOLD (owner's decision; don't start without being asked)
 - **Client history:** one large CSV of every line item for every job the company has ever completed. Must show

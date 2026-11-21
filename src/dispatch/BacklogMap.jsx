@@ -10,7 +10,7 @@ import { STATUS } from "./backlogModel";
 
 const MAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_KEY;
 let mapsPromise = null;
-function loadMaps() {
+export function loadMaps() {
   if (window.google?.maps?.Map) return Promise.resolve();
   if (mapsPromise) return mapsPromise;
   mapsPromise = new Promise((ok, fail) => {

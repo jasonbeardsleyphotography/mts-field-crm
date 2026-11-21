@@ -5,6 +5,7 @@ import Admin from "./Admin.jsx";
 import Backlog from "./Backlog.jsx";
 import AppMenu from "./AppMenu.jsx";
 import ShopBoard from "./shop/ShopBoard.jsx";
+import Schedule from "./Schedule.jsx";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS Dispatch — a separate tool on the field app's site (/dispatch).
@@ -14,7 +15,7 @@ import ShopBoard from "./shop/ShopBoard.jsx";
 
 const TABS = [
   { id: "backlog", label: "Backlog", need: "dispatch" },
-  { id: "schedule", label: "Schedule", need: "dispatch", soon: true },
+  { id: "schedule", label: "Schedule", need: "dispatch" },
   { id: "shop", label: "Shop Board", need: "shop" },
   { id: "admin", label: "Admin", need: "admin", hidden: true },   // opened from the ☰ menu
 ];
@@ -110,6 +111,7 @@ export default function DispatchApp() {
       )}
       {current?.id === "backlog" && <Backlog me={me} />}
       {current?.id === "shop" && <ShopBoard user={me} isAdmin={!!me.perms.admin} />}
+      {current?.id === "schedule" && <Schedule me={me} />}
       {current?.id === "admin" && <Admin me={me} />}
       <AppMenu me={me} current="dispatch" onAdmin={() => pick("admin")} onSignOut={signOut} />
     </div>
