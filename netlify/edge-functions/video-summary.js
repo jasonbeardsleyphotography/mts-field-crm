@@ -53,7 +53,13 @@ export default async (request) => {
   const auth = request.headers.get("authorization") || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   const email = token ? await emailForToken(token) : null;
-  if (!email || !(await isAllowedEmail(email))) {
+  // Built-in list first; people added on the Admin screen are checked by the
+  // regular server (edge functions can't read the Admin list themselves).
+  let allowed = !!email && (await isAllowedEmail(email));
+  if (email && !allowed) {
+    try { allowed = (await fetch(new URL("/api/dispatch/allowed-field", request.url), { headers: { authorization: auth } })).ok; } catch {}
+  }
+  if (!allowed) {
     return new Response(JSON.stringify({ error: "Not signed in with an approved account." }), { status: 401, headers: { "content-type": "application/json" } });
   }
   const key = env("GEMINI_API_KEY") || env("VITE_GEMINI_KEY");

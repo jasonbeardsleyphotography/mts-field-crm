@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import SoilMap from "./SoilMap.jsx";
+import AddTest from "./AddTest.jsx";
 import { soilApi, pdfUrl } from "./api";
 import { METRICS, legendCss, RATING, fmtVal, fmtDate, testDate, whyFor, fieldsFor, rate, metricsFor } from "./soilData";
 
@@ -87,7 +88,7 @@ function SampleDetail({ s, test, siteId, token, onClose, included, onToggle }) {
         <div className="t-sub" style={{ marginBottom: 8 }}>
           {test?.lab}{s.labNumber ? ` · lab number ${s.labNumber}` : ""}{s.label && s.label !== s.labNumber ? ` · labelled “${s.label}”` : ""}
         </div>
-        {test?.transcribed && <div className="why" style={{ marginBottom: 8 }}>These values were typed in from the lab report. The PDF above is the original.</div>}
+        {test?.transcribed && <div className="why" style={{ marginBottom: 8 }}>{test.transcribed === "ai" ? "These values were read from the lab report by AI and checked by Monster Tree Service." : "These values were typed in from the lab report."} The PDF above is the original.</div>}
         {test?.type === "F" && <div className="why" style={{ marginBottom: 8 }}>{test.note}</div>}
         {vals.map((f) => {
           const v = s.values[f.k];
@@ -170,6 +171,7 @@ export default function SitePage({ site: initial, mode = "staff", canEdit = fals
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
   const [newLink, setNewLink] = useState("");
+  const [addOpen, setAddOpen] = useState(false);
 
   const samples = useMemo(() => (test?.samples || []).map((s) => ({ ...s, key: `${test.id}/${s.id}`, included: !excluded.has(`${test.id}/${s.id}`) })), [test, excluded]);
   const metrics = useMemo(() => metricsFor(test, samples), [test, samples]);
@@ -356,7 +358,7 @@ export default function SitePage({ site: initial, mode = "staff", canEdit = fals
               {facts.map((f, i) => <div key={i} className={`fact ${f.tone}`}>{f.text}</div>)}
               <div className="t-sub" style={{ marginTop: 10 }}>
                 Each sample is compared with the lab's own ranges ({test?.lab || "lab"}{test?.method ? `, ${test.method}` : ""}). Tap a sample for its full results and what each value means.
-                {test?.transcribed ? " These values were typed in from the lab report." : ""}
+                {test?.transcribed ? (test.transcribed === "ai" ? " These values were read from the lab report by AI and checked." : " These values were typed in from the lab report.") : ""}
               </div>
             </div>
           )}
@@ -389,6 +391,10 @@ export default function SitePage({ site: initial, mode = "staff", canEdit = fals
 
           {tab === "admin" && (
             <div className="pad">
+              <div className="lbl">Soil tests</div>
+              <div className="t-sub">{tests.length} test{tests.length === 1 ? "" : "s"} on this property. Add a new one from its lab report PDF.</div>
+              <button className="b-main" style={{ marginTop: 8, marginBottom: 16 }} onClick={() => setAddOpen(true)}>Add a soil test</button>
+
               <div className="lbl">Client link</div>
               <div className="t-sub">A private, read-only page for this property only. It doesn't show dollar amounts, hours or anything else in the app. Turn a link off any time.</div>
               <button className="b-main" style={{ marginTop: 8 }} onClick={makeLink}>Make a client link</button>
@@ -434,7 +440,11 @@ export default function SitePage({ site: initial, mode = "staff", canEdit = fals
         </aside>
       </div>
 
-      {sel && (
+      {addOpen && (
+        <AddTest site={site} onClose={() => setAddOpen(false)}
+                 onSaved={(fresh, newId) => { setSite(fresh); if (newId) setTestId(newId); setSelected(null); setAddOpen(false); setTab("samples"); }} />
+      )}
+      {sel && !addOpen && (
         <SampleDetail s={sel} test={test} siteId={site.id} token={token} onClose={() => setSelected(null)}
                       included={sel.included} onToggle={() => toggle(sel.key)} />
       )}

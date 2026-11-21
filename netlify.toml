@@ -12,6 +12,11 @@
   path = "/api/video-summary"
   function = "video-summary"
 
+# Soil: read a lab report PDF with AI (admins only; the page reviews before saving).
+[[edge_functions]]
+  path = "/api/soil-extract"
+  function = "soil-extract"
+
 # Server-side Google OAuth (authorization-code flow). These MUST come before
 # the SPA catch-all below, or "/*" would swallow them and serve index.html.
 # The refresh token lives server-side (Netlify Blobs), so token renewal no

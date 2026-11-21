@@ -29,7 +29,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { getStore } from "@netlify/blobs";
-import { parseCookies, appPermissions, loadUserList, forgetUserCache, isOwnerEmail, APPS } from "../lib/accounts.mjs";
+import { parseCookies, appPermissions, loadUserList, forgetUserCache, isOwnerEmail, APPS, emailForToken } from "../lib/accounts.mjs";
 import { caller as sessionCaller } from "../lib/session.mjs";
 
 const json = (obj, status = 200, extra = {}) =>
@@ -106,6 +106,16 @@ export default async (req) => {
     const sid = parseCookies(req.headers.get("cookie")).mts_dsess;
     if (sid) { try { await D().delete(`sess/${sid}`); } catch {} }
     return json({ ok: true }, 200, { "Set-Cookie": "mts_dsess=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0" });
+  }
+
+  // For the field app's edge functions (which can't read the Admin list):
+  // is the Google account behind this access token allowed to use the field app?
+  if (route === "allowed-field" && method === "GET") {
+    const auth = req.headers.get("authorization") || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    const email = token ? await emailForToken(token) : null;
+    const ok = !!email && (await appPermissions(email, getStore)).field;
+    return json({ ok }, ok ? 200 : 403);
   }
 
   const me = await caller(req);

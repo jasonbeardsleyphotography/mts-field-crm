@@ -87,6 +87,36 @@ function ImportBox({ onDone }) {
   );
 }
 
+function NewProperty({ onDone }) {
+  const [open, setOpen] = useState(false);
+  const [f, setF] = useState({ name: "", client: "", address: "" });
+  const [busy, setBusy] = useState(false), [err, setErr] = useState("");
+  const save = async () => {
+    const name = f.name.trim(); if (!name || !f.address.trim()) { setErr("Give it a name and an address."); return; }
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50);
+    setBusy(true); setErr("");
+    try {
+      await soilApi("site", { method: "PUT", body: { site: { id, name, client: f.client.trim(), address: f.address.trim(), shapes: [], history: null, tests: [] } } });
+      setBusy(false); setOpen(false); setF({ name: "", client: "", address: "" }); onDone(id);
+    } catch (e) { setBusy(false); setErr(`Couldn't save (${e.message}).`); }
+  };
+  if (!open) return <button className="b-sec" onClick={() => setOpen(true)}>+ New property</button>;
+  return (
+    <div className="card pad" style={{ display: "grid", gap: 8 }}>
+      <div className="lbl">New property</div>
+      <label className="fld">Name (the account name)<input className="inp" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Boughton Hill" /></label>
+      <label className="fld">Client (optional)<input className="inp" value={f.client} onChange={(e) => setF({ ...f, client: e.target.value })} /></label>
+      <label className="fld">Address<input className="inp" value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} placeholder="Street, town NY zip" /></label>
+      {err && <div className="err" style={{ padding: 0 }}>{err}</div>}
+      <div style={{ display: "flex", gap: 6 }}>
+        <button className="b-main" disabled={busy} onClick={save}>{busy ? "Saving…" : "Create"}</button>
+        <button className="b-sec" disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
+      </div>
+      <div className="t-sub">Then open it and use Admin → Add a soil test.</div>
+    </div>
+  );
+}
+
 function StaffView() {
   const [me, setMe] = useState(undefined);
   const [linkErr, setLinkErr] = useState("");
@@ -175,7 +205,10 @@ function StaffView() {
             </button>
           ))}
         </div>
-        {me.perms.admin && <div style={{ marginTop: 16 }}><ImportBox onDone={(id) => { loadSites(); if (id) go(id); }} /></div>}
+        {me.perms.admin && <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
+          <NewProperty onDone={(id) => { loadSites(); go(id); }} />
+          <ImportBox onDone={(id) => { loadSites(); if (id) go(id); }} />
+        </div>}
       </div>
     </div>
   );

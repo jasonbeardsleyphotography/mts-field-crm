@@ -109,7 +109,8 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
 - Permissions (`appPermissions` in `netlify/lib/accounts.mjs`): field / dispatch / shop / admin per email, set on the
   Admin tab. The owner's two accounts (personal + main business account, `OWNER_HASHES`) always have everything. An email in the list is decided by the list (a
   "removed" entry blocks even a built-in account); otherwise the field app falls back to the built-in list + env var.
-  Node functions pass `getStore`; edge functions (video-stream, video-summary) still use the built-in list only.
+  Node functions pass `getStore`. Edge functions can't read Blobs: video-summary falls back to `GET /api/dispatch/allowed-field`
+  (Bearer token → field permission); video-stream still uses the built-in list only.
 - Backlog: the GTC Backlog .xlsm is parsed in the browser (`parseWorkbook.js`, SheetJS `xlsx`, columns found by header
   text; forecast/priority tabs are a rolling 12 months — months before the sheet date mean next year). Stored on the
   server; nothing is written back to Excel. Later the same parser can take the live SharePoint file.
@@ -157,6 +158,10 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   check). Tests may carry their own `fields`, per-sample lab `ratings` words, `recs`/`recText`/`comment`; leaf tests are
   `type: "F"` (no map colours). Non-Morgan methods only colour pH and organic matter. Staff-only notes live under
   `site.internal` (stripped for clients). Admins place sample pins by tapping the map ("Place samples").
+- Adding tests: property Admin tab → "Add a soil test" (`src/soil/AddTest.jsx`): PDFs → edge function
+  `netlify/edge-functions/soil-extract.js` (`/api/soil-extract`, Gemini reads the PDF, streamed NDJSON; admin checked by
+  calling `/api/soil/me` with the caller's cookies) → editable review table → PDFs + test saved (`transcribed: "ai"`).
+  UMass Modified Morgan → standard keys (full map colours); other labs → `fields`. "+ New property" on the Soil home.
 - App switcher (Field · Dispatch · Soil) sits at the top of every app's ☰ menu. Field app: `src/AppSwitcher.jsx`
   (asks `/api/dispatch/me`; shows nothing if that fails, so the field app is never affected; warns before leaving
   with photos uploading). Dispatch/Soil: `src/dispatch/AppMenu.jsx` (fixed bottom-left ☰; on a Soil property page it
@@ -168,5 +173,5 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   per client: jobs with their line items, targets and prices, plus soil samples. Stored separately from visit
   records, but tied to the client: tapping a name (e.g. "Ed Short") shows his history AND his app visits/pipeline
   status together. Both salespeople must see exactly the same history (so it needs a shared home, not one Drive).
-- (Soil reports moved out of ON HOLD — now being built as /soil, see above. Still to do: AI extraction from uploaded PDFs.)
+- (Soil reports moved out of ON HOLD — built as /soil, see above.)
 - Video snapshot button (photo from the live video view, with GPS + site-map pin) — explored, not built.
