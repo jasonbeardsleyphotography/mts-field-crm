@@ -48,6 +48,22 @@
   to = "/.netlify/functions/ai"
   status = 200
 
+# Dispatch (a separate tool on the same site): its API, then its page.
+[[redirects]]
+  from = "/api/dispatch/*"
+  to = "/.netlify/functions/dispatch/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/dispatch/*"
+  to = "/dispatch.html"
+  status = 200
+
+[[redirects]]
+  from = "/dispatch"
+  to = "/dispatch/"
+  status = 301
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

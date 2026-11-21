@@ -93,6 +93,27 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
 - In-app recordings from newer iOS may be WebM, which iPhones often cannot play; the recorder now asks for MP4
   first and the players fall back to Drive's own player.
 
+## Dispatch (/dispatch) — a separate tool on the same site (owner asked for it, Nov 2026)
+- Must never change the field app. Built SEPARATELY: `vite.dispatch.config.js` (second `vite build` in `npm run build`)
+  writes `dist/dispatch.html` + `dist/dispatch-assets/`, sharing no code files with the field app. Code lives in
+  `src/dispatch/`; do not import field-app modules from there (copy what's needed) or the field bundle changes.
+- Server: `netlify/functions/dispatch.mjs` (`/api/dispatch/*`), Blobs stores `mts-dispatch` (sessions `sess/…`,
+  sign-in links `link/…`, `backlog/current`, geocode cache `geo`) and `mts-admin` (`users`).
+- Sign-in: one-time sign-in links the owner makes on Admin (any email, Google or not; 14-day expiry; session cookie
+  `mts_dsess`, 400 days), or the field app's Google session cookie `mts_sess` on the same browser. The owner refused to
+  ask corporate for Microsoft-account permission, so no Microsoft sign-in.
+- Permissions (`appPermissions` in `netlify/lib/accounts.mjs`): field / dispatch / shop / admin per email, set on the
+  Admin tab. The owner (hash `OWNER_HASH`) always has everything. An email in the list is decided by the list (a
+  "removed" entry blocks even a built-in account); otherwise the field app falls back to the built-in list + env var.
+  Node functions pass `getStore`; edge functions (video-stream, video-summary) still use the built-in list only.
+- Backlog: the GTC Backlog .xlsm is parsed in the browser (`parseWorkbook.js`, SheetJS `xlsx`, columns found by header
+  text; forecast/priority tabs are a rolling 12 months — months before the sheet date mean next year). Stored on the
+  server; nothing is written back to Excel. Later the same parser can take the live SharePoint file.
+- Map pins: US Census batch geocoder (server, free), then Google's browser geocoder for misses; cached by address.
+- Planned next: Schedule (drag backlog jobs onto crews/days with a map) and Shop Board (port of the owner's
+  ShopBoard.jsx onto server storage — keep its rule: a unit's spec comes from code and is re-applied on every read;
+  fix its whole-object writes for day layout, undo, copy-to-week and reset).
+
 ## Future expansion — ON HOLD (owner's decision; don't start without being asked)
 - **Client history:** one large CSV of every line item for every job the company has ever completed. Must show
   per client: jobs with their line items, targets and prices, plus soil samples. Stored separately from visit

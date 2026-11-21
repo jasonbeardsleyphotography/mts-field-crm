@@ -76,7 +76,7 @@ export default async (req) => {
   // this is, refuse rather than guess — the person can simply try again.
   const email = await emailForToken(data.access_token);
   if (!email) return fail(origin, "account_check_failed");
-  if (!(await isAllowedEmail(email))) return fail(origin, "account_not_allowed");
+  if (!(await isAllowedEmail(email, getStore))) return fail(origin, "account_not_allowed");
 
   const sessionId = crypto.randomUUID();
   try {

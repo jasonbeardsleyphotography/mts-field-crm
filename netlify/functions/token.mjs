@@ -84,7 +84,7 @@ export default async (req) => {
       try { await getStore("mts-oauth").set(sessionId, JSON.stringify({ ...sess, email })); } catch {}
     }
   }
-  if (email && !(await isAllowedEmail(email))) {
+  if (email && !(await isAllowedEmail(email, getStore))) {
     try { await getStore("mts-oauth").delete(sessionId); } catch {}
     return json({ error: "account_not_allowed" }, 403);
   }
