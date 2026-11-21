@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { soilApi, redeemLink } from "./api";
 import { CSS } from "./theme";
 import SitePage from "./SitePage.jsx";
-import { readSitePackage, uploadSitePackage } from "./importPackage";
+import { readSitePackage, uploadSitePackage, uploadArchive } from "./importPackage";
 import { fmtDate } from "./soilData";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -34,11 +34,16 @@ function ImportBox({ onDone }) {
     setErr(""); setStep("Reading the package…");
     try {
       const p = await readSitePackage(file);
-      setPkg(p); setName(p.site.name); setClient(""); setStep("");
+      setPkg(p); if (p.site) setName(p.site.name); setClient(""); setStep("");
     } catch (e) { setErr(e.message || String(e)); setStep(""); }
   };
   const save = async () => {
     setErr("");
+    if (pkg.kind === "archive") {
+      try { await uploadArchive(pkg, setStep); setPkg(null); onDone(null); }
+      catch (e) { setErr(`Couldn't save (${e.message}). Running it again is safe — it picks up where it stopped.`); setStep(""); }
+      return;
+    }
     try {
       const site = { ...pkg.site, name: name.trim() || pkg.site.name, client: client.trim() };
       site.id = site.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50) || site.id;
@@ -48,12 +53,22 @@ function ImportBox({ onDone }) {
   };
   return (
     <div className="card pad">
-      <div className="lbl">Add a property from a site package (.zip)</div>
+      <div className="lbl">Add properties from a .zip (a site package or the soil test archive)</div>
       {!pkg ? (
         <label className="b-sec" style={{ display: "inline-block", marginTop: 6 }}>
           {step || "Choose the package zip…"}
           <input type="file" accept=".zip,application/zip" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) read(f); }} />
         </label>
+      ) : pkg.kind === "archive" ? (
+        <div style={{ display: "grid", gap: 8, marginTop: 6 }}>
+          <div className="t-sub">Soil test archive: {pkg.sites.length} properties · {pkg.sites.reduce((n, s) => n + s.tests.reduce((m, t) => m + t.samples.length, 0), 0)} samples · {pkg.files.length} lab reports.
+            Properties already here are updated; pins you've placed are kept.</div>
+          <div className="t-sub">{pkg.sites.map((s) => s.name).join(" · ")}</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="b-main" disabled={!!step} onClick={save}>{step || "Import all"}</button>
+            <button className="b-sec" disabled={!!step} onClick={() => setPkg(null)}>Cancel</button>
+          </div>
+        </div>
       ) : (
         <div style={{ display: "grid", gap: 8, marginTop: 6 }}>
           <div className="t-sub">{pkg.site.address} · {pkg.site.tests[0].samples.length} samples · {pkg.files.length} lab reports
@@ -154,7 +169,7 @@ function StaffView() {
             </button>
           ))}
         </div>
-        {me.perms.admin && <div style={{ marginTop: 16 }}><ImportBox onDone={(id) => { loadSites(); go(id); }} /></div>}
+        {me.perms.admin && <div style={{ marginTop: 16 }}><ImportBox onDone={(id) => { loadSites(); if (id) go(id); }} /></div>}
       </div>
     </div>
   );

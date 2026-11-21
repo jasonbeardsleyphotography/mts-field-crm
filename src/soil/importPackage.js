@@ -15,8 +15,36 @@ import { soilApi } from "./api";
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50);
 const VALUE_KEYS = ["ph", "P", "K", "Ca", "Mg", "S", "B", "Mn", "Zn", "Cu", "Fe", "Al", "Pb", "cec", "exacid", "ca_bs", "mg_bs", "k_bs", "om"];
 
+/** The OneDrive archive: soil-archive.json + pdf/<site>/<file>.pdf for many properties. */
+async function readArchive(zip, entry) {
+  const d = JSON.parse(await entry.async("string"));
+  if (d.kind !== "mts-soil-archive" || !Array.isArray(d.sites)) throw new Error("soil-archive.json isn't in the expected format.");
+  const files = [];
+  for (const site of d.sites) for (const t of site.tests || []) for (const smp of t.samples || []) {
+    const e = smp.pdf && zip.file(`pdf/${site.id}/${smp.pdf}`);
+    if (e && !files.some((f) => f.siteId === site.id && f.key === smp.pdf)) files.push({ siteId: site.id, key: smp.pdf, entry: e });
+  }
+  return { kind: "archive", sites: d.sites, files };
+}
+
+export async function uploadArchive({ sites, files }, onStep = () => {}) {
+  let i = 0;
+  for (const site of sites) {
+    onStep(`Saving ${site.name}… (${++i} of ${sites.length})`);
+    await soilApi("site", { method: "PUT", body: { site } });
+  }
+  i = 0;
+  for (const f of files) {
+    onStep(`Uploading lab reports… ${++i} of ${files.length}`);
+    await soilApi(`pdf?site=${encodeURIComponent(f.siteId)}&key=${encodeURIComponent(f.key)}`, { method: "PUT", raw: await f.entry.async("arraybuffer") });
+  }
+  onStep("");
+}
+
 export async function readSitePackage(file, { name, client } = {}) {
   const zip = await JSZip.loadAsync(file);
+  const arc = Object.values(zip.files).find((f) => !f.dir && /(^|\/)soil-archive\.json$/.test(f.name));
+  if (arc) return readArchive(zip, arc);
   const find = (re) => Object.values(zip.files).find((f) => !f.dir && re.test(f.name) && !/__MACOSX/.test(f.name));
   const geo = find(/soil_samples\.geojson$/i);
   if (!geo) throw new Error("This zip has no data/soil_samples.geojson — is it a site package?");

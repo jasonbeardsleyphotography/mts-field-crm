@@ -129,6 +129,16 @@ export default async (req) => {
     const old = await getJSON(`site/${site.id}`);
     site.links = old?.links || [];                  // links are only changed through /link
     if (!b.replaceShapes && old?.shapes?.length && !site.shapes?.length) site.shapes = old.shapes;
+    // Re-importing must not lose pins placed by hand.
+    for (const t of site.tests) for (const smp of t.samples || []) {
+      if (smp.lat != null) continue;
+      const o = old?.tests?.find((x) => x.id === t.id)?.samples?.find((x) => x.id === smp.id);
+      if (o?.lat != null) { smp.lat = o.lat; smp.lng = o.lng; }
+    }
+    if (!site.center && old?.center) site.center = old.center;
+    if (!site.center && site.address && !site.tests.some((t) => (t.samples || []).some((x) => x.lat != null))) {
+      site.center = await geocodeAddress(site.address);
+    }
     site.updatedAt = Date.now(); site.updatedBy = me.name || me.email;
     await saveSite(site);
     return json({ ok: true, id: site.id });
@@ -200,6 +210,17 @@ export default async (req) => {
 
   return json({ error: "not_found" }, 404);
 };
+
+/** Property location from its address (US Census geocoder, free, no key). */
+async function geocodeAddress(address) {
+  try {
+    const u = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?" +
+      new URLSearchParams({ address, benchmark: "Public_AR_Current", format: "json" });
+    const r = await fetch(u, { signal: AbortSignal.timeout(8000) });
+    const m = (await r.json())?.result?.addressMatches?.[0]?.coordinates;
+    return m && isFinite(m.y) && isFinite(m.x) ? { lat: m.y, lng: m.x } : null;
+  } catch { return null; }
+}
 
 async function pdfResponse(siteId, key) {
   const buf = await S().get(`pdf/${siteId}/${key}`, { type: "arrayBuffer" });

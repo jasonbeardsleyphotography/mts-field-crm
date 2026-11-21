@@ -23,7 +23,7 @@ const LOC_MSG = {
 
 export default function SoilMap({
   samples, metric, fade, opacity, shapes, draft, drawMode, onMapClick, selected, onSelect,
-  onParcelStatus, useParcel = true, height = "100%",
+  onParcelStatus, useParcel = true, height = "100%", center,
 }) {
   const el = useRef(null);
   const map = useRef(null);
@@ -39,8 +39,8 @@ export default function SoilMap({
   const allPoints = useMemo(() => {
     const pts = placed.map((s) => [s.lat, s.lng]);
     (shapes || []).forEach((sh) => sh.coords.forEach((c) => pts.push(c)));
-    return pts.length ? pts : [[42.96, -77.51]];
-  }, [placed, shapes]);
+    return pts.length ? pts : [center ? [center.lat, center.lng] : [43.12, -77.55]];
+  }, [placed, shapes, center]);
   const proj = useMemo(() => projector(placed.length ? placed.map((s) => [s.lat, s.lng]) : allPoints), [placed, allPoints]);
 
   // ── create the map once ───────────────────────────────────────────────────
@@ -73,7 +73,7 @@ export default function SoilMap({
   useEffect(() => {
     if (!ready || fitted.current) return;
     if (allPoints.length > 1) { map.current.fitBounds(allPoints, { padding: [40, 40], maxZoom: 19 }); fitted.current = true; }
-    else map.current.setView(allPoints[0], 17);
+    else map.current.setView(allPoints[0], center ? 18 : 10);
   }, [ready, allPoints]);
 
   // ── NYS tax parcel (may be empty: Monroe County doesn't share parcels) ───
@@ -109,7 +109,7 @@ export default function SoilMap({
   useEffect(() => {
     if (!ready) return;
     const t = setTimeout(() => {
-      const out = renderGradient({
+      const out = metric && renderGradient({
         metric, fade, proj, allPoints, shapes: shapes || [], regions: parcel,
         samples: placed.filter((s) => s.included).map((s) => ({ lat: s.lat, lng: s.lng, value: s.values?.[metric] })),
       });

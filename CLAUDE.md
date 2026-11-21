@@ -128,8 +128,12 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
 - Client data (addresses, lab PDFs, $ history) is imported through the page (site package .zip), never committed to git.
 - Each lab is judged by its own reference ranges (labs use different methods); never mix labs on one colour scale.
 - Trees (later): separate layer; inspections stored as separate dated records, not on the tree.
-- Agreed next: OneDrive archive (12 more properties, 27 reports; transcribe non-UMass + 2 scanned reports for owner
-  review; tap-to-place sample pins), then the Field / Dispatch / Soil switcher in every app's ☰ menu (Shop Board lives in
+- OneDrive archive (12 properties, 27 reports) imports from `MTS-soil-archive.zip` (soil-archive.json + pdf/<site>/…),
+  built outside the repo; 18 UMass reports parsed by script, 9 others typed in by hand (`transcribed: true`, owner to
+  check). Tests may carry their own `fields`, per-sample lab `ratings` words, `recs`/`recText`/`comment`; leaf tests are
+  `type: "F"` (no map colours). Non-Morgan methods only colour pH and organic matter. Staff-only notes live under
+  `site.internal` (stripped for clients). Admins place sample pins by tapping the map ("Place samples").
+- Agreed next: the Field / Dispatch / Soil switcher in every app's ☰ menu (Shop Board lives in
   Dispatch; Admin = an item in the ☰ menu for admins), then Shop Board, then Schedule.
 
 ## Future expansion — ON HOLD (owner's decision; don't start without being asked)

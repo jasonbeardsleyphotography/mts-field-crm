@@ -158,3 +158,65 @@ export const fmtDate = (d) => {
   if (/^\d{4}-\d{2}$/.test(d)) return new Date(d + "-15T12:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" });
   return d;
 };
+
+/* ── Tests from other labs / leaf tests ──────────────────────────────────────
+   A test can list its own `fields` (key, label, unit) and each sample its own
+   lab `ratings` (the lab's words, e.g. "Relatively High"). Labs use different
+   methods, so a test is only ever judged against its own lab's ranges. */
+export const testDate = (t) => t?.date || t?.received || t?.reported || null;
+
+const EXTRA_WHY = {
+  bph: "Buffer pH tells the lab how much lime the soil would need to raise its pH. Only matters when soil is acidic.",
+  salts: "Dissolved salts, e.g. from road salt. High levels pull water out of roots and burn evergreen needles.",
+  h_bs: "Share of the soil's nutrient-holding space taken by acidity (hydrogen).",
+  density: "How heavy a scoop of the soil is; used by the lab in its calculations.",
+  N: "Nitrogen drives leaf and shoot growth and green colour.",
+  Na: "Sodium — high levels usually mean road salt or salty water.",
+};
+const LEAF_WHY = {
+  N: "Nitrogen in the leaves — drives growth and green colour.",
+  P: "Phosphorus in the leaves — energy and root growth.",
+  K: "Potassium in the leaves — water control and stress tolerance.",
+  Ca: "Calcium in the leaves — cell walls. High leaf calcium is common on limestone soils.",
+  Mg: "Magnesium in the leaves — the centre of chlorophyll.",
+  S: "Sulfur in the leaves — needed for proteins.",
+  B: "Boron in the leaves — new growth and buds.",
+  Cu: "Copper in the leaves — needed in small amounts.",
+  Fe: "Iron in the leaves — needed to make chlorophyll.",
+  Mn: "Manganese in the leaves. Low leaf manganese is a common cause of yellow leaves on trees in high-pH soil, even when the soil has plenty — the roots just can't take it up.",
+  Zn: "Zinc in the leaves — leaf and shoot growth.",
+  Na: "Sodium in the leaves — high levels point to salt exposure.",
+};
+export function whyFor(k, test) {
+  if (test?.type === "F") return LEAF_WHY[k] || "";
+  return NUTRIENTS.find((n) => n.k === k)?.why || EXTRA_WHY[k] || "";
+}
+export function fieldsFor(test) {
+  if (test?.fields?.length) return test.fields;
+  return NUTRIENTS.map((n) => ({ k: n.k, label: n.label, unit: n.unit }));
+}
+const word = (w) => {
+  const s = String(w || "").toLowerCase();
+  if (/deficient|below|very low|\blow\b/.test(s)) return "low";
+  if (/above|very high|high|excess/.test(s)) return "high";
+  if (/optimum|medium|normal|sufficient|adequate/.test(s)) return "ok";
+  return null;
+};
+/** low / ok / high for one value of one sample. */
+export function rate(test, sample, k) {
+  const v = sample?.values?.[k];
+  if (sample?.ratings?.[k]) return word(sample.ratings[k]);
+  if (test?.type === "F") {
+    const r = test.ranges?.[k]; if (!r || v == null) return null;
+    return r[0] != null && v < r[0] ? "low" : r[1] != null && v > r[1] ? "high" : "ok";
+  }
+  return rating(k, v, test?.ranges, test?.phTarget);
+}
+/** Which map colour layers make sense for a test. The colour scales are set
+    for Modified Morgan ppm; other methods only get pH and organic matter. */
+export function metricsFor(test, samples) {
+  if (!test || test.type === "F") return [];
+  const has = (m) => samples.some((s) => s.values?.[m] != null);
+  const ok = test.method === "Modified Morgan" && !test.fields ? METRIC_ORDER : ["ph", "om"];
+  return ok.filter(has);
+}
