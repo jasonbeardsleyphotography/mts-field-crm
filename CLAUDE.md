@@ -139,6 +139,13 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   drag across days → writes the same week.<sunday> cells the yard reads. Off-duty people are hidden from crew boxes
   (data kept, they return when back on duty), sit locked in Off Duty (not draggable; their sheet has "Back on duty
   today"). Person `ops` (GTC/PHC/LC/SHOP/SALES; none = anywhere) → amber plate + "to check" line when on another op's crew.
+  Bins are built by `yardGroups(day, assets)` = units on NO crew right now, grouped by day.stacks only when the whole
+  stored group is free (the crews' own hitching comes from iron order — deriveHitch — and day.stacks used to drift
+  from it, so loads dragged to the yard vanished). Every stack drag carries `members` (exactly what was grabbed) and
+  yardMove uses them; loads sent to a bin are re-recorded as one group (`regroup`). Equipment tab = the owner's parked
+  FleetView (condition columns) + "+ Add equipment" (AddAssetSheet copies drawing/towing keys from a SEED unit of the
+  same kind) + name / drawing label / plate edits stored as `asset.custom` (LABEL_KEYS win in reSpec; drawing/towing
+  keys never do).
 - Schedule (Dispatch tab, `src/dispatch/Schedule.jsx`): crews for a day come from the Shop Board (that day's record,
   else the latest earlier saved day, else the standing setup). Jobs are assigned per day in `mts-shop` key
   `sched.<iso>` = { assign: { jobRef: { crew|null, order, label, town, hrs, at, by } } }, merged per job like the board

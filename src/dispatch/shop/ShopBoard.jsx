@@ -71,7 +71,7 @@ const DAY = {
 const DAY_ORDER = ["on", "vac", "sick", "train", "light"];
 
 /* Fleet and Week ahead are parked, not deleted — flip them back on here. */
-const TABS = [["crews", "The yard"], ["people", "People"]];
+const TABS = [["crews", "The yard"], ["people", "People"], ["fleet", "Equipment"]];
 // const TABS = [["crews", "The yard"], ["fleet", "Fleet"], ["week", "Week ahead"]];
 
 const C = {
@@ -271,6 +271,7 @@ async function sGet(key, shared = true) {
    to the drawings breaks every board that already has saved data.          */
 const SPEC = Object.fromEntries(SEED_ASSETS.map((a) => [a.id, a]));
 const SPEC_KEYS = ["name", "spec", "cat", "shape", "top", "fam", "code", "vl", "hc", "tt", "pull", "avoid", "rides", "plate"];
+const LABEL_KEYS = ["name", "plate", "vl", "spec"];
 const reSpec = (assets) => {
   const out = {};
   for (const [id, a] of Object.entries(assets || {})) {
@@ -278,6 +279,9 @@ const reSpec = (assets) => {
     if (!sp) { out[id] = a; continue; }
     const merged = { ...a };
     SPEC_KEYS.forEach((k) => { if (sp[k] !== undefined) merged[k] = sp[k]; else delete merged[k]; });
+    // Labels the owner changed on the Equipment tab (name, plate, drawing label)
+    // win over the code's; the drawing / towing keys never do.
+    if (a.custom) LABEL_KEYS.forEach((k) => { if (a.custom[k]) merged[k] = a.custom[k]; });
     out[id] = merged;
   }
   return out;
@@ -811,6 +815,17 @@ function yardNodes(day, peopleIds) {
 
 /* read the yard back into crew membership — this is what keeps the rest of
    the app (day sheet, fleet labels, warnings) working off the same record */
+/* Remember a load that went to a bin as one group (truck + what it tows),
+   so it shows together there and moves together next time. */
+function regroup(day, mem) {
+  const st = (day.stacks = day.stacks || {});
+  Object.keys(st).forEach((k) => {
+    const left = (st[k] || []).filter((x) => !mem.includes(x));
+    if (left.length !== (st[k] || []).length) { if (left.length) st[k] = left; else delete st[k]; }
+  });
+  if (mem.length) st[mem[0]] = mem.slice();
+}
+
 /* Take people / units off every crew (used when they go to a bin). */
 function pullOut(day, kind, ids, stamp) {
   Object.values(day.crews || {}).forEach((c) => {
@@ -836,6 +851,26 @@ function materialize(day, peopleIds, stamp) {
   Object.values(day.crews).forEach((c) => {
     if (before[c.id] !== JSON.stringify([c.people, c.iron])) { c.at = stamp.at; c.by = stamp.by; }
   });
+}
+
+/* Everything on no crew today, grouped the way it is hitched. Built from what
+   is actually free right now (the original used the day's stored hitch list,
+   which drifted from the crews' own order — loads dragged to the yard then
+   "disappeared" because half of their stored group was still on a crew). */
+function yardGroups(day, assets) {
+  const onCrew = new Set();
+  live(day.crews).forEach((c) => (c.iron || []).forEach((x) => onCrew.add(x)));
+  const free = (id) => { const a = assets[id]; return a && !a.del && !onCrew.has(id); };
+  const seen = new Set(), out = [];
+  Object.entries(day.stacks || {}).forEach(([k, mem]) => {
+    const all = mem && mem.length ? mem : [k];
+    const m = all.filter((x) => free(x) && !seen.has(x));
+    if (!m.length) return;
+    if (m.length === all.length) { m.forEach((x) => seen.add(x)); out.push({ id: m[0], members: m }); }
+    else m.forEach((x) => { seen.add(x); out.push({ id: x, members: [x] }); });
+  });
+  live(assets).forEach((a) => { if (free(a.id) && !seen.has(a.id)) { seen.add(a.id); out.push({ id: a.id, members: [a.id] }); } });
+  return out;
 }
 
 const rigOf = (core, assetId) =>
@@ -1151,6 +1186,8 @@ const CSS = scopeCss(`
 
 /* --- fleet columns ------------------------------------------------------- */
 .cols { display:flex; gap:11px; padding:13px 16px 26px; overflow-x:auto; align-items:flex-start; scroll-snap-type:x proximity; }
+.col[data-wide="1"] { flex:1 1 560px; }
+.col[data-wide="1"] .col-b { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); align-items:start; }
 .col { flex:0 0 254px; scroll-snap-align:start; background:${C.panel}; border:1px solid ${C.edgeSoft}; border-radius:4px; }
 .col-h { display:flex; align-items:baseline; gap:7px; padding:9px 11px; border-bottom:1px solid ${C.edgeSoft}; border-top:3px solid; border-radius:4px 4px 0 0; }
 .col-h em { font-style:normal; font-size:12px; letter-spacing:.1em; }
@@ -1439,17 +1476,21 @@ const CSS = scopeCss(`
 .right > div { display:flex; min-height:0; }
 .right > div:first-child { flex:2.2; }      /* at the yard: the big one */
 .right > div:not(:first-child) { flex:1; min-height:120px; }   /* in for repair, broken: smaller */
-.ppl { display:grid; grid-template-columns:300px minmax(0,1fr); gap:12px; padding:10px 16px 20px; }
-@media (max-width:900px){ .ppl { grid-template-columns:1fr; } }
-.ppl-side { background:${C.panel}; border:1px solid ${C.edgeSoft}; border-radius:4px; display:flex; flex-direction:column; min-height:0; }
-.ppl-list { display:flex; flex-direction:column; max-height:52vh; overflow:auto; }
+.ppl { display:grid; grid-template-columns:300px minmax(0,1fr); gap:12px; padding:10px 16px 12px; height:calc(100vh - 128px); min-height:560px; }
+.ppl-side { background:${C.panel}; border:1px solid ${C.edgeSoft}; border-radius:4px; display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+.ppl-list { display:flex; flex-direction:column; flex:1; min-height:0; overflow:auto; }
+.ppl-main { display:flex; flex-direction:column; min-height:0; }
+.ppl-main .cal-grid { flex:1; min-height:0; grid-template-rows:auto repeat(6, minmax(64px, 1fr)); }
+.ppl-main .cal-d { min-height:0; overflow:hidden; }
+@media (max-width:900px){ .ppl { grid-template-columns:1fr; height:auto; } .ppl-list { max-height:40vh; } .ppl-main .cal-d { min-height:96px; } }
 .ppl-row { display:grid; grid-template-columns:6px 1fr; grid-template-rows:auto auto; column-gap:10px; text-align:left; padding:9px 12px; border-top:1px solid ${C.edgeSoft}; min-height:48px; }
 .ppl-row i { grid-row:1 / 3; border-radius:2px; }
 .ppl-row span { font-size:14px; letter-spacing:.06em; }
 .ppl-row small { font-size:10.5px; color:var(--faint); }
 .ppl-row[data-on="1"] { background:${C.tileHi}; box-shadow:inset 3px 0 0 #17A05B; }
-.ppl-edit { border-top:1px solid ${C.edge}; padding:10px 12px 14px; }
+.ppl-edit { border-top:1px solid ${C.edge}; padding:10px 12px 14px; flex-shrink:0; max-height:46%; overflow:auto; background:${C.tile}; }
 .ppl-main { min-width:0; }
+.ppl-main > .ppl-top, .ppl-main > .legend { flex-shrink:0; }
 .ppl-top { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
 .ppl-month { font-size:20px; letter-spacing:.08em; min-width:190px; text-align:center; }
 .cal-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:4px; user-select:none; }
@@ -1666,7 +1707,7 @@ function ConditionDock({ drag, registerZone, onDrop }) {
 }
 
 /* ============================ FLEET ======================================= */
-function FleetView({ core, crewsMap, engine, filters, setFilters, onOpen, onStatus, flashSet }) {
+function FleetView({ core, crewsMap, engine, filters, setFilters, onOpen, onStatus, flashSet, onAdd }) {
   const { begin, registerZone, drag } = engine;
   const assets = live(core.assets);
   const crews = live(crewsMap);
@@ -1721,6 +1762,7 @@ function FleetView({ core, crewsMap, engine, filters, setFilters, onOpen, onStat
           <button key={y} className="chip stencil" data-on={filters.yard === y ? 1 : 0} onClick={() => toggle("yard", y)}>{y}</button>
         ))}
         <div className="spacer" />
+        {onAdd && <button className="btn stencil" data-primary="1" onClick={onAdd}>+ Add equipment</button>}
         <input className="srch" placeholder="Find unit or plate" value={filters.q}
                onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))} />
       </div>
@@ -1758,7 +1800,7 @@ function FleetView({ core, crewsMap, engine, filters, setFilters, onOpen, onStat
             </div>
           );
           return (
-            <div className="col" key={g.key}>
+            <div className="col" key={g.key} data-wide={g.items.length > 6 ? 1 : 0}>
               <div className="col-h" style={{ borderTopColor: g.color }}>
                 {g.badge && <span style={{ color: C.inkDim, display: "flex" }}><OpGlyph op={g.badge} size={13} /></span>}
                 <em className="stencil">{g.label}</em>
@@ -1899,10 +1941,18 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
 
   const room = roster.filter((p) => !crewHas.p.has(p.id) && !offToday(p.id));
   const away = roster.filter((p) => offToday(p.id));
-  const parked = Object.keys(stacks).filter((k) => !(stacks[k] || [k]).some((m) => crewHas.u.has(m)) && stackShown(k));
-  const yard = parked.filter((k) => !broken(k));
-  const shop = parked.filter((k) => broken(k) && !taggedOut(k));
-  const brokeList = parked.filter((k) => taggedOut(k));
+  const gMem = (g) => g.members.map((i) => assets[i]).filter((a) => a && !a.del);
+  const gShown = (g) => { const o = new Set(); gMem(g).forEach((m) => (m.ops || []).forEach((x) => o.add(x))); return !o.size || [...o].some((x) => ops[x]); };
+  const gDown = (g) => gMem(g).some((m) => m.status === "tagged" || m.status === "shop");
+  const gTagged = (g) => gMem(g).some((m) => m.status === "tagged");
+  const parked = yardGroups(day, assets).filter(gShown);
+  const yard = parked.filter((g) => !gDown(g));
+  const shop = parked.filter((g) => gDown(g) && !gTagged(g));
+  const brokeList = parked.filter(gTagged);
+  const binCard = (g, from, scale, down) => (
+    <LoadCard key={g.id} members={gMem(g)} scale={scale} broken={down} onClick={() => onOpenAsset(g.id)}
+              onBegin={(e) => begin(e, { kind: "stack", id: g.id, members: g.members, name: gMem(g).map((m) => m.tag).join(" · "), from })} />
+  );
   const hot = (id) => (drag && drag.over === id ? " hot" : "");
   const outIssues = [];
   Object.values(crewJobs).forEach((cj) => cj.lines.forEach((t) => outIssues.push(t)));
@@ -2021,7 +2071,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
                                   onLink={() => { const r = rigOf(core, l.lead.id);
                                     r ? onUnlink(r.id) : onLink(b.crew.id, l.members.map((m) => m.id)); }}
                                   onClick={() => onOpenAsset(l.lead.id)}
-                                  onBegin={(e) => begin(e, { kind: "stack", id: l.id,
+                                  onBegin={(e) => begin(e, { kind: "stack", id: l.id, members: l.members.map((m) => m.id),
                                     name: l.members.map((m) => m.tag).join(" · "), from: `crew:${b.crew.id}` })} />
                       </div>
                     ))}
@@ -2036,8 +2086,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
             <div className={`bin${hot("yard")}`}>
               <div className="bin-h">AT THE YARD<b>{yard.length}</b></div>
               <div className="bin-b row">
-                {yard.map((k) => <LoadCard key={k} members={membersOf(k)} scale={0.52} onClick={() => onOpenAsset(k)}
-                                           onBegin={(e) => begin(e, { kind: "stack", id: k, name: membersOf(k).map((m) => m.tag).join(" · "), from: "yard" })} />)}
+                {yard.map((g) => binCard(g, "yard", 0.52, false))}
                 {!yard.length && <span className="hint">everything is out</span>}
               </div>
             </div>
@@ -2046,8 +2095,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
             <div className={`bin rep${hot("rep")}`}>
               <div className="bin-h">IN FOR REPAIR<b>{shop.length}</b></div>
               <div className="bin-b row">
-                {shop.map((k) => <LoadCard key={k} members={membersOf(k)} scale={0.44} broken onClick={() => onOpenAsset(k)}
-                                           onBegin={(e) => begin(e, { kind: "stack", id: k, name: membersOf(k).map((m) => m.tag).join(" · "), from: "rep" })} />)}
+                {shop.map((g) => binCard(g, "rep", 0.44, true))}
                 {!shop.length && <span className="hint">nothing being serviced</span>}
               </div>
             </div>
@@ -2056,8 +2104,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
             <div className={`bin broke${hot("broke")}`}>
               <div className="bin-h">BROKEN · DO NOT OPERATE<b>{brokeList.length}</b></div>
               <div className="bin-b row">
-                {brokeList.map((k) => <LoadCard key={k} members={membersOf(k)} scale={0.44} broken onClick={() => onOpenAsset(k)}
-                                           onBegin={(e) => begin(e, { kind: "stack", id: k, name: membersOf(k).map((m) => m.tag).join(" · "), from: "broke" })} />)}
+                {brokeList.map((g) => binCard(g, "broke", 0.44, true))}
                 {!brokeList.length && <span className="hint">nothing broken</span>}
               </div>
             </div>
@@ -2354,7 +2401,7 @@ const Sheet = ({ onClose, title, sub, tone, children }) => (
   </div>
 );
 
-function AssetSheet({ a, core, onClose, onStatus, onField, onToggleOp, onDelete }) {
+function AssetSheet({ a, core, onClose, onStatus, onField, onToggleOp, onDelete, onLabel }) {
   const st = ST[a.status];
   const using = live(core.crews).filter((c) => (c.iron || []).includes(a.id));
   /* text fields commit on blur and on close, so typing is not one write per key */
@@ -2410,6 +2457,20 @@ function AssetSheet({ a, core, onClose, onStatus, onField, onToggleOp, onDelete 
         ? <div style={{ fontSize: 11.5, color: C.inkFaint }}>Not on a crew. Assign it on the Crews tab.</div>
         : <div className="opts">{using.map((c) => <span key={c.id} className="mini stencil" style={{ borderLeftColor: C.edge }}>{c.name}</span>)}</div>}
 
+      {onLabel && (
+        <>
+          <div className="fl stencil">NAME · LABEL ON THE DRAWING · PLATE</div>
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1.3fr 1fr", gap: 6 }}>
+            <input className="srch" style={{ width: "100%" }} defaultValue={a.name} key={`n${a.id}`} placeholder="Name"
+                   onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== a.name) onLabel(a.id, "name", v.toUpperCase()); }} />
+            <input className="srch" style={{ width: "100%" }} defaultValue={a.vl || ""} key={`v${a.id}`} placeholder="Drawing label"
+                   onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== a.vl) onLabel(a.id, "vl", v.toUpperCase()); }} />
+            <input className="srch" style={{ width: "100%" }} defaultValue={a.plate || ""} key={`p${a.id}`} placeholder="Plate"
+                   onBlur={(e) => { const v = e.target.value.trim(); if (v !== (a.plate || "")) onLabel(a.id, "plate", v); }} />
+          </div>
+          <div style={{ fontSize: 11, color: C.inkDim, marginTop: 6 }}>The drawing and what it can tow stay as they are.</div>
+        </>
+      )}
       <div className="fl stencil">HOW IT READS IN THE DAY SHEET</div>
       <input className="srch" style={{ width: "100%" }} value={tag} placeholder={a.name}
              onChange={(e) => setTag(e.target.value)} onBlur={commitTag} />
@@ -2438,6 +2499,59 @@ function AssetSheet({ a, core, onClose, onStatus, onField, onToggleOp, onDelete 
   );
 }
 
+/* Add a unit to the fleet. Its kind (drawing, family, what it tows or rides
+   on) is copied from an existing unit of the same kind, so it draws and
+   hitches correctly; you give it a name, plate, yard and operations. */
+const KIND_NAMES = {
+  chipbody: "Chip truck", rolloff: "Dump / wood truck", flatbed: "Pickup (flatbed)", bucket: "Bucket truck",
+  cabover: "Cab-over rig (PHC)", landscape: "Lawn truck", utv: "UTV / spray rig", car: "Car",
+  spider: "Spider lift", avant: "Avant", chipper: "Chipper", flattrailer: "Flatbed trailer",
+  lifttrailer: "Lift trailer", grinder: "Stump grinder",
+};
+function AddAssetSheet({ onClose, onCreate }) {
+  const kinds = Object.keys(KIND_NAMES).map((top) => ({ top, tpl: SEED_ASSETS.find((x) => x.top === top) })).filter((k) => k.tpl);
+  const [top, setTop] = useState("chipbody");
+  const tpl = (kinds.find((k) => k.top === top) || kinds[0]).tpl;
+  const [f, setF] = useState({ name: "", plate: "", yard: "Brighton", tag: "" });
+  const [ops, setOps] = useState(() => tpl.ops.slice());
+  useEffect(() => { setOps(tpl.ops.slice()); }, [top]); // eslint-disable-line react-hooks/exhaustive-deps
+  const create = () => {
+    const name = f.name.trim().toUpperCase(); if (!name) return;
+    onCreate({
+      name, vl: name.slice(0, 12), code: name.replace(/[^A-Z0-9]/g, "").slice(0, 4) || "NEW",
+      spec: KIND_NAMES[top] + (f.plate ? " · " + f.plate : ""), plate: f.plate.trim(), yard: f.yard, ops, status: "running", note: "",
+      tag: f.tag.trim() || tpl.tag, cat: tpl.cat, shape: tpl.shape, top: tpl.top, fam: tpl.fam, hc: tpl.hc,
+      ...(tpl.tt ? { tt: tpl.tt } : {}), ...(tpl.pull ? { pull: tpl.pull.slice() } : {}), ...(tpl.avoid ? { avoid: tpl.avoid.slice() } : {}), ...(tpl.rides ? { rides: tpl.rides.slice() } : {}),
+    });
+  };
+  return (
+    <Sheet onClose={onClose} title="Add equipment" sub="Pick what kind of unit it is, then name it.">
+      <div className="fl stencil">KIND</div>
+      <div className="opts">
+        {kinds.map((k) => <button key={k.top} className="opt stencil" data-on={top === k.top ? 1 : 0} onClick={() => setTop(k.top)}>{KIND_NAMES[k.top]}</button>)}
+      </div>
+      <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}>
+        <TopLoad members={[{ ...tpl, id: "preview", name: f.name || tpl.name, vl: (f.name || tpl.vl || "").toUpperCase().slice(0, 12), status: "running" }]} scale={1.2} />
+      </div>
+      <div className="fl stencil">NAME</div>
+      <input className="srch" style={{ width: "100%" }} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. F750 CHIP '27" autoFocus />
+      <div className="fl stencil">PLATE · HOW IT READS IN THE DAY SHEET</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+        <input className="srch" style={{ width: "100%" }} value={f.plate} onChange={(e) => setF({ ...f, plate: e.target.value })} placeholder="Plate (optional)" />
+        <input className="srch" style={{ width: "100%" }} value={f.tag} onChange={(e) => setF({ ...f, tag: e.target.value })} placeholder={`e.g. ${tpl.tag}`} />
+      </div>
+      <div className="fl stencil">YARD</div>
+      <div className="opts">{["Brighton", "Rush Scottsville", "Off-site"].map((y) => <button key={y} className="opt stencil" data-on={f.yard === y ? 1 : 0} onClick={() => setF({ ...f, yard: y })}>{y}</button>)}</div>
+      <div className="fl stencil">OPERATIONS</div>
+      <div className="opts">{OP_ORDER.map((o) => { const on = ops.includes(o); return <button key={o} className="opt stencil" data-on={on ? 1 : 0} onClick={() => setOps(on ? ops.filter((x) => x !== o) : [...ops, o])}>{o}</button>; })}</div>
+      <div className="act">
+        <button className="btn stencil" data-primary="1" disabled={!f.name.trim()} onClick={create}>Add to the fleet</button>
+        <button className="btn stencil" onClick={onClose}>Cancel</button>
+      </div>
+    </Sheet>
+  );
+}
+
 /* Edit a crew: name, operation, and its people and equipment — with lists and
    pickers, so nothing has to be dragged. Off-duty people can't be added. */
 function CrewSheet({ c, core, day, offToday, onClose, onRename, onOps, onDelete, onAddPerson, onRemovePerson, onAddStack, onRemoveStack }) {
@@ -2453,11 +2567,9 @@ function CrewSheet({ c, core, day, offToday, onClose, onRename, onOps, onDelete,
   const crewOfPerson = (pid) => crews.find((x) => x.id !== c.id && (x.people || []).includes(pid));
   const people = (c.people || []).map((id) => core.people[id]).filter((p) => p && !p.del);
   const others = live(core.people).filter((p) => !(c.people || []).includes(p.id)).sort((a, b) => a.name.localeCompare(b.name));
-  const stacks = day.stacks || {};
-  const memOf = (k) => (stacks[k] || [k]).map((m) => core.assets[m]).filter((a) => a && !a.del);
-  const onAnyCrew = (k) => crews.some((x) => (stacks[k] || [k]).some((m) => (x.iron || []).includes(m)));
-  const mine = Object.keys(stacks).filter((k) => (stacks[k] || [k]).some((m) => (c.iron || []).includes(m)));
-  const free = Object.keys(stacks).filter((k) => !onAnyCrew(k) && memOf(k).length);
+  const mine = loadsOf(c, core.assets, deriveHitch(day.crews, core.assets)).map((l) => ({ id: l.id, members: l.members.map((m) => m.id) }));
+  const free = yardGroups(day, core.assets);
+  const memOf = (g) => g.members.map((m) => core.assets[m]).filter((a) => a && !a.del);
   const opsMismatch = (p) => (p.ops && p.ops.length && c.ops && !p.ops.includes(c.ops) ? `not set up for ${c.ops}` : "");
   const statusWord = (k) => { const m = memOf(k); return m.some((a) => a.status === "tagged") ? " — BROKEN" : m.some((a) => a.status === "shop") ? " — in the shop" : ""; };
   return (
@@ -2496,17 +2608,17 @@ function CrewSheet({ c, core, day, offToday, onClose, onRename, onOps, onDelete,
 
       <div className="fl stencil">EQUIPMENT</div>
       <div style={{ display: "grid", gap: 4 }}>
-        {mine.map((k) => (
-          <div key={k} className="mini stencil" style={{ justifyContent: "space-between", borderLeftColor: memOf(k).some((a) => a.status === "tagged" || a.status === "shop") ? ST.tagged.color : C.edge }}>
-            <span>{memOf(k).map((m) => m.tag || m.name).join(" · ")}{statusWord(k)}</span>
-            <button className="lnk" title="Back to the yard" onClick={() => onRemoveStack(k)}>✕</button>
+        {mine.map((g) => (
+          <div key={g.id} className="mini stencil" style={{ justifyContent: "space-between", borderLeftColor: memOf(g).some((a) => a.status === "tagged" || a.status === "shop") ? ST.tagged.color : C.edge }}>
+            <span>{memOf(g).map((m) => m.tag || m.name).join(" · ")}{statusWord(g)}</span>
+            <button className="lnk" title="Back to the yard" onClick={() => onRemoveStack(g)}>✕</button>
           </div>
         ))}
         {!mine.length && <span className="hint">No equipment on this crew yet.</span>}
       </div>
-      <select className="srch" style={{ width: "100%", marginTop: 8 }} value="" onChange={(e) => { if (e.target.value) onAddStack(e.target.value); }}>
+      <select className="srch" style={{ width: "100%", marginTop: 8 }} value="" onChange={(e) => { const g = free.find((x) => x.id === e.target.value); if (g) onAddStack(g); }}>
         <option value="">+ Add equipment from the yard…</option>
-        {free.map((k) => <option key={k} value={k}>{memOf(k).map((m) => m.tag || m.name).join(" · ")}{statusWord(k)}</option>)}
+        {free.map((g) => <option key={g.id} value={g.id}>{memOf(g).map((m) => `${m.tag || m.name} (${m.name})`).join(" · ")}{statusWord(g)}</option>)}
       </select>
       <div style={{ fontSize: 11, color: C.inkDim, marginTop: 8 }}>A truck comes with whatever is hitched to it. Changes save as you make them.</div>
 
@@ -2757,6 +2869,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
   const [openAsset, setOpenAsset] = useState(null);
   const [openCrew, setOpenCrew] = useState(null);
   const [openPerson, setOpenPerson] = useState(null);
+  const [addAsset, setAddAsset] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [dayFocus, setDayFocus] = useState(null);
   const [flashSet, setFlashSet] = useState(new Set());
@@ -3239,7 +3352,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
     const n = live(dayRef.current.crews).filter((c) => /^CREW/.test(c.name)).length + 1;
     const cid = `c${Date.now().toString(36)}`;
     const hintX = Math.max(0, at ? at.x : 0), hintY = Math.max(0, at ? at.y : 0);
-    const ids = item.kind === "stack" ? (dayRef.current.stacks[item.id] || [item.id]) : [];
+    const ids = item.kind === "stack" ? (item.members || dayRef.current.stacks[item.id] || [item.id]) : [];
     const label = item.kind === "person"
       ? (people[item.id] || {}).d
       : ids.map((m) => (coreRef.current.assets[m] || {}).tag).filter(Boolean).join(" · ");
@@ -3288,7 +3401,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
         return;
       }
       if (kind === "stack") {
-        let ids = (dayRef.current.stacks[id] || [id]);
+        let ids = (item.members || dayRef.current.stacks[id] || [id]);
         const rg = ids.map((m) => rigOf(coreRef.current, m)).find(Boolean);
         if (rg) ids = [...new Set([...ids, ...rg.members])];   // linked combos stay whole
         const label = ids.map((m) => (coreRef.current.assets[m] || {}).tag).filter(Boolean).join(" · ");
@@ -3331,20 +3444,20 @@ export default function ShopBoard({ user, isAdmin = false }) {
       return;
     }
     /* a stack: the truck plus whatever is hitched to it */
-    const mem = (dayRef.current.stacks[id] || [id]);
+    const mem = (item.members || dayRef.current.stacks[id] || [id]);
     const label = mem.map((m) => (coreRef.current.assets[m] || {}).tag).filter(Boolean).join(" · ");
     if (where === "rep") {
       snapshot(`${label} to the shop`);
       apply((d, s) => mem.forEach((m) => { const a = d.assets[m]; if (a) { a.status = "shop"; a.at = s.at; a.by = s.by; } }),
             `${label} → In shop`, true);
-      applyDay((d, s) => { delete d.pos[id]; pullOut(d, "stack", mem, s); });
+      applyDay((d, s) => { delete d.pos[id]; pullOut(d, "stack", mem, s); regroup(d, mem); });
       return;
     }
     if (where === "broke") {
       snapshot(`${label} broken`);
       apply((d, s) => mem.forEach((m) => { const a = d.assets[m]; if (a) { a.status = "tagged"; a.at = s.at; a.by = s.by; } }),
             `${label} → Broken (tagged out)`, true);
-      applyDay((d, s) => { delete d.pos[id]; pullOut(d, "stack", mem, s); });
+      applyDay((d, s) => { delete d.pos[id]; pullOut(d, "stack", mem, s); regroup(d, mem); });
       return;
     }
     if (where === "yard") {
@@ -3352,7 +3465,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
       snapshot(`${label} back to the yard`);
       if (wasDown) apply((d, s) => mem.forEach((m) => { const a = d.assets[m]; if (a && ["shop", "tagged"].includes(a.status)) { a.status = "running"; a.at = s.at; a.by = s.by; } }),
                          `${label} → Running`, true);
-      applyDay((d, s) => { delete d.pos[id]; pullOut(d, "stack", mem, s); });
+      applyDay((d, s) => { delete d.pos[id]; pullOut(d, "stack", mem, s); regroup(d, mem); });
       return;
     }
     applyDay((d) => {
@@ -3470,7 +3583,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
       {tab === "fleet" && (
         <>
           <FleetView core={core} crewsMap={day.crews} engine={engine} filters={filters} setFilters={setFilters}
-                     flashSet={flashSet} onOpen={setOpenAsset} onStatus={setStatus} />
+                     flashSet={flashSet} onOpen={setOpenAsset} onStatus={setStatus} onAdd={() => setAddAsset(true)} />
           {core.log.length > 0 && (
             <div className="log">
               <h4>WHAT CHANGED</h4>
@@ -3505,15 +3618,20 @@ export default function ShopBoard({ user, isAdmin = false }) {
 
       {asset && !asset.del && (
         <AssetSheet a={asset} core={core} onClose={() => setOpenAsset(null)} onStatus={setStatus}
-                    onField={setField} onToggleOp={toggleOp} onDelete={removeAsset} />
+                    onField={setField} onToggleOp={toggleOp} onDelete={removeAsset}
+                    onLabel={(id, k, v) => apply((d, s) => { const x = d.assets[id]; if (x) { x.custom = { ...(x.custom || {}), [k]: v }; x[k] = v; x.at = s.at; x.by = s.by; } }, `${nameOf(id)} · ${k === "vl" ? "drawing label" : k} → ${v || "—"}`)} />
+      )}
+      {addAsset && (
+        <AddAssetSheet onClose={() => setAddAsset(false)}
+                       onCreate={(unit) => { const id = `a${Date.now().toString(36)}`; apply((d, s) => { d.assets[id] = { ...unit, id, at: s.at, by: s.by }; }, `${unit.name} added to the fleet`); setAddAsset(false); }} />
       )}
       {crew && !crew.del && (
         <CrewSheet c={crew} core={core} day={day} offToday={(pid) => { const cc = week.cells[`${pid}:${dayIndex}`]; return cc && cc.code !== "on" && cc.code !== "light"; }}
                    onClose={() => setOpenCrew(null)} onRename={renameCrew} onOps={opsCrew} onDelete={delCrew}
                    onAddPerson={(pid) => yardMove({ kind: "person", id: pid }, `crew:${crew.id}`)}
                    onRemovePerson={(pid) => yardMove({ kind: "person", id: pid }, "room")}
-                   onAddStack={(k) => yardMove({ kind: "stack", id: k }, `crew:${crew.id}`)}
-                   onRemoveStack={(k) => yardMove({ kind: "stack", id: k }, "yard")} />
+                   onAddStack={(g) => yardMove({ kind: "stack", id: g.id, members: g.members }, `crew:${crew.id}`)}
+                   onRemoveStack={(g) => yardMove({ kind: "stack", id: g.id, members: g.members }, "yard")} />
       )}
       {noteOpen && (
         <DaySheet core={core} crewsMap={day.crews} week={week} iso={cur} dayIndex={dayIndex}

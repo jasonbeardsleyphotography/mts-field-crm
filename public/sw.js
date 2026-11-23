@@ -1,3 +1,4 @@
+// v114: Shop Board: yard bins fixed (loads no longer vanish), Equipment tab, People screen fills the page.
 // v113: Shop Board: crew editor, Broken box, People calendar (days off, operations), Off Duty.
 // v112: Shop Board drag & drop rebuilt; job tags checked against crews; Soil bulk PDF upload by file name.
 // v111: Soil: add a soil test from its lab PDF (AI reads, owner checks); new property.
@@ -156,7 +157,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v113";
+const CACHE = "mts-field-v114";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {
