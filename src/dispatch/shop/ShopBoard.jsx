@@ -55,8 +55,8 @@ const SEED_RIGS = [
 const ST = {
   running: { key: "running", label: "Running",    short: "RUN",  color: "#17A05B", note: "Safe to operate" },
   watch:   { key: "watch",   label: "Watch",      short: "WCH",  color: "#E5A100", note: "Operable — flagged" },
-  shop:    { key: "shop",    label: "In shop",    short: "SHOP", color: "#3A8DD8", note: "Being serviced" },
-  tagged:  { key: "tagged",  label: "Tagged out", short: "OUT",  color: "#D93B2B", note: "Do not operate" },
+  shop:    { key: "shop",    label: "In for repair", short: "REPAIR", color: "#3A8DD8", note: "Tagged out — being repaired" },
+  tagged:  { key: "tagged",  label: "Broken",        short: "BROKEN", color: "#D93B2B", note: "Tagged out — broken, do not operate" },
   parked:  { key: "parked",  label: "Parked",     short: "PRK",  color: "#6E7A83", note: "Off the schedule" },
 };
 const ST_ORDER = ["running", "watch", "shop", "tagged", "parked"];
@@ -1187,12 +1187,12 @@ const CSS = scopeCss(`
 /* --- fleet columns ------------------------------------------------------- */
 .cols { display:flex; gap:11px; padding:13px 16px 26px; overflow-x:auto; align-items:flex-start; scroll-snap-type:x proximity; }
 .col[data-wide="1"] { flex:1 1 560px; }
-.col[data-wide="1"] .col-b { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); align-items:start; }
+.col[data-wide="1"] .col-b { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); align-items:start; }
 .col { flex:0 0 254px; scroll-snap-align:start; background:${C.panel}; border:1px solid ${C.edgeSoft}; border-radius:4px; }
 .col-h { display:flex; align-items:baseline; gap:7px; padding:9px 11px; border-bottom:1px solid ${C.edgeSoft}; border-top:3px solid; border-radius:4px 4px 0 0; }
 .col-h em { font-style:normal; font-size:12px; letter-spacing:.1em; }
 .col-h u { text-decoration:none; margin-left:auto; font-size:11.5px; color:var(--faint); }
-.col-b { padding:9px; display:flex; flex-direction:column; gap:8px; min-height:104px; transition:background .12s; }
+.col-b { padding:7px; display:flex; flex-direction:column; gap:5px; min-height:104px; transition:background .12s; }
 .col-b[data-hot="1"] { background:#20282e; box-shadow:inset 0 0 0 1px #4b585f; }
 .empty { font-size:11.5px; color:var(--faint); letter-spacing:.05em; padding:16px 4px; text-align:center; line-height:1.5; }
 
@@ -1218,6 +1218,16 @@ const CSS = scopeCss(`
   repeating-linear-gradient(135deg, rgba(217,59,43,.11) 0 7px, transparent 7px 14px), ${C.tile}; }
 .tile[data-st="tagged"] .grip { background:repeating-linear-gradient(135deg,${ST.tagged.color} 0 4px,#2a1a19 4px 8px); }
 .tile[data-st="parked"] { opacity:.72; }
+.tile-sm { border-width:2px; border-color:var(--edge); }
+.tile-sm[data-st="running"] { border-color:var(--edge) !important; border-width:1px; }
+.tile-sm .grip { flex-basis:11px; }
+.tile-sm .tile-b { display:flex; align-items:center; gap:8px; padding:5px 8px; }
+.tile-sm .tile-name { margin-top:0; font-size:12.5px; display:block; }
+.tile-sm .tile-sub { display:block; font-size:9.5px; }
+.sm-ic { flex:0 0 30px; display:flex; align-items:flex-end; justify-content:center; }
+.sm-t { flex:1; min-width:0; display:block; }
+.sm-st { flex:none; font-size:9px; letter-spacing:.08em; border:1px solid; border-radius:2px; padding:1px 4px; }
+.tile-sm[data-st="shop"] { background:repeating-linear-gradient(135deg, rgba(58,141,216,.10) 0 7px, transparent 7px 14px), ${C.tile}; }
 .bar { flex:0 0 4px; }
 @media (prefers-reduced-motion:no-preference){ .flash { animation:flash 1.6s ease-out 1; } }
 @keyframes flash { 0%{box-shadow:0 0 0 2px ${C.ink}} 100%{box-shadow:0 1px 0 #10151a} }
@@ -1659,22 +1669,18 @@ const Placard = ({ person, onBegin, tone, onClick, sub }) => {
 function AssetTile({ a, crewName, begin, onOpen, flash }) {
   const st = ST[a.status] || ST.running;
   return (
-    <div className={`tile${flash ? " flash" : ""}`} data-st={a.status}>
-      <div className="bar" style={{ background: st.color }} />
+    <div className={`tile tile-sm${flash ? " flash" : ""}`} data-st={a.status} style={{ borderColor: st.color }}>
       <div className="grip" onPointerDown={(e) => begin(e, { kind: "asset", id: a.id, name: a.name, shape: a.shape, instant: true })}
            role="button" tabIndex={-1} aria-label={`Drag ${a.name}`} />
       <button className="tile-b" onClick={onOpen}
               onPointerDown={(e) => { if ((e.pointerType || "mouse") === "mouse") begin(e, { kind: "asset", id: a.id, name: a.name, shape: a.shape }); }}
-              aria-label={`${a.name}, ${st.label}`}>
-        <div className="mach-wrap" style={{ "--mach": tones(a.fam).body, "--mach-lo": tones(a.fam).lo, "--mach-hi": tones(a.fam).hi }}>
-          <Machine shape={a.shape} dim={a.status === "parked"} />
-        </div>
-        <div className="tile-name stencil">{a.name}</div>
-        <div className="tile-sub">{a.spec}</div>
-        <div className="tile-foot">
-          <span className="ops">{a.ops.map((o) => <OpTag key={o} op={o} />)}</span>
-          <u className="stencil">{crewName || "UNASSIGNED"}</u>
-        </div>
+              aria-label={`${a.name}, ${st.label}`} title={`${a.spec}${a.plate ? " · " + a.plate : ""} — ${st.label}`}>
+        <span className="sm-ic" style={{ "--mach": tones(a.fam).body, "--mach-lo": tones(a.fam).lo, "--mach-hi": tones(a.fam).hi }}><MachineChip shape={a.shape} /></span>
+        <span className="sm-t">
+          <span className="tile-name stencil">{a.name}</span>
+          <span className="tile-sub">{crewName ? `On ${crewName}` : a.yard || ""}{a.ops.length ? " · " + a.ops.join("/") : ""}</span>
+        </span>
+        {a.status !== "running" && <span className="sm-st stencil" style={{ color: st.color, borderColor: st.color }}>{st.short}</span>}
       </button>
     </div>
   );
@@ -1707,51 +1713,49 @@ function ConditionDock({ drag, registerZone, onDrop }) {
 }
 
 /* ============================ FLEET ======================================= */
-function FleetView({ core, crewsMap, engine, filters, setFilters, onOpen, onStatus, flashSet, onAdd }) {
-  const { begin, registerZone, drag } = engine;
+/* Equipment tab columns = kinds of machine (the owner's list: aerial lifts,
+   trucks, trailers, material handlers, grinders, chippers…). Condition shows
+   as the card's outline; repair and broken units sink to the bottom. */
+const EQUIP_GROUPS = [
+  { key: "aerial", label: "Aerial lifts", test: (a) => a.cat === "SPIDER LIFT" || a.cat === "AERIAL" || a.fam === "AERIAL" },
+  { key: "truck", label: "Trucks", test: (a) => a.hc === "truck" && a.cat !== "SALES" },
+  { key: "trailer", label: "Trailers", test: (a) => a.hc === "trailer" || a.cat === "TRAILER" },
+  { key: "handler", label: "Material handlers", test: (a) => a.cat === "AVANT" || a.shape === "LOADER" },
+  { key: "chipper", label: "Chippers", test: (a) => a.cat === "CHIPPER" || a.shape === "CHIPPER" },
+  { key: "grinder", label: "Stump grinders", test: (a) => a.cat === "STUMP GRINDER" || a.shape === "GRINDER" },
+  { key: "spray", label: "Sprayers & UTVs", test: (a) => a.hc === "carried" && a.fam === "PHC" },
+  { key: "car", label: "Sales cars", test: (a) => a.cat === "SALES" || a.shape === "CAR" },
+];
+const equipGroupOf = (a) => (EQUIP_GROUPS.find((g) => g.test(a)) || { key: "other" }).key;
+const SINK = { running: 0, watch: 1, parked: 2, shop: 3, tagged: 4 };
+
+function FleetView({ core, crewsMap, engine, filters, setFilters, onOpen, flashSet, onAdd }) {
+  const { begin } = engine;
   const assets = live(core.assets);
   const crews = live(crewsMap);
   const crewOf = {};
   crews.forEach((c) => c.iron.forEach((i) => { crewOf[i] = c.name; }));
-  const cats = useMemo(() => [...new Set(SEED_ASSETS.map((a) => a.cat))].sort(), []);
   const yards = ["Brighton", "Rush Scottsville", "Off-site"];
 
   const shown = assets.filter((a) => {
     if (filters.op && !a.ops.includes(filters.op)) return false;
-    if (filters.cat.length && !filters.cat.includes(a.cat)) return false;
     if (filters.yard && a.yard !== filters.yard) return false;
     if (filters.st && a.status !== filters.st) return false;
     const q = filters.q.trim().toLowerCase();
     if (q && !(a.name + " " + a.spec + " " + (a.plate || "")).toLowerCase().includes(q)) return false;
     return true;
   });
+  const order = (l) => l.sort((x, y) => (SINK[x.status] ?? 0) - (SINK[y.status] ?? 0) || x.name.localeCompare(y.name));
+  const groups = [...EQUIP_GROUPS, { key: "other", label: "Other" }]
+    .map((g) => ({ ...g, items: order(shown.filter((a) => equipGroupOf(a) === g.key)) }))
+    .filter((g) => g.items.length);
 
-  let groups;
-  if (filters.by === "status") {
-    groups = ST_ORDER.map((k) => ({ key: k, label: ST[k].label, color: ST[k].color, drop: true, items: shown.filter((a) => a.status === k) }));
-  } else if (filters.by === "op") {
-    groups = OP_ORDER.map((k) => ({ key: k, label: OPS[k].label, badge: k, color: C.edge, items: shown.filter((a) => a.ops.includes(k)) }));
-  } else {
-    groups = cats.filter((c) => shown.some((a) => a.cat === c))
-                 .map((c) => ({ key: c, label: c, color: C.edge, items: shown.filter((a) => a.cat === c) }));
-  }
-
-  const toggle = (k, v) => setFilters((f) => {
-    const cur = f[k];
-    if (Array.isArray(cur)) return { ...f, [k]: cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v] };
-    return { ...f, [k]: cur === v ? "" : v };
-  });
-  const attention = assets.filter((a) => a.status === "tagged" || a.status === "shop");
+  const toggle = (k, v) => setFilters((f) => ({ ...f, [k]: f[k] === v ? "" : v }));
+  const count = (k) => assets.filter((a) => a.status === k).length;
 
   return (
     <>
       <div className="tb">
-        <span className="fl stencil" style={{ margin: 0 }}>COLUMNS</span>
-        {[["status", "Condition"], ["op", "Operation"], ["cat", "Type"]].map(([v, l]) => (
-          <button key={v} className="chip stencil" data-on={filters.by === v ? 1 : 0}
-                  onClick={() => setFilters((f) => ({ ...f, by: v }))}>{l}</button>
-        ))}
-        <span className="vr" />
         {OP_ORDER.map((o) => (
           <button key={o} className="chip stencil" data-on={filters.op === o ? 1 : 0} onClick={() => toggle("op", o)}>
             <OpGlyph op={o} /> {o}
@@ -1766,56 +1770,39 @@ function FleetView({ core, crewsMap, engine, filters, setFilters, onOpen, onStat
         <input className="srch" placeholder="Find unit or plate" value={filters.q}
                onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))} />
       </div>
-
       <div className="tb" style={{ paddingTop: 0, borderBottom: `1px solid ${C.edgeSoft}` }}>
-        <span className="fl stencil" style={{ margin: 0 }}>TYPE</span>
-        {cats.map((c) => (
-          <button key={c} className="chip stencil" data-on={filters.cat.includes(c) ? 1 : 0} onClick={() => toggle("cat", c)}>{c}</button>
+        <span className="fl stencil" style={{ margin: 0 }}>CONDITION</span>
+        {ST_ORDER.map((k) => (
+          <button key={k} className="chip stencil" data-on={filters.st === k ? 1 : 0} onClick={() => toggle("st", k)}
+                  style={{ borderColor: ST[k].color }}>
+            <span className="swatch" style={{ background: ST[k].color }} />{ST[k].label} <b className="mono" style={{ fontWeight: 500, opacity: .7 }}>{count(k)}</b>
+          </button>
         ))}
+        <span className="note" style={{ padding: 0 }}>Outline = condition. Tap a unit to change it, or drag it to the bar at the bottom.</span>
       </div>
-
-      {attention.length > 0 && (
-        <div className="attn">
-          <span className="stencil" style={{ fontSize: 9.5, letterSpacing: ".16em", color: C.inkFaint }}>OFF THE SCHEDULE</span>
-          {attention.map((a) => (
-            <button key={a.id} className="mini stencil" style={{ borderLeftColor: ST[a.status].color }} onClick={() => onOpen(a.id)}>
-              <MachineChip shape={a.shape} />{a.name}<span style={{ color: C.inkFaint }}>{ST[a.status].short}</span>
-            </button>
-          ))}
-        </div>
-      )}
 
       <div className="cols">
-        {groups.map((g) => {
-          const zid = `col:${g.key}`;
-          const hot = drag && drag.over === zid;
-          const body = (
-            <div className="col-b" data-hot={hot ? 1 : 0}>
-              {g.items.length === 0
-                ? <div className="empty">Nothing here.<br />{g.drop ? "Drag a unit in." : "Adjust the filters."}</div>
-                : g.items.map((a) => (
-                    <AssetTile key={a.id} a={a} crewName={crewOf[a.id]} begin={begin}
-                               flash={flashSet.has(a.id)} onOpen={() => onOpen(a.id)} />
-                  ))}
+        {groups.map((g) => (
+          <div className="col" key={g.key} data-wide={g.items.length > 8 ? 1 : 0}>
+            <div className="col-h" style={{ borderTopColor: C.edge }}>
+              <em className="stencil">{g.label}</em>
+              {g.items.some((a) => a.status === "shop" || a.status === "tagged") && (
+                <span className="mono" style={{ fontSize: 10.5, color: ST.tagged.color }}>
+                  {g.items.filter((a) => a.status === "shop" || a.status === "tagged").length} out
+                </span>
+              )}
+              <u className="mono">{g.items.length}</u>
             </div>
-          );
-          return (
-            <div className="col" key={g.key} data-wide={g.items.length > 6 ? 1 : 0}>
-              <div className="col-h" style={{ borderTopColor: g.color }}>
-                {g.badge && <span style={{ color: C.inkDim, display: "flex" }}><OpGlyph op={g.badge} size={13} /></span>}
-                <em className="stencil">{g.label}</em>
-                <u className="mono">{g.items.length}</u>
-              </div>
-              {g.drop
-                ? <Zone id={zid} accepts={["asset"]} registerZone={registerZone} onDrop={(item) => onStatus(item.id, g.key)}>{body}</Zone>
-                : body}
+            <div className="col-b">
+              {g.items.map((a) => (
+                <AssetTile key={a.id} a={a} crewName={crewOf[a.id]} begin={begin}
+                           flash={flashSet.has(a.id)} onOpen={() => onOpen(a.id)} />
+              ))}
             </div>
-          );
-        })}
+          </div>
+        ))}
+        {!groups.length && <div className="empty">Nothing matches. Adjust the filters.</div>}
       </div>
-      {filters.by === "op" && (
-        <div className="note">A unit shows up under every operation it serves, so shared machines appear more than once. That is on purpose.</div>
-      )}
     </>
   );
 }
@@ -2873,7 +2860,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
   const [noteOpen, setNoteOpen] = useState(false);
   const [dayFocus, setDayFocus] = useState(null);
   const [flashSet, setFlashSet] = useState(new Set());
-  const [filters, setFilters] = useState({ by: "status", cat: [], yard: "", st: "", q: "" });
+  const [filters, setFilters] = useState({ op: "", yard: "", st: "", q: "" });
   const [cur, setCur] = useState(() => isoOf(new Date()));
   const wkIso = useMemo(() => isoOf(weekStartOf(new Date(cur + "T00:00:00"))), [cur]);
   const dayIndex = useMemo(

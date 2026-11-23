@@ -146,6 +146,11 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   FleetView (condition columns) + "+ Add equipment" (AddAssetSheet copies drawing/towing keys from a SEED unit of the
   same kind) + name / drawing label / plate edits stored as `asset.custom` (LABEL_KEYS win in reSpec; drawing/towing
   keys never do).
+- Equipment tab (owner, Nov 23): columns are KINDS of machine (`EQUIP_GROUPS`: Aerial lifts (incl. the bucket truck),
+  Trucks, Trailers, Material handlers, Chippers, Stump grinders, Sprayers & UTVs, Sales cars, Other), not conditions.
+  Condition = the compact card's outline + a short badge; repair (status `shop`, blue, "In for repair") and broken
+  (status `tagged`, red, "Broken") sink to the bottom of each column. The Type filter and column switcher are gone;
+  conditions are a filter row. Status keys are unchanged (only labels), so stored data is untouched.
 - Tab order (owner, Nov 23): Shop Board · Schedule · Backlog; Shop Board is the default tab.
 - Backlog tab = a job manager, not a dashboard: one totals line, Group by Priority (status categories) / Equipment
   (`equipmentNeeds` from crewCheck, "No special equipment") / Zone, OLDEST FIRST inside each group; map coloured by age
