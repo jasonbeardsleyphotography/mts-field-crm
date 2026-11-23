@@ -132,7 +132,17 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   must BE the Zone element (className/style on the Zone) — a wrapper div has zero size and never receives drops (that
   bug made drops on crews create new crews in the original). Crew boxes pack to the visible width (ResizeObserver).
   Polls don't merge day changes while dragging or for 2 s after. In-crew load cards have no caption (they overlapped).
-  Bins: Crew room / Off Duty (left), At the yard (big) / In for repair (status shop) / Broken (status tagged) (right).
+  Bins: Crew room / Off Duty (left), At the yard (big) / Broken (right). (No "In for repair" since Nov 23.)
+  Owner, Nov 23: trailers and sales cars are OFF the board (`offBoard` in reSpec drops them); lifts / Avants / spray
+  rigs hook straight to a truck (`direct`: carried → towed, tt = rides[0]); the grinder can go behind any truck.
+  Dropping something without a truck on a crew hooks it to the crew's best free truck (pickTow). Grabbing the
+  lower part of a load card (`grabbed`) drags only what is towed = unhook. Linked combos ("rigs") no longer drag
+  anything along (they pulled units in from other crews). New units from the Fleetio export: a39 AVANT 755i (the big
+  Avant, tag 03 AVANT_BIG), a40 F750 WOOD '27.
+  BROKEN IS DATED: asset.broken = [{from, to|null}] (`brokenOn`, `brokenAfter`, `assetsOn(assets, iso)`); breaking or
+  un-breaking on a future day never changes earlier days. Old status "tagged"/"shop" = broken on every day until
+  first edited. Everything shown for a day uses `dayCore` (assets resolved for that day); Schedule's crewsForDay too.
+  The Shop Board and Schedule share the day being planned while the page is open (`src/dispatch/sharedDay.js`).
   Room and yard are decided by crew MEMBERSHIP (`crewHas`), not screen positions (that left dropped people/trucks in
   both places). ✎ Edit on each crew opens CrewSheet: rename, operation, add/remove people and equipment via pickers
   (reuses yardMove). People tab (`PeopleView`): month calendar; pick a person + reason (vac/sick/train/light/on), tap or
@@ -147,9 +157,8 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   same kind) + name / drawing label / plate edits stored as `asset.custom` (LABEL_KEYS win in reSpec; drawing/towing
   keys never do).
 - Equipment tab (owner, Nov 23): columns are KINDS of machine (`EQUIP_GROUPS`: Aerial lifts (incl. the bucket truck),
-  Trucks, Trailers, Material handlers, Chippers, Stump grinders, Sprayers & UTVs, Sales cars, Other), not conditions.
-  Condition = the compact card's outline + a short badge; repair (status `shop`, blue, "In for repair") and broken
-  (status `tagged`, red, "Broken") sink to the bottom of each column. The Type filter and column switcher are gone;
+  Pickups, Trucks (not pickups), Material handlers, Chippers, Stump grinders, Sprayers & UTVs, Other), not conditions.
+  Condition = the compact card's outline + a short badge; Broken (status `tagged`, red) sinks to the bottom. The Type filter and column switcher are gone;
   conditions are a filter row. Status keys are unchanged (only labels), so stored data is untouched.
 - Tab order (owner, Nov 23): Shop Board · Schedule · Backlog · Quick pick; Shop Board is the default tab.
 - Hours (`src/dispatch/hours.js`): the workbook's hours are ON-SITE HOURS (OSH). Sales hours: 1 SH = 0.78 OSH. The OSH | SH
@@ -161,12 +170,15 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   them. Status `paused` beats everything, never late, own colour; card reads "Name: reason". Pause from a Backlog card,
   the Schedule map card or Quick pick. Shared loader `useBacklog.js` (backlog + paused, enriched).
 - Seasons (`seasonStatus` in backlogModel): 08 WINTER Jan–Mar, SPRING Apr–Jun, SUMMER Jul–Sep, FALL Oct–Dec, OAK Nov–Mar
-  (assumed), "OAK 2027" = not before 2027 (assumed). In season → due by its end; out of season → status `season`
+  (confirmed), "OAK 2027" = the oak window starting Nov 1, 2027 (confirmed). In season → due by its end; out of season → status `season`
   ("Waiting for season", not late); late only if a whole window ended ≥ the promised lead (4 wk if 99) after the sale.
 - Age colours are by RANK (`ageT`, 9-stop gradient) among jobs that aren't paused / waiting for season.
 - Tag filters (`TagFilter.jsx`: tap = must have, again = must not, again = clear; all/any). Schedule: each crew's
-  "Find work" lists only jobs it can do (`checkJob` with crew machines + people; stump tags are `later` and ignored),
-  optional "fits the hours left". "Tag → equipment" button shows the rules (TAG_RULES / UNMAPPED_TAGS in crewCheck).
+  "Find work" lists only jobs it can do (`checkJob` with crew machines + people; stump tags are `later` and ignored).
+  NO "fits the hours left" filter — the owner removed it (many jobs take several days).
+  Aerial tags are ALTERNATIVES (BUCKET, LIFT, and CLIMBING / CLIMBABLE / GROUND, which need no machine — every foreman
+  climbs) unless the job also has 02 REQUIRED: then every aerial machine tagged is needed. LIFT TALL! always needs the
+  100HD. 03 AVANT_BIG = the Avant 755i. "Tag → equipment" button shows the rules (TAG_RULES / UNMAPPED_TAGS in crewCheck).
 - Quick pick (`QuickPick.jsx`, phone-first): full-screen map; pick crew (today's Shop Board), hour range in the viewer's
   unit, fits crew, tags; nearest first from the crew's last stop today (else its yard) or "near me" (one-shot GPS, never
   sent); "+ Add to <crew> today" writes sched.<today> like the Schedule.
