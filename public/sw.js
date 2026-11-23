@@ -1,3 +1,4 @@
+// v117: Dispatch: Quick pick tab, jobs on pause, seasons, OSH/SH hours + crew day load, tag filters and "Find work" per crew.
 // v116: Shop Board Equipment tab: columns by kind of machine, condition as card outline, repair vs broken, compact cards.
 // v115: Dispatch: tabs Shop Board · Schedule · Backlog; Backlog regrouped by priority/equipment (oldest first), tree vs stump hours; Schedule map tap shows the job.
 // v114: Shop Board: yard bins fixed (loads no longer vanish), Equipment tab, People screen fills the page.
@@ -159,7 +160,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v116";
+const CACHE = "mts-field-v117";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

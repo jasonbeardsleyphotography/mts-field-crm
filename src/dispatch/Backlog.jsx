@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { api } from "./api";
+import { useBacklog } from "./useBacklog";
+import { fmtH, useHoursUnit } from "./hours";
 import { C } from "./theme";
 import { parseBacklogWorkbook } from "./parseWorkbook";
-import { enrich, STATUS, STATUS_ORDER, FACETS, tagColor, tagShort, money, monthName, singleOpsJobUrl, ageColor, AGE_LEGEND } from "./backlogModel";
+import { STATUS, STATUS_ORDER, FACETS, tagColor, tagShort, money, monthName, singleOpsJobUrl, jobColor, gradientColor, ageLegend, PAUSED_COLOR, SEASON_COLOR } from "./backlogModel";
 import { EQUIPMENT_ORDER } from "./crewCheck";
 import BacklogMap, { useJobPoints } from "./BacklogMap.jsx";
 import JobHours from "./JobHours.jsx";
@@ -23,12 +25,13 @@ const GROUPS = {
   zone: { label: "Zone", note: "oldest first in each" },
 };
 const NO_EQUIP = "No special equipment";
-const h1 = (n) => (Math.round((n || 0) * 10) / 10).toLocaleString();
 const sumTree = (l) => l.reduce((t, j) => t + (j.treeHrs || 0), 0);
 const sumGrind = (l) => l.reduce((t, j) => t + (j.grindHrs || 0), 0);
 const oldestFirst = (a, b) => (b.days || 0) - (a.days || 0);
 
-function promiseText(j) {
+export function promiseText(j) {
+  if (j.status === "paused") return `On pause${j.paused?.until ? ` · check back ${new Date(j.paused.until + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}`;
+  if (j.dueText) return j.dueText;
   if (j.status === "sched") return `Scheduled ${new Date(j.nextVisit + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}${j.visitWho ? ` · ${j.visitWho}` : ""}`;
   if (j.status === "hold") return "On hold";
   if (j.status === "flex") return "Flexible / seasonal";
@@ -53,8 +56,8 @@ function Forecast({ f }) {
           const hb = (b / max) * (H - 10), hc = (c / max) * (H - 10);
           return (
             <g key={m}>
-              <rect x={x + bw * 0.12} y={H - hb} width={bw * 0.5} height={hb} fill={i === clearIdx ? "#5d7d6a" : "#56636c"} rx="1.5"><title>{`${monthName(m, true)}: ${Math.round(b)} backlog hours at the start`}</title></rect>
-              <rect x={x + bw * 0.64} y={H - hc} width={bw * 0.22} height={hc} fill={C.green} opacity=".85" rx="1"><title>{`${monthName(m, true)}: ${Math.round(c)} crew hours available`}</title></rect>
+              <rect x={x + bw * 0.12} y={H - hb} width={bw * 0.5} height={hb} fill={i === clearIdx ? "#5d7d6a" : "#56636c"} rx="1.5"><title>{`${monthName(m, true)}: ${fmtH(b, 0)} backlog at the start`}</title></rect>
+              <rect x={x + bw * 0.64} y={H - hc} width={bw * 0.22} height={hc} fill={C.green} opacity=".85" rx="1"><title>{`${monthName(m, true)}: ${fmtH(c, 0)} crew time available`}</title></rect>
               <text x={x + bw / 2} y={H + 14} textAnchor="middle" fontSize="10" fill={C.inkDim} className="st">{monthName(m)}</text>
             </g>
           );
@@ -65,10 +68,35 @@ function Forecast({ f }) {
   );
 }
 
-function JobCard({ j, selected, onSelect, cardRef, colorBy, zoneColors }) {
+/** Put a job on pause (or edit why), with an optional date to check back. */
+export function PauseForm({ j, onPause, onResume, onDone }) {
+  const [reason, setReason] = useState(j.paused?.reason || "");
+  const [until, setUntil] = useState(j.paused?.until || "");
+  const [busy, setBusy] = useState(false), [err, setErr] = useState("");
+  const go = async (fn) => { setBusy(true); setErr(""); try { await fn(); onDone?.(); } catch (e) { setErr(`Couldn't save (${e.message}).`); } setBusy(false); };
+  return (
+    <div style={{ display: "grid", gap: 6, padding: 8, border: `1px solid ${PAUSED_COLOR}`, borderRadius: 3, background: "rgba(179,136,255,.07)" }} onClick={(e) => e.stopPropagation()}>
+      <div className="hint" style={{ padding: 0 }}>Why can't it be scheduled yet? Shown on the card as “{j.name}: …”. Paused jobs never count as late.</div>
+      <input className="inp" autoFocus placeholder="e.g. wants to meet again with Jason first" value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)}
+             onKeyDown={(e) => { if (e.key === "Enter" && reason.trim()) go(() => onPause(j.ref, reason.trim(), until)); }} />
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        <span className="hint" style={{ padding: 0 }}>Check back on (optional)</span>
+        <input className="inp" type="date" style={{ width: "auto" }} value={until} onChange={(e) => setUntil(e.target.value)} />
+        <span className="spacer" />
+        {j.paused && <button className="btn st" disabled={busy} onClick={() => go(() => onResume(j.ref))}>Back to the backlog</button>}
+        <button className="btn st" data-primary="1" disabled={busy || !reason.trim()} onClick={() => go(() => onPause(j.ref, reason.trim(), until))}>{j.paused ? "Save" : "Pause it"}</button>
+        <button className="btn st" onClick={() => onDone?.()}>Cancel</button>
+      </div>
+      {err && <div className="err">{err}</div>}
+    </div>
+  );
+}
+
+function JobCard({ j, selected, onSelect, cardRef, colorBy, zoneColors, onPause, onResume }) {
   const [open, setOpen] = useState(false);
+  const [pausing, setPausing] = useState(false);
   const st = STATUS[j.status];
-  const bar = colorBy === "zone" ? (zoneColors[j.zone] || C.edge) : colorBy === "age" ? ageColor(j.days) : st.color;
+  const bar = colorBy === "zone" ? (zoneColors[j.zone] || C.edge) : colorBy === "age" ? jobColor(j) : st.color;
   return (
     <div ref={cardRef} className="card" onClick={() => onSelect(j.ref)}
          style={{ display: "flex", overflow: "hidden", cursor: "pointer", boxShadow: selected ? `0 0 0 2px ${C.ink}` : "none" }}>
@@ -77,7 +105,8 @@ function JobCard({ j, selected, onSelect, cardRef, colorBy, zoneColors }) {
         <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", gap: 6, alignItems: "baseline", flexWrap: "wrap" }}>
-              <b style={{ fontSize: 14 }}>{j.name}</b>
+              <b style={{ fontSize: 14 }}>{j.name}{j.paused ? ":" : ""}</b>
+              {j.paused && <span style={{ fontSize: 13.5, color: "#d7c4ff" }}>{j.paused.reason}</span>}
               {j.priority && <span title="On the Priority Work list" style={{ color: C.amber }}>★</span>}
               <span className="mono hint">#{j.ref}</span>
             </div>
@@ -85,8 +114,10 @@ function JobCard({ j, selected, onSelect, cardRef, colorBy, zoneColors }) {
               {j.town}{j.zone ? ` · Zone ${j.zone}` : ""}{j.crew ? ` · ${j.crew}` : ""}{j.rep ? ` · ${j.rep}` : ""}
             </div>
             <div style={{ marginTop: 3, fontSize: 12.5, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "baseline" }}>
-              <span style={{ color: ageColor(j.days), fontWeight: 600 }}>{j.days != null ? `${Math.round(j.days)} days waiting` : ""}</span>
+              <span style={{ color: jobColor(j), fontWeight: 600 }}>{j.days != null ? `${Math.round(j.days)} days waiting` : ""}</span>
               <span style={{ color: st.color }}>{promiseText(j)}</span>
+              {j.checkBack && <span className="st" style={{ fontSize: 10.5, background: PAUSED_COLOR, color: "#1b1426", padding: "1px 6px", borderRadius: 2 }}>Check back now</span>}
+              {j.paused && <span className="hint" style={{ padding: 0 }}>paused by {j.paused.by}</span>}
             </div>
           </div>
           <JobHours j={j} />
@@ -112,9 +143,11 @@ function JobCard({ j, selected, onSelect, cardRef, colorBy, zoneColors }) {
           <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }} onClick={(e) => e.stopPropagation()}>
             <a className="btn st" href={singleOpsJobUrl(j.ref)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>Open in SingleOps</a>
             <a className="btn st" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(j.addr)}`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>Address</a>
+            <button className="btn st" style={{ borderColor: PAUSED_COLOR }} onClick={() => setPausing((v) => !v)}>{j.paused ? "Edit pause / resume" : "⏸ Pause…"}</button>
             <span className="hint" style={{ alignSelf: "center" }}>{j.addr}{j.dueRange ? ` · window ${j.dueRange}` : ""}</span>
           </div>
         )}
+        {selected && pausing && <div style={{ marginTop: 8 }}><PauseForm j={j} onPause={onPause} onResume={onResume} onDone={() => setPausing(false)} /></div>}
       </div>
     </div>
   );
@@ -127,8 +160,8 @@ function Group({ title, color, jobs, open, onToggle, children }) {
         <span className="st" style={{ fontSize: 13.5, color: C.ink }}>{title}</span>
         <span className="mono hint">{jobs.length} job{jobs.length === 1 ? "" : "s"}</span>
         <span className="spacer" />
-        <span className="mono" style={{ fontSize: 12, color: C.inkDim }}>{h1(sumTree(jobs))} h tree{sumGrind(jobs) ? ` · ${h1(sumGrind(jobs))} h stump` : ""}</span>
-        {jobs.length > 0 && <span className="mono hint" style={{ color: ageColor(jobs[0].days) }}>oldest {Math.round(jobs[0].days || 0)} d</span>}
+        <span className="mono" style={{ fontSize: 12, color: C.inkDim }}>{fmtH(sumTree(jobs))} tree{sumGrind(jobs) ? ` · ${fmtH(sumGrind(jobs))} stump` : ""}</span>
+        {jobs.length > 0 && <span className="mono hint" style={{ color: jobColor(jobs[0]) }}>oldest {Math.round(jobs[0].days || 0)} d</span>}
         <span className="hint">{open ? "▴" : "▾"}</span>
       </button>
       {open && <div style={{ padding: 8, display: "grid", gap: 6, borderTop: `1px solid ${C.edgeSoft}` }}>{children}</div>}
@@ -137,7 +170,8 @@ function Group({ title, color, jobs, open, onToggle, children }) {
 }
 
 export default function Backlog() {
-  const [data, setData] = useState(undefined);
+  useHoursUnit();
+  const { data, jobs, err: loadErr, load, pause, resume } = useBacklog();
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
   const [q, setQ] = useState("");
@@ -146,18 +180,13 @@ export default function Backlog() {
   const [openFacet, setOpenFacet] = useState("");
   const [groupBy, setGroupBy] = useState(() => { try { return localStorage.getItem("mts-backlog-group") || "priority"; } catch { return "priority"; } });
   const [colorBy, setColorBy] = useState("age");
-  const [closed, setClosed] = useState(() => new Set(["sched", "hold"]));
+  const [closed, setClosed] = useState(() => new Set(["sched", "hold", "season"]));
   const [selected, setSelected] = useState(null);
   const [limits, setLimits] = useState({});
   const [showForecast, setShowForecast] = useState(false);
   const fileRef = useRef(null);
   const cardRefs = useRef({});
 
-  const load = async () => {
-    try { const d = await api("backlog"); setData(d.empty ? null : d); setErr(""); }
-    catch (e) { setErr(`Couldn't load the backlog (${e.message}).`); setData(null); }
-  };
-  useEffect(() => { load(); }, []);
   useEffect(() => { try { localStorage.setItem("mts-backlog-group", groupBy); } catch {} }, [groupBy]);
 
   const upload = async (file) => {
@@ -171,7 +200,6 @@ export default function Backlog() {
     } catch (e) { setBusy(""); setErr(e.status ? `Couldn't save it (${e.message}).` : (e.message || String(e))); }
   };
 
-  const jobs = useMemo(() => (data ? enrich(data) : []), [data]);
   const { points, state: geoState } = useJobPoints(jobs);
   const zoneColors = useMemo(() => {
     const zs = [...new Set(jobs.map((j) => j.zone))].sort((a, b) => (parseFloat(a) || 999) - (parseFloat(b) || 999));
@@ -235,19 +263,20 @@ export default function Backlog() {
         <div className="st" style={{ fontSize: 16 }}>No backlog loaded yet</div>
         <div className="hint">Upload the GTC Backlog workbook (.xlsm). Nothing is ever written back to it.</div>
         <div>{uploader}</div>
-        {err && <div className="err">{err}</div>}
+        {(err || loadErr) && <div className="err">{err || loadErr}</div>}
       </div></div>
     </div>
   );
 
   const sel = selected && jobs.find((j) => j.ref === selected);
+  const legend = ageLegend(jobs);
   const filtersOn = q || status.size || Object.values(facet).some((s) => s.size);
 
   return (
     <div className="wrap" style={{ maxWidth: 1800 }}>
       {/* one slim line of totals + the status filters */}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
-        <span className="mono" style={{ fontSize: 13 }}>{shown.length} jobs · <b>{h1(sumTree(shown))} h tree work</b> · {h1(sumGrind(shown))} h stump grinding · {money(shown.reduce((t, j) => t + (j.price || 0), 0))}</span>
+        <span className="mono" style={{ fontSize: 13 }}>{shown.length} jobs · <b>{fmtH(sumTree(shown))} tree work</b> · {fmtH(sumGrind(shown))} stump grinding · {money(shown.reduce((t, j) => t + (j.price || 0), 0))}</span>
         <span className="spacer" />
         <span className="hint">{data.fileName}{data.asOf ? ` · sheet ${new Date(data.asOf + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</span>
         {uploader}
@@ -295,7 +324,7 @@ export default function Backlog() {
             return (
               <Group key={g.key} title={g.title} color={g.color} jobs={g.jobs} open={open} onToggle={() => setClosed((c) => toggleSet(c, g.key))}>
                 {g.jobs.slice(0, lim).map((j) => (
-                  <JobCard key={j.ref} j={j} selected={selected === j.ref} onSelect={pick} colorBy={colorBy} zoneColors={zoneColors}
+                  <JobCard key={j.ref} j={j} selected={selected === j.ref} onSelect={pick} colorBy={colorBy} zoneColors={zoneColors} onPause={pause} onResume={resume}
                            cardRef={(el) => { if (el) cardRefs.current[j.ref] = el; }} />
                 ))}
                 {g.jobs.length > lim && <button className="btn st" onClick={() => setLimits((l) => ({ ...l, [g.key]: lim + 50 }))}>Show {Math.min(50, g.jobs.length - lim)} more of {g.jobs.length - lim}</button>}
@@ -321,9 +350,9 @@ export default function Backlog() {
                 <div className="card" style={{ position: "absolute", left: 10, right: 10, bottom: 10, padding: "10px 12px", background: "rgba(27,33,38,.97)", boxShadow: "0 6px 20px rgba(0,0,0,.5)", zIndex: 5 }}>
                   <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <b>{sel.name}</b> <span className="mono hint">#{sel.ref}</span>
+                      <b>{sel.name}{sel.paused ? ":" : ""}</b> {sel.paused && <span style={{ color: "#d7c4ff" }}>{sel.paused.reason}</span>} <span className="mono hint">#{sel.ref}</span>
                       <div className="hint">{sel.addr}</div>
-                      <div style={{ fontSize: 12.5, marginTop: 3 }}><span style={{ color: ageColor(sel.days) }}>{Math.round(sel.days || 0)} days waiting</span> · <span style={{ color: STATUS[sel.status].color }}>{promiseText(sel)}</span></div>
+                      <div style={{ fontSize: 12.5, marginTop: 3 }}><span style={{ color: jobColor(sel) }}>{Math.round(sel.days || 0)} days waiting</span> · <span style={{ color: STATUS[sel.status].color }}>{promiseText(sel)}</span></div>
                       {sel.needs.length > 0 && <div className="hint" style={{ marginTop: 3 }}>Needs: {sel.needs.join(", ")}</div>}
                     </div>
                     <JobHours j={sel} />
@@ -334,9 +363,18 @@ export default function Backlog() {
             </BacklogMap>
           </div>
           <div style={{ padding: "6px 10px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            {colorBy === "age" && AGE_LEGEND.map(([d, l]) => <span key={d} className="hint" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><i style={{ width: 10, height: 10, borderRadius: 5, background: ageColor(d) }} />{l}</span>)}
+            {colorBy === "age" && (
+              <>
+                <span className="hint" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  newest <i style={{ width: 120, height: 10, borderRadius: 5, background: `linear-gradient(90deg, ${[0, .125, .25, .375, .5, .625, .75, .875, 1].map(gradientColor).join(",")})` }} /> oldest
+                </span>
+                <span className="hint">({legend.map(([, l]) => l).join(" · ")})</span>
+                <span className="hint" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><i style={{ width: 10, height: 10, borderRadius: 5, background: SEASON_COLOR }} />waiting for season</span>
+                <span className="hint" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><i style={{ width: 10, height: 10, borderRadius: 5, background: PAUSED_COLOR }} />on pause</span>
+              </>
+            )}
             {colorBy === "status" && STATUS_ORDER.map((k) => <span key={k} className="hint" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><i style={{ width: 10, height: 10, borderRadius: 5, background: STATUS[k].color }} />{STATUS[k].label}</span>)}
-            <span className="hint">{geoState || "Bigger dot = more tree-work hours. Tap a dot for the job."}</span>
+            <span className="hint">{geoState || "Bigger dot = more tree work. Tap a dot for the job."}</span>
           </div>
         </div>
       </div>

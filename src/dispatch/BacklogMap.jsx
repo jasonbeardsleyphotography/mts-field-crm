@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import { STATUS, ageColor } from "./backlogModel";
+import { STATUS, jobColor } from "./backlogModel";
+import { fmtH } from "./hours";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Map of backlog jobs. Each address is looked up once (server: US Census
@@ -107,7 +108,7 @@ export default function BacklogMap({ jobs, points, selected, onPick, colorBy = "
     jobs.forEach((j) => {
       const p = points[j.ref]; if (!p) return;
       want.add(j.ref); bounds.extend(p);
-      const color = colorBy === "zone" ? (zoneColors[j.zone] || "#7d8a94") : colorBy === "age" ? ageColor(j.days) : STATUS[j.status].color;
+      const color = colorBy === "zone" ? (zoneColors[j.zone] || "#7d8a94") : colorBy === "age" ? jobColor(j) : STATUS[j.status].color;
       const sel = selected === j.ref;
       const icon = {
         path: g.SymbolPath.CIRCLE, scale: sel ? 10 : Math.max(5, Math.min(9, 4 + (j.treeHrs ?? j.hrs ?? 0) / 6)),
@@ -115,7 +116,7 @@ export default function BacklogMap({ jobs, points, selected, onPick, colorBy = "
       };
       let m = markers.current.get(j.ref);
       if (!m) {
-        m = new g.Marker({ map: map.current, position: p, icon, title: `${j.name} · ${Math.round(j.treeHrs ?? j.hrs ?? 0)} h` });
+        m = new g.Marker({ map: map.current, position: p, icon, title: `${j.name} · ${fmtH(j.treeHrs ?? j.hrs)}` });
         m.addListener("click", () => pickRef.current?.(j.ref));
         markers.current.set(j.ref, m);
       } else { m.setIcon(icon); m.setPosition(p); }
@@ -138,4 +139,4 @@ export default function BacklogMap({ jobs, points, selected, onPick, colorBy = "
     </div>
   );
 }
-const STATUS_Z = { over: 60, soon: 50, ok: 40, flex: 20, sched: 30, hold: 10 };
+const STATUS_Z = { over: 60, soon: 50, ok: 40, season: 25, flex: 20, sched: 30, hold: 10, paused: 15 };

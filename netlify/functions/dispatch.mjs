@@ -25,6 +25,8 @@
      POST   link     {email}        (admin) one-time sign-in link, 14 days
      GET    backlog                 (dispatch) the last uploaded workbook data
      PUT    backlog  {…}            (dispatch) replace it
+     GET    paused                  (dispatch) jobs on pause { ref: { reason, until, by, at } }
+     POST   paused {ref, reason, until} | {ref, remove}   pause / edit / resume a job
      POST   geocode  {items:[{id,addr}]}  (dispatch) lat/lng, cached
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -188,6 +190,31 @@ export default async (req) => {
     const rec = { ...b, uploadedAt: Date.now(), uploadedBy: me.name || me.email };
     await D().set("backlog/current", JSON.stringify(rec));
     return json({ ok: true, uploadedAt: rec.uploadedAt });
+  }
+  // Jobs "on pause": the office can't schedule them yet (client wants to meet
+  // first, away until spring…). Stored apart from the workbook so a new upload
+  // keeps them. { ref: { reason, until, by, at } }; removed = { removed: true, at }.
+  if (route === "paused" && method === "GET") {
+    const raw = await D().get("backlog/paused");
+    return json({ paused: raw ? JSON.parse(raw) : {} });
+  }
+  if (route === "paused" && method === "POST") {
+    const b = await body();
+    const ref = String(b?.ref || "").slice(0, 40);
+    if (!ref) return json({ error: "bad_data" }, 400);
+    const raw = await D().get("backlog/paused");
+    const all = raw ? JSON.parse(raw) : {};
+    if (b.remove) all[ref] = { removed: true, at: Date.now(), by: me.name || me.email };
+    else {
+      const reason = String(b.reason || "").trim().slice(0, 300);
+      if (!reason) return json({ error: "reason_needed" }, 400);
+      const until = /^\d{4}-\d{2}-\d{2}$/.test(b.until || "") ? b.until : "";
+      all[ref] = { reason, until, by: me.name || me.email, at: Date.now(), since: all[ref]?.removed ? Date.now() : (all[ref]?.since || Date.now()) };
+    }
+    // drop removal markers older than 60 days
+    for (const [k, v] of Object.entries(all)) if (v.removed && Date.now() - v.at > 60 * 86400000) delete all[k];
+    await D().set("backlog/paused", JSON.stringify(all));
+    return json({ paused: all });
   }
   if (route === "geocode" && method === "POST") {
     const { items } = await body();

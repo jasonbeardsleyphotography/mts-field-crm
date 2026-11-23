@@ -6,6 +6,8 @@ import Backlog from "./Backlog.jsx";
 import AppMenu from "./AppMenu.jsx";
 import ShopBoard from "./shop/ShopBoard.jsx";
 import Schedule from "./Schedule.jsx";
+import QuickPick from "./QuickPick.jsx";
+import { useHoursUnit, setHoursUnit } from "./hours";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS Dispatch — a separate tool on the field app's site (/dispatch).
@@ -17,6 +19,7 @@ const TABS = [
   { id: "shop", label: "Shop Board", need: "shop" },
   { id: "schedule", label: "Schedule", need: "dispatch" },
   { id: "backlog", label: "Backlog", need: "dispatch" },
+  { id: "quick", label: "Quick pick", need: "dispatch" },
   { id: "admin", label: "Admin", need: "admin", hidden: true },   // opened from the ☰ menu
 ];
 
@@ -27,6 +30,7 @@ const LINK_ERRORS = {
 };
 
 export default function DispatchApp() {
+  const unit = useHoursUnit();
   const [me, setMe] = useState(undefined);       // undefined = loading, null = signed out
   const [linkErr, setLinkErr] = useState("");
   const [tab, setTab] = useState(() => {
@@ -91,6 +95,11 @@ export default function DispatchApp() {
             ))}
           </div>
           <div className="spacer" />
+          {current && current.id !== "shop" && current.id !== "admin" && (
+            <div className="tabs" role="group" aria-label="Hours shown as" title="On-site hours (OSH) or sales hours (SH). 1 SH = 0.78 OSH. The workbook's hours are OSH.">
+              {["OSH", "SH"].map((u) => <button key={u} className="tab st" aria-selected={unit === u} onClick={() => setHoursUnit(u)}>{u}</button>)}
+            </div>
+          )}
           <span className="who">{me.name || me.email}</span>
         </div>
       </header>
@@ -112,8 +121,10 @@ export default function DispatchApp() {
       {current?.id === "backlog" && <Backlog me={me} />}
       {current?.id === "shop" && <ShopBoard user={me} isAdmin={!!me.perms.admin} />}
       {current?.id === "schedule" && <Schedule me={me} />}
+      {current?.id === "quick" && <QuickPick me={me} />}
       {current?.id === "admin" && <Admin me={me} />}
-      <AppMenu me={me} current="dispatch" onAdmin={() => pick("admin")} onSignOut={signOut} />
+      <AppMenu me={me} current="dispatch" onAdmin={() => pick("admin")} onSignOut={signOut}
+               buttonStyle={current?.id === "quick" ? { left: "auto", right: 12, bottom: "calc(40% + 16px)", width: 42, height: 42 } : undefined} />
     </div>
   );
 }

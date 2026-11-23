@@ -151,7 +151,25 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   Condition = the compact card's outline + a short badge; repair (status `shop`, blue, "In for repair") and broken
   (status `tagged`, red, "Broken") sink to the bottom of each column. The Type filter and column switcher are gone;
   conditions are a filter row. Status keys are unchanged (only labels), so stored data is untouched.
-- Tab order (owner, Nov 23): Shop Board · Schedule · Backlog; Shop Board is the default tab.
+- Tab order (owner, Nov 23): Shop Board · Schedule · Backlog · Quick pick; Shop Board is the default tab.
+- Hours (`src/dispatch/hours.js`): the workbook's hours are ON-SITE HOURS (OSH). Sales hours: 1 SH = 0.78 OSH. The OSH | SH
+  switch in the Dispatch header is per device (localStorage `mts-dispatch-hours-unit`); always format with `fmtH()` so the
+  unit is printed. A normal day = 6.24 OSH (8 SH) per person working (`dayOsh`); Schedule warns when a crew is light/heavy.
+  Stump grinding / cleanup / soil & seed never count toward the day (a later stage; a stump screen is planned).
+- Jobs ON PAUSE ("purgatory", owner's idea): `mts-dispatch` key `backlog/paused` = { ref: { reason, until, by, at } }
+  (`/api/dispatch/paused`, GET / POST {ref, reason, until} | {ref, remove}); kept apart from the workbook so uploads keep
+  them. Status `paused` beats everything, never late, own colour; card reads "Name: reason". Pause from a Backlog card,
+  the Schedule map card or Quick pick. Shared loader `useBacklog.js` (backlog + paused, enriched).
+- Seasons (`seasonStatus` in backlogModel): 08 WINTER Jan–Mar, SPRING Apr–Jun, SUMMER Jul–Sep, FALL Oct–Dec, OAK Nov–Mar
+  (assumed), "OAK 2027" = not before 2027 (assumed). In season → due by its end; out of season → status `season`
+  ("Waiting for season", not late); late only if a whole window ended ≥ the promised lead (4 wk if 99) after the sale.
+- Age colours are by RANK (`ageT`, 9-stop gradient) among jobs that aren't paused / waiting for season.
+- Tag filters (`TagFilter.jsx`: tap = must have, again = must not, again = clear; all/any). Schedule: each crew's
+  "Find work" lists only jobs it can do (`checkJob` with crew machines + people; stump tags are `later` and ignored),
+  optional "fits the hours left". "Tag → equipment" button shows the rules (TAG_RULES / UNMAPPED_TAGS in crewCheck).
+- Quick pick (`QuickPick.jsx`, phone-first): full-screen map; pick crew (today's Shop Board), hour range in the viewer's
+  unit, fits crew, tags; nearest first from the crew's last stop today (else its yard) or "near me" (one-shot GPS, never
+  sent); "+ Add to <crew> today" writes sched.<today> like the Schedule.
 - Backlog tab = a job manager, not a dashboard: one totals line, Group by Priority (status categories) / Equipment
   (`equipmentNeeds` from crewCheck, "No special equipment") / Zone, OLDEST FIRST inside each group; map coloured by age
   by default (`ageColor`, green → dark red over a year). Hours split (`enrich` → treeHrs / grindHrs / cleanupHrs / seedHrs,

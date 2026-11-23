@@ -12,16 +12,26 @@
 const norm = (t) => String(t || "").trim().toUpperCase().replace(/\s+/g, " ");
 
 /** Equipment a tag needs: label + how to recognise a unit that provides it. */
+// `what` = plain words for the "Tag → equipment" list the owner checks.
+// `later` = a later stage of the job (stump grinding): grouped and shown, but a
+// tree crew is NOT expected to carry it, so it doesn't count against a crew.
 const NEEDS = [
-  { tags: ["02 BUCKET"], label: "Bucket truck", ok: (a) => a.shape === "BUCKET" || /bucket/i.test(a.tag || "") },
-  { tags: ["02 LIFT", "02 LIFT REGULAR"], label: "Lift", ok: (a) => a.shape === "SPIDER" },
-  { tags: ["02 LIFT TALL!"], label: "Tall lift (CMC 100HD)", ok: (a) => a.code === "100" || /100HD/i.test(a.name || "") },
-  { tags: ["03 AVANT"], label: "Avant", ok: (a) => a.shape === "LOADER" },
-  { tags: ["03 BIG CHIP"], label: "Big chipper (19XPC)", ok: (a) => /19XPC/i.test(a.name || "") },
-  { tags: ["03 WOOD TRUCK"], label: "Wood truck", ok: (a) => a.cat === "DUMP TRUCK" },
-  { tags: ["03 CRANE"], label: "Crane", ok: () => false, note: "not in the fleet — book one" },
-  { tags: ["07 STUMPS", "07 STUMP CLEANUP"], label: "Stump grinder", ok: (a) => a.shape === "GRINDER" },
+  { tags: ["02 BUCKET"], label: "Bucket truck", what: "the bucket truck (F750 BUCKET)", ok: (a) => a.shape === "BUCKET" || /bucket/i.test(a.tag || "") },
+  { tags: ["02 LIFT", "02 LIFT REGULAR"], label: "Lift", what: "any spider lift (CMC 83HD, 83HD+, 100HD)", ok: (a) => a.shape === "SPIDER" },
+  { tags: ["02 LIFT TALL!"], label: "Tall lift (CMC 100HD)", what: "the CMC 100HD", ok: (a) => a.code === "100" || /100HD/i.test(a.name || "") },
+  { tags: ["03 AVANT", "03 AVANT_BIG"], label: "Avant", what: "any Avant (AVANT_BIG: which one is the big one? tell me)", ok: (a) => a.shape === "LOADER" },
+  { tags: ["03 BIG CHIP"], label: "Big chipper (19XPC)", what: "a Bandit 19XPC", ok: (a) => /19XPC/i.test(a.name || "") },
+  { tags: ["03 WOOD TRUCK"], label: "Wood truck", what: "a dump truck (WOOD TRUCK, RATTLIN LOG)", ok: (a) => a.cat === "DUMP TRUCK" },
+  { tags: ["03 CRANE"], label: "Crane", what: "not in the fleet — book one", ok: () => false, note: "not in the fleet — book one" },
+  { tags: ["07 STUMPS", "07 STUMP CLEANUP"], label: "Stump grinder", what: "the Rayco grinder — a later stage, not needed on the tree crew", ok: (a) => a.shape === "GRINDER", later: true },
 ];
+/** Tags that look like equipment/crew-type tags but aren't mapped to a machine yet. */
+export const UNMAPPED_TAGS = {
+  "02 CLIMBABLE": "climbable — no machine needed?", "02 CLIMBING": "climbing crew — no machine needed?",
+  "02 GROUND": "ground work — no machine needed?", "02 REQUIRED": "required equipment — see the job notes",
+};
+/** For the "Tag → equipment" list. */
+export const TAG_RULES = NEEDS.map((n) => ({ tags: n.tags, label: n.label, what: n.what, later: !!n.later }));
 
 /** Things to cover when the office calls to schedule. */
 const CALLS = {
@@ -73,7 +83,7 @@ export function checkJob(tags, crew, assets, peopleOn) {
   const units = (crew?.iron || []).map((id) => assets?.[id]).filter((a) => a && !a.del);
   const missing = [];
   NEEDS.forEach((n) => {
-    if (!n.tags.some((t) => T.includes(t))) return;
+    if (n.later || !n.tags.some((t) => T.includes(t))) return;
     const have = units.filter(n.ok);
     if (!have.length) missing.push({ label: n.label, why: n.note || "not on this crew" });
     else if (have.every(isDown)) missing.push({ label: n.label, why: `${have[0].name} is ${have[0].status === "shop" ? "in the shop" : "tagged out"}` });
@@ -98,4 +108,9 @@ export const EQUIPMENT_ORDER = NEEDS.map((n) => n.label);
 export function equipmentNeeds(tags) {
   const T = (tags || []).map(norm);
   return NEEDS.filter((n) => n.tags.some((t) => T.includes(t))).map((n) => n.label);
+}
+
+/** Can this crew do this job today (equipment that works + enough people)? */
+export function fitsCrew(tags, crew, assets, peopleOn) {
+  return checkJob(tags, crew, assets, peopleOn).problems === 0;
 }

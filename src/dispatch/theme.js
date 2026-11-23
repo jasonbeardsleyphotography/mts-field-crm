@@ -29,6 +29,12 @@ export const CSS = `
 .tab[disabled] { opacity:.45; cursor:default; }
 .spacer { flex:1 1 20px; }
 .who { font-size:11px; color:${C.inkFaint}; }
+@media (max-width:640px) {
+  .hd-in { padding:6px 10px 6px; gap:6px; }
+  .brand { display:none; }
+  .who { display:none; }
+  .tab { padding:6px 8px; font-size:11.5px; }
+}
 
 .btn { padding:8px 13px; border:1px solid ${C.edge}; border-radius:2px; font-size:11.5px; letter-spacing:.07em; color:${C.ink}; }
 .btn:hover { background:${C.tileHi}; }
