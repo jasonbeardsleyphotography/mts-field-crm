@@ -96,7 +96,6 @@ export default function QuickPick({ me }) {
   const [settings, setSettings] = useState({ yards: {} });
   const [crewId, setCrewId] = useState(() => { try { return localStorage.getItem("mts-qp-crew") || ""; } catch { return ""; } });
   const [range, setRange] = useState("any");
-  const [fitLeft, setFitLeft] = useState(false);
   const [fit, setFit] = useState(true);
   const [tagF, setTagF] = useState(emptyTags);
   const [tagsOpen, setTagsOpen] = useState(false);
@@ -162,12 +161,11 @@ export default function QuickPick({ me }) {
     return jobs
       .filter((j) => !assign[j.ref]?.crew && !["paused", "hold", "sched", "season"].includes(j.status))
       .filter((j) => { const h = inUnit(j.treeHrs || 0); return h >= lo && h < hi; })
-      .filter((j) => !fitLeft || !crew || (j.treeHrs || 0) <= left + 0.5)
       .filter((j) => passTags(j, tagF))
       .filter((j) => !fit || !crew || checkJob(j.tags, crew, board.core.assets, on).problems === 0)
       .map((j) => ({ j, d: origin?.p && points[j.ref] ? km(origin.p, points[j.ref]) : null }))
       .sort((a, b) => (a.d ?? 1e9) - (b.d ?? 1e9) || (b.j.days || 0) - (a.j.days || 0));
-  }, [jobs, assign, range, fitLeft, left, tagF, fit, crew, board, origin, points, peopleOn]);
+  }, [jobs, assign, range, tagF, fit, crew, board, origin, points, peopleOn]);
   const shown = useMemo(() => matches.map((m) => m.j), [matches]);
   const distOf = useMemo(() => Object.fromEntries(matches.map((m) => [m.j.ref, m.d])), [matches]);
   const sel = selected && jobBy[selected];
@@ -197,7 +195,7 @@ export default function QuickPick({ me }) {
           <button onClick={() => setFolded(false)} style={{ display: "flex", gap: 8, alignItems: "center", textAlign: "left" }}>
             {crew && <i style={{ display: "inline-block", width: 9, height: 9, borderRadius: 5, background: crewColor(crew.id) }} />}
             <b className="st" style={{ fontSize: 12.5 }}>{crew ? crew.name : "No crew picked"}</b>
-            <span className="hint" style={{ padding: 0 }}>{(RANGES.find((r) => r[0] === range) || RANGES[0])[1]} {hoursUnit()}{fitLeft ? ` · ≤ ${fmtH(left)}` : ""}{crew && fit ? " · fits crew" : ""}{tagF.inc.length + tagF.exc.length ? ` · ${tagF.inc.length + tagF.exc.length} tags` : ""} · {near === "me" ? "near me" : "near crew"}</span>
+            <span className="hint" style={{ padding: 0 }}>{(RANGES.find((r) => r[0] === range) || RANGES[0])[1]} {hoursUnit()}{crew && fit ? " · fits crew" : ""}{tagF.inc.length + tagF.exc.length ? ` · ${tagF.inc.length + tagF.exc.length} tags` : ""} · {near === "me" ? "near me" : "near crew"}</span>
             <span className="spacer" /><span className="hint" style={{ padding: 0 }}>Filters ▾</span>
           </button>
         ) : <>
@@ -213,7 +211,6 @@ export default function QuickPick({ me }) {
         <div style={{ display: "flex", gap: 6, overflowX: "auto", alignItems: "center", paddingBottom: 2 }}>
           <span className="hint" style={{ padding: 0, flexShrink: 0 }}>{hoursUnit()}</span>
           {RANGES.map(([k, l]) => <button key={k} className="chip st" data-on={range === k ? 1 : 0} style={{ flexShrink: 0, padding: "7px 10px" }} onClick={() => setRange(k)}>{l}</button>)}
-          {crew && <button className="chip st" data-on={fitLeft ? 1 : 0} style={{ flexShrink: 0, padding: "7px 10px" }} onClick={() => setFitLeft((v) => !v)}>≤ {fmtH(left)} left</button>}
         </div>
         <div style={{ display: "flex", gap: 6, overflowX: "auto", alignItems: "center", paddingBottom: 2 }}>
           {crew && <button className="chip st" data-on={fit ? 1 : 0} style={{ flexShrink: 0, padding: "7px 10px" }} onClick={() => setFit((v) => !v)} title="Only jobs this crew's machines and people can do">{fit ? "✓ Fits crew" : "Fits crew: off"}</button>}

@@ -8,7 +8,8 @@ import TagFilter, { emptyTags, passTags } from "./TagFilter.jsx";
 import { PauseForm, promiseText } from "./Backlog.jsx";
 import { useJobPoints, loadMaps } from "./BacklogMap.jsx";
 import { shopGet, shopDays, shopPatch, shopSchedRange, stampNow, shopSettings, saveYard } from "./shop/shopApi";
-import { freshCore, mergeCore, live, isoOf, addDays, weekStartOf } from "./shop/ShopBoard.jsx";
+import { freshCore, mergeCore, live, isoOf, addDays, weekStartOf, assetsOn } from "./shop/ShopBoard.jsx";
+import { sharedDay, setSharedDay } from "./sharedDay";
 import { checkJob, TAG_RULES, UNMAPPED_TAGS } from "./crewCheck";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -82,7 +83,8 @@ function bestOrder(yard, stops) {
 
 /** The crews on the Shop Board for a day: its own record, else the latest earlier one, else the standing setup. */
 export async function crewsForDay(iso) {
-  const core = mergeCore(await shopGet("core"), freshCore());
+  const raw = mergeCore(await shopGet("core"), freshCore());
+  const core = { ...raw, assets: assetsOn(raw.assets, iso) };    // broken on THIS day
   let day = await shopGet(`day.${iso}`), from = iso;
   if (!day?.crews) {
     const before = (await shopDays()).filter((d) => d < iso).sort();
@@ -208,7 +210,7 @@ function TagRules({ onClose }) {
   return (
     <div className="card" style={{ padding: 12, marginBottom: 10, display: "grid", gap: 6, maxWidth: 760 }}>
       <div className="st" style={{ fontSize: 13 }}>Tag → equipment (what “fits this crew” checks)</div>
-      <div className="hint" style={{ padding: 0 }}>A job fits a crew when the crew has every machine its tags call for (and it isn't in for repair or broken), and enough people for its #-PERSON tag. Tell me anything that's wrong or missing and I'll change it.</div>
+      <div className="hint" style={{ padding: 0 }}>A job fits a crew when the crew has the machines its tags call for (not broken that day), and enough people for its #-PERSON tag. Aerial tags (BUCKET, LIFT, CLIMBING, CLIMBABLE, GROUND) are alternatives — any one will do — unless the job is also tagged REQUIRED. Tell me anything that's wrong and I'll change it.</div>
       {TAG_RULES.map((r) => (
         <div key={r.label} style={{ display: "flex", gap: 8, fontSize: 12.5, flexWrap: "wrap" }}>
           <span className="mono" style={{ width: 230, color: "#c8ced2" }}>{r.tags.join(", ")}</span>
@@ -216,7 +218,7 @@ function TagRules({ onClose }) {
         </div>
       ))}
       <div style={{ display: "flex", gap: 8, fontSize: 12.5 }}><span className="mono" style={{ width: 230, color: "#c8ced2" }}>#2 / #3 / #4 PERSON</span><span>→ that many people working on the crew that day</span></div>
-      <div className="hint" style={{ padding: 0, marginTop: 4 }}>Not mapped yet (ignored by the check):</div>
+      <div className="hint" style={{ padding: 0, marginTop: 4 }}>No machine needed / special:</div>
       {Object.entries(UNMAPPED_TAGS).map(([t, w]) => (
         <div key={t} style={{ display: "flex", gap: 8, fontSize: 12.5 }}><span className="mono" style={{ width: 230, color: "#c8ced2" }}>{t}</span><span className="hint" style={{ padding: 0 }}>{w}</span></div>
       ))}
@@ -263,11 +265,11 @@ function YardSettings({ settings, onSaved, onClose }) {
 
 export default function Schedule({ me }) {
   useHoursUnit();
-  const [iso, setIso] = useState(() => isoOf(new Date()));
+  const [iso, setIso] = useState(() => sharedDay(isoOf(new Date())));
+  useEffect(() => { setSharedDay(iso); }, [iso]);
   const { data, jobs, pause, resume } = useBacklog();
   const [tagF, setTagF] = useState(emptyTags);
   const [fitCrew, setFitCrew] = useState(null);      // crew id: list only jobs that crew can do
-  const [fitHours, setFitHours] = useState(false);   // …and that fit the hours it has left
   const [rulesOpen, setRulesOpen] = useState(false);
   const [pausing, setPausing] = useState(false);
   const [board, setBoard] = useState(null);          // { core, crews, from }
@@ -411,13 +413,13 @@ export default function Schedule({ me }) {
       .filter((j) => !s || `${j.name} ${j.ref} ${j.addr} ${j.zone} ${j.tags.join(" ")} ${j.paused?.reason || ""}`.toLowerCase().includes(s))
       .filter((j) => passTags(j, tagF))
       .filter((j) => !fitC || checkJob(j.tags, fitC, board.core.assets, on).problems === 0)
-      .filter((j) => !fitC || !fitHours || (j.treeHrs || 0) <= fitLeft + 0.5)
+
       .sort(nearCrew ? (a, b) => (distTo[a.ref] ?? 1e9) - (distTo[b.ref] ?? 1e9)
         : sort === "zone" ? (a, b) => (parseFloat(a.zone) || 99) - (parseFloat(b.zone) || 99)
         : sort === "old" ? (a, b) => (b.days || 0) - (a.days || 0)
         : sort === "big" ? (a, b) => (b.treeHrs || 0) - (a.treeHrs || 0)
         : (a, b) => STATUS[a.status].rank - STATUS[b.status].rank || b.lateWeeks - a.lateWeeks);
-  }, [jobs, assign, show, plannedOn, q, sort, nearCrew, distTo, tagF, fitC, fitHours, fitLeft, peopleOn, board]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [jobs, assign, show, plannedOn, q, sort, nearCrew, distTo, tagF, fitC, peopleOn, board]); // eslint-disable-line react-hooks/exhaustive-deps
   const [limit, setLimit] = useState(80);
   useEffect(() => setLimit(80), [q, show, sort]);
   // Stable list for the map (a new array every render made it rebuild every
@@ -599,7 +601,6 @@ export default function Schedule({ me }) {
               <div style={{ padding: "6px 8px", borderRadius: 3, border: `1px solid ${crewColor(fitC.id)}`, display: "grid", gap: 5 }}>
                 <div style={{ fontSize: 12.5 }}>Showing jobs <b style={{ color: crewColor(fitC.id) }}>{fitC.name}</b> can do (its machines, {peopleOn(fitC)} people). It has <b>{fmtH(fitLeft)}</b> left to fill today.</div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <button className="chip st" data-on={fitHours ? 1 : 0} onClick={() => setFitHours((v) => !v)}>Only jobs that fit the {fmtH(fitLeft)} left</button>
                   <button className="chip st" onClick={() => setFitCrew(null)}>Show every job</button>
                 </div>
               </div>

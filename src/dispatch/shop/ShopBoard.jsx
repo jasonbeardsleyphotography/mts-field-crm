@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { shopGet, shopDays, shopPatch, shopPresence, stampNow, changed, changedKeys } from "./shopApi";
 import { checkJob, problemLines } from "../crewCheck";
+import { sharedDay, setSharedDay } from "../sharedDay";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Shop Board — the owner's ShopBoard.jsx, moved into Dispatch.
@@ -20,7 +21,7 @@ import { checkJob, problemLines } from "../crewCheck";
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ============================ SEED (from Fleetio export, 08/26/2026) ======= */
-const SEED_ASSETS = [{"id":"a01","name":"F750 BUCKET","spec":"2017 F750 Bucket Truck","cat":"AERIAL","shape":"BUCKET","ops":["GTC"],"status":"running","yard":"Brighton","plate":"25633MM","note":"","tag":"Bucket","hc":"truck","pull":["flatbed"],"fam":"AERIAL","code":"BKT","top":"bucket","vl":"F750 BUCKET"},{"id":"a02","name":"F650 CHIP","spec":"2018 F650 Chip Truck - 4X2 2dr Regular Cab 158","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Brighton","plate":"25634MM","note":"","tag":"Chip Truck","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"F650","top":"chipbody","vl":"F650 CHIP"},{"id":"a03","name":"F250 LIFT TRUCK","spec":"2019 F250 - Lift Truck","cat":"SERVICE","shape":"PICKUP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"95009MM","note":"","tag":"Lift Truck","hc":"truck","pull":["lift"],"fam":"SERVICE","code":"F250","top":"flatbed","vl":"F250"},{"id":"a04","name":"F350 LIFT TRUCK","spec":"2019 F350 Lift Truck","cat":"SERVICE","shape":"PICKUP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"65099NA","note":"","tag":"Lift Truck","hc":"truck","pull":["lift"],"fam":"SERVICE","code":"F350","top":"flatbed","vl":"F350"},{"id":"a05","name":"F750 CHIP '19","spec":"2019 F750 Chip Truck - 4X2 4dr SuperCab 179-28","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Brighton","plate":"31108MN","note":"","tag":"Chip Truck","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"F750","top":"chipbody","vl":"F750 '19"},{"id":"a06","name":"BELMONT 10K","spec":"2020 Belmont Dump Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CD 70633","note":"","tag":"Dump Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"BEL","top":"flattrailer","vl":"BELMONT"},{"id":"a07","name":"TEXAS","spec":"2021 F750 Chip Truck","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Off-site","plate":"74251NE","note":"","tag":"Texas","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"TEX","top":"chipbody","vl":"TEXAS"},{"id":"a08","name":"WOOD TRUCK","spec":"2021 F750 Dump Truck 4X2 4dr SuperCab 179-281","cat":"DUMP TRUCK","shape":"DUMP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"99168NE","note":"","tag":"Wood Truck","hc":"truck","pull":["flatbed"],"fam":"WOOD","code":"WOOD","top":"rolloff","vl":"WOOD TRUCK"},{"id":"a09","name":"CMC 83HD+ '21","spec":"2021 Lift - CMC 83HD+","cat":"SPIDER LIFT","shape":"SPIDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Lift","hc":"carried","rides":["lift"],"fam":"AERIAL","code":"83+","top":"spider","vl":"CMC 83HD+"},{"id":"a10","name":"LIFT TRAILER '21","spec":"2021 Lift Trailer - No Ramp","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CA86310","note":"","tag":"Lift Trailer","hc":"trailer","tt":"lift","fam":"LIFTTR","code":"LT21","top":"lifttrailer","vl":"LT '21"},{"id":"a11","name":"AVANT '21","spec":"2021 Avant","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Avant","hc":"carried","rides":["flatbed"],"fam":"AVANT","code":"A21","top":"avant","vl":"AVANT 21"},{"id":"a12","name":"RAV4 '21","spec":"2021 Rav 4 - Sales - AWD XLE 4dr SUV","cat":"SALES","shape":"CAR","ops":["SALES"],"status":"running","yard":"Brighton","plate":"KKJ2683","note":"","tag":"Rav4","hc":"truck","fam":"SALES","code":"R21","top":"car","vl":"RAV4 21"},{"id":"a13","name":"REISER 20FT","spec":"2021 Reiser 20 ft. 2-Axle Platform/Flatbed Tra","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CJ58195","note":"","tag":"Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"R20","top":"flattrailer","vl":"REISER 20"},{"id":"a14","name":"DARTH","spec":"2022 F250 PHC Pickup - Black","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC"],"status":"running","yard":"Rush Scottsville","plate":"76997 ML","note":"","tag":"Darth","hc":"truck","fam":"PHC","code":"DRTH","top":"flatbed","vl":"DARTH"},{"id":"a15","name":"BRIDGETTE","spec":"2022 F550 Chip Truck","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Brighton","plate":"51734NC","note":"","tag":"Bridgette","hc":"truck","pull":["chipper","grinder"],"fam":"CHIP","code":"BRDG","top":"chipbody","vl":"BRIDGETTE"},{"id":"a16","name":"CMC 83HD '22","spec":"2022 Lift CMC 83HD","cat":"SPIDER LIFT","shape":"SPIDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Lift","hc":"carried","rides":["lift"],"fam":"AERIAL","code":"83","top":"spider","vl":"CMC 83HD"},{"id":"a17","name":"RATTLIN LOG","spec":"2023 F750 Dump Truck","cat":"DUMP TRUCK","shape":"DUMP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"38858 ND","note":"","tag":"Rattlin Log","hc":"truck","pull":["flatbed"],"fam":"WOOD","code":"RTL","top":"rolloff","vl":"RATTLIN LOG"},{"id":"a18","name":"ISUZU PHC","spec":"2023 Isuzu PHC Rig","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC"],"status":"running","yard":"Rush Scottsville","plate":"95112ND","note":"","tag":"PHC Rig","hc":"truck","fam":"PHC","code":"ISZ","top":"cabover","vl":"ISUZU"},{"id":"a19","name":"LIFT TRAILER '23","spec":"2023 Lift Trailer - No Ramp","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"cd 71509","note":"","tag":"Lift Trailer","hc":"trailer","tt":"lift","fam":"LIFTTR","code":"LT23","top":"lifttrailer","vl":"LT '23"},{"id":"a20","name":"REISER '23","spec":"2023 Reiser Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CD70287","note":"","tag":"Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"R23","top":"flattrailer","vl":"REISER 23"},{"id":"a21","name":"BANDIT 19XPC '24","spec":"2024 Bandit 19XPC Big Chipper","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"19A","top":"chipper","vl":"19XPC '24"},{"id":"a22","name":"COROLLA","spec":"2024 Toyota Corolla","cat":"SALES","shape":"CAR","ops":["SALES"],"status":"running","yard":"Brighton","plate":"HYH8990","note":"","tag":"Corolla","hc":"truck","fam":"SALES","code":"COR","top":"car","vl":"COROLLA"},{"id":"a23","name":"CMC 100HD","spec":"2025 CMC 100HD Lift","cat":"SPIDER LIFT","shape":"SPIDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Lift","hc":"carried","rides":["lift"],"fam":"AERIAL","code":"100","top":"spider","vl":"CMC 100HD"},{"id":"a24","name":"LIFT TRAILER '25","spec":"2025 NoRamp Lift Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CJ58425","note":"","tag":"Lift Trailer","hc":"trailer","tt":"lift","fam":"LIFTTR","code":"LT25","top":"lifttrailer","vl":"LT '25"},{"id":"a25","name":"HOPPER","spec":"2025 PHC Rig \"Hopper\"","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC"],"status":"running","yard":"Rush Scottsville","plate":"27575NG","note":"","tag":"Hopper","hc":"truck","fam":"PHC","code":"HOP","top":"cabover","vl":"HOPPER"},{"id":"a26","name":"RED REISER TILT","spec":"2025 Red Reiser Tilt Bed Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC","LC"],"status":"running","yard":"Brighton","plate":"CH71811","note":"","tag":"Tilt Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"TILT","top":"flattrailer","vl":"TILT"},{"id":"a27","name":"RAV4 '26","spec":"2026 Rav 4","cat":"SALES","shape":"CAR","ops":["SALES"],"status":"running","yard":"Brighton","plate":"MCK9239","note":"","tag":"Rav4","hc":"truck","fam":"SALES","code":"R26","top":"car","vl":"RAV4 26"},{"id":"a28","name":"BANDIT 18XP YELLOW","spec":"Bandit 18xp Yellow Chipper","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Off-site","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"18Y","top":"chipper","vl":"18XP YEL"},{"id":"a29","name":"BANDIT 15XPC","spec":"Bandit 15xpc","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"15","top":"chipper","vl":"15XPC"},{"id":"a30","name":"BANDIT 19XPC '22","spec":"Bandit 19XPC","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"19B","top":"chipper","vl":"19XPC '22"},{"id":"a31","name":"MORBARK 15R","spec":"Morbark 15R","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"parked","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"M15","top":"chipper","vl":"MORBARK 15R"},{"id":"a32","name":"MORBARK 1621","spec":"Morbark 1621","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"M16","top":"chipper","vl":"MORBARK 1621"},{"id":"a33","name":"F550 LAWN","spec":"F550 Lawn Truck Ford 2025","cat":"LAWN","shape":"LANDSCAPE","ops":["LC","PHC"],"status":"running","yard":"Rush Scottsville","plate":"32100NG","note":"","tag":"Lawn Truck","hc":"truck","pull":["flatbed"],"fam":"LAWN","code":"LAWN","top":"landscape","vl":"F550 LAWN"},{"id":"a34","name":"KUBOTA SPRAY","spec":"Kubota Spray Rig","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC","LC"],"status":"running","yard":"Rush Scottsville","plate":"","note":"","tag":"Spray Rig","hc":"carried","rides":["flatbed"],"fam":"PHC","code":"KUB","top":"utv","vl":"KUBOTA"},{"id":"a35","name":"AVANT '18","spec":"Avant 2018","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"parked","yard":"Brighton","plate":"","note":"","tag":"Avant","hc":"carried","rides":["flatbed"],"fam":"AVANT","code":"A18","top":"avant","vl":"AVANT 18"},{"id":"a36","name":"AVANT VIRGINIA","spec":"Avant Virginia","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"running","yard":"Off-site","plate":"","note":"","tag":"Avant","hc":"carried","rides":["flatbed"],"fam":"AVANT","code":"AVA","top":"avant","vl":"AVANT VA"},{"id":"a37","name":"RAYCO RG45X","spec":"Rayco Stump Grinder and Trailer","cat":"STUMP GRINDER","shape":"GRINDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"ck79362","note":"","tag":"Grinder","hc":"towed","tt":"grinder","fam":"GRINDER","code":"RG45","top":"grinder","vl":"RG45X"},{"id":"a38","name":"WESTCHESTER F750","spec":"Westchester F750 Chip Truck","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Off-site","plate":"27638NG","note":"","tag":"Chip Truck","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"WCH","top":"chipbody","vl":"WESTCHESTER"}];
+const SEED_ASSETS = [{"id":"a01","name":"F750 BUCKET","spec":"2017 F750 Bucket Truck","cat":"AERIAL","shape":"BUCKET","ops":["GTC"],"status":"running","yard":"Brighton","plate":"25633MM","note":"","tag":"Bucket","hc":"truck","pull":["flatbed"],"fam":"AERIAL","code":"BKT","top":"bucket","vl":"F750 BUCKET"},{"id":"a02","name":"F650 CHIP","spec":"2018 F650 Chip Truck - 4X2 2dr Regular Cab 158","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Brighton","plate":"25634MM","note":"","tag":"Chip Truck","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"F650","top":"chipbody","vl":"F650 CHIP"},{"id":"a03","name":"F250 LIFT TRUCK","spec":"2019 F250 - Lift Truck","cat":"SERVICE","shape":"PICKUP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"95009MM","note":"","tag":"Lift Truck","hc":"truck","pull":["lift"],"fam":"SERVICE","code":"F250","top":"flatbed","vl":"F250"},{"id":"a04","name":"F350 LIFT TRUCK","spec":"2019 F350 Lift Truck","cat":"SERVICE","shape":"PICKUP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"65099NA","note":"","tag":"Lift Truck","hc":"truck","pull":["lift"],"fam":"SERVICE","code":"F350","top":"flatbed","vl":"F350"},{"id":"a05","name":"F750 CHIP '19","spec":"2019 F750 Chip Truck - 4X2 4dr SuperCab 179-28","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Brighton","plate":"31108MN","note":"","tag":"Chip Truck","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"F750","top":"chipbody","vl":"F750 '19"},{"id":"a06","name":"BELMONT 10K","spec":"2020 Belmont Dump Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CD 70633","note":"","tag":"Dump Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"BEL","top":"flattrailer","vl":"BELMONT"},{"id":"a07","name":"TEXAS","spec":"2021 F750 Chip Truck","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Off-site","plate":"74251NE","note":"","tag":"Texas","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"TEX","top":"chipbody","vl":"TEXAS"},{"id":"a08","name":"WOOD TRUCK","spec":"2021 F750 Dump Truck 4X2 4dr SuperCab 179-281","cat":"DUMP TRUCK","shape":"DUMP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"99168NE","note":"","tag":"Wood Truck","hc":"truck","pull":["flatbed"],"fam":"WOOD","code":"WOOD","top":"rolloff","vl":"WOOD TRUCK"},{"id":"a09","name":"CMC 83HD+ '21","spec":"2021 Lift - CMC 83HD+","cat":"SPIDER LIFT","shape":"SPIDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Lift","hc":"carried","rides":["lift"],"fam":"AERIAL","code":"83+","top":"spider","vl":"CMC 83HD+"},{"id":"a10","name":"LIFT TRAILER '21","spec":"2021 Lift Trailer - No Ramp","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CA86310","note":"","tag":"Lift Trailer","hc":"trailer","tt":"lift","fam":"LIFTTR","code":"LT21","top":"lifttrailer","vl":"LT '21"},{"id":"a11","name":"AVANT '21","spec":"2021 Avant","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Avant","hc":"carried","rides":["flatbed"],"fam":"AVANT","code":"A21","top":"avant","vl":"AVANT 21"},{"id":"a12","name":"RAV4 '21","spec":"2021 Rav 4 - Sales - AWD XLE 4dr SUV","cat":"SALES","shape":"CAR","ops":["SALES"],"status":"running","yard":"Brighton","plate":"KKJ2683","note":"","tag":"Rav4","hc":"truck","fam":"SALES","code":"R21","top":"car","vl":"RAV4 21"},{"id":"a13","name":"REISER 20FT","spec":"2021 Reiser 20 ft. 2-Axle Platform/Flatbed Tra","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CJ58195","note":"","tag":"Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"R20","top":"flattrailer","vl":"REISER 20"},{"id":"a14","name":"DARTH","spec":"2022 F250 PHC Pickup - Black","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC"],"status":"running","yard":"Rush Scottsville","plate":"76997 ML","note":"","tag":"Darth","hc":"truck","fam":"PHC","code":"DRTH","top":"flatbed","vl":"DARTH"},{"id":"a15","name":"BRIDGETTE","spec":"2022 F550 Chip Truck","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Brighton","plate":"51734NC","note":"","tag":"Bridgette","hc":"truck","pull":["chipper","grinder"],"fam":"CHIP","code":"BRDG","top":"chipbody","vl":"BRIDGETTE"},{"id":"a16","name":"CMC 83HD '22","spec":"2022 Lift CMC 83HD","cat":"SPIDER LIFT","shape":"SPIDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Lift","hc":"carried","rides":["lift"],"fam":"AERIAL","code":"83","top":"spider","vl":"CMC 83HD"},{"id":"a17","name":"RATTLIN LOG","spec":"2023 F750 Dump Truck","cat":"DUMP TRUCK","shape":"DUMP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"38858 ND","note":"","tag":"Rattlin Log","hc":"truck","pull":["flatbed"],"fam":"WOOD","code":"RTL","top":"rolloff","vl":"RATTLIN LOG"},{"id":"a18","name":"ISUZU PHC","spec":"2023 Isuzu PHC Rig","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC"],"status":"running","yard":"Rush Scottsville","plate":"95112ND","note":"","tag":"PHC Rig","hc":"truck","fam":"PHC","code":"ISZ","top":"cabover","vl":"ISUZU"},{"id":"a19","name":"LIFT TRAILER '23","spec":"2023 Lift Trailer - No Ramp","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"cd 71509","note":"","tag":"Lift Trailer","hc":"trailer","tt":"lift","fam":"LIFTTR","code":"LT23","top":"lifttrailer","vl":"LT '23"},{"id":"a20","name":"REISER '23","spec":"2023 Reiser Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CD70287","note":"","tag":"Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"R23","top":"flattrailer","vl":"REISER 23"},{"id":"a21","name":"BANDIT 19XPC '24","spec":"2024 Bandit 19XPC Big Chipper","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"19A","top":"chipper","vl":"19XPC '24"},{"id":"a22","name":"COROLLA","spec":"2024 Toyota Corolla","cat":"SALES","shape":"CAR","ops":["SALES"],"status":"running","yard":"Brighton","plate":"HYH8990","note":"","tag":"Corolla","hc":"truck","fam":"SALES","code":"COR","top":"car","vl":"COROLLA"},{"id":"a23","name":"CMC 100HD","spec":"2025 CMC 100HD Lift","cat":"SPIDER LIFT","shape":"SPIDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Lift","hc":"carried","rides":["lift"],"fam":"AERIAL","code":"100","top":"spider","vl":"CMC 100HD"},{"id":"a24","name":"LIFT TRAILER '25","spec":"2025 NoRamp Lift Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CJ58425","note":"","tag":"Lift Trailer","hc":"trailer","tt":"lift","fam":"LIFTTR","code":"LT25","top":"lifttrailer","vl":"LT '25"},{"id":"a25","name":"HOPPER","spec":"2025 PHC Rig \"Hopper\"","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC"],"status":"running","yard":"Rush Scottsville","plate":"27575NG","note":"","tag":"Hopper","hc":"truck","fam":"PHC","code":"HOP","top":"cabover","vl":"HOPPER"},{"id":"a26","name":"RED REISER TILT","spec":"2025 Red Reiser Tilt Bed Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC","LC"],"status":"running","yard":"Brighton","plate":"CH71811","note":"","tag":"Tilt Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"TILT","top":"flattrailer","vl":"TILT"},{"id":"a27","name":"RAV4 '26","spec":"2026 Rav 4","cat":"SALES","shape":"CAR","ops":["SALES"],"status":"running","yard":"Brighton","plate":"MCK9239","note":"","tag":"Rav4","hc":"truck","fam":"SALES","code":"R26","top":"car","vl":"RAV4 26"},{"id":"a28","name":"BANDIT 18XP YELLOW","spec":"Bandit 18xp Yellow Chipper","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Off-site","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"18Y","top":"chipper","vl":"18XP YEL"},{"id":"a29","name":"BANDIT 15XPC","spec":"Bandit 15xpc","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"15","top":"chipper","vl":"15XPC"},{"id":"a30","name":"BANDIT 19XPC '22","spec":"Bandit 19XPC","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"19B","top":"chipper","vl":"19XPC '22"},{"id":"a31","name":"MORBARK 15R","spec":"Morbark 15R","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"parked","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"M15","top":"chipper","vl":"MORBARK 15R"},{"id":"a32","name":"MORBARK 1621","spec":"Morbark 1621","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"M16","top":"chipper","vl":"MORBARK 1621"},{"id":"a33","name":"F550 LAWN","spec":"F550 Lawn Truck Ford 2025","cat":"LAWN","shape":"LANDSCAPE","ops":["LC","PHC"],"status":"running","yard":"Rush Scottsville","plate":"32100NG","note":"","tag":"Lawn Truck","hc":"truck","pull":["flatbed"],"fam":"LAWN","code":"LAWN","top":"landscape","vl":"F550 LAWN"},{"id":"a34","name":"KUBOTA SPRAY","spec":"Kubota Spray Rig","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC","LC"],"status":"running","yard":"Rush Scottsville","plate":"","note":"","tag":"Spray Rig","hc":"carried","rides":["flatbed"],"fam":"PHC","code":"KUB","top":"utv","vl":"KUBOTA"},{"id":"a35","name":"AVANT '18","spec":"Avant 2018","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"parked","yard":"Brighton","plate":"","note":"","tag":"Avant","hc":"carried","rides":["flatbed"],"fam":"AVANT","code":"A18","top":"avant","vl":"AVANT 18"},{"id":"a36","name":"AVANT VIRGINIA","spec":"Avant Virginia","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"running","yard":"Off-site","plate":"","note":"","tag":"Avant","hc":"carried","rides":["flatbed"],"fam":"AVANT","code":"AVA","top":"avant","vl":"AVANT VA"},{"id":"a37","name":"RAYCO RG45X","spec":"Rayco Stump Grinder and Trailer","cat":"STUMP GRINDER","shape":"GRINDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"ck79362","note":"","tag":"Grinder","hc":"towed","tt":"grinder","fam":"GRINDER","code":"RG45","top":"grinder","vl":"RG45X"},{"id":"a38","name":"WESTCHESTER F750","spec":"Westchester F750 Chip Truck","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Off-site","plate":"27638NG","note":"","tag":"Chip Truck","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"WCH","top":"chipbody","vl":"WESTCHESTER"},{"id":"a39","name":"AVANT 755i","spec":"2025 Avant 755i (the big Avant)","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Big Avant","hc":"towed","tt":"flatbed","fam":"AVANT","code":"755","top":"avant","vl":"AVANT 755"},{"id":"a40","name":"F750 WOOD '27","spec":"2027 Ford F750 Wood Truck","cat":"DUMP TRUCK","shape":"DUMP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Wood Truck","hc":"truck","pull":["flatbed"],"fam":"WOOD","code":"W27","top":"rolloff","vl":"WOOD '27"}];
 
 const SEED_PEOPLE = [{"id":"p01","name":"James","d":"JAMES","c":"#DC4520"},{"id":"p02","name":"James B","d":"JAMES B","c":"#DEB89A"},{"id":"p03","name":"Jason Beardsley","d":"JASON BEARDSLEY","c":"#8CC220"},{"id":"p04","name":"Jay H","d":"JAY H","c":"#0E7C86"},{"id":"p05","name":"Jeff Royston","d":"JEFF ROYSTON","c":"#66DFC0"},{"id":"p06","name":"Joe G","d":"JOE G","c":"#7A7A7A"},{"id":"p07","name":"Kevin V","d":"KEVIN V","c":"#2E4258"},{"id":"p08","name":"Kory H","d":"KORY H","c":"#9EC0DE"},{"id":"p09","name":"Liz DeMay","d":"LIZ DEMAY","c":"#A8D149"},{"id":"p10","name":"Luke","d":"LUKE","c":"#3B9DE8"},{"id":"p11","name":"Max","d":"MAX","c":"#A88C8C"},{"id":"p12","name":"Mike L","d":"MIKE L","c":"#FFC800"},{"id":"p13","name":"Mike T","d":"MIKE T","c":"#5A6670"},{"id":"p14","name":"Rebecca V","d":"REBECCA V","c":"#5A6670"},{"id":"p15","name":"Robert L","d":"ROBERT L","c":"#B02000"},{"id":"p16","name":"Sarah","d":"SARAH","c":"#00ACA0"},{"id":"p17","name":"Shawn","d":"SHAWN","c":"#A32B7C"},{"id":"p18","name":"Trevor","d":"TREVOR","c":"#A85BC8"}];
 
@@ -55,11 +56,41 @@ const SEED_RIGS = [
 const ST = {
   running: { key: "running", label: "Running",    short: "RUN",  color: "#17A05B", note: "Safe to operate" },
   watch:   { key: "watch",   label: "Watch",      short: "WCH",  color: "#E5A100", note: "Operable — flagged" },
-  shop:    { key: "shop",    label: "In for repair", short: "REPAIR", color: "#3A8DD8", note: "Tagged out — being repaired" },
-  tagged:  { key: "tagged",  label: "Broken",        short: "BROKEN", color: "#D93B2B", note: "Tagged out — broken, do not operate" },
+  tagged:  { key: "tagged",  label: "Broken",        short: "BROKEN", color: "#D93B2B", note: "Broken — do not operate" },
   parked:  { key: "parked",  label: "Parked",     short: "PRK",  color: "#6E7A83", note: "Off the schedule" },
 };
-const ST_ORDER = ["running", "watch", "shop", "tagged", "parked"];
+const ST_ORDER = ["running", "watch", "tagged", "parked"];
+
+/* Broken is DATED (owner, Nov 23): asset.broken = [{ from: iso, to: iso|null }]
+   — broken from `from`, back in service on `to`. Breaking a unit on a future
+   day, or bringing it back on a future day, never changes the days before.
+   Older records only had status "tagged"/"shop": broken on every day. */
+const LEGACY_FROM = "2000-01-01";
+const isLegacyDown = (a) => !a.broken && (a.status === "tagged" || a.status === "shop");
+const spansOf = (a) => (a.broken ? a.broken.map((x) => ({ ...x })) : isLegacyDown(a) ? [{ from: LEGACY_FROM, to: null }] : []);
+const brokenOn = (a, iso) => !!a && spansOf(a).some((x) => x.from <= iso && (!x.to || iso < x.to));
+/** The assets as they stand on a day: status "tagged" when broken that day. */
+function assetsOn(assets, iso) {
+  const out = {};
+  for (const [id, a] of Object.entries(assets || {})) {
+    const base = a.status === "tagged" || a.status === "shop" ? "running" : a.status;
+    out[id] = brokenOn(a, iso) ? { ...a, status: "tagged" } : base === a.status ? a : { ...a, status: base };
+  }
+  return out;
+}
+/** New broken spans for a unit put in (on) or taken out (!on) of Broken on a day. */
+function brokenAfter(a, iso, on) {
+  let sp = spansOf(a);
+  if (on) {
+    if (sp.some((x) => x.from <= iso && (!x.to || iso < x.to))) return sp;
+    const next = sp.map((x) => x.from).filter((f) => f > iso).sort()[0] || null;
+    sp.push({ from: iso, to: next });
+  } else {
+    sp = sp.flatMap((x) => (x.from <= iso && (!x.to || iso < x.to) ? (x.from === iso ? [] : [{ ...x, to: iso }]) : [x]));
+  }
+  return sp.sort((x, y) => (x.from < y.from ? -1 : 1));
+}
+const fmtIso = (iso) => (iso === LEGACY_FROM ? "before this board" : new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }));
 
 const DAY = {
   on:    { key: "on",    label: "On the board", short: "ON",    color: "#17A05B" },
@@ -272,17 +303,24 @@ async function sGet(key, shared = true) {
 const SPEC = Object.fromEntries(SEED_ASSETS.map((a) => [a.id, a]));
 const SPEC_KEYS = ["name", "spec", "cat", "shape", "top", "fam", "code", "vl", "hc", "tt", "pull", "avoid", "rides", "plate"];
 const LABEL_KEYS = ["name", "plate", "vl", "spec"];
+/* Owner, Nov 23: the board is for scheduling, not fleet upkeep — trailers and
+   the sales cars are left off it entirely. A lift or Avant behind a truck is
+   assumed to bring its own trailer, so it hooks straight to the truck, like
+   the grinder (which can go behind any truck). */
+const offBoard = (a) => a && (a.hc === "trailer" || a.cat === "TRAILER" || a.cat === "SALES" || a.shape === "CAR");
+const direct = (a) => (a.hc === "carried" ? { ...a, hc: "towed", tt: (a.rides || [])[0] || "flatbed" } : a);
 const reSpec = (assets) => {
   const out = {};
   for (const [id, a] of Object.entries(assets || {})) {
     const sp = SPEC[id];
-    if (!sp) { out[id] = a; continue; }
+    if (offBoard(sp || a)) continue;
+    if (!sp) { out[id] = direct(a); continue; }
     const merged = { ...a };
     SPEC_KEYS.forEach((k) => { if (sp[k] !== undefined) merged[k] = sp[k]; else delete merged[k]; });
     // Labels the owner changed on the Equipment tab (name, plate, drawing label)
     // win over the code's; the drawing / towing keys never do.
     if (a.custom) LABEL_KEYS.forEach((k) => { if (a.custom[k]) merged[k] = a.custom[k]; });
-    out[id] = merged;
+    out[id] = direct(merged);
   }
   return out;
 };
@@ -312,7 +350,7 @@ function mergeCore(a, b) {
   };
 }
 const freshCore = () => ({
-  assets: asMap(SEED_ASSETS), crews: asMap(SEED_CREWS), people: asMap(SEED_PEOPLE),
+  assets: reSpec(asMap(SEED_ASSETS)), crews: asMap(SEED_CREWS), people: asMap(SEED_PEOPLE),
   rigs: asMap(SEED_RIGS), log: [],
 });
 const live = (map) => Object.values(map || {}).filter((x) => !x.del);
@@ -1227,7 +1265,7 @@ const CSS = scopeCss(`
 .sm-ic { flex:0 0 30px; display:flex; align-items:flex-end; justify-content:center; }
 .sm-t { flex:1; min-width:0; display:block; }
 .sm-st { flex:none; font-size:9px; letter-spacing:.08em; border:1px solid; border-radius:2px; padding:1px 4px; }
-.tile-sm[data-st="shop"] { background:repeating-linear-gradient(135deg, rgba(58,141,216,.10) 0 7px, transparent 7px 14px), ${C.tile}; }
+
 .bar { flex:0 0 4px; }
 @media (prefers-reduced-motion:no-preference){ .flash { animation:flash 1.6s ease-out 1; } }
 @keyframes flash { 0%{box-shadow:0 0 0 2px ${C.ink}} 100%{box-shadow:0 1px 0 #10151a} }
@@ -1718,16 +1756,15 @@ function ConditionDock({ drag, registerZone, onDrop }) {
    as the card's outline; repair and broken units sink to the bottom. */
 const EQUIP_GROUPS = [
   { key: "aerial", label: "Aerial lifts", test: (a) => a.cat === "SPIDER LIFT" || a.cat === "AERIAL" || a.fam === "AERIAL" },
-  { key: "truck", label: "Trucks", test: (a) => a.hc === "truck" && a.cat !== "SALES" },
-  { key: "trailer", label: "Trailers", test: (a) => a.hc === "trailer" || a.cat === "TRAILER" },
+  { key: "pickup", label: "Pickups", test: (a) => a.shape === "PICKUP" || /pickup/i.test(a.spec || "") },
+  { key: "truck", label: "Trucks", test: (a) => a.hc === "truck" },
   { key: "handler", label: "Material handlers", test: (a) => a.cat === "AVANT" || a.shape === "LOADER" },
   { key: "chipper", label: "Chippers", test: (a) => a.cat === "CHIPPER" || a.shape === "CHIPPER" },
   { key: "grinder", label: "Stump grinders", test: (a) => a.cat === "STUMP GRINDER" || a.shape === "GRINDER" },
-  { key: "spray", label: "Sprayers & UTVs", test: (a) => a.hc === "carried" && a.fam === "PHC" },
-  { key: "car", label: "Sales cars", test: (a) => a.cat === "SALES" || a.shape === "CAR" },
+  { key: "spray", label: "Sprayers & UTVs", test: (a) => a.top === "utv" },
 ];
 const equipGroupOf = (a) => (EQUIP_GROUPS.find((g) => g.test(a)) || { key: "other" }).key;
-const SINK = { running: 0, watch: 1, parked: 2, shop: 3, tagged: 4 };
+const SINK = { running: 0, watch: 1, parked: 2, tagged: 4 };
 
 function FleetView({ core, crewsMap, engine, filters, setFilters, onOpen, flashSet, onAdd }) {
   const { begin } = engine;
@@ -1786,9 +1823,9 @@ function FleetView({ core, crewsMap, engine, filters, setFilters, onOpen, flashS
           <div className="col" key={g.key} data-wide={g.items.length > 8 ? 1 : 0}>
             <div className="col-h" style={{ borderTopColor: C.edge }}>
               <em className="stencil">{g.label}</em>
-              {g.items.some((a) => a.status === "shop" || a.status === "tagged") && (
+              {g.items.some((a) => a.status === "tagged") && (
                 <span className="mono" style={{ fontSize: 10.5, color: ST.tagged.color }}>
-                  {g.items.filter((a) => a.status === "shop" || a.status === "tagged").length} out
+                  {g.items.filter((a) => a.status === "tagged").length} broken
                 </span>
               )}
               <u className="mono">{g.items.length}</u>
@@ -1830,6 +1867,18 @@ const Plate = ({ p, onBegin, off, onClick, locked, warn }) => (
     {off && <span className="plate-v">{off}</span>}
   </span>
 );
+
+/* Which part of a load card was grabbed: the truck (top) takes the whole load;
+   what it tows (below the hitch) comes off on its own — that is how you unhook. */
+function grabbed(e, members) {
+  if (members.length < 2) return members;
+  const svg = e.currentTarget.querySelector && e.currentTarget.querySelector("svg");
+  if (!svg) return members;
+  const r = svg.getBoundingClientRect();
+  const lead = members.find((m) => m.hc === "truck") || members[0];
+  const cut = (shapeOf(lead).l + TGAP / 2) / loadDims(members).h;
+  return (e.clientY - r.top) / Math.max(1, r.height) > cut ? members.filter((m) => m !== lead) : members;
+}
 
 const LoadCard = ({ members, onBegin, onClick, scale = 1, label = true, broken, odd, linked, onLink }) => (
   <span className={`lcard${broken ? " broke" : ""}${linked ? " linked" : ""}`} onPointerDown={onBegin} onClick={onClick}
@@ -1879,8 +1928,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
     return [...set];
   };
   const stackShown = (lead) => { const o = opsOfStack(lead); return !o.length || o.some((x) => ops[x]); };
-  const broken = (lead) => membersOf(lead).some((m) => m.status === "tagged" || m.status === "shop");
-  const taggedOut = (lead) => membersOf(lead).some((m) => m.status === "tagged");
+  const broken = (lead) => membersOf(lead).some((m) => m.status === "tagged");
   // who / what is on a crew today (the bins used screen positions, which left
   // people and trucks dropped onto a crew still showing in the room / yard)
   const crewHas = useMemo(() => {
@@ -1930,15 +1978,13 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
   const away = roster.filter((p) => offToday(p.id));
   const gMem = (g) => g.members.map((i) => assets[i]).filter((a) => a && !a.del);
   const gShown = (g) => { const o = new Set(); gMem(g).forEach((m) => (m.ops || []).forEach((x) => o.add(x))); return !o.size || [...o].some((x) => ops[x]); };
-  const gDown = (g) => gMem(g).some((m) => m.status === "tagged" || m.status === "shop");
-  const gTagged = (g) => gMem(g).some((m) => m.status === "tagged");
+  const gDown = (g) => gMem(g).some((m) => m.status === "tagged");
   const parked = yardGroups(day, assets).filter(gShown);
   const yard = parked.filter((g) => !gDown(g));
-  const shop = parked.filter((g) => gDown(g) && !gTagged(g));
-  const brokeList = parked.filter(gTagged);
+  const brokeList = parked.filter(gDown);
   const binCard = (g, from, scale, down) => (
     <LoadCard key={g.id} members={gMem(g)} scale={scale} broken={down} onClick={() => onOpenAsset(g.id)}
-              onBegin={(e) => begin(e, { kind: "stack", id: g.id, members: g.members, name: gMem(g).map((m) => m.tag).join(" · "), from })} />
+              onBegin={(e) => { const part = grabbed(e, gMem(g)); begin(e, { kind: "stack", id: part[0].id, members: part.map((m) => m.id), name: part.map((m) => m.tag).join(" · "), from: part.length === gMem(g).length ? from : `part:${from}` }); }} />
   );
   const hot = (id) => (drag && drag.over === id ? " hot" : "");
   const outIssues = [];
@@ -2054,12 +2100,9 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
                     {b.lSlots.map(({ l, x, y }) => (
                       <div key={l.id} className="slot" style={{ left: x, top: y }}>
                         <LoadCard members={l.members} broken={broken(l.id)} odd={stackIssues(l.members)} label={false}
-                                  linked={!!rigOf(core, l.lead.id)}
-                                  onLink={() => { const r = rigOf(core, l.lead.id);
-                                    r ? onUnlink(r.id) : onLink(b.crew.id, l.members.map((m) => m.id)); }}
                                   onClick={() => onOpenAsset(l.lead.id)}
-                                  onBegin={(e) => begin(e, { kind: "stack", id: l.id, members: l.members.map((m) => m.id),
-                                    name: l.members.map((m) => m.tag).join(" · "), from: `crew:${b.crew.id}` })} />
+                                  onBegin={(e) => { const part = grabbed(e, l.members); begin(e, { kind: "stack", id: part[0].id, members: part.map((m) => m.id),
+                                    name: part.map((m) => m.tag).join(" · "), from: part.length === l.members.length ? `crew:${b.crew.id}` : `part:crew:${b.crew.id}` }); }} />
                       </div>
                     ))}
                 </Zone>
@@ -2078,18 +2121,10 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
               </div>
             </div>
           </Zone>
-          <Zone id="rep" accepts={["stack"]} registerZone={registerZone} onDrop={(it) => onMove(it, "rep")}>
-            <div className={`bin rep${hot("rep")}`}>
-              <div className="bin-h">IN FOR REPAIR<b>{shop.length}</b></div>
-              <div className="bin-b row">
-                {shop.map((g) => binCard(g, "rep", 0.44, true))}
-                {!shop.length && <span className="hint">nothing being serviced</span>}
-              </div>
-            </div>
-          </Zone>
           <Zone id="broke" accepts={["stack"]} registerZone={registerZone} onDrop={(it) => onMove(it, "broke")}>
             <div className={`bin broke${hot("broke")}`}>
               <div className="bin-h">BROKEN · DO NOT OPERATE<b>{brokeList.length}</b></div>
+              <div className="hint" style={{ padding: "0 8px" }}>Stays broken on later days until you drag it out. Taking it out on a later day doesn't change the days before.</div>
               <div className="bin-b row">
                 {brokeList.map((g) => binCard(g, "broke", 0.44, true))}
                 {!brokeList.length && <span className="hint">nothing broken</span>}
@@ -2167,7 +2202,7 @@ function buildDaySheet(core, crewsMap, week, dayIndex, opt) {
 
     const gear = [];
     (c.iron || []).map((i) => core.assets[i]).filter((a) => a && !a.del).forEach((a) => {
-      if (a.status === "tagged" || a.status === "shop") {
+      if (a.status === "tagged") {
         grounded.push(`${a.name} — ${ST[a.status].label.toLowerCase()} — on ${c.name}`);
         if (opt.skipDown) return;
       }
@@ -2388,7 +2423,7 @@ const Sheet = ({ onClose, title, sub, tone, children }) => (
   </div>
 );
 
-function AssetSheet({ a, core, onClose, onStatus, onField, onToggleOp, onDelete, onLabel }) {
+function AssetSheet({ a, core, iso, onClose, onStatus, onField, onToggleOp, onDelete, onLabel }) {
   const st = ST[a.status];
   const using = live(core.crews).filter((c) => (c.iron || []).includes(a.id));
   /* text fields commit on blur and on close, so typing is not one write per key */
@@ -2410,7 +2445,12 @@ function AssetSheet({ a, core, onClose, onStatus, onField, onToggleOp, onDelete,
         <Machine shape={a.shape} dim={a.status === "parked"} />
       </div>
 
-      <div className="fl stencil">CONDITION</div>
+      <div className="fl stencil">CONDITION{iso ? ` ON ${fmtIso(iso).toUpperCase()}` : ""}</div>
+      {spansOf(a).length > 0 && (
+        <div className="hint" style={{ padding: "0 0 6px" }}>
+          {spansOf(a).map((x, i) => <div key={i}>Broken from {fmtIso(x.from)}{x.to ? ` — back in service ${fmtIso(x.to)}` : " — until taken out of Broken"}</div>)}
+        </div>
+      )}
       <div className="opts">
         {ST_ORDER.map((k) => (
           <button key={k} className="opt stencil" data-on={a.status === k ? 1 : 0} onClick={() => onStatus(a.id, k)}>
@@ -2491,9 +2531,8 @@ function AssetSheet({ a, core, onClose, onStatus, onField, onToggleOp, onDelete,
    hitches correctly; you give it a name, plate, yard and operations. */
 const KIND_NAMES = {
   chipbody: "Chip truck", rolloff: "Dump / wood truck", flatbed: "Pickup (flatbed)", bucket: "Bucket truck",
-  cabover: "Cab-over rig (PHC)", landscape: "Lawn truck", utv: "UTV / spray rig", car: "Car",
-  spider: "Spider lift", avant: "Avant", chipper: "Chipper", flattrailer: "Flatbed trailer",
-  lifttrailer: "Lift trailer", grinder: "Stump grinder",
+  cabover: "Cab-over rig (PHC)", landscape: "Lawn truck", utv: "UTV / spray rig",
+  spider: "Spider lift", avant: "Avant", chipper: "Chipper", grinder: "Stump grinder",
 };
 function AddAssetSheet({ onClose, onCreate }) {
   const kinds = Object.keys(KIND_NAMES).map((top) => ({ top, tpl: SEED_ASSETS.find((x) => x.top === top) })).filter((k) => k.tpl);
@@ -2507,8 +2546,8 @@ function AddAssetSheet({ onClose, onCreate }) {
     onCreate({
       name, vl: name.slice(0, 12), code: name.replace(/[^A-Z0-9]/g, "").slice(0, 4) || "NEW",
       spec: KIND_NAMES[top] + (f.plate ? " · " + f.plate : ""), plate: f.plate.trim(), yard: f.yard, ops, status: "running", note: "",
-      tag: f.tag.trim() || tpl.tag, cat: tpl.cat, shape: tpl.shape, top: tpl.top, fam: tpl.fam, hc: tpl.hc,
-      ...(tpl.tt ? { tt: tpl.tt } : {}), ...(tpl.pull ? { pull: tpl.pull.slice() } : {}), ...(tpl.avoid ? { avoid: tpl.avoid.slice() } : {}), ...(tpl.rides ? { rides: tpl.rides.slice() } : {}),
+      tag: f.tag.trim() || tpl.tag, cat: tpl.cat, shape: tpl.shape, top: tpl.top, fam: tpl.fam, hc: tpl.hc === "carried" ? "towed" : tpl.hc,
+      ...(tpl.tt || tpl.rides ? { tt: tpl.tt || tpl.rides[0] } : {}), ...(tpl.pull ? { pull: tpl.pull.slice() } : {}), ...(tpl.avoid ? { avoid: tpl.avoid.slice() } : {}), ...(tpl.rides ? { rides: tpl.rides.slice() } : {}),
     });
   };
   return (
@@ -2558,7 +2597,7 @@ function CrewSheet({ c, core, day, offToday, onClose, onRename, onOps, onDelete,
   const free = yardGroups(day, core.assets);
   const memOf = (g) => g.members.map((m) => core.assets[m]).filter((a) => a && !a.del);
   const opsMismatch = (p) => (p.ops && p.ops.length && c.ops && !p.ops.includes(c.ops) ? `not set up for ${c.ops}` : "");
-  const statusWord = (k) => { const m = memOf(k); return m.some((a) => a.status === "tagged") ? " — BROKEN" : m.some((a) => a.status === "shop") ? " — in the shop" : ""; };
+  const statusWord = (k) => { const m = memOf(k); return m.some((a) => a.status === "tagged") ? " — BROKEN" : ""; };
   return (
     <Sheet onClose={onClose} title={c.name} sub={`${people.length} on the crew · ${mine.length} load${mine.length === 1 ? "" : "s"}`}>
       <div className="fl stencil">CREW NAME</div>
@@ -2596,7 +2635,7 @@ function CrewSheet({ c, core, day, offToday, onClose, onRename, onOps, onDelete,
       <div className="fl stencil">EQUIPMENT</div>
       <div style={{ display: "grid", gap: 4 }}>
         {mine.map((g) => (
-          <div key={g.id} className="mini stencil" style={{ justifyContent: "space-between", borderLeftColor: memOf(g).some((a) => a.status === "tagged" || a.status === "shop") ? ST.tagged.color : C.edge }}>
+          <div key={g.id} className="mini stencil" style={{ justifyContent: "space-between", borderLeftColor: memOf(g).some((a) => a.status === "tagged") ? ST.tagged.color : C.edge }}>
             <span>{memOf(g).map((m) => m.tag || m.name).join(" · ")}{statusWord(g)}</span>
             <button className="lnk" title="Back to the yard" onClick={() => onRemoveStack(g)}>✕</button>
           </div>
@@ -2861,7 +2900,8 @@ export default function ShopBoard({ user, isAdmin = false }) {
   const [dayFocus, setDayFocus] = useState(null);
   const [flashSet, setFlashSet] = useState(new Set());
   const [filters, setFilters] = useState({ op: "", yard: "", st: "", q: "" });
-  const [cur, setCur] = useState(() => isoOf(new Date()));
+  const [cur, setCur] = useState(() => sharedDay(isoOf(new Date())));
+  useEffect(() => { setSharedDay(cur); }, [cur]);
   const wkIso = useMemo(() => isoOf(weekStartOf(new Date(cur + "T00:00:00"))), [cur]);
   const dayIndex = useMemo(
     () => Math.round((new Date(cur + "T00:00:00") - new Date(wkIso + "T00:00:00")) / 86400000), [cur, wkIso]);
@@ -3158,9 +3198,25 @@ export default function ShopBoard({ user, isAdmin = false }) {
 
   /* --- actions ---------------------------------------------------------- */
   const nameOf = (id) => (coreRef.current.assets[id] || {}).name || id;
+  /* put units in / take them out of Broken on the day being viewed */
+  const setBroken = (ids, on, label) => {
+    const iso = curRef.current;
+    const todo = ids.filter((m) => { const a = coreRef.current.assets[m]; return a && brokenOn(a, iso) !== on; });
+    if (!todo.length) return;
+    apply((d, s) => todo.forEach((m) => {
+      const a = d.assets[m]; if (!a) return;
+      a.broken = brokenAfter(a, iso, on);
+      if (a.status === "tagged" || a.status === "shop") a.status = "running";
+      a.at = s.at; a.by = s.by;
+    }), `${label || todo.map(nameOf).join(" · ")} → ${on ? "Broken" : "back in service"} ${fmtIso(iso)}`, true);
+  };
   const setStatus = (id, code) => {
-    if ((coreRef.current.assets[id] || {}).status === code) return;
-    apply((d, s) => { const a = d.assets[id]; if (a) { a.status = code; a.at = s.at; a.by = s.by; } },
+    const a = coreRef.current.assets[id]; if (!a) return;
+    if (code === "tagged") { setBroken([id], true); return; }
+    if (brokenOn(a, curRef.current)) setBroken([id], false);
+    const base = a.status === "tagged" || a.status === "shop" ? "running" : a.status;
+    if (base === code) return;
+    apply((d, s) => { const x = d.assets[id]; if (x) { x.status = code; x.at = s.at; x.by = s.by; } },
           `${nameOf(id)} → ${ST[code].label}`);
   };
   const setField = (id, k, v) =>
@@ -3183,8 +3239,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
       return r && !r.del ? r.members.slice() : [];
     }
     if (members && members.length > 1) return members.slice();
-    const rig = rigOf(coreRef.current, id);          // locked combos travel together
-    return rig ? rig.members.slice() : [id];
+    return [id];          // (linked combos were removed: they dragged units in from other crews)
   };
 
   const dropOn = (kind, id, crewId, afterLead, members) => {
@@ -3309,6 +3364,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
     const t = setInterval(() => { if (!document.hidden && !dragRef.current) load(); }, 15000);
     return () => { dead = true; clearInterval(t); };
   }, [cur]);
+  const dayCore = useMemo(() => ({ ...core, assets: assetsOn(core.assets, cur) }), [core, cur]);
   const crewJobs = useMemo(() => {
     const out = {};
     Object.entries(sched?.assign || {}).forEach(([ref, a]) => {
@@ -3318,13 +3374,13 @@ export default function ShopBoard({ user, isAdmin = false }) {
         const code = (week.cells[`${pid}:${dayIndex}`] || {}).code;
         return core.people[pid] && !core.people[pid].del && (!code || code === "on" || code === "light");
       }).length;
-      const res = checkJob(a.tags, c, core.assets, on);
+      const res = checkJob(a.tags, c, dayCore.assets, on);
       const o = (out[a.crew] = out[a.crew] || { jobs: 0, lines: [] });
       o.jobs++; o.lines.push(...problemLines(a.label || ref, res));
     });
     return out;
-  }, [sched, day, core, week, dayIndex]);
-  const BIN_LABEL = { room: "→ Crew room", vac: "→ Off duty today", yard: "→ At the yard", rep: "→ In for repair", broke: "→ Broken (do not operate)", newcrew: "→ New crew" };
+  }, [sched, day, core, dayCore, week, dayIndex]);
+  const BIN_LABEL = { room: "→ Crew room", vac: "→ Off duty today", yard: "→ At the yard (unhooked)", broke: "→ Broken from this day on", newcrew: "→ New crew" };
   const dropLabel = (d) => {
     if (!d.over) return "";
     if (d.over === d.item.from) return "Same place — no change";
@@ -3344,7 +3400,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
       ? (people[item.id] || {}).d
       : ids.map((m) => (coreRef.current.assets[m] || {}).tag).filter(Boolean).join(" · ");
     if (item.kind === "stack") {
-      ids.forEach((m) => { const a = coreRef.current.assets[m]; if (a && (a.status === "shop" || a.status === "tagged")) setStatus(m, "running"); });
+      setBroken(ids, false);
     } else {
       const off = (week.cells[`${item.id}:${dayIndex}`] || {}).code;
       if (off && off !== "on") setCell(item.id, dayIndex, "on");
@@ -3388,11 +3444,9 @@ export default function ShopBoard({ user, isAdmin = false }) {
         return;
       }
       if (kind === "stack") {
-        let ids = (item.members || dayRef.current.stacks[id] || [id]);
-        const rg = ids.map((m) => rigOf(coreRef.current, m)).find(Boolean);
-        if (rg) ids = [...new Set([...ids, ...rg.members])];   // linked combos stay whole
+        const ids = (item.members || dayRef.current.stacks[id] || [id]);
         const label = ids.map((m) => (coreRef.current.assets[m] || {}).tag).filter(Boolean).join(" · ");
-        ids.forEach((m) => { const a = coreRef.current.assets[m]; if (a && (a.status === "shop" || a.status === "tagged")) setStatus(m, "running"); });
+        setBroken(ids, false);
         snapshot(`${label} to ${cname}`);
         applyDay((d, s) => {
           Object.values(d.crews).forEach((c) => {
@@ -3401,7 +3455,21 @@ export default function ShopBoard({ user, isAdmin = false }) {
             if (c.iron.length !== n) { c.at = s.at; c.by = s.by; }
           });
           const c = d.crews[cid];
-          if (c) { c.iron = [...c.iron, ...ids]; c.at = s.at; c.by = s.by; }
+          if (c) {
+            // Something without a truck (a lift, Avant, chipper, grinder) hooks
+            // onto the crew's best free truck: it goes right after that truck.
+            const A = coreRef.current.assets;
+            const hasTruck = ids.some((m) => A[m] && A[m].hc === "truck");
+            const first = A[ids[0]];
+            let at = -1;
+            if (!hasTruck && first && first.hc === "towed") {
+              const hitch = deriveHitch({ [c.id]: c }, A);
+              const tid = pickTow(first, loadsOf(c, A, hitch), hitch);
+              at = tid ? c.iron.indexOf(tid) : -1;
+            }
+            c.iron = at >= 0 ? [...c.iron.slice(0, at + 1), ...ids, ...c.iron.slice(at + 1)] : [...c.iron, ...ids];
+            c.at = s.at; c.by = s.by;
+          }
           ids.forEach((m) => { delete d.pos[m]; });
         }, `${label} → ${cname}`);
         return;
@@ -3433,25 +3501,15 @@ export default function ShopBoard({ user, isAdmin = false }) {
     /* a stack: the truck plus whatever is hitched to it */
     const mem = (item.members || dayRef.current.stacks[id] || [id]);
     const label = mem.map((m) => (coreRef.current.assets[m] || {}).tag).filter(Boolean).join(" · ");
-    if (where === "rep") {
-      snapshot(`${label} to the shop`);
-      apply((d, s) => mem.forEach((m) => { const a = d.assets[m]; if (a) { a.status = "shop"; a.at = s.at; a.by = s.by; } }),
-            `${label} → In shop`, true);
-      applyDay((d, s) => { delete d.pos[id]; pullOut(d, "stack", mem, s); regroup(d, mem); });
-      return;
-    }
     if (where === "broke") {
       snapshot(`${label} broken`);
-      apply((d, s) => mem.forEach((m) => { const a = d.assets[m]; if (a) { a.status = "tagged"; a.at = s.at; a.by = s.by; } }),
-            `${label} → Broken (tagged out)`, true);
+      setBroken(mem, true, label);
       applyDay((d, s) => { delete d.pos[id]; pullOut(d, "stack", mem, s); regroup(d, mem); });
       return;
     }
     if (where === "yard") {
-      const wasDown = mem.some((m) => ["shop", "tagged"].includes((coreRef.current.assets[m] || {}).status));
       snapshot(`${label} back to the yard`);
-      if (wasDown) apply((d, s) => mem.forEach((m) => { const a = d.assets[m]; if (a && ["shop", "tagged"].includes(a.status)) { a.status = "running"; a.at = s.at; a.by = s.by; } }),
-                         `${label} → Running`, true);
+      setBroken(mem, false, label);
       applyDay((d, s) => { delete d.pos[id]; pullOut(d, "stack", mem, s); regroup(d, mem); });
       return;
     }
@@ -3532,10 +3590,10 @@ export default function ShopBoard({ user, isAdmin = false }) {
     </div>
   );
 
-  const assets = live(core.assets);
+  const assets = live(dayCore.assets);
   const counts = ST_ORDER.map((k) => ({ k, n: assets.filter((a) => a.status === k).length }));
   const others = Object.entries(presence).filter(([uid, v]) => uid !== me.uid && Date.now() - v.at < 150000);
-  const asset = openAsset && core.assets[openAsset];
+  const asset = openAsset && dayCore.assets[openAsset];
   const crew = openCrew && day.crews[openCrew];
 
   return (
@@ -3569,7 +3627,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
 
       {tab === "fleet" && (
         <>
-          <FleetView core={core} crewsMap={day.crews} engine={engine} filters={filters} setFilters={setFilters}
+          <FleetView core={dayCore} crewsMap={day.crews} engine={engine} filters={filters} setFilters={setFilters}
                      flashSet={flashSet} onOpen={setOpenAsset} onStatus={setStatus} onAdd={() => setAddAsset(true)} />
           {core.log.length > 0 && (
             <div className="log">
@@ -3582,7 +3640,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
         </>
       )}
       {tab === "crews" && (
-        <YardView onOrder={orderCrews} core={core} day={day} iso={cur} dayIndex={dayIndex} week={week} engine={engine} crewJobs={crewJobs}
+        <YardView onOrder={orderCrews} core={dayCore} day={day} iso={cur} dayIndex={dayIndex} week={week} engine={engine} crewJobs={crewJobs}
                   savedDays={savedDays} ops={ops} setOps={setOps}
                   onMove={yardMove} onNewCrew={addCrew} onCrew={setOpenCrew} onPerson={setOpenPerson}
                   onOpenAsset={(id) => setOpenAsset(id)} onDate={setCur} onAddPerson={addPerson}
@@ -3604,7 +3662,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
       )}
 
       {asset && !asset.del && (
-        <AssetSheet a={asset} core={core} onClose={() => setOpenAsset(null)} onStatus={setStatus}
+        <AssetSheet a={asset} core={dayCore} iso={cur} onClose={() => setOpenAsset(null)} onStatus={setStatus}
                     onField={setField} onToggleOp={toggleOp} onDelete={removeAsset}
                     onLabel={(id, k, v) => apply((d, s) => { const x = d.assets[id]; if (x) { x.custom = { ...(x.custom || {}), [k]: v }; x[k] = v; x.at = s.at; x.by = s.by; } }, `${nameOf(id)} · ${k === "vl" ? "drawing label" : k} → ${v || "—"}`)} />
       )}
@@ -3613,7 +3671,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
                        onCreate={(unit) => { const id = `a${Date.now().toString(36)}`; apply((d, s) => { d.assets[id] = { ...unit, id, at: s.at, by: s.by }; }, `${unit.name} added to the fleet`); setAddAsset(false); }} />
       )}
       {crew && !crew.del && (
-        <CrewSheet c={crew} core={core} day={day} offToday={(pid) => { const cc = week.cells[`${pid}:${dayIndex}`]; return cc && cc.code !== "on" && cc.code !== "light"; }}
+        <CrewSheet c={crew} core={dayCore} day={day} offToday={(pid) => { const cc = week.cells[`${pid}:${dayIndex}`]; return cc && cc.code !== "on" && cc.code !== "light"; }}
                    onClose={() => setOpenCrew(null)} onRename={renameCrew} onOps={opsCrew} onDelete={delCrew}
                    onAddPerson={(pid) => yardMove({ kind: "person", id: pid }, `crew:${crew.id}`)}
                    onRemovePerson={(pid) => yardMove({ kind: "person", id: pid }, "room")}
@@ -3621,7 +3679,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
                    onRemoveStack={(g) => yardMove({ kind: "stack", id: g.id, members: g.members }, "yard")} />
       )}
       {noteOpen && (
-        <DaySheet core={core} crewsMap={day.crews} week={week} iso={cur} dayIndex={dayIndex}
+        <DaySheet core={dayCore} crewsMap={day.crews} week={week} iso={cur} dayIndex={dayIndex}
                   onClose={() => setNoteOpen(false)} />
       )}
       {openPerson && core.people[openPerson] && !core.people[openPerson].del && (
@@ -3659,4 +3717,4 @@ export default function ShopBoard({ user, isAdmin = false }) {
 }
 
 /* Used by the Schedule tab: the same crews, people and day inheritance. */
-export { freshCore, mergeCore, live, isoOf, addDays, weekStartOf };
+export { freshCore, mergeCore, live, isoOf, addDays, weekStartOf, assetsOn };

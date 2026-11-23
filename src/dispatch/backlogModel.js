@@ -52,8 +52,8 @@ export const STATUS_ORDER = ["paused", "over", "soon", "ok", "season", "flex", "
 /* ── Seasons ────────────────────────────────────────────────────────────────
    A job with a season tag is due in its season, not by its weeks promise:
      winter Jan 1–Mar 31 · spring Apr 1–Jun 30 · summer Jul 1–Sep 30 · fall Oct 1–Dec 31
-     OAK = oak pruning, Nov 1–Mar 31 (outside oak-wilt season) — owner to confirm
-     "OAK 2027" = the oak window, but not before Jan 1, 2027 — owner to confirm
+     OAK = oak pruning, Nov 1–Mar 31 (outside oak-wilt season) — confirmed by the owner
+     "OAK 2027" = the oak window starting Nov 1, 2027 — confirmed
    • In its season now → due by the season's end (amber in the last 2 weeks).
    • Out of season → "Waiting for season": not overdue.
    • Past promise only if a whole season window went by after it was sold
@@ -70,7 +70,8 @@ export function seasonsOf(tags) {
   const out = [];
   (tags || []).forEach((t) => {
     const m = String(t).toUpperCase().match(/^08\s+([A-Z]+)(?:\s+(\d{4}))?/);
-    if (m && SEASONS[m[1]]) out.push({ ...SEASONS[m[1]], key: m[1], notBefore: m[2] ? new Date(+m[2], 0, 1) : null });
+    // "OAK 2027" = the oak window that starts Nov 1, 2027 (owner, Nov 23)
+    if (m && SEASONS[m[1]]) out.push({ ...SEASONS[m[1]], key: m[1], notBefore: m[2] ? new Date(+m[2], SEASONS[m[1]].m[0], 1) : null });
   });
   return out;
 }
