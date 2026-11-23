@@ -14,9 +14,9 @@ import Schedule from "./Schedule.jsx";
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const TABS = [
-  { id: "backlog", label: "Backlog", need: "dispatch" },
-  { id: "schedule", label: "Schedule", need: "dispatch" },
   { id: "shop", label: "Shop Board", need: "shop" },
+  { id: "schedule", label: "Schedule", need: "dispatch" },
+  { id: "backlog", label: "Backlog", need: "dispatch" },
   { id: "admin", label: "Admin", need: "admin", hidden: true },   // opened from the ☰ menu
 ];
 
@@ -31,7 +31,7 @@ export default function DispatchApp() {
   const [linkErr, setLinkErr] = useState("");
   const [tab, setTab] = useState(() => {
     if (/(^#|&)admin\b/.test(location.hash)) { history.replaceState(null, "", location.pathname); return "admin"; }
-    try { const t = localStorage.getItem("mts-dispatch-tab"); return t && t !== "admin" ? t : "backlog"; } catch { return "backlog"; }
+    try { const t = localStorage.getItem("mts-dispatch-tab"); return t && t !== "admin" ? t : "shop"; } catch { return "shop"; }
   });
 
   const loadMe = useCallback(async () => {

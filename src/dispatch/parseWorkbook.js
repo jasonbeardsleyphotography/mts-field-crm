@@ -105,6 +105,32 @@ export async function parseBacklogWorkbook(arrayBuffer, fileName = "") {
   }
   if (!jobs.length) throw new Error('No jobs found on the "Visit Export" tab.');
 
+  // ── Line items (stump grinding, cleanup, soil & seed…) ─────────────────────
+  // Any tab with Visit Ref # + Item Name + Quantity (today "Stump Labor Line
+  // Items"; if more items are added to that SingleOps report, they're picked
+  // up too). Labor-category quantities are hours; service quantities are units.
+  const lineItems = {};       // ref -> { grindHrs, grindUnits, cleanup, cleanupHrs, seed, seedHrs, other: {name: qty} }
+  wb.SheetNames.forEach((name) => {
+    const rows = rowsOf(XLSX, wb, name);
+    const lh = rows && headerMap(rows, ["Item Name", "Quantity"]);
+    if (!lh) return;
+    const refCol = lh.col("Visit Ref #") ?? lh.col("Ref #") ?? lh.col("Job #");
+    if (refCol == null) return;
+    for (let i = lh.at + 1; i < rows.length; i++) {
+      const row = rows[i] || [];
+      const id = ref(row[refCol]); const item = str(row[lh.col("Item Name")]); const qty = num(row[lh.col("Quantity")]) || 0;
+      if (!id || !item || !qty) continue;
+      const acc = row[lh.col("Accepted")];
+      if (acc === false || norm(acc) === "false") continue;     // declined options aren't work to do
+      const isLabor = /labor/i.test(str(row[lh.col("Item Category")])) || /labor/i.test(item);
+      const o = (lineItems[id] = lineItems[id] || { grindHrs: 0, grindUnits: 0, cleanup: 0, cleanupHrs: 0, seed: 0, seedHrs: 0, other: {} });
+      if (/stump/i.test(item) && /grind/i.test(item)) { if (isLabor) o.grindHrs += qty; else o.grindUnits += qty; }
+      else if (/stump/i.test(item) && /(debris|clean)/i.test(item)) { if (isLabor) o.cleanupHrs += qty; else o.cleanup += qty; }
+      else if (/(seed|topsoil|soil)/i.test(item)) { if (isLabor) o.seedHrs += qty; else o.seed += qty; }
+      else o.other[item] = (o.other[item] || 0) + qty;
+    }
+  });
+
   // ── Job Notes ──────────────────────────────────────────────────────────────
   const notes = {};
   const jn = rowsOf(XLSX, wb, "Job Notes");
@@ -195,6 +221,7 @@ export async function parseBacklogWorkbook(arrayBuffer, fileName = "") {
     fileName,
     asOf,
     jobs,
+    lineItems,
     notes,
     scheduled,
     zones,

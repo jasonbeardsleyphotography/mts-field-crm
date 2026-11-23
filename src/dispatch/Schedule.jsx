@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { api } from "./api";
 import { C } from "./theme";
-import { enrich, STATUS, money, hrs } from "./backlogModel";
+import { enrich, STATUS, money, hrs, ageColor, singleOpsJobUrl, tagShort } from "./backlogModel";
+import JobHours from "./JobHours.jsx";
 import { useJobPoints, loadMaps } from "./BacklogMap.jsx";
 import { shopGet, shopDays, shopPatch, shopSchedRange, stampNow, shopSettings, saveYard } from "./shop/shopApi";
 import { freshCore, mergeCore, live, isoOf, addDays, weekStartOf } from "./shop/ShopBoard.jsx";
@@ -94,7 +95,7 @@ async function crewsForDay(iso) {
   return { core, off, crews: live(crews).filter((c) => ["GTC", "PHC", "LC"].includes(c.ops || "GTC")), from: day?.crews ? from : "standing" };
 }
 
-function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick, yardOf }) {
+function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick, yardOf, children }) {
   const el = useRef(null), map = useRef(null), layers = useRef([]), fitted = useRef(false);
   const pickRef = useRef(onPick); pickRef.current = onPick;
   const [err, setErr] = useState("");
@@ -123,7 +124,7 @@ function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick, yardOf
       if (on) (byCrew[a.crew] = byCrew[a.crew] || []).push({ ...a, p, ref: j.ref });
       const m = new g.Marker({
         map: map.current, position: p, zIndex: on ? 100 + (sel ? 50 : 0) : sel ? 90 : 10,
-        title: `${j.name} · ${Math.round(j.hrs || 0)} h`,
+        title: `${j.name} · ${Math.round(j.treeHrs ?? j.hrs ?? 0)} h`,
         icon: on
           ? { path: g.SymbolPath.CIRCLE, scale: sel ? 13 : 11, fillColor: crewColor(a.crew), fillOpacity: 1, strokeColor: sel ? "#fff" : "#0b0e11", strokeWeight: sel ? 3 : 1.5 }
           : { path: g.SymbolPath.CIRCLE, scale: sel ? 9 : 5, fillColor: STATUS[j.status].color, fillOpacity: 0.75, strokeColor: sel ? "#fff" : "#0b0e11", strokeWeight: sel ? 2.5 : 1 },
@@ -139,15 +140,15 @@ function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick, yardOf
       const y = yardOf?.(crew);
       const path = list.map((x) => x.p);
       if (y) {
-        layers.current.push(new g.Polyline({ map: map.current, path: [y, ...path, y], strokeColor: crewColor(crew), strokeOpacity: 0.35, strokeWeight: 2 }));
+        layers.current.push(new g.Polyline({ map: map.current, path: [y, ...path, y], strokeColor: crewColor(crew), strokeOpacity: 0.35, strokeWeight: 2, clickable: false }));
         if (!yardsDrawn.has(`${y.lat},${y.lng}`)) {
           yardsDrawn.add(`${y.lat},${y.lng}`); bounds.extend(y);
-          layers.current.push(new g.Marker({ map: map.current, position: y, zIndex: 200, title: `Yard: ${y.name}`,
+          layers.current.push(new g.Marker({ map: map.current, position: y, zIndex: 5, clickable: false, title: `Yard: ${y.name}`,
             icon: { path: "M -7 -7 L 7 -7 L 7 7 L -7 7 Z", fillColor: "#E7E2D6", fillOpacity: 1, strokeColor: "#0b0e11", strokeWeight: 1.5, scale: 1 },
             label: { text: "Y", color: "#0b0e11", fontSize: "10px", fontWeight: "700" } }));
         }
       }
-      if (path.length > 1) layers.current.push(new g.Polyline({ map: map.current, path, strokeColor: crewColor(crew), strokeOpacity: 0.9, strokeWeight: 3 }));
+      if (path.length > 1) layers.current.push(new g.Polyline({ map: map.current, path, strokeColor: crewColor(crew), strokeOpacity: 0.9, strokeWeight: 3, clickable: false }));
     });
     if (any && !fitted.current) { map.current.fitBounds(bounds, 30); fitted.current = true; }
   }, [jobs, points, assign, selected, crewColor, yardOf]);
@@ -156,6 +157,7 @@ function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick, yardOf
     <div style={{ position: "relative", height: "100%", minHeight: 320 }}>
       <div ref={el} style={{ position: "absolute", inset: 0, background: "#1d2329" }} />
       {err && <div className="err" style={{ position: "absolute", top: 8, left: 8 }}>{err}</div>}
+      {children}
     </div>
   );
 }
@@ -377,10 +379,15 @@ export default function Schedule({ me }) {
       .filter((j) => !s || `${j.name} ${j.ref} ${j.addr} ${j.zone} ${j.tags.join(" ")}`.toLowerCase().includes(s))
       .sort(nearCrew ? (a, b) => (distTo[a.ref] ?? 1e9) - (distTo[b.ref] ?? 1e9)
         : sort === "zone" ? (a, b) => (parseFloat(a.zone) || 99) - (parseFloat(b.zone) || 99)
+        : sort === "old" ? (a, b) => (b.days || 0) - (a.days || 0)
         : (a, b) => STATUS[a.status].rank - STATUS[b.status].rank || b.lateWeeks - a.lateWeeks);
   }, [jobs, assign, show, plannedOn, q, sort, nearCrew, distTo]);
   const [limit, setLimit] = useState(80);
   useEffect(() => setLimit(80), [q, show, sort]);
+  // Stable list for the map (a new array every render made it rebuild every
+  // marker on each re-render, which could swallow a tap mid-rebuild).
+  const mapJobs = useMemo(() => jobs.filter((j) => assign[j.ref]?.crew || list.includes(j)), [jobs, assign, list]);
+  const onMapPick = useCallback((r) => setSelected((s) => (s === r ? null : r)), []);
 
   if (data === undefined) return <div className="wrap hint">Loading…</div>;
   if (!data) return <div className="wrap hint">Upload the backlog workbook on the Backlog tab first — the Schedule plans its jobs.</div>;
@@ -414,7 +421,7 @@ export default function Schedule({ me }) {
       {yardsOpen && <YardSettings settings={settings} onSaved={setSettings} onClose={() => setYardsOpen(false)} />}
       {sel && (
         <div className="card" style={{ padding: "8px 12px", marginBottom: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderColor: "#58666f" }}>
-          <b>{sel.name}</b><span className="hint">#{sel.ref} · {sel.town} · {hrs(sel.hrs)} · {money(sel.price)}{plannedOn[sel.ref] ? ` · planned ${plannedOn[sel.ref]}` : ""}</span>
+          <b>{sel.name}</b><span className="hint">#{sel.ref} · {sel.town} · {hrs(sel.treeHrs)} tree work{sel.grindHrs ? ` + ${hrs(sel.grindHrs)} stump` : ""} · {money(sel.price)}{plannedOn[sel.ref] ? ` · planned ${plannedOn[sel.ref]}` : ""}</span>
           <span className="spacer" />
           {assign[sel.ref]?.crew
             ? <button className="btn st" data-danger="1" onClick={() => { remove(sel.ref); setSelected(null); }}>Take off the schedule</button>
@@ -430,7 +437,8 @@ export default function Schedule({ me }) {
           {!board && <div className="hint">Loading crews…</div>}
           {(board?.crews || []).map((c) => {
             const items = byCrew[c.id] || [];
-            const total = items.reduce((t, x) => t + (jobBy[x.ref]?.hrs ?? x.hrs ?? 0), 0);
+            const total = items.reduce((t, x) => t + (jobBy[x.ref] ? jobBy[x.ref].treeHrs : (x.hrs ?? 0)), 0);
+            const stumpTotal = items.reduce((t, x) => t + (jobBy[x.ref]?.grindHrs || 0) + (jobBy[x.ref]?.cleanupHrs || 0), 0);
             const yard = yardOf(c.id);
             const trip = tripKm(yard, items.map((x) => points[x.ref]).filter(Boolean));
             const ppl = (c.people || []).map((id) => board.core.people[id]).filter((p) => p && !p.del);
@@ -444,7 +452,8 @@ export default function Schedule({ me }) {
                   {c.name}<span className="hint" style={{ textTransform: "none", letterSpacing: 0 }}>{ppl.filter((p) => !board.off.has(p.id)).map(firstName).join(", ") || "nobody on it"}{offHere.length ? ` (${offHere.map(firstName).join(", ")} off)` : ""}</span>
                   {probs > 0 && <span className="st" style={{ color: "#fff", background: C.red, borderRadius: 2, padding: "1px 6px", fontSize: 10.5 }} title="See the red notes on the jobs below">⚠ {probs}</span>}
                   <span className="spacer" />
-                  <span className="mono" style={{ color: total > DAY_HRS + 1 ? C.amber : C.inkDim }}>{Math.round(total * 10) / 10} h</span>
+                  <span className="mono" style={{ color: total > DAY_HRS + 1 ? C.amber : C.inkDim }} title="Tree work hours">{Math.round(total * 10) / 10} h</span>
+                  {stumpTotal > 0 && <span className="mono" style={{ color: "#c9a0dc", fontSize: 11 }} title="Stump grinding + cleanup hours">+{Math.round(stumpTotal * 10) / 10} h stump</span>}
                 </div>
                 {items.length > 0 && (
                   <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "6px 8px 0", flexWrap: "wrap" }}>
@@ -468,9 +477,10 @@ export default function Schedule({ me }) {
                         <span className="mono" style={{ width: 18, height: 18, borderRadius: 9, background: crewColor(c.id), color: "#0b0e11", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{i + 1}</span>
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{j ? j.name : x.label}</div>
-                          <div className="hint" style={{ fontSize: 11 }}>{j?.town || x.town} · {hrs(j?.hrs ?? x.hrs)}{prev && here ? ` · ${miles(km(prev, here))} from ${i === 0 ? "yard" : "last"}` : ""}{!j ? " · no longer in the backlog" : ""}</div>
+                          <div className="hint" style={{ fontSize: 11 }}>{j?.town || x.town}{j ? "" : ` · ${hrs(x.hrs)}`}{prev && here ? ` · ${miles(km(prev, here))} from ${i === 0 ? "yard" : "last"}` : ""}{!j ? " · no longer in the backlog" : ""}</div>
                           <JobChecks r={checks[x.ref]} />
                         </span>
+                        {j && <JobHours j={j} size={13} />}
                         <button className="btn" style={{ padding: "2px 7px" }} title="Earlier" onClick={(e) => { e.stopPropagation(); move(c.id, i, -1); }}>↑</button>
                         <button className="btn" style={{ padding: "2px 7px" }} title="Later" onClick={(e) => { e.stopPropagation(); move(c.id, i, 1); }}>↓</button>
                         <button className="btn" style={{ padding: "2px 7px" }} title="Take off" onClick={(e) => { e.stopPropagation(); remove(x.ref); }}>✕</button>
@@ -490,8 +500,37 @@ export default function Schedule({ me }) {
         {/* map */}
         <div className="card" style={{ position: "sticky", top: 70 }}>
           <div style={{ height: "min(70vh, 680px)" }}>
-            <ScheduleMap jobs={jobs.filter((j) => assign[j.ref]?.crew || list.includes(j))} points={points} assign={assign}
-                         crewColor={crewColor} selected={selected} onPick={(r) => setSelected((s) => (s === r ? null : r))} yardOf={yardOf} />
+            <ScheduleMap jobs={mapJobs} points={points} assign={assign}
+                         crewColor={crewColor} selected={selected} onPick={onMapPick} yardOf={yardOf}>
+              {sel && (
+                <div className="card" style={{ position: "absolute", left: 10, right: 10, bottom: 10, zIndex: 5, padding: "10px 12px", background: "rgba(27,33,38,.97)", boxShadow: "0 6px 20px rgba(0,0,0,.5)", maxHeight: "60%", overflow: "auto" }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <b>{sel.name}</b> <span className="mono hint">#{sel.ref}</span>
+                      <div className="hint">{sel.addr || sel.town}{sel.zone ? ` · Zone ${sel.zone}` : ""}{sel.crew ? ` · ${sel.crew}` : ""} · {money(sel.price)}</div>
+                      <div style={{ fontSize: 12.5, marginTop: 3 }}>
+                        {sel.days != null && <span style={{ color: ageColor(sel.days) }}>{Math.round(sel.days)} days waiting · </span>}
+                        <span style={{ color: STATUS[sel.status].color }}>{sel.status === "over" ? `${Math.round(sel.lateWeeks)} wk past promise` : STATUS[sel.status].label}</span>
+                        {plannedOn[sel.ref] ? <span className="hint"> · planned {plannedOn[sel.ref]}</span> : null}
+                        {assign[sel.ref]?.crew ? <span className="hint"> · on {(board?.crews || []).find((c) => c.id === assign[sel.ref].crew)?.name || "a crew"} today</span> : null}
+                      </div>
+                      {sel.tags?.length > 0 && <div className="hint" style={{ marginTop: 3 }}>{sel.tags.map(tagShort).join(" · ")}</div>}
+                      {sel.note && <div style={{ marginTop: 4, fontSize: 12, color: "#c8ced2", lineHeight: 1.4 }}>{sel.note}</div>}
+                      <JobChecks r={checks[sel.ref]} />
+                    </div>
+                    <JobHours j={sel} />
+                    <button className="btn" onClick={() => setSelected(null)} aria-label="Close">✕</button>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                    {!assign[sel.ref]?.crew && (board?.crews || []).map((c) => (
+                      <button key={c.id} className="btn st" style={{ borderColor: crewColor(c.id) }} onClick={() => addTo(sel.ref, c.id)}>+ {c.name}</button>
+                    ))}
+                    {assign[sel.ref]?.crew && <button className="btn st" data-danger="1" onClick={() => { remove(sel.ref); setSelected(null); }}>Take off the schedule</button>}
+                    <a className="btn st" href={singleOpsJobUrl(sel.ref)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>Open in SingleOps</a>
+                  </div>
+                </div>
+              )}
+            </ScheduleMap>
           </div>
           <div className="hint" style={{ padding: "6px 10px" }}>{geoState || "Numbered dots = this day's stops, in order. Small dots = backlog jobs (coloured by status)."}</div>
         </div>
@@ -503,6 +542,7 @@ export default function Schedule({ me }) {
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <select className="inp" style={{ width: "auto", flex: 1 }} value={sort} onChange={(e) => setSort(e.target.value)}>
                 <option value="late">Most past promise first</option>
+                <option value="old">Oldest first</option>
                 <option value="zone">By zone</option>
                 {(board?.crews || []).filter((c) => (byCrew[c.id] || []).length).map((c) => <option key={c.id} value={`near:${c.id}`}>Nearest to {c.name}'s stops</option>)}
               </select>
@@ -510,7 +550,7 @@ export default function Schedule({ me }) {
                 {show === "all" ? "Showing all" : "Hide scheduled / on hold"}
               </button>
             </div>
-            <div className="hint">{list.length} jobs · {hrs(list.reduce((t, j) => t + (j.hrs || 0), 0))}. Drag onto a crew, or tap to pick.</div>
+            <div className="hint">{list.length} jobs · {hrs(list.reduce((t, j) => t + (j.treeHrs || 0), 0))} tree work · {hrs(list.reduce((t, j) => t + (j.grindHrs || 0), 0))} stump. Drag onto a crew, or tap to pick.</div>
           </div>
           <div style={{ maxHeight: "62vh", overflow: "auto", padding: "0 8px 8px", display: "grid", gap: 4 }}>
             {list.slice(0, limit).map((j) => (
@@ -524,7 +564,7 @@ export default function Schedule({ me }) {
                     {plannedOn[j.ref] ? ` · planned ${plannedOn[j.ref]}` : ""}{distTo[j.ref] != null ? ` · ${miles(distTo[j.ref])}` : ""}
                   </div>
                 </span>
-                <span className="mono" style={{ fontSize: 12.5 }}>{hrs(j.hrs)}</span>
+                <JobHours j={j} size={13} />
               </div>
             ))}
             {list.length > limit && <button className="btn st" onClick={() => setLimit((l) => l + 100)}>Show more</button>}

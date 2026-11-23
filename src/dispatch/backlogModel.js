@@ -10,6 +10,22 @@ const SINGLEOPS_JOB_TAG_COLORS = {
 export const singleOpsJobUrl = (jn) =>
   `https://app.singleops.com/search/full_global_search?search_string=${encodeURIComponent(String(jn || "").trim())}`;
 
+import { equipmentNeeds } from "./crewCheck";
+
+/** Colour by how long a job has waited: newest green → oldest dark red. */
+const AGE_STOPS = [[0, [23, 160, 91]], [60, [145, 207, 96]], [120, [229, 200, 60]], [180, [240, 140, 60]], [270, [217, 59, 43]], [365, [140, 20, 30]]];
+export function ageColor(days) {
+  const d = Math.max(0, days || 0);
+  for (let i = 1; i < AGE_STOPS.length; i++) {
+    if (d <= AGE_STOPS[i][0]) {
+      const [a0, c0] = AGE_STOPS[i - 1], [a1, c1] = AGE_STOPS[i], t = (d - a0) / (a1 - a0);
+      return `rgb(${c0.map((v, k) => Math.round(v + (c1[k] - v) * t)).join(",")})`;
+    }
+  }
+  return `rgb(${AGE_STOPS[AGE_STOPS.length - 1][1].join(",")})`;
+}
+export const AGE_LEGEND = [[0, "new"], [60, "2 mo"], [120, "4 mo"], [180, "6 mo"], [270, "9 mo"], [365, "1 yr+"]];
+
 export const STATUS = {
   over:  { label: "Past promise",   color: "#D93B2B", rank: 0 },
   soon:  { label: "Due in 2 weeks", color: "#E5A100", rank: 1 },
@@ -58,8 +74,18 @@ export function enrich(data) {
     else if (j.diff != null && j.diff < 0) status = "over";
     else if (j.diff != null && j.diff < 2) status = "soon";
     else status = "ok";
+    // Hours split: tree work (pruning, removals…) vs stump grinding, stump
+    // cleanup and soil & seed. Labor line items are hours and come off the
+    // total; service items without labor hours are shown as quantities.
+    const li = data.lineItems?.[j.ref];
+    const grindHrs = li ? li.grindHrs : (j.stumpHrs || 0);
+    const cleanupHrs = li?.cleanupHrs || 0, seedHrs = li?.seedHrs || 0;
+    const treeHrs = Math.max(0, (j.hrs || 0) - grindHrs - cleanupHrs - seedHrs);
     return {
       ...j,
+      treeHrs, grindHrs, cleanupHrs, seedHrs,
+      cleanupQty: li?.cleanup || 0, seedQty: li?.seed || 0, grindUnits: li?.grindUnits || 0,
+      needs: equipmentNeeds(j.tags),
       name: [j.first, j.last].filter(Boolean).join(" ") || j.last || j.ref,
       crew: crewTag ? `${crewTag[1]}-person` : "",
       equip, season,

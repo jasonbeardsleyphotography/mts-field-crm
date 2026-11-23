@@ -146,11 +146,21 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   FleetView (condition columns) + "+ Add equipment" (AddAssetSheet copies drawing/towing keys from a SEED unit of the
   same kind) + name / drawing label / plate edits stored as `asset.custom` (LABEL_KEYS win in reSpec; drawing/towing
   keys never do).
+- Tab order (owner, Nov 23): Shop Board · Schedule · Backlog; Shop Board is the default tab.
+- Backlog tab = a job manager, not a dashboard: one totals line, Group by Priority (status categories) / Equipment
+  (`equipmentNeeds` from crewCheck, "No special equipment") / Zone, OLDEST FIRST inside each group; map coloured by age
+  by default (`ageColor`, green → dark red over a year). Hours split (`enrich` → treeHrs / grindHrs / cleanupHrs / seedHrs,
+  shown by `JobHours.jsx`): tree work is the big number. Splits come from the workbook's line-item sheet (`lineItems` in
+  parseWorkbook: any sheet with Item Name + Quantity + job number; labor items = hours, others = quantities), else the
+  sheet's Stump Hrs. The current export has only Stump Grind Labor / Stump Grinding / Stump Debris Removal (a quantity);
+  soil & seed and cleanup labor appear automatically once SingleOps' export includes them.
 - Schedule (Dispatch tab, `src/dispatch/Schedule.jsx`): crews for a day come from the Shop Board (that day's record,
   else the latest earlier saved day, else the standing setup). Jobs are assigned per day in `mts-shop` key
   `sched.<iso>` = { assign: { jobRef: { crew|null, order, label, town, hrs, at, by } } }, merged per job like the board
   (crew null = taken off). Dispatch users may read the board and edit only sched.*; board edits need Shop Board.
-  Drag (desktop HTML5 DnD) or tap a job then "Add here" (phones); ↑↓ reorder; map shows numbered stops + route line per
+  Drag (desktop HTML5 DnD) or tap a job then "Add here" (phones); tapping a map dot opens a job card ON the map
+  (with "+ <crew>" buttons); route lines and yard markers are not clickable and the map's job list is memoised (a new array
+  each render rebuilt every marker and could swallow taps); ↑↓ reorder; map shows numbered stops + route line per
   crew; "Nearest to <crew>" sorts the backlog by distance to that crew's stops; jobs planned on other days of the week
   are marked/hidden. The Shop Board Day sheet appends each crew's scheduled jobs ("Jobs from the Schedule" toggle).
   Nothing is written to SingleOps or the workbook.

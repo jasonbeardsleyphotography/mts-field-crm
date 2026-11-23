@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import { STATUS } from "./backlogModel";
+import { STATUS, ageColor } from "./backlogModel";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Map of backlog jobs. Each address is looked up once (server: US Census
@@ -70,7 +70,7 @@ export function useJobPoints(jobs) {
   return { points, state };
 }
 
-export default function BacklogMap({ jobs, points, selected, onPick, colorBy = "status", zoneColors = {} }) {
+export default function BacklogMap({ jobs, points, selected, onPick, colorBy = "status", zoneColors = {}, children }) {
   const el = useRef(null);
   const map = useRef(null);
   const markers = useRef(new Map());
@@ -107,15 +107,15 @@ export default function BacklogMap({ jobs, points, selected, onPick, colorBy = "
     jobs.forEach((j) => {
       const p = points[j.ref]; if (!p) return;
       want.add(j.ref); bounds.extend(p);
-      const color = colorBy === "zone" ? (zoneColors[j.zone] || "#7d8a94") : STATUS[j.status].color;
+      const color = colorBy === "zone" ? (zoneColors[j.zone] || "#7d8a94") : colorBy === "age" ? ageColor(j.days) : STATUS[j.status].color;
       const sel = selected === j.ref;
       const icon = {
-        path: g.SymbolPath.CIRCLE, scale: sel ? 10 : Math.max(5, Math.min(9, 4 + (j.hrs || 0) / 6)),
+        path: g.SymbolPath.CIRCLE, scale: sel ? 10 : Math.max(5, Math.min(9, 4 + (j.treeHrs ?? j.hrs ?? 0) / 6)),
         fillColor: color, fillOpacity: 0.92, strokeColor: sel ? "#ffffff" : "#0b0e11", strokeWeight: sel ? 3 : 1.2,
       };
       let m = markers.current.get(j.ref);
       if (!m) {
-        m = new g.Marker({ map: map.current, position: p, icon, title: `${j.name} · ${Math.round(j.hrs || 0)} h` });
+        m = new g.Marker({ map: map.current, position: p, icon, title: `${j.name} · ${Math.round(j.treeHrs ?? j.hrs ?? 0)} h` });
         m.addListener("click", () => pickRef.current?.(j.ref));
         markers.current.set(j.ref, m);
       } else { m.setIcon(icon); m.setPosition(p); }
@@ -134,6 +134,7 @@ export default function BacklogMap({ jobs, points, selected, onPick, colorBy = "
     <div style={{ position: "relative", width: "100%", height: "100%", minHeight: 320 }}>
       <div ref={el} style={{ position: "absolute", inset: 0, borderRadius: 3, background: "#1d2329" }} />
       {err && <div className="err" style={{ position: "absolute", top: 10, left: 10 }}>{err}</div>}
+      {children}
     </div>
   );
 }

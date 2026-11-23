@@ -92,3 +92,10 @@ export function problemLines(name, r) {
   if (r.short) out.push(`${name}: ${r.short.need}-person job, crew has ${r.short.have}`);
   return out;
 }
+
+/** The special equipment a job's tags call for (labels), in a fixed order. */
+export const EQUIPMENT_ORDER = NEEDS.map((n) => n.label);
+export function equipmentNeeds(tags) {
+  const T = (tags || []).map(norm);
+  return NEEDS.filter((n) => n.tags.some((t) => T.includes(t))).map((n) => n.label);
+}
