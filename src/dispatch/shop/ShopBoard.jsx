@@ -71,7 +71,7 @@ const DAY = {
 const DAY_ORDER = ["on", "vac", "sick", "train", "light"];
 
 /* Fleet and Week ahead are parked, not deleted — flip them back on here. */
-const TABS = [["crews", "The yard"]];
+const TABS = [["crews", "The yard"], ["people", "People"]];
 // const TABS = [["crews", "The yard"], ["fleet", "Fleet"], ["week", "Week ahead"]];
 
 const C = {
@@ -1437,13 +1437,43 @@ const CSS = scopeCss(`
 .canvas-wrap { grid-area:canvas; overflow:auto; border:1px solid ${C.edgeSoft}; border-radius:4px; }
 .right { grid-area:right; display:flex; flex-direction:column; gap:10px; min-height:0; }
 .right > div { display:flex; min-height:0; }
-.right > div:first-child { flex:1; }        /* at the yard */
-.right > div:last-child { flex:1.45; }      /* in for repair, given more room */
+.right > div:first-child { flex:2.2; }      /* at the yard: the big one */
+.right > div:not(:first-child) { flex:1; min-height:120px; }   /* in for repair, broken: smaller */
+.ppl { display:grid; grid-template-columns:300px minmax(0,1fr); gap:12px; padding:10px 16px 20px; }
+@media (max-width:900px){ .ppl { grid-template-columns:1fr; } }
+.ppl-side { background:${C.panel}; border:1px solid ${C.edgeSoft}; border-radius:4px; display:flex; flex-direction:column; min-height:0; }
+.ppl-list { display:flex; flex-direction:column; max-height:52vh; overflow:auto; }
+.ppl-row { display:grid; grid-template-columns:6px 1fr; grid-template-rows:auto auto; column-gap:10px; text-align:left; padding:9px 12px; border-top:1px solid ${C.edgeSoft}; min-height:48px; }
+.ppl-row i { grid-row:1 / 3; border-radius:2px; }
+.ppl-row span { font-size:14px; letter-spacing:.06em; }
+.ppl-row small { font-size:10.5px; color:var(--faint); }
+.ppl-row[data-on="1"] { background:${C.tileHi}; box-shadow:inset 3px 0 0 #17A05B; }
+.ppl-edit { border-top:1px solid ${C.edge}; padding:10px 12px 14px; }
+.ppl-main { min-width:0; }
+.ppl-top { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+.ppl-month { font-size:20px; letter-spacing:.08em; min-width:190px; text-align:center; }
+.cal-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:4px; user-select:none; }
+.cal-h { text-align:center; font-size:11px; letter-spacing:.12em; color:var(--faint); padding:4px 0; }
+.cal-d { min-height:104px; background:${C.panel}; border:1px solid ${C.edgeSoft}; border-radius:4px; padding:6px; cursor:pointer; display:flex; flex-direction:column; gap:4px; }
+.cal-d:hover { border-color:#4d5a62; }
+.cal-d[data-out="1"] { opacity:.45; }
+.cal-d[data-wknd="1"] { background:#181d22; }
+.cal-d[data-today="1"] b { background:#17A05B; color:#08130c; border-radius:2px; padding:0 4px; }
+.cal-d b { font-weight:500; font-size:13px; align-self:flex-start; }
+.cal-offs { display:flex; flex-wrap:wrap; gap:3px; }
+.cal-off { font-size:10.5px; padding:1px 5px; border-left:3px solid; background:${C.tile}; border-radius:2px; white-space:nowrap; }
+.cal-off em { font-style:normal; font-size:9px; letter-spacing:.06em; }
+.bin.broke { border-color:#5a2420; background:#1f1514; }
+.bin.broke .bin-h { color:#e0796c; }
+.plate.locked { cursor:pointer; opacity:.6; }
+.plate.warn { box-shadow:0 0 0 1.5px #E5A100; }
+.cbox-edit { font-size:9.5px; letter-spacing:.08em; color:var(--dim); border:1px solid var(--edge); border-radius:2px; padding:2px 6px; margin-left:4px; }
+.cbox-edit:hover { color:var(--ink); border-color:#5d6a73; }
 .right .bin-b { overflow:auto; align-content:flex-start; }
 @media (max-width:1100px){
   .oy-g { grid-template-columns:186px minmax(0,1fr); grid-template-areas:"left canvas" "right right"; }
   .right { flex-direction:row; }
-  .right > div:first-child, .right > div:last-child { flex:1; }
+  .right > div { flex:1 !important; }
 }
 @media (max-width:820px){
   .oy-g { grid-template-columns:1fr; grid-template-areas:"left" "canvas" "right"; }
@@ -1763,8 +1793,9 @@ const ago = (t) => {
 };
 
 /* ============================ YARD VIEW =================================== */
-const Plate = ({ p, onBegin, off, onClick }) => (
-  <span className={`plate${off ? " off" : ""}`} onPointerDown={onBegin} onClick={onClick}>
+const Plate = ({ p, onBegin, off, onClick, locked, warn }) => (
+  <span className={`plate${off ? " off" : ""}${locked ? " locked" : ""}${warn ? " warn" : ""}`} onPointerDown={locked ? undefined : onBegin} onClick={onClick}
+        title={locked ? "Off duty today — tap to put them back on duty" : warn || undefined}>
     <span className="plate-c" style={{ background: p.c }} />
     <span className="plate-n">{p.d}</span>
     {off && <span className="plate-v">{off}</span>}
@@ -1820,6 +1851,14 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
   };
   const stackShown = (lead) => { const o = opsOfStack(lead); return !o.length || o.some((x) => ops[x]); };
   const broken = (lead) => membersOf(lead).some((m) => m.status === "tagged" || m.status === "shop");
+  const taggedOut = (lead) => membersOf(lead).some((m) => m.status === "tagged");
+  // who / what is on a crew today (the bins used screen positions, which left
+  // people and trucks dropped onto a crew still showing in the room / yard)
+  const crewHas = useMemo(() => {
+    const p = new Set(), u = new Set();
+    live(day.crews).forEach((c) => { (c.people || []).forEach((x) => p.add(x)); (c.iron || []).forEach((x) => u.add(x)); });
+    return { p, u };
+  }, [day.crews]);
   const offToday = (pid) => {
     const c = week.cells[`${pid}:${dayIndex}`];
     return c && c.code !== "on" && c.code !== "light" ? DAY[c.code].short : null;
@@ -1838,7 +1877,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const boxes = packBoxes(live(day.crews)
+  const boxes = packBoxes(live(day.crews).map((c) => ({ ...c, people: (c.people || []).filter((pid) => !offToday(pid)) }))
     .filter((c) => !c.ops || ops[c.ops] !== false)
     .map((c, i) => layoutBox(c, i, core, hitch2, anchors)), vw);
   /* the "+ New crew" tile sits where the next box would go; the canvas grows to fit */
@@ -1858,14 +1897,19 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
     onOrder(ids);
   };
 
-  const room = roster.filter((p) => !pos[p.id] && !offToday(p.id));
+  const room = roster.filter((p) => !crewHas.p.has(p.id) && !offToday(p.id));
   const away = roster.filter((p) => offToday(p.id));
-  const parked = Object.keys(stacks).filter((k) => !pos[k] && stackShown(k));
+  const parked = Object.keys(stacks).filter((k) => !(stacks[k] || [k]).some((m) => crewHas.u.has(m)) && stackShown(k));
   const yard = parked.filter((k) => !broken(k));
-  const shop = parked.filter((k) => broken(k));
+  const shop = parked.filter((k) => broken(k) && !taggedOut(k));
+  const brokeList = parked.filter((k) => taggedOut(k));
   const hot = (id) => (drag && drag.over === id ? " hot" : "");
   const outIssues = [];
   Object.values(crewJobs).forEach((cj) => cj.lines.forEach((t) => outIssues.push(t)));
+  live(day.crews).forEach((c) => (c.people || []).forEach((pid) => {
+    const p = core.people[pid];
+    if (p && !p.del && p.ops && p.ops.length && c.ops && !p.ops.includes(c.ops) && !offToday(pid)) outIssues.push(`${p.name} is on ${c.name} but isn't set up for ${c.ops}`);
+  }));
   Object.keys(stacks).forEach((k) => {
     if (!pos[k] || !stackShown(k)) return;
     stackIssues(membersOf(k)).forEach((t) => outIssues.push(t));
@@ -1927,11 +1971,10 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
           </Zone>
           <Zone id="vac" accepts={["person"]} registerZone={registerZone} onDrop={(it) => onMove(it, "vac")}>
             <div className={`bin vac${hot("vac")}`}>
-              <div className="bin-h">ON VACATION<b>{away.length}</b></div>
+              <div className="bin-h">OFF DUTY<b>{away.length}</b></div>
               <div className="bin-b">
-                {away.map((p) => <Plate key={p.id} p={p} off={offToday(p.id)} onClick={() => onPerson(p.id)}
-                                        onBegin={(e) => begin(e, { kind: "person", id: p.id, name: p.d, color: p.c, from: "vac" })} />)}
-                {!away.length && <span className="hint">nobody off</span>}
+                {away.map((p) => <Plate key={p.id} p={p} off={offToday(p.id)} onClick={() => onPerson(p.id)} locked />)}
+                {!away.length && <span className="hint">nobody off · drop a name here to mark them off today</span>}
               </div>
             </div>
           </Zone>
@@ -1956,6 +1999,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
                       <span className="cbox-g" title="Move this crew"
                             onPointerDown={(e) => begin(e, { kind: "crew", id: b.crew.id, name: b.crew.name })} />
                       <button className="cbox-n stencil" onClick={() => onCrew(b.crew.id)}>{b.crew.name}</button>
+                      <button className="cbox-edit stencil" onClick={() => onCrew(b.crew.id)} title="Rename, change operation, add or remove people and equipment">✎ Edit</button>
                       {b.crew.ops && <u className="stencil"><OpGlyph op={b.crew.ops} /> {b.crew.ops}</u>}
                       {crewJobs[b.crew.id]?.lines.length > 0 && (
                         <em className="cbox-warn" title={crewJobs[b.crew.id].lines.join("\n")}>⚠ {crewJobs[b.crew.id].lines.length}</em>
@@ -1966,6 +2010,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
                     {b.pSlots.map(({ p, x, y }) => (
                       <div key={p.id} className="slot" style={{ left: x, top: y, width: PL_W }}>
                         <Plate p={p} off={offToday(p.id)} onClick={() => onPerson(p.id)}
+                               warn={p.ops && p.ops.length && b.crew.ops && !p.ops.includes(b.crew.ops) ? `${p.name} isn't set up for ${b.crew.ops}` : ""}
                                onBegin={(e) => begin(e, { kind: "person", id: p.id, name: p.d, color: p.c, from: `crew:${b.crew.id}` })} />
                       </div>
                     ))}
@@ -2001,9 +2046,19 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
             <div className={`bin rep${hot("rep")}`}>
               <div className="bin-h">IN FOR REPAIR<b>{shop.length}</b></div>
               <div className="bin-b row">
-                {shop.map((k) => <LoadCard key={k} members={membersOf(k)} scale={0.52} broken onClick={() => onOpenAsset(k)}
+                {shop.map((k) => <LoadCard key={k} members={membersOf(k)} scale={0.44} broken onClick={() => onOpenAsset(k)}
                                            onBegin={(e) => begin(e, { kind: "stack", id: k, name: membersOf(k).map((m) => m.tag).join(" · "), from: "rep" })} />)}
-                {!shop.length && <span className="hint">nothing down</span>}
+                {!shop.length && <span className="hint">nothing being serviced</span>}
+              </div>
+            </div>
+          </Zone>
+          <Zone id="broke" accepts={["stack"]} registerZone={registerZone} onDrop={(it) => onMove(it, "broke")}>
+            <div className={`bin broke${hot("broke")}`}>
+              <div className="bin-h">BROKEN · DO NOT OPERATE<b>{brokeList.length}</b></div>
+              <div className="bin-b row">
+                {brokeList.map((k) => <LoadCard key={k} members={membersOf(k)} scale={0.44} broken onClick={() => onOpenAsset(k)}
+                                           onBegin={(e) => begin(e, { kind: "stack", id: k, name: membersOf(k).map((m) => m.tag).join(" · "), from: "broke" })} />)}
+                {!brokeList.length && <span className="hint">nothing broken</span>}
               </div>
             </div>
           </Zone>
@@ -2383,7 +2438,9 @@ function AssetSheet({ a, core, onClose, onStatus, onField, onToggleOp, onDelete 
   );
 }
 
-function CrewSheet({ c, onClose, onRename, onOps, onDelete }) {
+/* Edit a crew: name, operation, and its people and equipment — with lists and
+   pickers, so nothing has to be dragged. Off-duty people can't be added. */
+function CrewSheet({ c, core, day, offToday, onClose, onRename, onOps, onDelete, onAddPerson, onRemovePerson, onAddStack, onRemoveStack }) {
   const [name, setName] = useState(c.name);
   const nameRef = useRef(name); nameRef.current = name;
   const killed = useRef(false);
@@ -2392,12 +2449,23 @@ function CrewSheet({ c, onClose, onRename, onOps, onDelete }) {
     if (!killed.current && v && v !== c.name) onRename(c.id, v);
   }, [c.id, c.name, onRename]);
   useEffect(() => () => commit(), [commit]);   // closing the sheet saves the name
+  const crews = live(day.crews);
+  const crewOfPerson = (pid) => crews.find((x) => x.id !== c.id && (x.people || []).includes(pid));
+  const people = (c.people || []).map((id) => core.people[id]).filter((p) => p && !p.del);
+  const others = live(core.people).filter((p) => !(c.people || []).includes(p.id)).sort((a, b) => a.name.localeCompare(b.name));
+  const stacks = day.stacks || {};
+  const memOf = (k) => (stacks[k] || [k]).map((m) => core.assets[m]).filter((a) => a && !a.del);
+  const onAnyCrew = (k) => crews.some((x) => (stacks[k] || [k]).some((m) => (x.iron || []).includes(m)));
+  const mine = Object.keys(stacks).filter((k) => (stacks[k] || [k]).some((m) => (c.iron || []).includes(m)));
+  const free = Object.keys(stacks).filter((k) => !onAnyCrew(k) && memOf(k).length);
+  const opsMismatch = (p) => (p.ops && p.ops.length && c.ops && !p.ops.includes(c.ops) ? `not set up for ${c.ops}` : "");
+  const statusWord = (k) => { const m = memOf(k); return m.some((a) => a.status === "tagged") ? " — BROKEN" : m.some((a) => a.status === "shop") ? " — in the shop" : ""; };
   return (
-    <Sheet onClose={onClose} title={c.name} sub={`${c.people.length} on the crew · ${c.iron.length} units`}>
+    <Sheet onClose={onClose} title={c.name} sub={`${people.length} on the crew · ${mine.length} load${mine.length === 1 ? "" : "s"}`}>
       <div className="fl stencil">CREW NAME</div>
       <input className="srch" style={{ width: "100%" }} value={name}
              onChange={(e) => setName(e.target.value)} onBlur={commit}
-             onKeyDown={(e) => { if (e.key === "Enter") { commit(); onClose(); } }} />
+             onKeyDown={(e) => { if (e.key === "Enter") { commit(); } }} />
       <div className="fl stencil">OPERATION</div>
       <div className="opts">
         {[...OP_ORDER, "SHOP"].map((l) => (
@@ -2406,14 +2474,51 @@ function CrewSheet({ c, onClose, onRename, onOps, onDelete }) {
           </button>
         ))}
       </div>
+
+      <div className="fl stencil">PEOPLE</div>
+      <div className="opts">
+        {people.map((p) => (
+          <span key={p.id} className="mini stencil" style={{ borderLeftColor: p.c || C.edge, gap: 8 }}>
+            {p.d}{offToday(p.id) ? <em style={{ color: C.inkFaint, fontStyle: "normal" }}> off today</em> : null}
+            {opsMismatch(p) ? <em style={{ color: ST.watch.color, fontStyle: "normal" }}> ⚠ {opsMismatch(p)}</em> : null}
+            <button className="lnk" title="Take off this crew" onClick={() => onRemovePerson(p.id)}>✕</button>
+          </span>
+        ))}
+        {!people.length && <span className="hint">Nobody on this crew yet.</span>}
+      </div>
+      <select className="srch" style={{ width: "100%", marginTop: 8 }} value="" onChange={(e) => { if (e.target.value) onAddPerson(e.target.value); }}>
+        <option value="">+ Add a person…</option>
+        {others.map((p) => {
+          const off = offToday(p.id), on = crewOfPerson(p.id), mm = opsMismatch(p);
+          return <option key={p.id} value={p.id} disabled={!!off}>{p.name}{off ? " — off duty" : on ? ` — move from ${on.name}` : ""}{mm ? ` (⚠ ${mm})` : ""}</option>;
+        })}
+      </select>
+
+      <div className="fl stencil">EQUIPMENT</div>
+      <div style={{ display: "grid", gap: 4 }}>
+        {mine.map((k) => (
+          <div key={k} className="mini stencil" style={{ justifyContent: "space-between", borderLeftColor: memOf(k).some((a) => a.status === "tagged" || a.status === "shop") ? ST.tagged.color : C.edge }}>
+            <span>{memOf(k).map((m) => m.tag || m.name).join(" · ")}{statusWord(k)}</span>
+            <button className="lnk" title="Back to the yard" onClick={() => onRemoveStack(k)}>✕</button>
+          </div>
+        ))}
+        {!mine.length && <span className="hint">No equipment on this crew yet.</span>}
+      </div>
+      <select className="srch" style={{ width: "100%", marginTop: 8 }} value="" onChange={(e) => { if (e.target.value) onAddStack(e.target.value); }}>
+        <option value="">+ Add equipment from the yard…</option>
+        {free.map((k) => <option key={k} value={k}>{memOf(k).map((m) => m.tag || m.name).join(" · ")}{statusWord(k)}</option>)}
+      </select>
+      <div style={{ fontSize: 11, color: C.inkDim, marginTop: 8 }}>A truck comes with whatever is hitched to it. Changes save as you make them.</div>
+
       <div className="act">
-        <button className="btn stencil" data-danger="1" onClick={() => { killed.current = true; onDelete(c.id); }}>Delete crew</button>
+        <button className="btn stencil" data-primary="1" onClick={() => { commit(); onClose(); }}>Done</button>
+        <button className="btn stencil" data-danger="1" onClick={() => { if (window.confirm(`Delete ${c.name}? Its people go back to the crew room and its equipment to the yard.`)) { killed.current = true; onDelete(c.id); } }}>Delete crew</button>
       </div>
     </Sheet>
   );
 }
 
-function PersonSheet({ p, core, onClose, onRename, onRemove }) {
+function PersonSheet({ p, core, onClose, onRename, onRemove, offToday, onBackOnDuty, onCalendar }) {
   const [name, setName] = useState(p.name);
   const nameRef = useRef(name); nameRef.current = name;
   const killed = useRef(false);
@@ -2433,6 +2538,16 @@ function PersonSheet({ p, core, onClose, onRename, onRemove }) {
       <div style={{ fontSize: 11, color: C.inkDim, marginTop: 8 }}>
         Spell it the way SingleOps does, so the crew recognizes the name.
       </div>
+      {offToday && (
+        <div style={{ marginTop: 12, padding: "10px 12px", background: C.bg, border: `1px solid ${C.edgeSoft}`, borderRadius: 3 }}>
+          <div style={{ fontSize: 12.5 }}>Off duty today — {offToday.toLowerCase()}.</div>
+          <div className="opts" style={{ marginTop: 8 }}>
+            <button className="btn stencil" data-primary="1" onClick={onBackOnDuty}>Back on duty today</button>
+            <button className="btn stencil" onClick={onCalendar}>Days off calendar</button>
+          </div>
+        </div>
+      )}
+      {!offToday && <div className="opts" style={{ marginTop: 10 }}><button className="btn stencil" onClick={onCalendar}>Days off calendar</button></div>}
       <div className="fl stencil">WITH THEM TODAY</div>
       {iron.length === 0
         ? <div style={{ fontSize: 11.5, color: C.inkFaint }}>No units on their crew.</div>
@@ -2444,6 +2559,153 @@ function PersonSheet({ p, core, onClose, onRename, onRemove }) {
                 onClick={() => { killed.current = true; onRemove(p.id); }}>Remove from board</button>
       </div>
     </Sheet>
+  );
+}
+
+/* ============================ PEOPLE ======================================
+   Who is around, and when. A big month calendar: pick a person, pick a reason,
+   then tap days (or drag across them). Days off are saved in the same week
+   records the yard reads, so on those days the person sits in Off Duty and
+   can't be put on a crew. Each person's operations (GTC / PHC / LC / Shop /
+   Sales) are set here; the yard flags anyone put on a crew outside them.   */
+const PERSON_OPS = ["GTC", "PHC", "LC", "SHOP", "SALES"];
+const REASONS = [["vac", "Vacation"], ["sick", "Sick"], ["train", "Training"], ["light", "Light duty"], ["on", "Back on duty"]];
+
+function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, onAddPerson, onRemove }) {
+  const [month, setMonth] = useState(() => { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return d; });
+  const [sel, setSel] = useState(null);
+  const [reason, setReason] = useState("vac");
+  const [weeks, setWeeks] = useState({});        // sunday iso -> cells
+  const [err, setErr] = useState("");
+  const paint = useRef(null);                    // { code, done:Set } while dragging across days
+  const roster = live(core.people).sort((a, b) => a.name.localeCompare(b.name));
+  const person = sel && core.people[sel];
+
+  // the 6 calendar weeks shown for this month
+  const first = weekStartOf(month);
+  const days = Array.from({ length: 42 }, (_, i) => addDays(first, i));
+  const sundays = [0, 1, 2, 3, 4, 5].map((w) => isoOf(addDays(first, w * 7)));
+  const gen = useRef(0);
+  useEffect(() => {
+    const g = ++gen.current;
+    Promise.all(sundays.map((sun) => shopGet(`week.${sun}`).then((v) => [sun, v?.cells || {}]))).then((list) => {
+      if (g === gen.current) setWeeks(Object.fromEntries(list));
+    });
+  }, [isoOf(month)]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const cellOf = (pid, d) => {
+    const sun = isoOf(weekStartOf(d)), di = d.getDay();
+    return (weeks[sun] || {})[`${pid}:${di}`];
+  };
+  const codeOf = (pid, d) => { const c = cellOf(pid, d); return c && c.code !== "on" ? c.code : null; };
+
+  const setDay = (pid, d, code) => {
+    const sun = isoOf(weekStartOf(d)), key = `${pid}:${d.getDay()}`;
+    const val = { code, at: stampNow(), by: (me && me.name) || "?" };
+    setWeeks((w) => ({ ...w, [sun]: { ...(w[sun] || {}), [key]: val } }));
+    if (sun === boardWeekIso) onBoardCell(key, val);       // the yard shows it straight away
+    shopPatch(`week.${sun}`, { cells: { [key]: val } }).then((r) => { if (!r) setErr("Couldn't save a change — check your connection."); else setErr(""); });
+  };
+  const tapDay = (d, dragging) => {
+    if (!sel) { setErr("Pick a person on the left first."); return; }
+    const k = isoOf(d);
+    if (dragging) { if (paint.current.done.has(k)) return; paint.current.done.add(k); setDay(sel, d, paint.current.code); return; }
+    const cur = codeOf(sel, d);
+    const code = reason === "on" ? "on" : cur === reason ? "on" : reason;   // tap again to clear
+    paint.current = { code, done: new Set([k]) };
+    setDay(sel, d, code);
+  };
+  const onGridMove = (e) => {
+    if (!paint.current || !e.buttons) return;
+    const el = document.elementFromPoint(e.clientX, e.clientY)?.closest?.("[data-day]");
+    if (el) tapDay(new Date(el.dataset.day + "T00:00:00"), true);
+  };
+  useEffect(() => { const up = () => { paint.current = null; }; window.addEventListener("pointerup", up); return () => window.removeEventListener("pointerup", up); }, []);
+
+  const inMonth = (d) => d.getMonth() === month.getMonth();
+  const todayIso = isoOf(new Date());
+  const offCount = (pid) => days.filter((d) => inMonth(d) && codeOf(pid, d) && codeOf(pid, d) !== "light").length;
+  const monthName = month.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
+  return (
+    <div className="ppl">
+      <div className="ppl-side">
+        <div className="bin-h" style={{ border: 0 }}>PEOPLE<button className="lnk stencil" onClick={onAddPerson}>+ add person</button><b>{roster.length}</b></div>
+        <div className="ppl-list">
+          {roster.map((p) => (
+            <button key={p.id} className="ppl-row" data-on={sel === p.id ? 1 : 0} onClick={() => setSel(sel === p.id ? null : p.id)}>
+              <i style={{ background: p.c || C.edge }} />
+              <span className="stencil">{p.d}</span>
+              <small>{(p.ops && p.ops.length ? p.ops : ["all"]).join(" · ")}{offCount(p.id) ? ` · ${offCount(p.id)} off` : ""}</small>
+            </button>
+          ))}
+        </div>
+        {person && !person.del && (
+          <div className="ppl-edit">
+            <div className="fl stencil">NAME</div>
+            <input className="srch" style={{ width: "100%" }} defaultValue={person.name} key={person.id}
+                   onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== person.name) onRename(person.id, v); }} />
+            <div className="fl stencil">WORKS IN</div>
+            <div className="opts">
+              {PERSON_OPS.map((o) => {
+                const on = (person.ops || []).includes(o);
+                return <button key={o} className="opt stencil" data-on={on ? 1 : 0}
+                               onClick={() => onSetOps(person.id, on ? (person.ops || []).filter((x) => x !== o) : [...(person.ops || []), o])}>{on ? "✓ " : ""}{o}</button>;
+              })}
+            </div>
+            <div className="hint" style={{ padding: "6px 0" }}>{person.ops && person.ops.length ? `The yard flags ${person.name.split(" ")[0]} if put on a crew outside these.` : "None ticked = can work anywhere."}</div>
+            <div className="act" style={{ marginTop: 8 }}>
+              <button className="btn stencil" data-danger="1" onClick={() => { if (window.confirm(`Remove ${person.name} from the board?`)) { onRemove(person.id); setSel(null); } }}>Remove from board</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="ppl-main">
+        <div className="ppl-top">
+          <button className="btn stencil" onClick={() => setMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))}>‹</button>
+          <span className="stencil ppl-month">{monthName}</span>
+          <button className="btn stencil" onClick={() => setMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))}>›</button>
+          <button className="btn stencil" onClick={() => { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); setMonth(d); }}>This month</button>
+          <span className="spacer" />
+          <span className="hint" style={{ padding: 0 }}>{person ? <>Tap or drag across days to mark <b style={{ color: C.ink }}>{person.name}</b>:</> : "Pick a person on the left, then:"}</span>
+          {REASONS.map(([k, l]) => (
+            <button key={k} className="marker stencil" data-on={reason === k ? 1 : 0} onClick={() => setReason(k)}>
+              {k !== "on" && <span className="swatch" style={{ background: DAY[k].color }} />}{l}
+            </button>
+          ))}
+        </div>
+        {err && <div className="hint" style={{ color: "#E8867B" }}>{err}</div>}
+        <div className="cal-grid" onPointerMove={onGridMove} style={{ touchAction: sel ? "none" : "auto" }}>
+          {DNAMES.map((n) => <div key={n} className="cal-h stencil">{n}</div>)}
+          {days.map((d) => {
+            const k = isoOf(d);
+            const offs = roster.map((p) => ({ p, code: codeOf(p.id, d) })).filter((x) => x.code);
+            const mine = sel && codeOf(sel, d);
+            return (
+              <div key={k} data-day={k} className="cal-d" data-out={inMonth(d) ? 0 : 1} data-today={k === todayIso ? 1 : 0}
+                   data-wknd={d.getDay() === 0 || d.getDay() === 6 ? 1 : 0}
+                   style={mine ? { boxShadow: `inset 0 0 0 2px ${DAY[mine].color}`, background: `${DAY[mine].color}22` } : undefined}
+                   onPointerDown={(e) => { e.preventDefault(); tapDay(d, false); }}>
+                <b className="mono">{d.getDate()}</b>
+                <div className="cal-offs">
+                  {offs.slice(0, 6).map(({ p, code }) => (
+                    <span key={p.id} className="cal-off" style={{ borderLeftColor: p.c || C.edge, opacity: code === "light" ? 0.7 : 1 }} title={`${p.name} — ${DAY[code].label}`}>
+                      {(p.name || "").split(" ")[0]} <em style={{ color: DAY[code].color }}>{DAY[code].short}</em>
+                    </span>
+                  ))}
+                  {offs.length > 6 && <span className="cal-off">+{offs.length - 6} more</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="legend" style={{ padding: "8px 0 0" }}>
+          {["vac", "sick", "train", "light"].map((k) => <i key={k}><span className="swatch" style={{ background: DAY[k].color }} />{DAY[k].label}</i>)}
+          <i style={{ color: C.inkFaint }}>Tap a marked day again to clear it. Light duty keeps the person available.</i>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2962,7 +3224,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
     });
     return out;
   }, [sched, day, core, week, dayIndex]);
-  const BIN_LABEL = { room: "→ Crew room", vac: "→ On vacation (today)", yard: "→ At the yard", rep: "→ In for repair", newcrew: "→ New crew" };
+  const BIN_LABEL = { room: "→ Crew room", vac: "→ Off duty today", yard: "→ At the yard", rep: "→ In for repair", broke: "→ Broken (do not operate)", newcrew: "→ New crew" };
   const dropLabel = (d) => {
     if (!d.over) return "";
     if (d.over === d.item.from) return "Same place — no change";
@@ -3075,6 +3337,13 @@ export default function ShopBoard({ user, isAdmin = false }) {
       snapshot(`${label} to the shop`);
       apply((d, s) => mem.forEach((m) => { const a = d.assets[m]; if (a) { a.status = "shop"; a.at = s.at; a.by = s.by; } }),
             `${label} → In shop`, true);
+      applyDay((d, s) => { delete d.pos[id]; pullOut(d, "stack", mem, s); });
+      return;
+    }
+    if (where === "broke") {
+      snapshot(`${label} broken`);
+      apply((d, s) => mem.forEach((m) => { const a = d.assets[m]; if (a) { a.status = "tagged"; a.at = s.at; a.by = s.by; } }),
+            `${label} → Broken (tagged out)`, true);
       applyDay((d, s) => { delete d.pos[id]; pullOut(d, "stack", mem, s); });
       return;
     }
@@ -3220,6 +3489,13 @@ export default function ShopBoard({ user, isAdmin = false }) {
                   undoLabel={undoLabel} onUndo={undo}
                   onCopy={copyDay} onLink={lockRig} onUnlink={unlockRig} />
       )}
+      {tab === "people" && (
+        <PeopleView core={core} me={me} boardWeekIso={wkIso}
+                    onBoardCell={(key, val) => setWeek((w) => ({ cells: { ...w.cells, [key]: val } }))}
+                    onRename={renamePerson} onAddPerson={addPerson} onRemove={removePerson}
+                    onSetOps={(id, list) => apply((d, s) => { const p = d.people[id]; if (p) { p.ops = PERSON_OPS.filter((o) => list.includes(o)); p.at = s.at; p.by = s.by; } },
+                                                  `${(core.people[id] || {}).name} works in ${list.length ? list.join(", ") : "anything"}`)} />
+      )}
       {tab === "week" && (
         <WeekView core={core} people={people} engine={engine} week={week} setCell={setCell}
                   marker={marker} setMarker={setMarker} iso={wkIso} onDayFocus={setDayFocus}
@@ -3232,7 +3508,12 @@ export default function ShopBoard({ user, isAdmin = false }) {
                     onField={setField} onToggleOp={toggleOp} onDelete={removeAsset} />
       )}
       {crew && !crew.del && (
-        <CrewSheet c={crew} onClose={() => setOpenCrew(null)} onRename={renameCrew} onOps={opsCrew} onDelete={delCrew} />
+        <CrewSheet c={crew} core={core} day={day} offToday={(pid) => { const cc = week.cells[`${pid}:${dayIndex}`]; return cc && cc.code !== "on" && cc.code !== "light"; }}
+                   onClose={() => setOpenCrew(null)} onRename={renameCrew} onOps={opsCrew} onDelete={delCrew}
+                   onAddPerson={(pid) => yardMove({ kind: "person", id: pid }, `crew:${crew.id}`)}
+                   onRemovePerson={(pid) => yardMove({ kind: "person", id: pid }, "room")}
+                   onAddStack={(k) => yardMove({ kind: "stack", id: k }, `crew:${crew.id}`)}
+                   onRemoveStack={(k) => yardMove({ kind: "stack", id: k }, "yard")} />
       )}
       {noteOpen && (
         <DaySheet core={core} crewsMap={day.crews} week={week} iso={cur} dayIndex={dayIndex}
@@ -3240,7 +3521,10 @@ export default function ShopBoard({ user, isAdmin = false }) {
       )}
       {openPerson && core.people[openPerson] && !core.people[openPerson].del && (
         <PersonSheet p={core.people[openPerson]} core={core} onClose={() => setOpenPerson(null)}
-                     onRename={renamePerson} onRemove={removePerson} />
+                     onRename={renamePerson} onRemove={removePerson}
+                     offToday={(() => { const cc = week.cells[`${openPerson}:${dayIndex}`]; return cc && cc.code !== "on" && cc.code !== "light" ? DAY[cc.code].label : null; })()}
+                     onBackOnDuty={() => setCell(openPerson, dayIndex, "on")}
+                     onCalendar={() => { setOpenPerson(null); setTab("people"); }} />
       )}
       {dayFocus !== null && (
         <DayFocus dayIndex={dayFocus} iso={wkIso} core={core} week={week} setCell={setCell}

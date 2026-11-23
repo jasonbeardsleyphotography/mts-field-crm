@@ -132,6 +132,13 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   must BE the Zone element (className/style on the Zone) — a wrapper div has zero size and never receives drops (that
   bug made drops on crews create new crews in the original). Crew boxes pack to the visible width (ResizeObserver).
   Polls don't merge day changes while dragging or for 2 s after. In-crew load cards have no caption (they overlapped).
+  Bins: Crew room / Off Duty (left), At the yard (big) / In for repair (status shop) / Broken (status tagged) (right).
+  Room and yard are decided by crew MEMBERSHIP (`crewHas`), not screen positions (that left dropped people/trucks in
+  both places). ✎ Edit on each crew opens CrewSheet: rename, operation, add/remove people and equipment via pickers
+  (reuses yardMove). People tab (`PeopleView`): month calendar; pick a person + reason (vac/sick/train/light/on), tap or
+  drag across days → writes the same week.<sunday> cells the yard reads. Off-duty people are hidden from crew boxes
+  (data kept, they return when back on duty), sit locked in Off Duty (not draggable; their sheet has "Back on duty
+  today"). Person `ops` (GTC/PHC/LC/SHOP/SALES; none = anywhere) → amber plate + "to check" line when on another op's crew.
 - Schedule (Dispatch tab, `src/dispatch/Schedule.jsx`): crews for a day come from the Shop Board (that day's record,
   else the latest earlier saved day, else the standing setup). Jobs are assigned per day in `mts-shop` key
   `sched.<iso>` = { assign: { jobRef: { crew|null, order, label, town, hrs, at, by } } }, merged per job like the board
@@ -189,5 +196,5 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   per client: jobs with their line items, targets and prices, plus soil samples. Stored separately from visit
   records, but tied to the client: tapping a name (e.g. "Ed Short") shows his history AND his app visits/pipeline
   status together. Both salespeople must see exactly the same history (so it needs a shared home, not one Drive).
-- (Soil reports moved out of ON HOLD — built as /soil, see above.)
+- (Soil reports moved out of ON HOLD — built as /soil, see above.) Soil development PAUSED by the owner (Nov 23) to focus on Dispatch.
 - Video snapshot button (photo from the live video view, with GPS + site-map pin) — explored, not built.
