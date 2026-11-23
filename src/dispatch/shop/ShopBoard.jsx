@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { shopGet, shopDays, shopPatch, shopPresence, stampNow, changed, changedKeys } from "./shopApi";
+import { checkJob, problemLines } from "../crewCheck";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Shop Board — the owner's ShopBoard.jsx, moved into Dispatch.
@@ -912,10 +913,20 @@ function packBoxes(sized, CW) {
    Pointer-based, so it works with a mouse and with a thumb. Drop zones
    register their DOM node; hit-testing picks the smallest matching rect.    */
 
+/* Rebuilt for smoothness (the owner found the original jumpy):
+   • A drag starts only after the pointer really moves (6 px mouse, 10 px
+     touch), so a click stays a click. Only the week "paint" markers start at once.
+   • The ghost follows the pointer by moving its own element (no React render
+     per mouse move); the board re-renders only when the target under the
+     pointer changes.
+   • Dropping back where the item came from (item.from) does nothing.
+   • The click that ends a drag is swallowed, so it doesn't also open a sheet.
+   • Escape cancels; near the edges the canvas (and page) scroll by themselves. */
 function useDragEngine() {
   const zones = useRef(new Map());
   const st = useRef(null);
-  const [drag, setDrag] = useState(null);
+  const ghostRef = useRef(null);
+  const [drag, setDrag] = useState(null);     // { item, over, x, y } — changes on start, target change, end
 
   const registerZone = useCallback((id, el, meta) => {
     if (el) zones.current.set(id, { el, meta });
@@ -936,61 +947,106 @@ function useDragEngine() {
     return best;
   };
 
+  const placeGhost = () => {
+    const s = st.current, g = ghostRef.current;
+    if (s && g) g.style.transform = `translate3d(${Math.round(s.x - s.ox)}px, ${Math.round(s.y - s.oy)}px, 0)`;
+  };
+
+  const finish = () => {
+    const s = st.current; st.current = null;
+    if (s && s.timer) clearInterval(s.timer);
+    document.body.style.userSelect = ""; document.body.style.webkitUserSelect = ""; document.body.style.cursor = "";
+    setDrag(null);
+    return s;
+  };
+
   const begin = useCallback((e, item) => {
     if (e.button != null && e.button > 0) return;
     const br = e.currentTarget ? e.currentTarget.getBoundingClientRect() : { left: e.clientX, top: e.clientY };
+    const paintNow = item.kind === "marker" && item.instant === true;
     st.current = {
       item, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY,
-      ox: e.clientX - br.left, oy: e.clientY - br.top,
-      active: item.instant === true, painted: null,
+      // keep the ghost under the pointer where it was grabbed (capped, since grips are small)
+      ox: Math.min(Math.max(0, e.clientX - br.left), 28), oy: Math.min(Math.max(0, e.clientY - br.top), 18),
+      active: paintNow, painted: null, over: null,
       axis: item.axis || "free", ptr: e.pointerType || "mouse",
     };
-    if (st.current.active) setDrag({ item, x: e.clientX, y: e.clientY, over: null });
+    if (paintNow) setDrag({ item, x: e.clientX, y: e.clientY, over: null });
   }, []);
 
   useEffect(() => {
+    const autoScroll = () => {
+      const s = st.current; if (!s || !s.active) return;
+      const edge = 56, step = (d) => Math.ceil(((edge - d) / edge) * 18);
+      const wrap = document.querySelector(".mb .canvas-wrap");
+      if (wrap) {
+        const r = wrap.getBoundingClientRect();
+        if (s.y > r.top && s.y < r.bottom) {
+          if (s.x < r.left + edge && s.x > r.left - 20) wrap.scrollLeft -= step(s.x - r.left);
+          else if (s.x > r.right - edge && s.x < r.right + 20) wrap.scrollLeft += step(r.right - s.x);
+        }
+      }
+      if (s.y < edge) window.scrollBy(0, -step(s.y));
+      else if (s.y > window.innerHeight - edge) window.scrollBy(0, step(window.innerHeight - s.y));
+    };
     const move = (e) => {
       const s = st.current; if (!s) return;
       const dx = e.clientX - s.x0, dy = e.clientY - s.y0;
       if (!s.active) {
+        const need = s.ptr === "touch" ? 10 : 6;
         if (s.axis === "x") {
-          if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy)) return;
-        } else if (Math.hypot(dx, dy) < 6) return;
+          if (Math.abs(dx) < need || Math.abs(dx) < Math.abs(dy)) return;
+        } else if (Math.hypot(dx, dy) < need) return;
         s.active = true;
+        document.body.style.userSelect = "none"; document.body.style.webkitUserSelect = "none"; document.body.style.cursor = "grabbing";
+        s.timer = setInterval(autoScroll, 16);
+        setDrag({ item: s.item, x: e.clientX, y: e.clientY, over: null });
       }
       s.x = e.clientX; s.y = e.clientY;
       if (e.cancelable) e.preventDefault();
+      if (!s.raf) s.raf = requestAnimationFrame(() => { if (st.current) { st.current.raf = 0; placeGhost(); } });
       const over = hit(e.clientX, e.clientY, s.item.kind);
-      setDrag({ item: s.item, x: s.x, y: s.y, over: over ? over.id : null });
+      const id = over ? over.id : null;
+      if (id !== s.over) { s.over = id; setDrag((d) => (d ? { ...d, over: id } : d)); }
       if (over && over.meta.paint && over.id !== s.painted) {
         s.painted = over.id;
         over.meta.onDrop(s.item, over.id);
       }
     };
     const up = (e) => {
-      const s = st.current; st.current = null;
-      if (!s) return;
+      const s = st.current; if (!s) return;
       if (s.active) {
         const over = hit(e.clientX, e.clientY, s.item.kind);
-        if (over && !over.meta.paint) {
+        // swallow the click that follows a drag, so it doesn't open a sheet
+        const stop = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+        window.addEventListener("click", stop, { capture: true, once: true });
+        setTimeout(() => window.removeEventListener("click", stop, { capture: true }), 350);
+        finish();
+        if (over && !over.meta.paint && over.id !== s.item.from) {
           over.meta.onDrop(s.item, over.id,
             { x: e.clientX - over.r.left - (s.ox || 0), y: e.clientY - over.r.top - (s.oy || 0) });
         }
+        return;
       }
-      setDrag(null);
+      st.current = null;       // a plain click: let it through untouched
     };
-    const cancel = () => { st.current = null; setDrag(null); };
+    const cancel = () => { if (st.current) finish(); };
+    const key = (e) => { if (e.key === "Escape" && st.current && st.current.active) finish(); };
     window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", key);
+    window.addEventListener("blur", cancel);
     return () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("blur", cancel);
     };
   }, []);
 
-  return { drag, begin, registerZone };
+  return { drag, begin, registerZone, ghostRef };
 }
 
 function Zone({ id, accepts, onDrop, paint, registerZone, children, style, className, onClick }) {
@@ -1217,8 +1273,22 @@ const CSS = scopeCss(`
 .log time { margin-left:auto; color:var(--faint); font-size:10.5px; white-space:nowrap; }
 
 /* --- ghost -------------------------------------------------------------- */
-.ghost { position:fixed; z-index:200; pointer-events:none; transform:translate(-50%,-50%) rotate(-1.4deg) scale(1.04);
-         box-shadow:0 12px 26px rgba(0,0,0,.55); opacity:.96; }
+.ghost { position:fixed; left:0; top:0; z-index:200; pointer-events:none; will-change:transform; }
+.ghost > :first-child { transform:rotate(-1.2deg) scale(1.04); box-shadow:0 12px 26px rgba(0,0,0,.55); opacity:.97; }
+.ghost-to { margin-top:6px; display:inline-block; font-size:10.5px; letter-spacing:.08em; padding:3px 8px; border-radius:2px;
+            background:#17A05B; color:#08130c; white-space:nowrap; }
+.ghost-to.none { background:#2a333a; color:var(--dim); }
+.cbox { transition: left .22s ease, top .22s ease, width .18s ease, height .18s ease, background .12s, box-shadow .12s, opacity .12s; }
+.cbox.lifted { opacity:.35; }
+.slot { transition: left .18s ease, top .18s ease; }
+.newcrew { position:absolute; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px;
+           border:1.5px dashed #3e4a52; border-radius:5px; color:var(--faint); text-align:center; padding:10px;
+           transition: left .22s ease, top .22s ease, background .12s, border-color .12s, color .12s; }
+.newcrew b { font-family:'Barlow Condensed',sans-serif; font-weight:600; letter-spacing:.1em; font-size:13px; color:var(--dim); }
+.newcrew span { font-size:10.5px; line-height:1.4; }
+.newcrew.ready { border-color:#5b686f; color:var(--dim); }
+.newcrew.hot { background:#20282e; border-color:#17A05B; border-style:solid; }
+.newcrew.hot b { color:var(--ink); }
 .gate { max-width:392px; margin:14vh auto; padding:24px; background:${C.panel}; border:1px solid var(--edge); border-radius:4px; }
 .gate h2 { font-size:17px; letter-spacing:.07em; margin:0 0 8px; font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; }
 .gate p { font-size:12.5px; color:var(--dim); line-height:1.55; margin:0 0 16px; }
@@ -1448,6 +1518,8 @@ const CSS = scopeCss(`
 .cbox-n { font-size:12.5px; letter-spacing:.09em; color:var(--ink); }
 .cbox-h u { text-decoration:none; display:inline-flex; align-items:center; gap:3px; font-size:8.5px;
             letter-spacing:.1em; color:var(--faint); border:1px solid var(--edge); padding:1px 4px; border-radius:2px; }
+.cbox-warn { font-style:normal; font-size:10px; letter-spacing:.06em; color:#fff; background:#D93B2B; border-radius:2px; padding:1px 5px; margin-left:auto; cursor:help; }
+.cbox-warn + b { margin-left:6px !important; }
 .cbox-h b { margin-left:auto; font-weight:500; font-size:9.5px; letter-spacing:.06em; color:var(--faint); }
 .cbox-e { position:absolute; left:12px; top:38px; font-size:10px; color:var(--faint); letter-spacing:.04em; }
 .slot { position:absolute; }
@@ -1700,7 +1772,8 @@ const Plate = ({ p, onBegin, off, onClick }) => (
 );
 
 const LoadCard = ({ members, onBegin, onClick, scale = 1, label = true, broken, odd, linked, onLink }) => (
-  <span className={`lcard${broken ? " broke" : ""}${linked ? " linked" : ""}`} onPointerDown={onBegin} onClick={onClick}>
+  <span className={`lcard${broken ? " broke" : ""}${linked ? " linked" : ""}`} onPointerDown={onBegin} onClick={onClick}
+        title={label ? undefined : members.map((m) => m.tag).join(" · ")}>
     {odd && odd.length > 0 && <span className="lcard-w" title={odd.join("\n")}>!</span>}
     {members.length > 1 && onLink && (
       <span className="lcard-k" role="button" title={linked ? "Linked — click to unlink" : "Link these so they stay together"}
@@ -1728,7 +1801,7 @@ function stackIssues(members) {
   return out;
 }
 
-function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setOps, onOrder,
+function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setOps, onOrder, crewJobs = {},
                    onCopy, onLink, onUnlink,
                    onMove, onNewCrew, onCrew, onPerson, onAddPerson, onOpenAsset, onDate, undoLabel, onUndo }) {
   const { begin, registerZone, drag } = engine;
@@ -1755,9 +1828,27 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
   /* clusters, filtered by which operations are switched on */
   const hitch2 = useMemo(() => deriveHitch(day.crews, core.assets), [day.crews, core.assets]);
   const anchors = day.pos || {};
+  // pack the crews to the width actually on screen (the original used a fixed
+  // 1400 px, so boxes ran off the right edge on a laptop)
+  const wrapRef = useRef(null);
+  const [vw, setVw] = useState(CW);
+  useEffect(() => {
+    const el = wrapRef.current; if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setVw(Math.max(520, Math.floor(el.clientWidth) - 2)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const boxes = packBoxes(live(day.crews)
     .filter((c) => !c.ops || ops[c.ops] !== false)
-    .map((c, i) => layoutBox(c, i, core, hitch2, anchors)), CW);
+    .map((c, i) => layoutBox(c, i, core, hitch2, anchors)), vw);
+  /* the "+ New crew" tile sits where the next box would go; the canvas grows to fit */
+  const lastBox = boxes[boxes.length - 1];
+  const NEW_W = 220;
+  const NEW_H = 118;
+  const newTile = !lastBox ? { x: 16, y: 16 }
+    : lastBox.x + lastBox.w + 16 + NEW_W <= vw ? { x: lastBox.x + lastBox.w + 16, y: lastBox.y }
+    : { x: 16, y: Math.max(...boxes.map((b) => b.y + b.h)) + 16 };
+  const canvasH = Math.max(CH, newTile.y + NEW_H + 24, ...boxes.map((b) => b.y + b.h + 24));
   /* dropped on a box: slot it in there. dropped past the end: put it last. */
   const dropCrew = (id, at) => {
     let target = boxes.findIndex((b) => at.x >= b.x && at.x <= b.x + b.w && at.y >= b.y && at.y <= b.y + b.h);
@@ -1774,6 +1865,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
   const shop = parked.filter((k) => broken(k));
   const hot = (id) => (drag && drag.over === id ? " hot" : "");
   const outIssues = [];
+  Object.values(crewJobs).forEach((cj) => cj.lines.forEach((t) => outIssues.push(t)));
   Object.keys(stacks).forEach((k) => {
     if (!pos[k] || !stackShown(k)) return;
     stackIssues(membersOf(k)).forEach((t) => outIssues.push(t));
@@ -1828,7 +1920,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
                 <b>{room.length}</b></div>
               <div className="bin-b">
                 {room.map((p) => <Plate key={p.id} p={p} onClick={() => onPerson(p.id)}
-                                        onBegin={(e) => begin(e, { kind: "person", id: p.id, name: p.d, color: p.c, instant: true })} />)}
+                                        onBegin={(e) => begin(e, { kind: "person", id: p.id, name: p.d, color: p.c, from: "room" })} />)}
                 {!room.length && <span className="hint">everyone is out</span>}
               </div>
             </div>
@@ -1838,49 +1930,56 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
               <div className="bin-h">ON VACATION<b>{away.length}</b></div>
               <div className="bin-b">
                 {away.map((p) => <Plate key={p.id} p={p} off={offToday(p.id)} onClick={() => onPerson(p.id)}
-                                        onBegin={(e) => begin(e, { kind: "person", id: p.id, name: p.d, color: p.c, instant: true })} />)}
+                                        onBegin={(e) => begin(e, { kind: "person", id: p.id, name: p.d, color: p.c, from: "vac" })} />)}
                 {!away.length && <span className="hint">nobody off</span>}
               </div>
             </div>
           </Zone>
         </div>
 
-        <div className="canvas-wrap">
-          <Zone id="canvas" accepts={["person", "stack", "crew"]} registerZone={registerZone}
-                onDrop={(it, _z, at) => (it.kind === "crew" ? dropCrew(it.id, at) : onMove(it, "canvas", at))}>
-            <div className="canvas" style={{ width: CW, height: CH }}>
+        <div className="canvas-wrap" ref={wrapRef}>
+          <Zone id="canvas" accepts={["crew"]} registerZone={registerZone}
+                onDrop={(it, _z, at) => dropCrew(it.id, at)}>
+            <div className="canvas" style={{ width: vw, height: canvasH }}>
               <div className="asphalt" />
+              <Zone id="newcrew" accepts={["person", "stack"]} registerZone={registerZone} onDrop={(it) => onMove(it, "newcrew")}
+                    className={`newcrew${drag && drag.over === "newcrew" ? " hot" : ""}${drag && (drag.item.kind === "person" || drag.item.kind === "stack") ? " ready" : ""}`}
+                    style={{ left: newTile.x, top: newTile.y, width: NEW_W, height: NEW_H }}>
+                <b>＋ New crew</b><span>Drop a name or a truck here to start a crew</span>
+              </Zone>
               {boxes.map((b) => (
                 <Zone key={b.crew.id} id={`crew:${b.crew.id}`} accepts={["person", "stack"]}
-                      registerZone={registerZone} onDrop={(it) => onMove(it, `crew:${b.crew.id}`)}>
-                  <div className={`cbox${drag && drag.over === `crew:${b.crew.id}` ? " hot" : ""}`}
-                       style={{ left: b.x, top: b.y, width: b.w, height: b.h }}>
+                      registerZone={registerZone} onDrop={(it) => onMove(it, `crew:${b.crew.id}`)}
+                      className={`cbox${drag && drag.over === `crew:${b.crew.id}` ? " hot" : ""}${drag && drag.item.kind === "crew" && drag.item.id === b.crew.id ? " lifted" : ""}`}
+                      style={{ left: b.x, top: b.y, width: b.w, height: b.h }}>
                     <div className="cbox-h">
                       <span className="cbox-g" title="Move this crew"
-                            onPointerDown={(e) => begin(e, { kind: "crew", id: b.crew.id, name: b.crew.name, instant: true })} />
+                            onPointerDown={(e) => begin(e, { kind: "crew", id: b.crew.id, name: b.crew.name })} />
                       <button className="cbox-n stencil" onClick={() => onCrew(b.crew.id)}>{b.crew.name}</button>
                       {b.crew.ops && <u className="stencil"><OpGlyph op={b.crew.ops} /> {b.crew.ops}</u>}
-                      <b>{b.ppl.filter((p) => !offToday(p.id)).length}p · {b.loads.length}</b>
+                      {crewJobs[b.crew.id]?.lines.length > 0 && (
+                        <em className="cbox-warn" title={crewJobs[b.crew.id].lines.join("\n")}>⚠ {crewJobs[b.crew.id].lines.length}</em>
+                      )}
+                      <b>{b.ppl.filter((p) => !offToday(p.id)).length}p · {b.loads.length}{crewJobs[b.crew.id]?.jobs ? ` · ${crewJobs[b.crew.id].jobs} job${crewJobs[b.crew.id].jobs === 1 ? "" : "s"}` : ""}</b>
                     </div>
                     {b.ppl.length === 0 && b.loads.length === 0 && <span className="cbox-e">empty — drag a name or a truck in</span>}
                     {b.pSlots.map(({ p, x, y }) => (
                       <div key={p.id} className="slot" style={{ left: x, top: y, width: PL_W }}>
                         <Plate p={p} off={offToday(p.id)} onClick={() => onPerson(p.id)}
-                               onBegin={(e) => begin(e, { kind: "person", id: p.id, name: p.d, color: p.c, instant: true })} />
+                               onBegin={(e) => begin(e, { kind: "person", id: p.id, name: p.d, color: p.c, from: `crew:${b.crew.id}` })} />
                       </div>
                     ))}
                     {b.lSlots.map(({ l, x, y }) => (
                       <div key={l.id} className="slot" style={{ left: x, top: y }}>
-                        <LoadCard members={l.members} broken={broken(l.id)} odd={stackIssues(l.members)}
+                        <LoadCard members={l.members} broken={broken(l.id)} odd={stackIssues(l.members)} label={false}
                                   linked={!!rigOf(core, l.lead.id)}
                                   onLink={() => { const r = rigOf(core, l.lead.id);
                                     r ? onUnlink(r.id) : onLink(b.crew.id, l.members.map((m) => m.id)); }}
                                   onClick={() => onOpenAsset(l.lead.id)}
                                   onBegin={(e) => begin(e, { kind: "stack", id: l.id,
-                                    name: l.members.map((m) => m.tag).join(" · "), instant: true })} />
+                                    name: l.members.map((m) => m.tag).join(" · "), from: `crew:${b.crew.id}` })} />
                       </div>
                     ))}
-                  </div>
                 </Zone>
               ))}
             </div>
@@ -1893,7 +1992,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
               <div className="bin-h">AT THE YARD<b>{yard.length}</b></div>
               <div className="bin-b row">
                 {yard.map((k) => <LoadCard key={k} members={membersOf(k)} scale={0.52} onClick={() => onOpenAsset(k)}
-                                           onBegin={(e) => begin(e, { kind: "stack", id: k, name: membersOf(k).map((m) => m.tag).join(" · "), instant: true })} />)}
+                                           onBegin={(e) => begin(e, { kind: "stack", id: k, name: membersOf(k).map((m) => m.tag).join(" · "), from: "yard" })} />)}
                 {!yard.length && <span className="hint">everything is out</span>}
               </div>
             </div>
@@ -1903,7 +2002,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
               <div className="bin-h">IN FOR REPAIR<b>{shop.length}</b></div>
               <div className="bin-b row">
                 {shop.map((k) => <LoadCard key={k} members={membersOf(k)} scale={0.52} broken onClick={() => onOpenAsset(k)}
-                                           onBegin={(e) => begin(e, { kind: "stack", id: k, name: membersOf(k).map((m) => m.tag).join(" · "), instant: true })} />)}
+                                           onBegin={(e) => begin(e, { kind: "stack", id: k, name: membersOf(k).map((m) => m.tag).join(" · "), from: "rep" })} />)}
                 {!shop.length && <span className="hint">nothing down</span>}
               </div>
             </div>
@@ -2426,9 +2525,11 @@ export default function ShopBoard({ user, isAdmin = false }) {
   const queue = useRef(Promise.resolve());
   const activeUntil = useRef(0);
   const endedAt = useRef(0);
+  const dragRef = useRef(false);
   const wasDragging = useRef(false);
 
   useEffect(() => {
+    dragRef.current = !!drag;
     if (drag) wasDragging.current = true;
     else if (wasDragging.current) { wasDragging.current = false; endedAt.current = Date.now(); }
   }, [drag]);
@@ -2539,8 +2640,9 @@ export default function ShopBoard({ user, isAdmin = false }) {
         // edits are still being saved, so they can't be flipped back).
         {
           const iso = curRef.current;
-          const rd = dayPending.current ? null : await sGet(kDay(iso));
-          if (rd && rd.crews && alive && !dayPending.current && curRef.current === iso) {
+          const busyHands = () => dragRef.current || Date.now() - endedAt.current < 2000;
+          const rd = dayPending.current || busyHands() ? null : await sGet(kDay(iso));
+          if (rd && rd.crews && alive && !dayPending.current && !busyHands() && curRef.current === iso) {
             setDayArr((c) => ({ crews: mergeMap(rd.crews, c.crews), stacks: rd.stacks || {}, pos: rd.pos || {}, inherited: null }));
             setSavedDays((s2) => (s2.has(iso) ? s2 : new Set(s2).add(iso)));
           }
@@ -2835,6 +2937,40 @@ export default function ShopBoard({ user, isAdmin = false }) {
 
   const peopleIds = () => live(coreRef.current.people).map((p) => p.id);
 
+  /* The day's jobs from the Schedule tab, checked against each crew as it is
+     on this board right now: missing equipment (or down), too few people. */
+  const [sched, setSched] = useState(null);
+  useEffect(() => {
+    let dead = false;
+    const load = () => shopGet(`sched.${cur}`).then((r) => { if (!dead) setSched(r); });
+    load();
+    const t = setInterval(() => { if (!document.hidden && !dragRef.current) load(); }, 15000);
+    return () => { dead = true; clearInterval(t); };
+  }, [cur]);
+  const crewJobs = useMemo(() => {
+    const out = {};
+    Object.entries(sched?.assign || {}).forEach(([ref, a]) => {
+      if (!a?.crew || ref.startsWith("_")) return;
+      const c = day.crews[a.crew]; if (!c || c.del) return;
+      const on = (c.people || []).filter((pid) => {
+        const code = (week.cells[`${pid}:${dayIndex}`] || {}).code;
+        return core.people[pid] && !core.people[pid].del && (!code || code === "on" || code === "light");
+      }).length;
+      const res = checkJob(a.tags, c, core.assets, on);
+      const o = (out[a.crew] = out[a.crew] || { jobs: 0, lines: [] });
+      o.jobs++; o.lines.push(...problemLines(a.label || ref, res));
+    });
+    return out;
+  }, [sched, day, core, week, dayIndex]);
+  const BIN_LABEL = { room: "→ Crew room", vac: "→ On vacation (today)", yard: "→ At the yard", rep: "→ In for repair", newcrew: "→ New crew" };
+  const dropLabel = (d) => {
+    if (!d.over) return "";
+    if (d.over === d.item.from) return "Same place — no change";
+    if (d.over.startsWith("crew:")) return `→ ${(day.crews[d.over.slice(5)] || {}).name || "crew"}`;
+    if (d.over === "canvas") return d.item.kind === "crew" ? "Drop to move the crew here" : "";
+    return BIN_LABEL[d.over] || "";
+  };
+
   /* Drop a name or a load on open ground and a crew starts there. Do it a few
      times and you have built the day's crews by hand. */
   const crewAt = (item, at) => {
@@ -2869,7 +3005,8 @@ export default function ShopBoard({ user, isAdmin = false }) {
 
   const yardMove = (item, where, at) => {
     const { kind, id } = item;
-    if (where === "canvas" && (kind === "person" || kind === "stack")) { crewAt(item, at); return; }
+    if (where === "newcrew" && (kind === "person" || kind === "stack")) { crewAt(item, { x: 100000, y: 100000 }); return; }
+    if (where === "canvas" && (kind === "person" || kind === "stack")) return;   // open ground: snaps back
     /* dropped inside a crew box: that box is now who it belongs to */
     if (where && where.startsWith("crew:")) {
       const cid = where.slice(5);
@@ -3076,7 +3213,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
         </>
       )}
       {tab === "crews" && (
-        <YardView onOrder={orderCrews} core={core} day={day} iso={cur} dayIndex={dayIndex} week={week} engine={engine}
+        <YardView onOrder={orderCrews} core={core} day={day} iso={cur} dayIndex={dayIndex} week={week} engine={engine} crewJobs={crewJobs}
                   savedDays={savedDays} ops={ops} setOps={setOps}
                   onMove={yardMove} onNewCrew={addCrew} onCrew={setOpenCrew} onPerson={setOpenPerson}
                   onOpenAsset={(id) => setOpenAsset(id)} onDate={setCur} onAddPerson={addPerson}
@@ -3113,7 +3250,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
       <ConditionDock drag={drag} registerZone={engine.registerZone} onDrop={setStatus} />
 
       {drag && (
-        <div className="ghost" style={{ left: drag.x, top: drag.y }}>
+        <div className="ghost" ref={engine.ghostRef} style={{ transform: `translate3d(${drag.x - 14}px, ${drag.y - 12}px, 0)` }}>
           {drag.item.kind === "marker" ? (
             <div className="marker stencil" data-on="1" style={{ background: C.tileHi }}>
               <span className="swatch" style={{ background: DAY[drag.item.code].color }} />{DAY[drag.item.code].label}
@@ -3122,6 +3259,9 @@ export default function ShopBoard({ user, isAdmin = false }) {
             <div className="mini stencil" style={{ borderLeftColor: drag.item.kind === "asset" ? (ST[(core.assets[drag.item.id] || {}).status] || ST.running).color : (drag.item.color || C.ink), padding: "6px 11px", fontSize: 12, gap: 7 }}>
               {drag.item.shape && <MachineChip shape={drag.item.shape} />}{drag.item.name}
             </div>
+          )}
+          {drag.item.kind !== "marker" && (
+            <div className={`ghost-to stencil${dropLabel(drag) ? "" : " none"}`}>{dropLabel(drag) || (drag.item.kind === "crew" ? "Drop to move the crew here" : "Drop on a crew, a bin or ＋ New crew")}</div>
           )}
         </div>
       )}

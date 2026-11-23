@@ -5,6 +5,7 @@ import { enrich, STATUS, money, hrs } from "./backlogModel";
 import { useJobPoints, loadMaps } from "./BacklogMap.jsx";
 import { shopGet, shopDays, shopPatch, shopSchedRange, stampNow, shopSettings, saveYard } from "./shop/shopApi";
 import { freshCore, mergeCore, live, isoOf, addDays, weekStartOf } from "./shop/ShopBoard.jsx";
+import { checkJob } from "./crewCheck";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Schedule — put backlog jobs on the Shop Board's crews for a day.
@@ -27,6 +28,11 @@ const km = (a, b) => {
 };
 const miles = (k) => `${(k * 0.621).toFixed(k < 16 ? 1 : 0)} mi`;
 const firstName = (p) => (p?.name || "").split(" ")[0];
+const byCrewRaw = (assign) => {
+  const out = {};
+  Object.entries(assign || {}).forEach(([ref, a]) => { if (a?.crew && !ref.startsWith("_")) (out[a.crew] = out[a.crew] || []).push({ ref, ...a }); });
+  return out;
+};
 const YARD_NAMES = ["Brighton", "Rush Scottsville"];
 const defaultYard = (c) => (["PHC", "LC"].includes(c.ops) ? "Rush Scottsville" : "Brighton");
 const yardKey = (crewId) => `_yard:${crewId}`;     // per-day yard choice, stored beside the jobs
@@ -80,7 +86,12 @@ async function crewsForDay(iso) {
     for (let i = before.length - 1; i >= 0 && !day?.crews; i--) { day = await shopGet(`day.${before[i]}`); from = before[i]; }
   }
   const crews = day?.crews ? day.crews : core.crews;
-  return { core, crews: live(crews).filter((c) => ["GTC", "PHC", "LC"].includes(c.ops || "GTC")), from: day?.crews ? from : "standing" };
+  // who is off that day (Shop Board week record: vacation / sick / training)
+  const sun = isoOf(weekStartOf(new Date(iso + "T12:00:00")));
+  const di = Math.round((new Date(iso + "T12:00:00") - new Date(sun + "T12:00:00")) / 86400000);
+  const wk = await shopGet(`week.${sun}`);
+  const off = new Set(Object.entries(wk?.cells || {}).filter(([k, v]) => k.endsWith(`:${di}`) && v && !["on", "light"].includes(v.code)).map(([k]) => k.split(":")[0]));
+  return { core, off, crews: live(crews).filter((c) => ["GTC", "PHC", "LC"].includes(c.ops || "GTC")), from: day?.crews ? from : "standing" };
 }
 
 function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick, yardOf }) {
@@ -145,6 +156,45 @@ function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick, yardOf
     <div style={{ position: "relative", height: "100%", minHeight: 320 }}>
       <div ref={el} style={{ position: "absolute", inset: 0, background: "#1d2329" }} />
       {err && <div className="err" style={{ position: "absolute", top: 8, left: 8 }}>{err}</div>}
+    </div>
+  );
+}
+
+/* Red: the crew can't do it as set up. Amber: call about it. Grey: what to load. */
+function JobChecks({ r }) {
+  if (!r || (!r.problems && !r.calls.length && !r.gear.length)) return null;
+  const chip = (bg, fg) => ({ display: "inline-block", fontSize: 10.5, padding: "1px 6px", borderRadius: 2, background: bg, color: fg, marginRight: 4, marginTop: 3 });
+  return (
+    <div>
+      {r.missing.map((m, i) => <span key={i} style={chip("rgba(217,59,43,.18)", "#ff9a8f")} title={m.why}>needs {m.label}{m.why !== "not on this crew" ? ` · ${m.why}` : ""}</span>)}
+      {r.short && <span style={chip("rgba(217,59,43,.18)", "#ff9a8f")}>{r.short.need}-person job · crew has {r.short.have}</span>}
+      {r.calls.length > 0 && <span style={chip("rgba(229,161,0,.16)", "#f0c050")} title={r.calls.join("\n")}>📞 {r.calls.length} to cover when calling</span>}
+      {r.gear.length > 0 && <span style={chip("#2a333a", "#98A3AB")}>load: {r.gear.join(", ")}</span>}
+    </div>
+  );
+}
+
+/* Everything the office should raise when calling to schedule this day's jobs. */
+function CallList({ assign, checks, jobBy, crews, crewColor }) {
+  const [open, setOpen] = useState(true);
+  const rows = Object.entries(assign).filter(([ref, a]) => a?.crew && !ref.startsWith("_") && checks[ref]?.calls?.length)
+    .map(([ref, a]) => ({ ref, a, j: jobBy[ref], calls: checks[ref].calls }));
+  if (!rows.length) return null;
+  return (
+    <div className="card" style={{ borderLeft: `4px solid ${C.amber}` }}>
+      <button className="card-h st" style={{ width: "100%", color: C.ink, fontSize: 12 }} onClick={() => setOpen((o) => !o)}>
+        📞 Office call list · {rows.length} job{rows.length === 1 ? "" : "s"}<span className="spacer" />{open ? "▴" : "▾"}
+      </button>
+      {open && (
+        <div style={{ padding: "6px 10px", display: "grid", gap: 6 }}>
+          {rows.map(({ ref, a, j, calls }) => (
+            <div key={ref} style={{ fontSize: 12.5 }}>
+              <b>{j?.name || a.label}</b> <span className="hint">#{ref} · {j?.town || a.town} · <span style={{ color: crewColor(a.crew) }}>{(crews.find((c) => c.id === a.crew) || {}).name}</span></span>
+              <ul style={{ margin: "2px 0 0 16px", color: "#d8d2c4", fontSize: 12 }}>{calls.map((t, i) => <li key={i}>{t}</li>)}</ul>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -230,6 +280,25 @@ export default function Schedule({ me }) {
     return () => clearInterval(t);
   }, [iso]);
 
+  // Does each scheduled job suit its crew? (equipment, crew size, things to call about)
+  const checks = useMemo(() => {
+    const out = {};
+    if (!board) return out;
+    Object.entries(byCrewRaw(assign)).forEach(([crewId, list]) => {
+      const c = board.crews.find((x) => x.id === crewId); if (!c) return;
+      const on = (c.people || []).filter((id) => board.core.people[id] && !board.core.people[id].del && !board.off.has(id)).length;
+      list.forEach((x) => { out[x.ref] = checkJob(jobBy[x.ref]?.tags || x.tags, c, board.core.assets, on); });
+    });
+    return out;
+  }, [board, assign, jobBy]);
+  // Older entries saved before tags were stored: add them once, so the Shop Board can check them too.
+  useEffect(() => {
+    if (!board || !jobs.length) return;
+    const fix = {};
+    Object.entries(assign).forEach(([ref, a]) => { if (a?.crew && !ref.startsWith("_") && !a.tags && jobBy[ref]) fix[ref] = { ...a, tags: jobBy[ref].tags || [] }; });
+    if (Object.keys(fix).length) save(fix);
+  }, [board, assign, jobs.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const crewIdx = useMemo(() => Object.fromEntries((board?.crews || []).map((c, i) => [c.id, i])), [board]);
   const crewColor = useCallback((id) => CREW_COLORS[(crewIdx[id] ?? 0) % CREW_COLORS.length], [crewIdx]);
   const byCrew = useMemo(() => {
@@ -255,7 +324,7 @@ export default function Schedule({ me }) {
     if (!merged) setErr("Couldn't save the last change — check your connection. It will show again once saved.");
     else { setErr(""); setWeek((w) => ({ ...w, [iso]: merged })); }
   };
-  const label = (j) => ({ label: `${j.name} #${j.ref}`, town: j.town, hrs: j.hrs || 0 });
+  const label = (j) => ({ label: `${j.name} #${j.ref}`, town: j.town, hrs: j.hrs || 0, tags: j.tags || [] });
   const crewYardName = useCallback((crewId) => {
     const c = (board?.crews || []).find((x) => x.id === crewId);
     return assign[yardKey(crewId)]?.yard || (c ? defaultYard(c) : "Brighton");
@@ -357,6 +426,7 @@ export default function Schedule({ me }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 12, alignItems: "start" }}>
         {/* crews */}
         <div style={{ display: "grid", gap: 8 }}>
+          <CallList assign={assign} checks={checks} jobBy={jobBy} crews={board?.crews || []} crewColor={crewColor} />
           {!board && <div className="hint">Loading crews…</div>}
           {(board?.crews || []).map((c) => {
             const items = byCrew[c.id] || [];
@@ -364,12 +434,15 @@ export default function Schedule({ me }) {
             const yard = yardOf(c.id);
             const trip = tripKm(yard, items.map((x) => points[x.ref]).filter(Boolean));
             const ppl = (c.people || []).map((id) => board.core.people[id]).filter((p) => p && !p.del);
+            const offHere = ppl.filter((p) => board.off.has(p.id));
+            const probs = items.reduce((n, x) => n + (checks[x.ref]?.problems || 0), 0);
             return (
               <div key={c.id} className="card" onDragOver={(e) => e.preventDefault()}
                    onDrop={(e) => { e.preventDefault(); const ref = e.dataTransfer.getData("text/x-job"); if (ref) addTo(ref, c.id); }}
                    style={{ borderLeft: `4px solid ${crewColor(c.id)}` }}>
                 <div className="card-h st" style={{ color: C.ink, fontSize: 12.5 }}>
-                  {c.name}<span className="hint" style={{ textTransform: "none", letterSpacing: 0 }}>{ppl.map(firstName).join(", ") || "nobody on it"}</span>
+                  {c.name}<span className="hint" style={{ textTransform: "none", letterSpacing: 0 }}>{ppl.filter((p) => !board.off.has(p.id)).map(firstName).join(", ") || "nobody on it"}{offHere.length ? ` (${offHere.map(firstName).join(", ")} off)` : ""}</span>
+                  {probs > 0 && <span className="st" style={{ color: "#fff", background: C.red, borderRadius: 2, padding: "1px 6px", fontSize: 10.5 }} title="See the red notes on the jobs below">⚠ {probs}</span>}
                   <span className="spacer" />
                   <span className="mono" style={{ color: total > DAY_HRS + 1 ? C.amber : C.inkDim }}>{Math.round(total * 10) / 10} h</span>
                 </div>
@@ -396,6 +469,7 @@ export default function Schedule({ me }) {
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{j ? j.name : x.label}</div>
                           <div className="hint" style={{ fontSize: 11 }}>{j?.town || x.town} · {hrs(j?.hrs ?? x.hrs)}{prev && here ? ` · ${miles(km(prev, here))} from ${i === 0 ? "yard" : "last"}` : ""}{!j ? " · no longer in the backlog" : ""}</div>
+                          <JobChecks r={checks[x.ref]} />
                         </span>
                         <button className="btn" style={{ padding: "2px 7px" }} title="Earlier" onClick={(e) => { e.stopPropagation(); move(c.id, i, -1); }}>↑</button>
                         <button className="btn" style={{ padding: "2px 7px" }} title="Later" onClick={(e) => { e.stopPropagation(); move(c.id, i, 1); }}>↓</button>

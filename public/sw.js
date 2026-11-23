@@ -1,3 +1,4 @@
+// v112: Shop Board drag & drop rebuilt; job tags checked against crews; Soil bulk PDF upload by file name.
 // v111: Soil: add a soil test from its lab PDF (AI reads, owner checks); new property.
 // v110: ☰ menu on the Pipeline screen; Schedule "Best order" from the yard.
 // v109: Schedule tab in Dispatch (backlog jobs onto Shop Board crews, map, day sheet jobs).
@@ -154,7 +155,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v111";
+const CACHE = "mts-field-v112";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

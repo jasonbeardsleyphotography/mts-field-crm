@@ -5,6 +5,7 @@ import SitePage from "./SitePage.jsx";
 import { readSitePackage, uploadSitePackage, uploadArchive } from "./importPackage";
 import { fmtDate } from "./soilData";
 import AppMenu from "../dispatch/AppMenu.jsx";
+import BulkAdd from "./BulkAdd.jsx";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS Soil — /soil (staff) and /soil/c/<token> (a client's private page).
@@ -124,6 +125,7 @@ function StaffView() {
   const [open, setOpen] = useState(() => (location.hash.match(/site=([a-z0-9-]+)/) || [])[1] || null);
   const [site, setSite] = useState(null);
   const [canEdit, setCanEdit] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [err, setErr] = useState("");
 
   useEffect(() => {
@@ -206,6 +208,12 @@ function StaffView() {
           ))}
         </div>
         {me.perms.admin && <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
+          <div className="card pad">
+            <div className="lbl">New soil tests</div>
+            <div className="t-sub" style={{ marginBottom: 8 }}>Drop in the lab report PDFs — the file names tell the app which property each one belongs to.</div>
+            <button className="b-main" onClick={() => setBulkOpen(true)}>Add soil reports (PDFs)</button>
+          </div>
+          {bulkOpen && <BulkAdd sites={sites || []} onClose={() => setBulkOpen(false)} onDone={() => { setBulkOpen(false); loadSites(); }} />}
           <NewProperty onDone={(id) => { loadSites(); go(id); }} />
           <ImportBox onDone={(id) => { loadSites(); if (id) go(id); }} />
         </div>}

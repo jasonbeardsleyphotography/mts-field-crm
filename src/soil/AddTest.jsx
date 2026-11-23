@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { soilApi } from "./api";
 import { NUTRIENTS, fmtDate } from "./soilData";
 
@@ -41,12 +41,14 @@ async function extract(file, onStep) {
 }
 
 /** One AI result + its PDF → a test in the app's format. */
-function toTest(res, pdfKey, n) {
-  const type = res.type === "F" ? "F" : "S";
+function toTest(res, pdfKey, n, hint = {}) {
+  const type = res.type === "F" || (!res.type && hint.type === "F") ? "F" : "S";
   const isMorgan = type === "S" && /modified morgan/i.test(res.method || "") && /umass|massachusetts/i.test(res.lab || "");
   const samples = (res.samples || []).map((s, i) => ({
     id: String(i + 1).padStart(3, "0"),
-    label: s.label || `Sample ${i + 1}`, labNumber: s.labNumber || "", location: s.location || s.label || "",
+    label: s.label || `Sample ${i + 1}`, labNumber: s.labNumber || "",
+    // the area in the file name is the office's own label for a one-sample report
+    location: (res.samples.length === 1 && hint.area) || s.location || s.label || hint.area || "",
     values: Object.fromEntries(Object.entries(s.values || {}).filter(([, v]) => typeof v === "number" && isFinite(v))),
     ratings: s.ratings || undefined, valueNotes: s.valueNotes || undefined,
     recText: s.recommendations || undefined, comment: s.comment || undefined,
@@ -55,7 +57,7 @@ function toTest(res, pdfKey, n) {
   const keys = ORDER.filter((k) => samples.some((s) => s.values[k] != null));
   const ranges = {};
   samples.forEach((s) => Object.entries(s._ranges).forEach(([k, r]) => { if (Array.isArray(r) && !ranges[k]) ranges[k] = r; }));
-  const date = res.sampled || res.received || res.reported || null;
+  const date = res.sampled || res.received || res.reported || hint.date || null;
   return {
     id: `${date || "test"}-${slug(res.lab) || "lab"}-${n}`,
     type, date, received: res.received || null, reported: res.reported || null,
@@ -67,7 +69,7 @@ function toTest(res, pdfKey, n) {
   };
 }
 
-export default function AddTest({ site, onClose, onSaved }) {
+export default function AddTest({ site, onClose, onSaved, initialFiles, embedded = false }) {
   const [files, setFiles] = useState([]);          // [{ file, key, state, step, error }]
   const [tests, setTests] = useState([]);
   const [busy, setBusy] = useState("");
@@ -75,7 +77,9 @@ export default function AddTest({ site, onClose, onSaved }) {
 
   const read = async (list) => {
     setErr(""); setTests([]);
-    const fs = [...list].filter((f) => /\.pdf$/i.test(f.name) || f.type === "application/pdf").map((f) => ({ file: f, key: safeKey(f.name), state: "waiting", step: "" }));
+    const fs = [...list].map((x) => (x.file ? x : { file: x, hint: {} }))
+      .filter(({ file: f }) => /\.pdf$/i.test(f.name) || f.type === "application/pdf")
+      .map(({ file: f, hint }) => ({ file: f, hint: hint || {}, key: safeKey(f.name), state: "waiting", step: "" }));
     if (!fs.length) { setErr("Choose one or more PDF lab reports."); return; }
     setFiles(fs);
     const out = [];
@@ -84,7 +88,7 @@ export default function AddTest({ site, onClose, onSaved }) {
       upd({ state: "reading" });
       try {
         const res = await extract(fs[i].file, (step) => upd({ step }));
-        out.push(toTest(res, fs[i].key, i + 1));
+        out.push(toTest(res, fs[i].key, i + 1, fs[i].hint));
         upd({ state: "done", step: `${res.samples.length} sample${res.samples.length === 1 ? "" : "s"} found` });
       } catch (e) { upd({ state: "error", step: e.message }); }
     }
@@ -133,23 +137,29 @@ export default function AddTest({ site, onClose, onSaved }) {
     } catch (e) { setBusy(""); setErr(`Couldn't save (${e.message}). Nothing was lost — try Save again.`); }
   };
 
+  const started = useRef(false);
+  useEffect(() => { if (initialFiles?.length && !started.current) { started.current = true; read(initialFiles); } }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const keysOf = (t) => (t.fields ? t.fields.map((f) => f.k) : ORDER.filter((k) => t.samples.some((s) => s.values[k] != null)));
 
+  const Wrap = embedded ? EmbedWrap : SheetWrap;
   return (
-    <div className="sheet" role="dialog" aria-label="Add a soil test" style={{ maxHeight: "92dvh" }}>
-      <div className="sheet-h">
+    <Wrap>
+      {!embedded && <div className="sheet-h">
         <div style={{ flex: 1 }}>
           <div className="t-h">Add a soil test</div>
           <div className="t-sub">{site.name} · upload the lab report PDF(s). AI reads the values; you check them before anything is saved.</div>
         </div>
         <button className="b-icon" onClick={onClose} aria-label="Close" disabled={!!busy}>✕</button>
-      </div>
-      <div className="sheet-b">
+      </div>}
+      <div className={embedded ? "" : "sheet-b"}>
+        {!embedded && <>
         <label className="b-main" style={{ display: "inline-flex" }}>
           Choose PDF report(s)
           <input type="file" accept="application/pdf,.pdf" multiple hidden onChange={(e) => { const l = [...(e.target.files || [])]; e.target.value = ""; if (l.length) read(l); }} />
         </label>
         <div className="t-sub" style={{ marginTop: 6 }}>The reports go to Google's Gemini AI to be read (the same AI the field app uses).</div>
+        </>}
         {files.map((f, i) => (
           <div key={i} className="t-sub" style={{ marginTop: 6, color: f.state === "error" ? "#b3261e" : undefined }}>
             {f.state === "done" ? "✓" : f.state === "error" ? "✕" : "…"} {f.file.name} — {f.step || (f.state === "waiting" ? "waiting" : "")}
@@ -201,14 +211,16 @@ export default function AddTest({ site, onClose, onSaved }) {
 
         {tests.length > 0 && (
           <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap", alignItems: "center" }}>
-            <button className="b-main" disabled={!!busy || !tests.some((t) => t.samples.length)} onClick={save}>{busy || "Save test"}</button>
-            <button className="b-sec" disabled={!!busy} onClick={onClose}>Cancel</button>
+            <button className="b-main" disabled={!!busy || !tests.some((t) => t.samples.length)} onClick={save}>{busy || (embedded ? `Save for ${site.name}` : "Save test")}</button>
+            {!embedded && <button className="b-sec" disabled={!!busy} onClick={onClose}>Cancel</button>}
             <span className="t-sub">After saving, use “Place samples on the map” on the Map tab.</span>
           </div>
         )}
       </div>
-    </div>
+    </Wrap>
   );
 }
+const SheetWrap = ({ children }) => <div className="sheet" role="dialog" aria-label="Add a soil test" style={{ maxHeight: "92dvh" }}>{children}</div>;
+const EmbedWrap = ({ children }) => <div>{children}</div>;
 const th = { textAlign: "left", padding: "4px 6px", borderBottom: "1px solid #d9d3c4", whiteSpace: "nowrap", fontSize: 12 };
 const td = { padding: "3px 4px", borderBottom: "1px solid #f0ece2" };

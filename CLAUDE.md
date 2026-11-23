@@ -125,6 +125,13 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   the items its own action touched (`undoRef.own`), copy-to-week asks before replacing planned days, Reset is admin
   only, identity = sign-in. Its CSS is scoped under `.mb` by `scopeCss`. check-undef can't see `const A = 1, B = 2`:
   declare SCREAMING_CASE constants one per line.
+  Drag & drop (rebuilt Nov 2026 after "jumpy" reports): drags start only after real movement (clicks stay clicks; the
+  click after a drag is swallowed), the ghost moves via its own element (no re-render per mouse move), items carry
+  `from` and dropping back there is a no-op, Escape cancels, the canvas auto-scrolls. Open asphalt accepts only crew
+  re-ordering; new crews come from the "＋ New crew" tile. Absolutely-positioned drop targets (crew boxes, new-crew tile)
+  must BE the Zone element (className/style on the Zone) — a wrapper div has zero size and never receives drops (that
+  bug made drops on crews create new crews in the original). Crew boxes pack to the visible width (ResizeObserver).
+  Polls don't merge day changes while dragging or for 2 s after. In-crew load cards have no caption (they overlapped).
 - Schedule (Dispatch tab, `src/dispatch/Schedule.jsx`): crews for a day come from the Shop Board (that day's record,
   else the latest earlier saved day, else the standing setup). Jobs are assigned per day in `mts-shop` key
   `sched.<iso>` = { assign: { jobRef: { crew|null, order, label, town, hrs, at, by } } }, merged per job like the board
@@ -133,6 +140,11 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   crew; "Nearest to <crew>" sorts the backlog by distance to that crew's stops; jobs planned on other days of the week
   are marked/hidden. The Shop Board Day sheet appends each crew's scheduled jobs ("Jobs from the Schedule" toggle).
   Nothing is written to SingleOps or the workbook.
+  Job tags vs crew (`src/dispatch/crewCheck.js`, used by Schedule AND Shop Board): equipment tags (02 BUCKET, 02 LIFT,
+  02 LIFT TALL!, 03 AVANT, 03 BIG CHIP, 03 WOOD TRUCK, 03 CRANE, 07 STUMPS…) must match a unit on the crew that isn't in
+  the shop/tagged out; #N PERSON vs people working that day (week cells); scheduling tags (09 MUST BE HOME, NEIGHBOR
+  PERMISSION, OBSTACLE, 07 SCHEDULE…, 05 …, 04 lines) → the Schedule's "Office call list"; 06 gear → "load:" reminders.
+  sched entries store the job's `tags` (backfilled once by the Schedule) so the Shop Board can check without the backlog.
   "Best order" per crew: shortest straight-line loop yard → stops → yard (every order tried up to 8 stops; nearest-next
   + 2-opt above). Yard addresses live in `mts-shop` key `settings` ({ yards: { Brighton|Rush Scottsville: {addr,lat,lng} } },
   "Yards" button; Census lookup on the server, Google's geocoder in the browser as fallback). Default yard by crew op
@@ -162,6 +174,10 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   `netlify/edge-functions/soil-extract.js` (`/api/soil-extract`, Gemini reads the PDF, streamed NDJSON; admin checked by
   calling `/api/soil/me` with the caller's cookies) → editable review table → PDFs + test saved (`transcribed: "ai"`).
   UMass Modified Morgan → standard keys (full map colours); other labs → `fields`. "+ New property" on the Soil home.
+- Most new reports arrive as single PDFs named "Client, street zip, date, S|F, area.pdf" (only Boughton Hill had a full
+  package). Soil home → "Add soil reports (PDFs)" (`src/soil/BulkAdd.jsx`): `parseReportName` reads the name, files are
+  grouped by street number + street + zip and matched to existing properties (or new ones), then each group runs the
+  embedded AddTest (AI read → review → save). The file name's area labels one-sample reports; its date is a fallback.
 - App switcher (Field · Dispatch · Soil) sits at the top of every app's ☰ menu. Field app: `src/AppSwitcher.jsx`
   (asks `/api/dispatch/me`; shows nothing if that fails, so the field app is never affected; warns before leaving
   with photos uploading). Dispatch/Soil: `src/dispatch/AppMenu.jsx` (fixed bottom-left ☰; on a Soil property page it
