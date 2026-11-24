@@ -267,7 +267,15 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   MULTI-DAY JOBS: `addToDay` splits a job bigger than what the crew has left that day into today's share + full days on
   the same crew's next weekdays (Sat/Sun skipped); entries carry {hrs (this day's share), total, part, parts, days}.
   `entryHrs` counts a part's share. Taking off / moving (moveTo) takes every day of it; moving re-plans from the target.
-  WEEK VIEW (Day | Week switch, `mts-sched-mode`): `WeekGrid` = crews × Mon–Sat, each cell a load bar (vs dayOsh of the
+  LAYOUT (owner, Nov 24 later): [▾ Week view] opens the WeekGrid ABOVE the day (pushes the page down; mode "week" =
+  open, `mts-sched-mode`); then the day's crews as smaller 290 px boxes ACROSS THE TOP (sideways scroll); then the map
+  and the job list underneath. Job rows use `TagStrip` (TagPill.jsx): five fixed columns CREW | AERIAL | EQUIPMENT |
+  SEASON | ☎, short codes in fixed places (key: `TagStripKey`). SEASON SWITCHES (`SeasonBar`, `mts-sched-seasons`):
+  Winter / Spring / Summer / Fall / Oak check boxes — unticked hides jobs tagged only for those seasons; a box glows
+  while today is in its window (`seasonWindowNow`) with work days left / until it opens. PURGATORY is a pop-up
+  (`PurgatoryModal` in Backlog.jsx). CHECK-BACK: from the check-back date on, the job sits in a big ⏰ banner
+  (`CheckBackBanner`, Schedule + Backlog) until "Back to the backlog" or "New date…" — it never leaves Purgatory by itself.
+  WEEK VIEW (`WeekGrid`): `WeekGrid` = crews × Mon–Sat, each cell a load bar (vs dayOsh of the
   people working that day), the jobs (1/3 parts), ⚠ when a job doesn't suit the crew; HTML5 drag from the list into a
   cell or between cells; tap a day header to open it. Boards for each day come from crewsForDay.
 

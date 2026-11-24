@@ -96,6 +96,55 @@ export function PauseForm({ j, onPause, onResume, onDone }) {
   );
 }
 
+/** Purgatory as a pop-up (owner, Nov 24) — over the page, not squeezed into a row. */
+export function PurgatoryModal({ j, onPause, onResume, onClose }) {
+  if (!j) return null;
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1500, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "min(560px, 100%)", padding: 16, display: "grid", gap: 10, borderTop: `4px solid ${PAUSED_COLOR}`, boxShadow: "0 18px 50px rgba(0,0,0,.6)" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+          <b className="st" style={{ fontSize: 15, color: "#d7c4ff" }}>⏸ Purgatory</b>
+          <span style={{ fontSize: 14 }}><b>{j.name}</b> <span className="mono hint">#{j.ref}</span></span>
+          <span className="spacer" />
+          <button className="btn" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        <div className="hint" style={{ padding: 0, lineHeight: 1.5 }}>
+          Jobs in Purgatory are left off the schedule and never count as late. If you set a <b style={{ color: C.ink }}>check-back date</b>,
+          then from that day on the job is shown in a big <b style={{ color: "#f0c050" }}>⏰ Check back</b> banner at the top of the Schedule and the
+          Backlog, and its card is flagged, until you either bring it back to the backlog or give it a new date. It never leaves Purgatory by itself.
+        </div>
+        <PauseForm j={j} onPause={onPause} onResume={onResume} onDone={onClose} />
+      </div>
+    </div>
+  );
+}
+
+/** Purgatory jobs whose check-back date has come: a big, can't-miss banner. */
+export function CheckBackBanner({ jobs, onResume, onEdit }) {
+  const due = jobs.filter((j) => j.checkBack && j.paused && !j.paused.soHold);
+  if (!due.length) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  return (
+    <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 5, background: "linear-gradient(90deg, rgba(229,161,0,.22), rgba(179,136,255,.18))", border: "2px solid #E5A100", boxShadow: "0 0 0 3px rgba(229,161,0,.15), 0 6px 18px rgba(0,0,0,.35)" }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", marginBottom: 6 }}>
+        <b className="st" style={{ fontSize: 15, color: "#ffd166" }}>⏰ Check back · {due.length} job{due.length === 1 ? "" : "s"} from Purgatory</b>
+        <span style={{ fontSize: 12, color: "#e8dcc0" }}>Their check-back day has come. Call them, then bring them back to the backlog or set a new date.</span>
+      </div>
+      <div style={{ display: "grid", gap: 5 }}>
+        {due.map((j) => (
+          <div key={j.ref} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", background: "rgba(0,0,0,.25)", padding: "6px 8px", borderRadius: 3 }}>
+            <b>{j.name}:</b><span style={{ color: "#d7c4ff" }}>{j.paused.reason}</span>
+            <span className="hint" style={{ padding: 0 }}>check back {j.paused.until === today ? "today" : `since ${new Date(j.paused.until + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}`}{j.phone ? ` · ${j.phone}` : ""}</span>
+            <span className="spacer" />
+            <button className="btn st" data-primary="1" onClick={() => onResume(j.ref)}>Back to the backlog</button>
+            <button className="btn st" onClick={() => onEdit(j)}>New date…</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Delete a job from the Dispatch backlog — asks first. */
 export function DeleteConfirm({ j, onDelete, onDone }) {
   const [busy, setBusy] = useState(false), [err, setErr] = useState("");
@@ -171,7 +220,7 @@ function JobCard({ j, selected, onSelect, cardRef, colorBy, zoneColors, onPause,
             <span className="hint" style={{ alignSelf: "center" }}>{j.addr}{j.dueRange ? ` · window ${j.dueRange}` : ""}</span>
           </div>
         )}
-        {selected && pausing && <div style={{ marginTop: 8 }}><PauseForm j={j} onPause={onPause} onResume={onResume} onDone={() => setPausing(false)} /></div>}
+        {selected && pausing && <PurgatoryModal j={j} onPause={onPause} onResume={onResume} onClose={() => setPausing(false)} />}
         {selected && deleting && <div style={{ marginTop: 8 }}><DeleteConfirm j={j} onDelete={onDelete} onDone={() => setDeleting(false)} /></div>}
       </div>
     </div>
@@ -187,7 +236,7 @@ function CallActions({ j, pause, resume, remove }) {
         <button className="btn st" style={{ borderColor: PAUSED_COLOR }} onClick={() => setAct((a) => (a === "pause" ? null : "pause"))}>{j.paused ? "Purgatory: edit / bring back" : "⏸ Purgatory…"}</button>
         <button className="btn st" data-danger="1" onClick={() => setAct((a) => (a === "del" ? null : "del"))}>🗑 Delete…</button>
       </div>
-      {act === "pause" && <PauseForm j={j} onPause={pause} onResume={resume} onDone={() => setAct(null)} />}
+      {act === "pause" && <PurgatoryModal j={j} onPause={pause} onResume={resume} onClose={() => setAct(null)} />}
       {act === "del" && <DeleteConfirm j={j} onDelete={remove} onDone={() => setAct(null)} />}
     </div>
   );
@@ -213,6 +262,7 @@ export default function Backlog() {
   useHoursUnit();
   const { data, jobs, err: loadErr, load, pause, resume, deleted, restore, remove } = useBacklog();
   const [callQ, setCallQ] = useState("");
+  const [purgJob, setPurgJob] = useState(null);
   const [showDeleted, setShowDeleted] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
@@ -326,6 +376,8 @@ export default function Backlog() {
   })();
   return (
     <div className="wrap" style={{ maxWidth: 1800 }}>
+      <CheckBackBanner jobs={jobs} onResume={resume} onEdit={(j) => setPurgJob(j)} />
+      {purgJob && <PurgatoryModal j={purgJob} onPause={pause} onResume={resume} onClose={() => setPurgJob(null)} />}
       {/* someone's on the phone: where does their job land? */}
       <div className="card" style={{ padding: 10, marginBottom: 10, borderLeft: `4px solid ${C.blue}` }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>

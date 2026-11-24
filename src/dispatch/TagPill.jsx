@@ -44,3 +44,49 @@ export function TagRow({ tags, max }) {
     </div>
   );
 }
+
+/* TAG STRIP (owner, Nov 24: the tag rows were still "all over the place"). Every job
+   row shows the same five fixed columns, in the same place, so the eye can run down
+   the list:  CREW | AERIAL | EQUIPMENT | SEASON | CALL. Each mark is a short code in
+   a fixed-width box; hover (or open the job) for the full tag names. */
+const STRIP = [
+  { key: "crew", w: 40, items: [[/^#2 PERSON$/, "2P"], [/^#3 PERSON$/, "3P"], [/^#4 PERSON$/, "4P"]], join: true },
+  { key: "aerial", w: 92, items: [[/^02 BUCKET$/, "BKT"], [/^02 LIFT( REGULAR)?$/, "LIFT"], [/^02 LIFT TALL/, "TALL"], [/^02 CLIMB/, "CLMB"], [/^02 GROUND$/, "GRND"], [/^02 REQUIRED$/, "REQ"]] },
+  { key: "equip", w: 104, items: [[/^03 AVANT$/, "AVNT"], [/^03 AVANT[_]BIG$/, "755"], [/^03 BIG CHIP$/, "19XP"], [/^03 WOOD TRUCK$/, "WOOD"], [/^03 CRANE$/, "CRANE"], [/^07 STUMPS$/, "STMP"]] },
+  { key: "season", w: 80, items: [[/^08 WINTER$/, "WIN"], [/^08 SPRING$/, "SPR"], [/^08 SUMMER$/, "SUM"], [/^08 (FALL|AUTUMN)$/, "FALL"], [/^08 OAK/, "OAK"]] },
+];
+const STRIP_COLORS = { crew: "#ff1f8f", aerial: "#33cc33", equip: "#b0703f", season: "#a8a820" };
+export function TagStrip({ tags }) {
+  const T = tags || [];
+  const calls = T.filter((t) => /^0[4579] |^07 /.test(t) && !/^07 STUMP/.test(t));
+  return (
+    <div style={{ display: "flex", gap: 6, marginTop: 4, alignItems: "center", minWidth: 0 }} title={T.join(" · ")}>
+      {STRIP.map((col) => {
+        const hits = [];
+        col.items.forEach(([re, code]) => { const t = T.find((x) => re.test(x)); if (t && !hits.some((h) => h.code === code)) hits.push({ code, t }); });
+        const marks = col.join && hits.length ? [{ code: hits.map((h) => h.code.replace("P", "")).join("/") + "P", t: hits.map((h) => h.t).join(", ") }] : hits;
+        return (
+          <span key={col.key} style={{ flex: `0 0 ${col.w}px`, display: "flex", gap: 2, overflow: "hidden" }}>
+            {marks.map((m) => (
+              <span key={m.code} title={m.t} style={{ fontFamily: "'IBM Plex Mono', ui-monospace, monospace", fontSize: 10, fontWeight: 600, lineHeight: "15px", padding: "0 3px",
+                                                     borderRadius: 2, background: "#232b31", color: "#e3ded2", borderBottom: `2px solid ${STRIP_COLORS[col.key]}`, whiteSpace: "nowrap" }}>{m.code}</span>
+            ))}
+          </span>
+        );
+      })}
+      {calls.length > 0 && <span title={calls.join("\n")} style={{ fontSize: 10.5, color: "#f0c050", whiteSpace: "nowrap" }}>☎ {calls.length}</span>}
+    </div>
+  );
+}
+/** The key to the strip's codes. */
+export function TagStripKey() {
+  return (
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 10.5, color: "#98A3AB" }}>
+      <span><b style={{ color: STRIP_COLORS.crew }}>▬</b> crew size (2P, 3P, 2/3P)</span>
+      <span><b style={{ color: STRIP_COLORS.aerial }}>▬</b> aerial (BKT bucket, LIFT, TALL 100HD, CLMB, GRND, REQ)</span>
+      <span><b style={{ color: STRIP_COLORS.equip }}>▬</b> equipment (AVNT, 755 big Avant, 19XP big chipper, WOOD, CRANE, STMP)</span>
+      <span><b style={{ color: STRIP_COLORS.season }}>▬</b> season (WIN SPR SUM FALL OAK)</span>
+      <span style={{ color: "#f0c050" }}>☎ things to cover when calling</span>
+    </div>
+  );
+}

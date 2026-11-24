@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from "react";
 import { C } from "./theme";
-import { STATUS, money, jobColor, singleOpsJobUrl, tagShort, gradientColor, EMERGENCY_COLOR, PRIORITY_COLOR, PAUSED_COLOR, SEASON_COLOR } from "./backlogModel";
+import { STATUS, money, jobColor, singleOpsJobUrl, tagShort, seasonWindowNow, seasonKeysOf, gradientColor, EMERGENCY_COLOR, PRIORITY_COLOR, PAUSED_COLOR, SEASON_COLOR } from "./backlogModel";
 import JobHours from "./JobHours.jsx";
-import TagPill, { TagRow } from "./TagPill.jsx";
+import TagPill, { TagRow, TagStrip, TagStripKey } from "./TagPill.jsx";
 import { useBacklog } from "./useBacklog";
 import { fmtH, useHoursUnit, dayOsh } from "./hours";
 import TagFilter, { emptyTags, passTags } from "./TagFilter.jsx";
-import { PauseForm, promiseText } from "./Backlog.jsx";
+import { PauseForm, promiseText, PurgatoryModal, CheckBackBanner } from "./Backlog.jsx";
 import { useJobPoints, loadMaps } from "./BacklogMap.jsx";
 import { shopGet, shopDays, shopPatch, shopSchedRange, stampNow, shopSettings, saveYard } from "./shop/shopApi";
 import { freshCore, mergeCore, live, isoOf, addDays, weekStartOf, assetsOn } from "./shop/ShopBoard.jsx";
@@ -229,6 +229,37 @@ function TagRules({ onClose }) {
 
 /** Next weekday (Mon–Fri) after an ISO date. */
 const nextWorkday = (d) => { const x = new Date(d + "T12:00:00"); do { x.setDate(x.getDate() + 1); } while (x.getDay() === 0 || x.getDay() === 6); return isoOf(x); };
+/* SEASON SWITCHES (owner, Nov 24): permanent check boxes for the seasonal work.
+   Unticked = jobs tagged only for that season are left out of the job list (jobs with
+   no season tag always show). A box GLOWS while today is inside its window, with the
+   work days left; outside, it counts down to the window opening. Per device. */
+const SEASON_KEYS = ["WINTER", "SPRING", "SUMMER", "FALL", "OAK"];
+function SeasonBar({ on, setOn, jobs }) {
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "stretch", marginBottom: 10 }}>
+      <span className="st" style={{ fontSize: 11.5, color: C.inkDim, alignSelf: "center" }}>Seasonal work</span>
+      {SEASON_KEYS.map((k) => {
+        const w = seasonWindowNow(k);
+        const n = jobs.filter((j) => seasonKeysOf(j.tags).includes(k)).length;
+        const lit = w?.inNow;
+        const checked = on[k] !== false;
+        return (
+          <label key={k} title={lit ? `In season now — ${w.workdays} work days left` : `Opens ${w?.nextStart ? w.nextStart.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—"}`}
+                 style={{ display: "flex", gap: 7, alignItems: "center", padding: "5px 10px", borderRadius: 5, cursor: "pointer", userSelect: "none",
+                          background: lit ? "rgba(255,213,79,.14)" : C.panel, border: `1.5px solid ${lit ? "#FFD54F" : C.edge}`,
+                          boxShadow: lit ? "0 0 10px rgba(255,213,79,.55), inset 0 0 6px rgba(255,213,79,.25)" : "none", opacity: checked ? 1 : 0.55 }}>
+            <input type="checkbox" checked={checked} onChange={() => setOn({ ...on, [k]: !checked })} style={{ width: 16, height: 16, accentColor: "#E5A100" }} />
+            <span style={{ display: "grid", lineHeight: 1.15 }}>
+              <b className="st" style={{ fontSize: 12.5, color: lit ? "#FFE082" : C.ink }}>{k === "OAK" ? "Oak pruning" : w?.label}{lit ? " ●" : ""} <span className="mono" style={{ fontWeight: 400, color: C.inkDim }}>{n}</span></b>
+              <span style={{ fontSize: 10.5, color: lit ? "#ffe9a8" : C.inkFaint }}>{lit ? `in season · ${w.workdays} work days left` : w?.workdays != null ? `opens in ${w.workdays} work days` : ""}</span>
+            </span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
 const urgency = (j) => (j.status === "emergency" ? 0 : j.status === "priority" ? 1 : 2);
 
 /* Emergency / Priority jobs not on any crew this week — impossible to miss. */
@@ -362,7 +393,10 @@ export default function Schedule({ me }) {
   const [iso, setIso] = useState(() => sharedDay(isoOf(new Date())));
   useEffect(() => { setSharedDay(iso); }, [iso]);
   const { data, jobs, pause, resume, remove: deleteJob } = useBacklog();
-  const [rowAct, setRowAct] = useState(null);        // { ref, kind: "pause" | "del" } on a backlog row
+  const [rowAct, setRowAct] = useState(null);        // { ref, kind: "del" } on a backlog row
+  const [purgJob, setPurgJob] = useState(null);      // the Purgatory pop-up
+  const [seasonsOn, setSeasonsOn] = useState(() => { try { return JSON.parse(localStorage.getItem("mts-sched-seasons") || "{}"); } catch { return {}; } });
+  useEffect(() => { try { localStorage.setItem("mts-sched-seasons", JSON.stringify(seasonsOn)); } catch {} }, [seasonsOn]);
   const [tagF, setTagF] = useState(emptyTags);
   const [fitCrew, setFitCrew] = useState(null);      // crew id: list only jobs that crew can do
   const [rulesOpen, setRulesOpen] = useState(false);
@@ -580,6 +614,7 @@ export default function Schedule({ me }) {
       .filter((j) => show === "all" || (j.status !== "hold" && j.status !== "sched" && j.status !== "paused" && !j.nextVisit && !plannedOn[j.ref]))
       .filter((j) => !s || `${j.name} ${j.ref} ${j.addr} ${j.zone} ${j.tags.join(" ")} ${j.paused?.reason || ""}`.toLowerCase().includes(s))
       .filter((j) => passTags(j, tagF))
+      .filter((j) => { const ks = seasonKeysOf(j.tags); return !ks.length || ks.some((k) => seasonsOn[k] !== false); })
       .filter((j) => !fitC || checkJob(j.tags, fitC, board.core.assets, on).problems === 0)
 
       // Emergency, then Priority jobs always sit at the top, whatever the sort
@@ -588,7 +623,7 @@ export default function Schedule({ me }) {
         : sort === "old" ? (b.days || 0) - (a.days || 0)
         : sort === "big" ? (b.treeHrs || 0) - (a.treeHrs || 0)
         : STATUS[a.status].rank - STATUS[b.status].rank || b.lateWeeks - a.lateWeeks));
-  }, [jobs, assign, show, plannedOn, q, sort, nearCrew, distTo, tagF, fitC, peopleOn, board]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [jobs, assign, show, plannedOn, q, sort, nearCrew, distTo, tagF, fitC, peopleOn, board, seasonsOn]); // eslint-disable-line react-hooks/exhaustive-deps
   const [limit, setLimit] = useState(80);
   useEffect(() => setLimit(80), [q, show, sort]);
   // Stable list for the map (a new array every render made it rebuild every
@@ -607,15 +642,14 @@ export default function Schedule({ me }) {
     <div className="wrap" style={{ maxWidth: 1800 }}>
       {/* day / week picker */}
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
-        <div className="tabs" role="group" aria-label="View">
-          {[["day", "Day"], ["week", "Week"]].map(([k, l]) => <button key={k} className="tab st" aria-selected={mode === k} onClick={() => setMode(k)}>{l}</button>)}
-        </div>
+        <button className="btn st" data-primary={mode === "week" ? 1 : 0} onClick={() => setMode((m) => (m === "week" ? "day" : "week"))}
+                title="Show the whole week above the crews (scroll down for the day)">{mode === "week" ? "▴ Hide week" : "▾ Week view"}</button>
         <button className="btn st" onClick={() => setIso(isoOf(addDays(new Date(iso + "T12:00:00"), -7)))}>‹</button>
         {[0, 1, 2, 3, 4, 5, 6].map((i) => {
           const d = addDays(wkStart, i), di = isoOf(d);
           const n = Object.entries((di === iso ? { assign } : week[di])?.assign || {}).filter(([k, a]) => a?.crew && !k.startsWith("_")).length;
           return (
-            <button key={di} className="chip st" data-on={mode === "day" && di === iso ? 1 : 0} onClick={() => { setIso(di); setMode("day"); }}
+            <button key={di} className="chip st" data-on={di === iso ? 1 : 0} onClick={() => setIso(di)}
                     style={{ borderColor: di === today ? "#6b7880" : undefined }}>
               {DN[d.getDay()]} {d.getDate()}{n ? <b>{n}</b> : null}
             </button>
@@ -628,7 +662,10 @@ export default function Schedule({ me }) {
         <span className="hint">{saving ? "Saving…" : board ? (board.from === iso ? "Crews from this day's Shop Board." : board.from === "standing" ? "Crews from the standing Shop Board setup." : `Crews from the Shop Board (same as ${board.from}).`) : ""}</span>
       </div>
       {err && <div className="err" style={{ marginBottom: 8 }}>{err}</div>}
+      <CheckBackBanner jobs={jobs} onResume={resume} onEdit={(j) => setPurgJob(j)} />
       <UrgentBanner jobs={jobs} assign={assign} plannedOn={plannedOn} onPick={(r) => setSelected(r)} />
+      <SeasonBar on={seasonsOn} setOn={setSeasonsOn} jobs={jobs} />
+      {purgJob && <PurgatoryModal j={jobBy[purgJob.ref] || purgJob} onPause={pause} onResume={resume} onClose={() => setPurgJob(null)} />}
       {rulesOpen && <TagRules onClose={() => setRulesOpen(false)} />}
       {sel && (
         <div className="card" style={{ padding: "8px 12px", marginBottom: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderColor: "#58666f" }}>
@@ -641,16 +678,18 @@ export default function Schedule({ me }) {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: mode === "week" ? "minmax(0, 1fr) minmax(340px, 420px)" : "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", gap: 12, alignItems: "start" }}>
-        {mode === "week" && (
+      {mode === "week" && (
+        <div style={{ marginBottom: 12 }}>
           <WeekGrid days={weekDays} boards={boards} week={week} jobBy={jobBy} entryHrs={entryHrs} crewColor={crewColor}
                     selected={selected} onSelect={(r) => setSelected((s) => (s === r ? null : r))}
                     onDropJob={(d, ref, crew) => addToDay(d, ref, crew, boards[d])} onMoveJob={moveTo} onRemove={removeFrom}
-                    onOpenDay={(d) => { setIso(d); setMode("day"); }} checksFor={checksFor} today={today} />
-        )}
-        {/* crews */}
-        {mode === "day" && <div style={{ display: "grid", gap: 8 }}>
-          <CallList assign={assign} checks={checks} jobBy={jobBy} crews={board?.crews || []} crewColor={crewColor} />
+                    onOpenDay={(d) => setIso(d)} checksFor={checksFor} today={today} />
+        </div>
+      )}
+      <CallList assign={assign} checks={checks} jobBy={jobBy} crews={board?.crews || []} crewColor={crewColor} />
+      <div className="st hint" style={{ padding: "6px 0 4px", fontSize: 11.5 }}>{new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })} — crews</div>
+      {/* crews: smaller boxes across the top (owner, Nov 24); scroll sideways if there are many */}
+      <div style={{ display: "flex", gap: 8, overflowX: "auto", alignItems: "flex-start", paddingBottom: 8, marginBottom: 12 }}>
           {!board && <div className="hint">Loading crews…</div>}
           {(board?.crews || []).map((c) => {
             const items = byCrew[c.id] || [];
@@ -666,7 +705,7 @@ export default function Schedule({ me }) {
             return (
               <div key={c.id} className="card" onDragOver={(e) => e.preventDefault()}
                    onDrop={(e) => { e.preventDefault(); const ref = e.dataTransfer.getData("text/x-job"); if (ref) addTo(ref, c.id); }}
-                   style={{ borderLeft: `4px solid ${crewColor(c.id)}`, boxShadow: fitting ? `0 0 0 2px ${crewColor(c.id)}` : "none" }}>
+                   style={{ flex: "0 0 290px", maxHeight: 440, overflowY: "auto", borderTop: `4px solid ${crewColor(c.id)}`, boxShadow: fitting ? `0 0 0 2px ${crewColor(c.id)}` : "none" }}>
                 <div className="card-h st" style={{ color: C.ink, fontSize: 12.5 }}>
                   {c.name}<span className="hint" style={{ textTransform: "none", letterSpacing: 0 }}>{ppl.filter((p) => !board.off.has(p.id)).map(firstName).join(", ") || "nobody on it"}{offHere.length ? ` (${offHere.map(firstName).join(", ")} off)` : ""}</span>
                   {probs > 0 && <span className="st" style={{ color: "#fff", background: C.red, borderRadius: 2, padding: "1px 6px", fontSize: 10.5 }} title="See the red notes on the jobs below">⚠ {probs}</span>}
@@ -725,10 +764,10 @@ export default function Schedule({ me }) {
               </div>
             );
           })}
-        </div>}
+      </div>
 
-        {/* map */}
-        {mode === "day" && (
+      {/* map + the job list underneath */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 12, alignItems: "start" }}>
         <div className="card" style={{ position: "sticky", top: 70 }}>
           <div style={{ height: "min(70vh, 680px)" }}>
             <ScheduleMap jobs={mapJobs} points={points} assign={assign}
@@ -758,16 +797,15 @@ export default function Schedule({ me }) {
                     ))}
                     {assign[sel.ref]?.crew && <button className="btn st" data-danger="1" onClick={() => { remove(sel.ref); setSelected(null); }}>Take off the schedule</button>}
                     <a className="btn st" href={singleOpsJobUrl(sel.ref)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>Open in SingleOps</a>
-                    <button className="btn st" style={{ borderColor: "#B388FF" }} onClick={() => setPausing((v) => !v)}>{sel.paused ? "Purgatory…" : "⏸ Purgatory…"}</button>
+                    <button className="btn st" style={{ borderColor: "#B388FF" }} onClick={() => setPurgJob(sel)}>{sel.paused ? "Purgatory…" : "⏸ Purgatory…"}</button>
                   </div>
-                  {pausing && <div style={{ marginTop: 8 }}><PauseForm j={sel} onPause={pause} onResume={resume} onDone={() => setPausing(false)} /></div>}
+
                 </div>
               )}
             </ScheduleMap>
           </div>
           <div className="hint" style={{ padding: "6px 10px" }}>{geoState || "Numbered dots = this day's stops, in order. Small dots = backlog jobs (coloured by status). ★ = the shop."}</div>
         </div>
-        )}
 
         {/* backlog */}
         <div className="card">
@@ -803,6 +841,7 @@ export default function Schedule({ me }) {
                 <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><i style={{ width: 9, height: 9, borderRadius: 2, background: c }} />{l}</span>
               ))}
             </div>
+            <TagStripKey />
             <div className="hint">{list.length} jobs · {fmtH(list.reduce((t, j) => t + (j.treeHrs || 0), 0), 0)} tree work · {fmtH(list.reduce((t, j) => t + (j.grindHrs || 0), 0), 0)} stump. Drag onto a crew, or tap to pick.</div>
           </div>
           <div style={{ maxHeight: "62vh", overflow: "auto", padding: "0 8px 8px", display: "grid", gap: 4 }}>
@@ -821,19 +860,16 @@ export default function Schedule({ me }) {
                     {j.town}{j.zone ? ` · Z${j.zone}` : ""} · {j.crew || "?"} · {Math.round(j.days || 0)} d · {j.status === "over" ? (j.seasonal ? j.dueText : `${Math.round(j.lateWeeks)} wk late`) : j.seasonal ? j.dueText : STATUS[j.status].label}
                     {plannedOn[j.ref] ? ` · planned ${plannedOn[j.ref]}` : ""}{distTo[j.ref] != null ? ` · ${miles(distTo[j.ref])}` : ""}
                   </div>
-                  {j.tags.length > 0 && <TagRow tags={j.tags} />}
+                  <TagStrip tags={j.tags} />
                 </span>
                 <JobHours j={j} size={13} />
                 {selected === j.ref && <span style={{ display: "flex", flexDirection: "column", gap: 3 }} onClick={(e) => e.stopPropagation()}>
                   <button className="btn" style={{ padding: "1px 6px", borderColor: "#B388FF" }} title={j.paused ? "In Purgatory — edit" : "Purgatory — can't be scheduled yet"}
-                          onClick={() => setRowAct((r) => (r?.ref === j.ref && r.kind === "pause" ? null : { ref: j.ref, kind: "pause" }))}>⏸</button>
+                          onClick={() => setPurgJob(j)}>⏸</button>
                   <button className="btn" style={{ padding: "1px 6px" }} data-danger="1" title="Delete from the backlog"
                           onClick={() => setRowAct((r) => (r?.ref === j.ref && r.kind === "del" ? null : { ref: j.ref, kind: "del" }))}>🗑</button>
                 </span>}
               </div>
-              {rowAct?.ref === j.ref && rowAct.kind === "pause" && (
-                <div style={{ margin: "3px 0 6px" }}><PauseForm j={j} onPause={pause} onResume={resume} onDone={() => setRowAct(null)} /></div>
-              )}
               {rowAct?.ref === j.ref && rowAct.kind === "del" && (
                 <div style={{ margin: "3px 0 6px", padding: 8, border: "1px solid #D93B2B", borderRadius: 3, background: "rgba(217,59,43,.08)", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                   <span style={{ fontSize: 12.5 }}>Delete <b>{j.name}</b> (#{j.ref}) from the Dispatch backlog? It won't come back on the next import. You can restore it on the Backlog tab.</span>

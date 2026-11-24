@@ -90,6 +90,20 @@ function windowsOf(se, y0, y1) {
   }
   return out;
 }
+/** Is today inside this season's window? → { label, inNow, end, nextStart, workdays } (for the
+    Schedule's season switches). key: WINTER | SPRING | SUMMER | FALL | OAK. */
+export function seasonWindowNow(key, today = new Date()) {
+  const se = SEASONS[key]; if (!se) return null;
+  const t = new Date(today); t.setHours(12, 0, 0, 0);
+  const wins = windowsOf(se, t.getFullYear() - 1, t.getFullYear() + 1);
+  const now = wins.find((w) => w.start <= t && t <= w.end);
+  const next = wins.filter((w) => w.start > t).sort((a, b) => a.start - b.start)[0];
+  return now ? { label: se.label, inNow: true, end: now.end, workdays: workdaysBetween(t, now.end) }
+             : { label: se.label, inNow: false, nextStart: next?.start, workdays: next ? workdaysBetween(t, next.start) : null };
+}
+/** The season keys a job's tags call for (WINTER / SPRING / SUMMER / FALL / OAK). */
+export const seasonKeysOf = (tags) => [...new Set(seasonsOf(tags).map((s) => (s.key === "AUTUMN" ? "FALL" : s.key)))];
+
 const fmtD = (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) });
 /** Season verdict for a job, or null if it has no season tag. */
 export function seasonStatus(j, today = new Date()) {
