@@ -98,6 +98,7 @@ const DAY = {
   sick:  { key: "sick",  label: "Out sick",     short: "SICK",  color: "#D93B2B" },
   train: { key: "train", label: "Training",     short: "TRN",   color: "#E5A100" },
   light: { key: "light", label: "Light duty",   short: "LIGHT", color: "#6E7A83" },
+  hol:   { key: "hol",   label: "Holiday",      short: "HOL",   color: "#8a6bb8" },
 };
 const DAY_ORDER = ["on", "vac", "sick", "train", "light"];
 
@@ -442,7 +443,7 @@ const FAMILY = {
   PHC:     { label: "PHC rig",         c: "#7A5AA8" },
   LAWN:    { label: "Lawn",            c: "#5E9440" },
   CHIPPER: { label: "Chipper",         c: "#CF4A2B" },
-  AVANT:   { label: "Avant",           c: "#E0C020" },
+  AVANT:   { label: "Avant",           c: "#2F9E55" },
   GRINDER: { label: "Grinder",         c: "#A8476E" },
   FLATBED: { label: "Flatbed trailer", c: "#77838C" },
   LIFTTR:  { label: "Lift trailer",    c: "#4E585F" },
@@ -633,11 +634,79 @@ const VName = ({ w, lab, vl, code, ink, halo }) => {
 
 const TGAP = 7;
 
-/* Side views, for units that read better from the side when the yard runs
-   horizontally (owner, Nov 24: the Avant's top view didn't look like one).
-   Drawn facing right, like the trucks. */
+/* SIDE VIEWS (owner, Nov 24: "change all the trucks to side views"). Every unit
+   is drawn from the side, facing right (trucks drive right, towed units' tongues
+   point right at the truck), on a shared ground line; the name goes in an easy-
+   to-read tag BELOW it (see HLoad). Same model = same drawing: every 83 ft CMC
+   alike, the 100HD longer with a striped boom, all F650/F750 chip trucks alike,
+   Bridgette (F550) shorter and lighter, all wood trucks alike. */
+const SW = ({ cx, cy, r = 7 }) => <g><circle cx={cx} cy={cy} r={r} fill="#0A0D10" /><circle cx={cx} cy={cy} r={r * 0.42} fill="#5b666e" /></g>;
+/** A conventional cab facing right; x = its back, ground = wheel centre line. */
+const SCab = ({ x, t, h = 28, g = 36, hood = 10 }) => (
+  <g>
+    <path d={`M${x} ${g - 2} V${g - h + 5} Q${x} ${g - h} ${x + 5} ${g - h} H${x + 15} L${x + 22} ${g - h + 10} H${x + 22 + hood - 2} Q${x + 22 + hood} ${g - h + 10} ${x + 22 + hood} ${g - h + 13} V${g - 2} Z`}
+          fill={t.hi} stroke={t.lo} strokeWidth="1.3" />
+    <path d={`M${x + 6} ${g - h + 3} H${x + 14} L${x + 19.5} ${g - h + 10} H${x + 6} Z`} fill="#26343e" />
+  </g>
+);
+const chassis = (x1, x2, g = 36) => <rect x={x1} y={g - 6} width={x2 - x1} height="4" fill="#1b2126" />;
 const SIDE = {
-  avant: { w: 66, h: 38, art: (t, vl) => (<g>
+  chipbody: { w: 116, h: 44, art: (t) => (<g>{chassis(2, 108)}
+    <rect x="2" y="3" width="76" height="29" rx="2.5" fill={t.body} stroke={t.lo} strokeWidth="1.4" />
+    <rect x="4" y="6" width="72" height="3" fill={t.lo} opacity=".55" />
+    <line x1="6" y1="10" x2="6" y2="30" stroke={t.lo} strokeWidth="1.2" />
+    <SCab x={80} t={t} /><SW cx={20} cy={37} /><SW cx={35} cy={37} /><SW cx={98} cy={37} /></g>) },
+  chipbody550: { w: 106, h: 44, art: (t) => (<g>{chassis(6, 98)}
+    <rect x="6" y="9" width="64" height="23" rx="2" fill={shade(t.body, 0.14)} stroke={t.lo} strokeWidth="1.4" />
+    <rect x="8" y="12" width="60" height="2.5" fill={t.lo} opacity=".5" />
+    <SCab x={70} t={t} h={27} /><SW cx={24} cy={37} /><SW cx={88} cy={37} /></g>) },
+  rolloff: { w: 116, h: 44, art: (t) => (<g>{chassis(2, 108)}
+    <rect x="2" y="2" width="76" height="30" rx="1" fill={shade(t.body, -0.25)} stroke={t.lo} strokeWidth="1.6" />
+    {[12, 24, 36, 48, 60, 70].map((x) => <rect key={x} x={x} y="2" width="2" height="30" fill={t.lo} opacity=".6" />)}
+    <rect x="2" y="2" width="76" height="4" fill={t.lo} opacity=".5" />
+    <SCab x={80} t={t} /><SW cx={20} cy={37} /><SW cx={35} cy={37} /><SW cx={98} cy={37} /></g>) },
+  flatbed: { w: 100, h: 42, art: (t) => (<g>{chassis(2, 92)}
+    <rect x="2" y="25" width="60" height="6" rx="1" fill={t.body} stroke={t.lo} strokeWidth="1.2" />
+    <rect x="58" y="13" width="4" height="13" fill={t.lo} />
+    <SCab x={64} t={t} h={26} hood={12} /><SW cx={18} cy={37} /><SW cx={86} cy={37} /></g>) },
+  bucket: { w: 118, h: 46, art: (t) => (<g>{chassis(2, 110)}
+    <rect x="4" y="16" width="72" height="18" rx="1.5" fill={t.body} stroke={t.lo} strokeWidth="1.3" />
+    {[8, 26, 44, 60].map((x) => <rect key={x} x={x} y="19" width="12" height="12" rx="1" fill={t.lo} opacity=".45" />)}
+    <rect x="12" y="9" width="92" height="5" rx="2" fill={t.lo} />
+    <rect x="1" y="0" width="13" height="15" rx="2" fill={t.hi} stroke={t.lo} strokeWidth="1.2" />
+    <SCab x={80} t={t} h={27} /><SW cx={22} cy={38} /><SW cx={37} cy={38} /><SW cx={100} cy={38} /></g>) },
+  cabover: { w: 104, h: 44, art: (t) => (<g>{chassis(2, 100)}
+    <rect x="2" y="3" width="70" height="29" rx="2" fill={t.body} stroke={t.lo} strokeWidth="1.4" />
+    <rect x="4" y="27" width="66" height="3" fill={t.lo} opacity=".6" />
+    <rect x="73" y="6" width="27" height="28" rx="3" fill={t.hi} stroke={t.lo} strokeWidth="1.3" />
+    <rect x="88" y="9" width="10" height="11" rx="1.5" fill="#26343e" />
+    <SW cx={20} cy={37} /><SW cx={88} cy={37} /></g>) },
+  landscape: { w: 108, h: 44, art: (t) => (<g>{chassis(2, 100)}
+    <rect x="2" y="9" width="66" height="23" rx="1" fill={shade(t.body, -0.2)} stroke={t.lo} strokeWidth="1.4" />
+    {[10, 18, 26, 34, 42, 50, 58].map((x) => <line key={x} x1={x} y1="10" x2={x} y2="31" stroke={t.lo} strokeWidth="0.9" opacity=".7" />)}
+    <SCab x={70} t={t} h={28} /><SW cx={20} cy={37} /><SW cx={90} cy={37} /></g>) },
+  utv: { w: 60, h: 36, art: (t) => (<g>
+    <rect x="6" y="18" width="48" height="10" rx="2" fill={t.body} stroke={t.lo} strokeWidth="1.2" />
+    <ellipse cx="18" cy="15" rx="11" ry="6" fill={t.hi} stroke={t.lo} strokeWidth="1.1" />
+    <path d="M33 18 V5 H48 L52 18" fill="none" stroke={t.lo} strokeWidth="2" />
+    <SW cx={15} cy={29} r={6} /><SW cx={46} cy={29} r={6} /></g>) },
+  car: { w: 70, h: 34, art: (t) => (<g>
+    <path d="M4 26 V18 Q6 14 14 13 L24 5 H44 L54 13 Q64 14 66 19 V26 Z" fill={t.body} stroke={t.lo} strokeWidth="1.2" />
+    <path d="M26 8 H42 L49 13 H22 Z" fill="#26343e" /><SW cx={17} cy={27} r={6} /><SW cx={54} cy={27} r={6} /></g>) },
+  spider: { w: 78, h: 40, art: (t) => (<g>
+    <path d="M16 24 L3 38 M58 24 L72 38" stroke={t.lo} strokeWidth="2.6" />
+    <rect x="12" y="27" width="50" height="11" rx="5.5" fill="#0A0D10" /><rect x="16" y="30" width="42" height="5" rx="2.5" fill={t.lo} opacity=".6" />
+    <rect x="15" y="17" width="44" height="11" rx="2" fill={t.body} stroke={t.lo} strokeWidth="1.3" />
+    <rect x="6" y="11" width="60" height="5" rx="2" fill={t.lo} />
+    <rect x="63" y="3" width="12" height="12" rx="2" fill={t.hi} stroke={t.lo} strokeWidth="1.2" /></g>) },
+  spider100: { w: 94, h: 42, art: (t) => (<g>
+    <path d="M18 26 L3 40 M70 26 L88 40" stroke={t.lo} strokeWidth="2.8" />
+    <rect x="13" y="29" width="62" height="12" rx="6" fill="#0A0D10" /><rect x="17" y="32" width="54" height="5" rx="2.5" fill={t.lo} opacity=".6" />
+    <rect x="16" y="18" width="56" height="12" rx="2" fill={t.body} stroke={t.lo} strokeWidth="1.4" />
+    <rect x="5" y="11" width="76" height="6" rx="2" fill={t.lo} />
+    {[14, 30, 46, 62].map((x) => <rect key={x} x={x} y="11" width="6" height="6" fill="#E5A100" />)}
+    <rect x="78" y="2" width="14" height="13" rx="2" fill={t.hi} stroke={t.lo} strokeWidth="1.2" /></g>) },
+  avant: { w: 66, h: 38, art: (t) => (<g>
     <path d="M47 14 L62 21 L62 25 L46 19 Z" fill={t.body} stroke={t.lo} strokeWidth="1.2" />
     <path d="M60 17 h6 v15 h-9 l3 -4 z" fill={t.lo} />
     <rect x="4" y="16" width="52" height="11" rx="3" fill={t.body} stroke={t.lo} strokeWidth="1.3" />
@@ -645,45 +714,56 @@ const SIDE = {
     <path d="M25 17 L27 2 H42 L44 17" fill="none" stroke={t.lo} strokeWidth="2.2" strokeLinejoin="round" />
     <rect x="25" y="0.5" width="20" height="3.2" rx="1" fill={t.lo} />
     <rect x="30" y="9" width="8" height="8" rx="1.5" fill="#20262b" />
-    <circle cx="14" cy="29" r="8" fill="#0A0D10" /><circle cx="14" cy="29" r="3" fill={t.lo} />
-    <circle cx="46" cy="29" r="8" fill="#0A0D10" /><circle cx="46" cy="29" r="3" fill={t.lo} />
-    <text x="34" y="24.5" textAnchor="middle" fill={t.ink} stroke={t.body} strokeWidth="2" paintOrder="stroke"
-          fontFamily="'Barlow Condensed',sans-serif" fontWeight="700" fontSize="7">{vl}</text>
-  </g>) },
+    <SW cx={14} cy={30} r={8} /><SW cx={46} cy={30} r={8} /></g>) },
+  chipper: { w: 80, h: 40, art: (t) => (<g>
+    <path d="M54 29 H78" stroke={t.lo} strokeWidth="3" /><circle cx="78" cy="29" r="2.5" fill={t.lo} />
+    <path d="M2 13 L22 17 V31 L2 33 Z" fill={t.lo} />
+    <rect x="22" y="11" width="34" height="20" rx="2" fill={t.body} stroke={t.lo} strokeWidth="1.4" />
+    <path d="M42 11 V3 H54 V7 H47 V11 Z" fill={t.lo} />
+    <rect x="25" y="14" width="12" height="7" rx="1" fill={t.hi} opacity=".8" />
+    <SW cx={38} cy={33} /></g>) },
+  grinder: { w: 72, h: 38, art: (t) => (<g>
+    <path d="M50 26 H70" stroke={t.lo} strokeWidth="3" /><circle cx="70" cy="26" r="2.5" fill={t.lo} />
+    <rect x="18" y="11" width="34" height="18" rx="2" fill={t.body} stroke={t.lo} strokeWidth="1.4" />
+    <circle cx="12" cy="25" r="9" fill={t.lo} stroke={shade(t.body, -0.5)} strokeWidth="1.2" />
+    {[0, 45, 90, 135, 180, 225, 270, 315].map((d) => <rect key={d} x="11" y="14" width="2" height="3.5" fill={t.hi} transform={`rotate(${d} 12 25)`} />)}
+    <SW cx={36} cy={31} r={6} /></g>) },
 };
 const HGAP = 12;
-/** A unit's box when laid on its side: top views turned (length across), side views as drawn. */
-const hBox = (m) => { const sd = SIDE[m.top]; if (sd) return { w: sd.w, h: sd.h, side: sd }; const S = shapeOf(m); return { w: S.l, h: S.w, S }; };
+const TAG_H = 13;
+/** A unit's box from the side (falls back to the flatbed pickup drawing for unknown kinds). */
+const hBox = (m) => { const sd = SIDE[m.top] || SIDE.flatbed; return { w: sd.w, h: sd.h, side: sd }; };
 /** Lay out a load horizontally: the truck at the right facing right, what it tows behind it to the left. */
 function hLayout(members) {
   const lead = members.find((m) => m.hc === "truck") || members[0];
   const rest = members.filter((m) => m !== lead);
   const seq = [lead, ...rest];                       // right to left
   const boxes = seq.map(hBox);
-  const H = Math.max(...boxes.map((b) => b.h)) + 6;
-  const W = boxes.reduce((t, b) => t + b.w, 0) + HGAP * (seq.length - 1) + 14;
-  let x = W - 4;
-  const placed = seq.map((m, i) => { x -= boxes[i].w; const at = { m, b: boxes[i], x, y: (H - boxes[i].h) / 2 }; x -= HGAP; return at; });
-  return { W, H, placed, leadW: boxes[0].w };
+  const GH = Math.max(...boxes.map((b) => b.h));     // ground: every unit sits on the same line
+  const H = GH + TAG_H + 4;
+  const W = boxes.reduce((t, b) => t + b.w, 0) + HGAP * (seq.length - 1) + 6;
+  let x = W - 2;
+  const placed = seq.map((m, i) => { x -= boxes[i].w; const at = { m, b: boxes[i], x, y: GH - boxes[i].h }; x -= HGAP; return at; });
+  return { W, H, GH, placed, leadW: boxes[0].w };
 }
 function hDims(members) { const L = hLayout(members); return { w: L.W, h: L.H }; }
-/** The load drawn on its side, so the names read left to right. */
+/** The load from the side, each unit's name in a plain tag underneath. */
 function HLoad({ members, scale = 1, broken }) {
-  const { W, H, placed } = hLayout(members);
+  const { W, H, GH, placed } = hLayout(members);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width={W * scale} height={H * scale} style={{ display: "block", overflow: "visible" }} aria-hidden="true">
-      {placed.map(({ m, b, x, y }, i) => {
+      {placed.map(({ m, b, x, y }) => {
         const t = tones(m.fam), dim = m.status === "parked" ? 0.55 : 1;
-        const hitch = i > 0 && <line key={`h${m.id}`} x1={x + b.w} y1={H / 2} x2={placed[i - 1].x} y2={H / 2} stroke={shade(tones(placed[i - 1].m.fam).body, -0.45)} strokeWidth="3" />;
-        const ring = broken && <rect x={x - 3} y={y - 3} width={b.w + 6} height={b.h + 6} rx="4" fill="none" stroke="#D93B2B" strokeWidth="1.8" strokeDasharray="5 3" />;
-        if (b.side) return <g key={m.id} opacity={dim}>{hitch}<g transform={`translate(${x} ${y})`}>{b.side.art(t, m.vl || m.code)}</g>{ring}</g>;
-        const S = b.S;
+        const name = String(m.vl || m.code || m.name || "");
+        const fs = Math.max(6.5, Math.min(9.5, (b.w + HGAP - 8) / Math.max(1, name.length * 0.66)));
+        const tw = Math.min(b.w + HGAP - 2, name.length * fs * 0.66 + 8);
         return (
-          <g key={m.id} opacity={dim}>{hitch}
-            <g transform={`translate(${x + S.l} ${y}) rotate(90)`}>
-              {S.art(t)}
-              <VName w={S.w} lab={S.lab} vl={m.vl} code={m.code} ink={t.ink} halo={t.body} />
-            </g>{ring}
+          <g key={m.id} opacity={dim}>
+            <g transform={`translate(${x} ${y})`}>{b.side.art(t)}</g>
+            {broken && <rect x={x - 3} y={y - 3} width={b.w + 6} height={b.h + 6} rx="4" fill="none" stroke="#D93B2B" strokeWidth="1.8" strokeDasharray="5 3" />}
+            <rect x={x + b.w / 2 - tw / 2} y={GH + 3} width={tw} height={TAG_H} rx="2.5" fill="#E7E2D6" stroke={t.body} strokeWidth="1.2" />
+            <text x={x + b.w / 2} y={GH + 3 + TAG_H / 2} textAnchor="middle" dominantBaseline="central" fill="#14181C"
+                  fontFamily="'Barlow Condensed','Arial Narrow',sans-serif" fontWeight="700" fontSize={fs} letterSpacing="0.3">{name}</text>
           </g>
         );
       })}
@@ -1036,26 +1116,27 @@ function layoutBox(crew, i, core, hitch, anchors, offOf = () => null, vw = CW) {
     .sort((x, y) => (y.foreman ? 1 : 0) - (x.foreman ? 1 : 0));          // foremen first
   const loads = loadsOf(crew, core.assets).map((l) => ({ ...l, d: hDims(l.members) }));
   const w = Math.max(480, vw - 32);
-  const PW = Math.round(Math.min(300, Math.max(190, w * 0.26)));          // people column
-  const pInner = PW - BPAD;
+  // the crew's people ride in its title bar (owner, Nov 24), after the name / ✎ Edit / operation
+  const HP = Math.round(16 + 12 + textW(crew.name || "", true) * 1.05 + 62 + 48 + 14);
+  const pRight = w - 130;                                    // room for the counts / warnings on the right
   const pSlots = [];
-  let px = 0, py = 0;
+  let px = HP, py = 0;
   ppl.forEach((p) => {
-    const pw = Math.min(pInner, plateW(p, offOf(p.id)));
-    if (px > 0 && px + pw > pInner) { px = 0; py += PL_H; }
-    pSlots.push({ p, w: pw, x: BPAD + px, y: HEAD + BPAD + py });
+    const pw = Math.min(pRight - HP, plateW(p, offOf(p.id)));
+    if (px > HP && px + pw > pRight) { px = HP; py += PL_H - 4; }
+    pSlots.push({ p, w: pw, x: px, y: 3 + py });
     px += pw + 6;
   });
-  const pH = ppl.length ? py + PL_H : PL_H;
-  // equipment: each column (a load) a cell, flowing left → right, + one empty cell
-  const x0 = BPAD + PW + 8, EW = w - x0 - BPAD;
+  const headH = Math.max(HEAD, ppl.length ? py + PL_H + 2 : HEAD);
+  // equipment: from the left edge, each column (a load) a cell, flowing right, + one empty cell
+  const x0 = BPAD, EW = w - x0 - BPAD;
   const cSlots = [], lSlots = [];
   let cx = 0, cy = 0, rowH = 0, k = 0;
   const rowsOut = [];
   [...loads, null].forEach((l) => {
     const cw = l ? l.d.w + 12 : 70, ch = l ? l.d.h + 12 : 56;
     if (cx > 0 && cx + cw > EW) { rowsOut.push(rowH); cy += rowH + 6; cx = 0; rowH = 0; }
-    cSlots.push({ k, x: x0 + cx, y: HEAD + BPAD + cy, w: cw, h: ch, l, row: rowsOut.length });
+    cSlots.push({ k, x: x0 + cx, y: headH + BPAD + cy, w: cw, h: ch, l, row: rowsOut.length });
     cx += cw + 6; rowH = Math.max(rowH, ch); k++;
   });
   rowsOut.push(rowH);
@@ -1065,8 +1146,8 @@ function layoutBox(crew, i, core, hitch, anchors, offOf = () => null, vw = CW) {
     if (c.l) lSlots.push({ l: c.l, k: c.k, x: c.x + (c.w - c.l.d.w) / 2, y: c.y + (c.h - c.l.d.h) / 2 });
   });
   const eH = cy + rowH;
-  const h = HEAD + BPAD + Math.max(pH, eH) + BPAD;
-  return { crew, hint: a, w, h, ppl, loads, pSlots, lSlots, cSlots, PW };
+  const h = headH + BPAD + eH + BPAD;
+  return { crew, hint: a, w, h, ppl, loads, pSlots, lSlots, cSlots, headH };
 }
 
 const snap24 = (v) => Math.round(v / 24) * 24;
@@ -1988,6 +2069,7 @@ const Plate = ({ p, onBegin, off, onClick, locked, warn }) => (
   </span>
 );
 
+
 /* Which part of a load card was grabbed: the truck (top) takes the whole load;
    what it tows (below the hitch) comes off on its own — that is how you unhook. */
 function grabbed(e, members) {
@@ -2210,7 +2292,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
                       registerZone={registerZone} onDrop={(it) => onMove(it, `crew:${b.crew.id}`)}
                       className={`cbox${drag && drag.over === `crew:${b.crew.id}` ? " hot" : ""}${drag && drag.item.kind === "crew" && drag.item.id === b.crew.id ? " lifted" : ""}`}
                       style={{ left: b.x, top: b.y, width: b.w, height: b.h }}>
-                    <div className="cbox-h">
+                    <div className="cbox-h" style={{ height: b.headH, alignItems: "flex-start", paddingTop: 5 }}>
                       <span className="cbox-g" title="Move this crew"
                             onPointerDown={(e) => begin(e, { kind: "crew", id: b.crew.id, name: b.crew.name })} />
                       <button className="cbox-n stencil" onClick={() => onCrew(b.crew.id)}>{b.crew.name}</button>
@@ -2892,11 +2974,13 @@ function PersonExtras({ person, onSet }) {
   );
 }
 // Owner, Nov 24: only "Off duty" (older sick / training marks still count as off).
-const REASONS = [["vac", "Off duty"], ["on", "Back on duty"]];
+const REASONS = [["vac", "Off duty"], ["hol", "🎉 Holiday (everyone)"], ["on", "Back on duty"]];
 
 function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, onAddPerson, onRemove, onSetPerson }) {
   const [month, setMonth] = useState(() => { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return d; });
-  const [sel, setSel] = useState(null);
+  const [picked, setPicked] = useState(() => new Set());   // people to mark (tap names to pick several)
+  const sel = picked.size === 1 ? [...picked][0] : null;     // one picked = its details can be edited
+  const setSel = (id) => setPicked(id ? new Set([id]) : new Set());
   const [reason, setReason] = useState("vac");
   const [weeks, setWeeks] = useState({});        // sunday iso -> cells
   const [err, setErr] = useState("");
@@ -2922,21 +3006,39 @@ function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, o
   };
   const codeOf = (pid, d) => { const c = cellOf(pid, d); return c && c.code !== "on" ? c.code : null; };
 
-  const setDay = (pid, d, code) => {
-    const sun = isoOf(weekStartOf(d)), key = `${pid}:${d.getDay()}`;
-    const val = { code, at: stampNow(), by: (me && me.name) || "?" };
-    setWeeks((w) => ({ ...w, [sun]: { ...(w[sun] || {}), [key]: val } }));
-    if (sun === boardWeekIso) onBoardCell(key, val);       // the yard shows it straight away
-    shopPatch(`week.${sun}`, { cells: { [key]: val } }).then((r) => { if (!r) setErr("Couldn't save a change — check your connection."); else setErr(""); });
+  /* Mark several people / days at once: one save per week touched. */
+  const setMany = (items) => {
+    const at = stampNow(), by = (me && me.name) || "?";
+    const byWeek = {};
+    items.forEach(({ pid, d, code }) => {
+      const sun = isoOf(weekStartOf(d)), key = `${pid}:${d.getDay()}`;
+      (byWeek[sun] = byWeek[sun] || {})[key] = { code, at, by };
+    });
+    setWeeks((w) => { const n = { ...w }; Object.entries(byWeek).forEach(([sun, cells]) => { n[sun] = { ...(n[sun] || {}), ...cells }; }); return n; });
+    Object.entries(byWeek).forEach(([sun, cells]) => {
+      if (sun === boardWeekIso) Object.entries(cells).forEach(([key, val]) => onBoardCell(key, val));   // the yard shows it straight away
+      shopPatch(`week.${sun}`, { cells }).then((r) => { if (!r) setErr("Couldn't save a change — check your connection."); else setErr(""); });
+    });
   };
+  const setDay = (pid, d, code) => setMany([{ pid, d, code }]);
   const tapDay = (d, dragging) => {
-    if (!sel) { setErr("Pick a person on the left first."); return; }
     const k = isoOf(d);
-    if (dragging) { if (paint.current.done.has(k)) return; paint.current.done.add(k); setDay(sel, d, paint.current.code); return; }
-    const cur = codeOf(sel, d);
+    // Holiday: everyone off that day (tap again to put everyone back on)
+    if (reason === "hol") {
+      if (dragging) { if (paint.current.done.has(k)) return; paint.current.done.add(k); setMany(roster.map((p) => ({ pid: p.id, d, code: paint.current.code }))); return; }
+      const allHol = roster.every((p) => codeOf(p.id, d) === "hol");
+      const code = allHol ? "on" : "hol";
+      paint.current = { code, done: new Set([k]) };
+      setMany(roster.map((p) => ({ pid: p.id, d, code })));
+      return;
+    }
+    if (!picked.size) { setErr("Pick one or more people on the left first (tap names), or choose Holiday."); return; }
+    const ids = [...picked];
+    if (dragging) { if (paint.current.done.has(k)) return; paint.current.done.add(k); setMany(ids.map((pid) => ({ pid, d, code: paint.current.code }))); return; }
+    const cur = codeOf(ids[0], d);
     const code = reason === "on" ? "on" : cur === reason ? "on" : reason;   // tap again to clear
     paint.current = { code, done: new Set([k]) };
-    setDay(sel, d, code);
+    setMany(ids.map((pid) => ({ pid, d, code })));
   };
   const onGridMove = (e) => {
     if (!paint.current || !e.buttons) return;
@@ -2954,9 +3056,16 @@ function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, o
     <div className="ppl">
       <div className="ppl-side">
         <div className="bin-h" style={{ border: 0 }}>PEOPLE<button className="lnk stencil" onClick={onAddPerson}>+ add person</button><b>{roster.length}</b></div>
+        <div style={{ display: "flex", gap: 6, padding: "0 8px 6px", alignItems: "center", flexWrap: "wrap" }}>
+          <span className="hint" style={{ padding: 0 }}>{picked.size ? `${picked.size} picked` : "Tap names to pick one or several"}</span>
+          <span className="spacer" />
+          <button className="lnk stencil" onClick={() => setPicked(new Set(roster.map((p) => p.id)))}>all</button>
+          {picked.size > 0 && <button className="lnk stencil" onClick={() => setPicked(new Set())}>clear</button>}
+        </div>
         <div className="ppl-list">
           {roster.map((p) => (
-            <button key={p.id} className="ppl-row" data-on={sel === p.id ? 1 : 0} onClick={() => setSel(sel === p.id ? null : p.id)}>
+            <button key={p.id} className="ppl-row" data-on={picked.has(p.id) ? 1 : 0}
+                    onClick={() => setPicked((cur) => { const n = new Set(cur); n.has(p.id) ? n.delete(p.id) : n.add(p.id); return n; })}>
               <i style={{ background: p.c || C.edge }} />
               <span className="stencil">{p.foreman ? "★ " : ""}{p.d}</span>
               <small>{(p.ops && p.ops.length ? p.ops : ["all"]).join(" · ")}{offCount(p.id) ? ` · ${offCount(p.id)} off` : ""}</small>
@@ -2992,7 +3101,7 @@ function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, o
           <button className="btn stencil" onClick={() => setMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))}>›</button>
           <button className="btn stencil" onClick={() => { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); setMonth(d); }}>This month</button>
           <span className="spacer" />
-          <span className="hint" style={{ padding: 0 }}>{person ? <>Tap or drag across days to mark <b style={{ color: C.ink }}>{person.name}</b>:</> : "Pick a person on the left, then:"}</span>
+          <span className="hint" style={{ padding: 0 }}>{reason === "hol" ? <>Tap a day: <b style={{ color: C.ink }}>everyone</b> off (tap again to undo)</> : picked.size > 1 ? <>Tap or drag across days to mark <b style={{ color: C.ink }}>{picked.size} people</b>:</> : person ? <>Tap or drag across days to mark <b style={{ color: C.ink }}>{person.name}</b>:</> : "Pick people on the left, then:"}</span>
           {REASONS.map(([k, l]) => (
             <button key={k} className="marker stencil" data-on={reason === k ? 1 : 0} onClick={() => setReason(k)}>
               {k !== "on" && <span className="swatch" style={{ background: DAY[k].color }} />}{l}
@@ -3000,7 +3109,7 @@ function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, o
           ))}
         </div>
         {err && <div className="hint" style={{ color: "#E8867B" }}>{err}</div>}
-        <div className="cal-grid" onPointerMove={onGridMove} style={{ touchAction: sel ? "none" : "auto" }}>
+        <div className="cal-grid" onPointerMove={onGridMove} style={{ touchAction: picked.size || reason === "hol" ? "none" : "auto" }}>
           {DNAMES.map((n) => <div key={n} className="cal-h stencil">{n}</div>)}
           {days.map((d) => {
             const k = isoOf(d);

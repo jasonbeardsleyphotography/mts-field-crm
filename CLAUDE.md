@@ -164,6 +164,12 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   left; top views are turned on their side (names read left→right), units in `SIDE` (the Avant) use a side view.
   Standard drawings: every 83 ft CMC = `spider`, the 100HD = `spider100`, all F650/F750 chip trucks = `chipbody`,
   Bridgette (F550) = `chipbody550`, all wood trucks = `rolloff`. `grabbed` = the part LEFT of the hitch is towed.
+  Nov 24 later: EVERY unit is a SIDE view now (`SIDE` keyed by `top`, facing right, shared ground line) with its name in
+  a light tag BELOW it (HLoad); the Avant is green (FAMILY.AVANT). Crew people ride in the crew's TITLE BAR (layoutBox
+  `headH`, plates after the name/✎/op), equipment starts at the left edge. NOTE: a too-wide string slice once deleted
+  ~1,300 lines of this file (rebuilt from HEAD) — when replacing a range, check the end marker is the nearest one.
+  People tab: tap names to pick several (`picked` Set; details editable when exactly one), tap/drag days to mark all;
+  "🎉 Holiday (everyone)" marks every person off that day (code `hol`, tap again to undo). `setMany` = one week patch.
   Room and yard are decided by crew MEMBERSHIP (`crewHas`), not screen positions (that left dropped people/trucks in
   both places). ✎ Edit on each crew opens CrewSheet: rename, operation, add/remove people and equipment via pickers
   (reuses yardMove). People tab (`PeopleView`): month calendar; pick a person + reason (vac/sick/train/light/on), tap or
@@ -209,6 +215,12 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
 - Quick pick (`QuickPick.jsx`, phone-first): full-screen map; pick crew (today's Shop Board), hour range in the viewer's
   unit, fits crew, tags; nearest first from the crew's last stop today (else its yard) or "near me" (one-shot GPS, never
   sent); "+ Add to <crew> today" writes sched.<today> like the Schedule.
+- Backlog "📞 Someone calling?" lookup (name / street / phone / job #) → big card: WHERE IT LANDS (`landing` in
+  backlogModel: Mon–Fri weeks; week 1 = the Monday after the sale; a "13–15" promise lands the week of
+  week1+13 or week1+14, e.g. sold Wed Jul 1 → Oct 5 or Oct 12), or a season COUNTDOWN (work days until the season window
+  ends = overdue), plus Purgatory / Delete (two-step). Every card shows the same line (`LandLine`). Group "Oldest" = one
+  flat list, oldest first. Schedule multi-day: later days use only what the crew has FREE that day (other jobs count),
+  skipping full days (24 free then 16 free → a third day).
 - Backlog tab = a job manager, not a dashboard: one totals line, Group by Priority (status categories) / Equipment
   (`equipmentNeeds` from crewCheck, "No special equipment") / Zone, OLDEST FIRST inside each group; map coloured by age
   by default (`ageColor`, green → dark red over a year). Hours split (`enrich` → treeHrs / grindHrs / cleanupHrs / seedHrs,

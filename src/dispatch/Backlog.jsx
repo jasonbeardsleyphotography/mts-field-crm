@@ -21,6 +21,7 @@ import JobHours from "./JobHours.jsx";
 
 const ZONE_PALETTE = ["#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231", "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe", "#008080", "#e6beff", "#9a6324", "#fffac8", "#800000", "#aaffc3", "#808000", "#ffd8b1"];
 const GROUPS = {
+  oldest: { label: "Oldest", note: "every job, oldest first — no categories" },
   priority: { label: "Priority", note: "past promise first · oldest first in each" },
   equipment: { label: "Equipment", note: "what the job needs · oldest first in each" },
   zone: { label: "Zone", note: "oldest first in each" },
@@ -95,9 +96,32 @@ export function PauseForm({ j, onPause, onResume, onDone }) {
   );
 }
 
-function JobCard({ j, selected, onSelect, cardRef, colorBy, zoneColors, onPause, onResume }) {
+/** Delete a job from the Dispatch backlog — asks first. */
+export function DeleteConfirm({ j, onDelete, onDone }) {
+  const [busy, setBusy] = useState(false), [err, setErr] = useState("");
+  return (
+    <div style={{ padding: 8, border: "1px solid #D93B2B", borderRadius: 3, background: "rgba(217,59,43,.08)", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }} onClick={(e) => e.stopPropagation()}>
+      <span style={{ fontSize: 12.5 }}>Delete <b>{j.name}</b> (#{j.ref}) from the Dispatch backlog? It won't come back on the next import; you can restore it from "deleted" at the top.</span>
+      <button className="btn st" data-danger="1" disabled={busy} onClick={async () => { setBusy(true); try { await onDelete(j.ref, j.name); onDone?.(); } catch (e) { setErr(`Couldn't delete (${e.message}).`); } setBusy(false); }}>Yes, delete</button>
+      <button className="btn st" onClick={() => onDone?.()}>Cancel</button>
+      {err && <span className="err">{err}</span>}
+    </div>
+  );
+}
+
+/** "When will we get there?" — the promise window in Mon–Fri weeks, or the season countdown. */
+export function LandLine({ j, size = 12.5 }) {
+  if (j.nextVisit) return <div style={{ fontSize: size, color: "#9cc4e4" }}>Scheduled {new Date(j.nextVisit + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}{j.visitWho ? ` · ${j.visitWho}` : ""}</div>;
+  if (j.seasonal) return <div style={{ fontSize: size, color: SEASON_COLOR }}>⏳ {j.dueText}</div>;
+  if (j.land) return <div style={{ fontSize: size, color: /overdue/.test(j.land.text) ? "#ff9a8f" : "#d9d4c8" }}>📅 {j.land.text}</div>;
+  if ((j.promised ?? 99) >= 99) return <div className="hint" style={{ padding: 0 }}>Flexible (99) — no promised window</div>;
+  return null;
+}
+
+function JobCard({ j, selected, onSelect, cardRef, colorBy, zoneColors, onPause, onResume, onDelete }) {
   const [open, setOpen] = useState(false);
   const [pausing, setPausing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const st = STATUS[j.status];
   const bar = colorBy === "zone" ? (zoneColors[j.zone] || C.edge) : colorBy === "age" ? jobColor(j) : st.color;
   return (
@@ -122,6 +146,7 @@ function JobCard({ j, selected, onSelect, cardRef, colorBy, zoneColors, onPause,
               {j.checkBack && <span className="st" style={{ fontSize: 10.5, background: PAUSED_COLOR, color: "#1b1426", padding: "1px 6px", borderRadius: 2 }}>Check back now</span>}
               {j.paused && <span className="hint" style={{ padding: 0 }}>paused by {j.paused.by}</span>}
             </div>
+            <LandLine j={j} />
           </div>
           <JobHours j={j} />
           <span className="mono hint" style={{ minWidth: 52, textAlign: "right" }}>{money(j.price)}</span>
@@ -141,12 +166,29 @@ function JobCard({ j, selected, onSelect, cardRef, colorBy, zoneColors, onPause,
           <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }} onClick={(e) => e.stopPropagation()}>
             <a className="btn st" href={singleOpsJobUrl(j.ref)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>Open in SingleOps</a>
             <a className="btn st" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(j.addr)}`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>Address</a>
-            <button className="btn st" style={{ borderColor: PAUSED_COLOR }} onClick={() => setPausing((v) => !v)}>{j.paused ? "Purgatory: edit / bring back" : "⏸ Purgatory…"}</button>
+            <button className="btn st" style={{ borderColor: PAUSED_COLOR }} onClick={() => { setDeleting(false); setPausing((v) => !v); }}>{j.paused ? "Purgatory: edit / bring back" : "⏸ Purgatory…"}</button>
+            <button className="btn st" data-danger="1" onClick={() => { setPausing(false); setDeleting((v) => !v); }}>🗑 Delete…</button>
             <span className="hint" style={{ alignSelf: "center" }}>{j.addr}{j.dueRange ? ` · window ${j.dueRange}` : ""}</span>
           </div>
         )}
         {selected && pausing && <div style={{ marginTop: 8 }}><PauseForm j={j} onPause={onPause} onResume={onResume} onDone={() => setPausing(false)} /></div>}
+        {selected && deleting && <div style={{ marginTop: 8 }}><DeleteConfirm j={j} onDelete={onDelete} onDone={() => setDeleting(false)} /></div>}
       </div>
+    </div>
+  );
+}
+
+function CallActions({ j, pause, resume, remove }) {
+  const [act, setAct] = useState(null);
+  return (
+    <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <a className="btn st" href={singleOpsJobUrl(j.ref)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>Open in SingleOps</a>
+        <button className="btn st" style={{ borderColor: PAUSED_COLOR }} onClick={() => setAct((a) => (a === "pause" ? null : "pause"))}>{j.paused ? "Purgatory: edit / bring back" : "⏸ Purgatory…"}</button>
+        <button className="btn st" data-danger="1" onClick={() => setAct((a) => (a === "del" ? null : "del"))}>🗑 Delete…</button>
+      </div>
+      {act === "pause" && <PauseForm j={j} onPause={pause} onResume={resume} onDone={() => setAct(null)} />}
+      {act === "del" && <DeleteConfirm j={j} onDelete={remove} onDone={() => setAct(null)} />}
     </div>
   );
 }
@@ -169,7 +211,8 @@ function Group({ title, color, jobs, open, onToggle, children }) {
 
 export default function Backlog() {
   useHoursUnit();
-  const { data, jobs, err: loadErr, load, pause, resume, deleted, restore } = useBacklog();
+  const { data, jobs, err: loadErr, load, pause, resume, deleted, restore, remove } = useBacklog();
+  const [callQ, setCallQ] = useState("");
   const [showDeleted, setShowDeleted] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
@@ -225,6 +268,7 @@ export default function Backlog() {
       const zs = [...new Set(shown.map((j) => j.zone || "—"))].sort((a, b) => (parseFloat(a) || 999) - (parseFloat(b) || 999));
       return zs.map((z) => ({ key: z, title: /^\d/.test(z) ? `Zone ${z}` : z, color: zoneColors[z], jobs: shown.filter((j) => (j.zone || "—") === z) }));
     }
+    if (groupBy === "oldest") return [{ key: "all", title: "All jobs — oldest first", color: C.edge, jobs: shown }];
     return STATUS_ORDER.map((k) => ({ key: k, title: STATUS[k].label, color: STATUS[k].color, jobs: shown.filter((j) => j.status === k) })).filter((g) => g.jobs.length);
   }, [shown, groupBy, zoneColors]);
 
@@ -274,8 +318,44 @@ export default function Backlog() {
   const legend = ageLegend(jobs);
   const filtersOn = q || status.size || Object.values(facet).some((s) => s.size);
 
+  const callHits = (() => {
+    const t = callQ.trim().toLowerCase(); if (t.length < 2) return [];
+    const digits = t.replace(/\D/g, "");
+    return jobs.filter((j) => `${j.name} ${j.last} ${j.ref} ${j.addr} ${j.email || ""}`.toLowerCase().includes(t)
+      || (digits.length >= 4 && String(j.phone || "").replace(/\D/g, "").includes(digits))).slice(0, 6);
+  })();
   return (
     <div className="wrap" style={{ maxWidth: 1800 }}>
+      {/* someone's on the phone: where does their job land? */}
+      <div className="card" style={{ padding: 10, marginBottom: 10, borderLeft: `4px solid ${C.blue}` }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <b className="st" style={{ fontSize: 13 }}>📞 Someone calling?</b>
+          <input className="inp" style={{ flex: "1 1 280px", maxWidth: 520, fontSize: 15 }} placeholder="Type their name, street, phone or job #" value={callQ} onChange={(e) => setCallQ(e.target.value)} />
+          {callQ && <button className="btn st" onClick={() => setCallQ("")}>Clear</button>}
+          <span className="hint" style={{ padding: 0 }}>Weeks are Mon–Fri work weeks, counted from the first full week after the sale.</span>
+        </div>
+        {callQ.trim().length >= 2 && (
+          <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+            {callHits.map((j) => (
+              <div key={j.ref} style={{ padding: "8px 10px", background: C.tile, borderRadius: 3, borderLeft: `4px solid ${jobColor(j)}` }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 240 }}>
+                    <b style={{ fontSize: 15 }}>{j.name}</b> <span className="mono hint">#{j.ref}</span>
+                    <div className="hint" style={{ padding: 0 }}>{j.addr}{j.phone ? ` · ${j.phone}` : ""}</div>
+                    <div style={{ marginTop: 4, fontWeight: 600 }}><LandLine j={j} size={15.5} /></div>
+                    <div style={{ fontSize: 12.5, marginTop: 2, color: STATUS[j.status].color }}>{STATUS[j.status].label}{j.paused ? ` — ${j.paused.reason}` : ""} · {Math.round(j.days || 0)} days since it was sold</div>
+                  </div>
+                  <JobHours j={j} />
+                </div>
+                {j.tags.length > 0 && <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 6 }}>{j.tags.map((t) => <TagPill key={t} tag={t} small />)}</div>}
+                {j.note && <div style={{ marginTop: 6, fontSize: 12.5, color: "#c8ced2", whiteSpace: "pre-wrap" }}>{j.note}</div>}
+                <CallActions j={j} pause={pause} resume={resume} remove={remove} />
+              </div>
+            ))}
+            {!callHits.length && <div className="hint">No job matches “{callQ}”.</div>}
+          </div>
+        )}
+      </div>
       {/* one slim line of totals + the status filters */}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
         <span className="mono" style={{ fontSize: 13 }}>{shown.length} jobs · <b>{fmtH(sumTree(shown))} tree work</b> · {fmtH(sumGrind(shown))} stump grinding · {money(shown.reduce((t, j) => t + (j.price || 0), 0))}</span>
@@ -350,7 +430,7 @@ export default function Backlog() {
             return (
               <Group key={g.key} title={g.title} color={g.color} jobs={g.jobs} open={open} onToggle={() => setClosed((c) => toggleSet(c, g.key))}>
                 {g.jobs.slice(0, lim).map((j) => (
-                  <JobCard key={j.ref} j={j} selected={selected === j.ref} onSelect={pick} colorBy={colorBy} zoneColors={zoneColors} onPause={pause} onResume={resume}
+                  <JobCard key={j.ref} j={j} selected={selected === j.ref} onSelect={pick} colorBy={colorBy} zoneColors={zoneColors} onPause={pause} onResume={resume} onDelete={remove}
                            cardRef={(el) => { if (el) cardRefs.current[j.ref] = el; }} />
                 ))}
                 {g.jobs.length > lim && <button className="btn st" onClick={() => setLimits((l) => ({ ...l, [g.key]: lim + 50 }))}>Show {Math.min(50, g.jobs.length - lim)} more of {g.jobs.length - lim}</button>}

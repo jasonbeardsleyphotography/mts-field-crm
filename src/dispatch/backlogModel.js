@@ -108,9 +108,45 @@ export function seasonStatus(j, today = new Date()) {
   }
   if (now) {
     const left = (now.end - today) / DAYMS;
-    return { status: left < 14 ? "soon" : "ok", lateWeeks: 0, text: `${now.label} job · in season now · do by ${fmtD(now.end)}` };
+    const wd = workdaysBetween(today, now.end);
+    return { status: left < 14 ? "soon" : "ok", lateWeeks: 0, countdown: wd, until: now.end,
+             text: `${now.label} job · in season · ${wd} work day${wd === 1 ? "" : "s"} left until overdue (${fmtD(now.end)})` };
   }
-  return { status: "season", lateWeeks: 0, text: `${names} job · season starts ${next ? fmtD(next.start) : "—"}` };
+  const wd = next ? workdaysBetween(today, next.end) : null;
+  return { status: "season", lateWeeks: 0, countdown: wd, until: next?.end,
+           text: `${names} job · season opens ${next ? fmtD(next.start) : "—"}${next ? ` · overdue after ${fmtD(next.end)} (${wd} work days)` : ""}` };
+}
+
+/** Mon–Fri days from a (exclusive) to b (inclusive). */
+export function workdaysBetween(a, b) {
+  const x = new Date(a); x.setHours(12, 0, 0, 0);
+  const end = new Date(b); end.setHours(12, 0, 0, 0);
+  let n = 0;
+  while (x < end && n < 2000) { x.setDate(x.getDate() + 1); const d = x.getDay(); if (d !== 0 && d !== 6) n++; }
+  return n;
+}
+
+/* WHERE A JOB LANDS (owner, Nov 24) — for answering "when are you coming?".
+   Weeks are Mon–Fri work weeks. Week 1 = the first full work week after the sale
+   (the Monday after it). A "13–15 weeks" promise lands in week 14 or 15, i.e. the
+   week of (week-1 Monday + 13 weeks) or the week after. Sold Wed Jul 1 → week 1
+   starts Jul 6 → lands the week of Oct 5 or Oct 12. */
+const nextMonday = (d) => { const x = new Date(d); x.setHours(12, 0, 0, 0); do { x.setDate(x.getDate() + 1); } while (x.getDay() !== 1); return x; };
+const addWeeks = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n * 7); return x; };
+const fmtWk = (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) });
+export function landing(j, today = new Date()) {
+  if (!j.activeAt || j.promised == null || j.promised >= 99) return null;
+  const w1 = nextMonday(new Date(j.activeAt + "T12:00:00"));
+  const a = addWeeks(w1, j.promised), b = addWeeks(w1, j.promised + 1);
+  const endB = new Date(b); endB.setDate(endB.getDate() + 4);            // Friday of the later week
+  const t = new Date(today); t.setHours(12, 0, 0, 0);
+  const sold = new Date(j.activeAt + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const band = j.promisedLabel || `${j.promised}-${j.promised + 2}`;
+  let when;
+  if (t > endB) { const late = Math.max(1, Math.round((t - endB) / (7 * DAYMS))); when = `was due the week of ${fmtWk(a)} or ${fmtWk(b)} — ${late} week${late === 1 ? "" : "s"} overdue`; }
+  else if (t >= a) when = `due now — the week of ${fmtWk(a)} or ${fmtWk(b)}`;
+  else { const wd = workdaysBetween(t, a); when = `should land the week of ${fmtWk(a)} or ${fmtWk(b)} (${Math.ceil(wd / 5)} work week${Math.ceil(wd / 5) === 1 ? "" : "s"} away)`; }
+  return { a: a.toISOString().slice(0, 10), b: b.toISOString().slice(0, 10), text: `Sold ${sold}, promised ${band} weeks → ${when}` };
 }
 
 const groupOf = (tag) => {
@@ -182,7 +218,7 @@ export function enrich(data, paused = {}, today = new Date()) {
       name: [j.first, j.last].filter(Boolean).join(" ") || j.last || j.ref,
       crew: crewTag ? `${crewTag[1]}-person` : "",
       equip, season,
-      status, dueText, seasonal: !!se,
+      status, dueText, seasonal: !!se, countdown: se?.countdown ?? null, land: se ? null : landing(j, today),
       paused: p, checkBack: !!(p?.until && p.until <= todayIso),
       nextVisit,
       visitWho: visits[0]?.who || j.schedWho,

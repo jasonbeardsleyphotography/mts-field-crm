@@ -317,7 +317,7 @@ function visitJobs(rows, h, prev, today) {
       notes: p?.notes || prev?.notes?.[id] || "",
       schedDate: sched ? (start >= today ? start : today) : null,
       schedWho: sched ? str(g(r, "Assignee(s)")) || str(g(r, "Assignees")) : "",
-      phone: str(g(r, "Client Mobile")) || str(g(r, "Client Phone")),
+      phone: [...new Set([str(g(r, "Client Mobile")), str(g(r, "Client Phone"))].filter(Boolean))].join(" / "),
       email: str(g(r, "Client Email")),
     });
   }

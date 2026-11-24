@@ -502,14 +502,28 @@ export default function Schedule({ me }) {
     const used = list.reduce((t, x) => t + entryHrs(x), 0);
     const total = j.treeHrs ?? j.hrs ?? 0;
     const left = cap - used;
-    const parts = [];
-    let first = total <= Math.max(left, 0) + 0.25 ? total : left >= 1 ? left : Math.min(total, cap);
-    parts.push(first);
-    let rest = total - first;
-    while (rest > 0.25 && parts.length < 20) { const p = Math.min(rest, cap); parts.push(p); rest -= p; }
-    if (rest > 0) parts[parts.length - 1] += rest;
-    const days = [dayIso];
-    while (days.length < parts.length) days.push(nextWorkday(days[days.length - 1]));
+    const parts = [], days = [];
+    const first = total <= Math.max(left, 0) + 0.25 ? total : left >= 1 ? left : Math.min(total, cap);
+    parts.push(first); days.push(dayIso);
+    let rest = total - first, d = dayIso, guard = 0;
+    // following weekdays: only what the crew still has free that day (other jobs already
+    // there count), so 24 free then 16 free rolls the rest into a third day
+    while (rest > 0.25 && guard++ < 40) {
+      d = nextWorkday(d);
+      let A2 = week[d]?.assign;
+      if (!A2) { try { A2 = (await shopGet(`sched.${d}`))?.assign || {}; } catch { A2 = {}; } }
+      const b2 = boards[d];
+      const c2 = b2 ? (b2.crews || []).find((x) => x.id === crew) : c;
+      if (b2 && !c2) continue;                                       // crew not on the board that day
+      const ppl2 = b2 && c2 ? (c2.people || []).filter((id) => b2.core.people[id] && !b2.core.people[id].del && !b2.off.has(id)).length : ppl;
+      const cap2 = dayOsh(ppl2 || 0);
+      const used2 = Object.entries(A2).filter(([r, a]) => a?.crew === crew && r !== ref && !r.startsWith("_")).reduce((t, [r, a]) => t + entryHrs({ ref: r, ...a }), 0);
+      const free = cap2 - used2;
+      if (free < 1) continue;                                        // full that day: try the next one
+      const p = Math.min(rest, free);
+      parts.push(p); days.push(d); rest -= p;
+    }
+    if (rest > 0.25) { parts[parts.length - 1] += rest; }
     const base = { crew, ...label(j), total };
     const multi = parts.length > 1 ? { parts: parts.length, days } : { parts: null, days: null };
     for (let k = 0; k < parts.length; k++) {
