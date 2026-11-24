@@ -228,7 +228,11 @@ function TagRules({ onClose }) {
 }
 
 /** Next weekday (Mon–Fri) after an ISO date. */
-const nextWorkday = (d) => { const x = new Date(d + "T12:00:00"); do { x.setDate(x.getDate() + 1); } while (x.getDay() === 0 || x.getDay() === 6); return isoOf(x); };
+/* WEEKENDS (owner, Nov 24): off by default for all scheduling; the "Weekends" switch on
+   the Schedule turns them on (per device). Off = Sat/Sun dimmed, the week view is Mon–Fri
+   and multi-day jobs carry over Mon–Fri only. */
+let weekendsOn = (() => { try { return localStorage.getItem("mts-sched-weekends") === "1"; } catch { return false; } })();
+const nextWorkday = (d) => { const x = new Date(d + "T12:00:00"); do { x.setDate(x.getDate() + 1); } while (!weekendsOn && (x.getDay() === 0 || x.getDay() === 6)); return isoOf(x); };
 /* SEASON SWITCHES (owner, Nov 24): permanent check boxes for the seasonal work.
    Unticked = jobs tagged only for that season are left out of the job list (jobs with
    no season tag always show). A box GLOWS while today is inside its window, with the
@@ -402,6 +406,8 @@ export default function Schedule({ me }) {
   const [rulesOpen, setRulesOpen] = useState(false);
   const [pausing, setPausing] = useState(false);
   const [board, setBoard] = useState(null);          // { core, crews, from }
+  const [weekends, setWeekendsState] = useState(weekendsOn);
+  const setWeekends = (v) => { weekendsOn = v; setWeekendsState(v); try { localStorage.setItem("mts-sched-weekends", v ? "1" : "0"); } catch {} };
   const [mode, setMode] = useState(() => { try { return localStorage.getItem("mts-sched-mode") || "day"; } catch { return "day"; } });
   useEffect(() => { try { localStorage.setItem("mts-sched-mode", mode); } catch {} }, [mode]);
   const [boards, setBoards] = useState({});          // iso -> crews for that day (week view)
@@ -435,14 +441,14 @@ export default function Schedule({ me }) {
 
   // week view: the crews for every day of the week (each day can differ on the Shop Board)
   const weekStartIso = isoOf(weekStartOf(new Date(iso + "T12:00:00")));
-  const weekDays = useMemo(() => [1, 2, 3, 4, 5, 6].map((i) => isoOf(addDays(new Date(weekStartIso + "T12:00:00"), i))), [weekStartIso]);
+  const weekDays = useMemo(() => (weekends ? [0, 1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5]).map((i) => isoOf(addDays(new Date(weekStartIso + "T12:00:00"), i))), [weekStartIso, weekends]);
   useEffect(() => {
     if (mode !== "week") return;
     let dead = false;
     Promise.all(weekDays.map((d) => crewsForDay(d).then((b) => [d, b]))).then((list) => { if (!dead) setBoards(Object.fromEntries(list)); });
     const t = setInterval(async () => { if (document.hidden || savingRef.current) return; const wk = await shopSchedRange(weekStartIso, 7); if (!dead && !savingRef.current) setWeek(wk); }, 10000);
     return () => { dead = true; clearInterval(t); };
-  }, [mode, weekStartIso]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, weekStartIso, weekends]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // pick up other people's changes to this day
   const savingRef = useRef(0); savingRef.current = saving;
@@ -650,7 +656,8 @@ export default function Schedule({ me }) {
           const n = Object.entries((di === iso ? { assign } : week[di])?.assign || {}).filter(([k, a]) => a?.crew && !k.startsWith("_")).length;
           return (
             <button key={di} className="chip st" data-on={di === iso ? 1 : 0} onClick={() => setIso(di)}
-                    style={{ borderColor: di === today ? "#6b7880" : undefined }}>
+                    title={!weekends && (d.getDay() === 0 || d.getDay() === 6) ? "Weekend — off (turn on with the Weekends switch)" : undefined}
+                    style={{ borderColor: di === today ? "#6b7880" : undefined, opacity: !weekends && (d.getDay() === 0 || d.getDay() === 6) ? 0.4 : 1 }}>
               {DN[d.getDay()]} {d.getDate()}{n ? <b>{n}</b> : null}
             </button>
           );
@@ -658,13 +665,13 @@ export default function Schedule({ me }) {
         <button className="btn st" onClick={() => setIso(isoOf(addDays(new Date(iso + "T12:00:00"), 7)))}>›</button>
         <button className="btn st" onClick={() => setIso(today)}>Today</button>
         <span className="spacer" />
+        <button className="chip st" data-on={weekends ? 1 : 0} onClick={() => setWeekends(!weekends)} title="Weekends are off unless this is on">{weekends ? "Weekends: ON" : "Weekends: off"}</button>
         <button className="btn st" onClick={() => setRulesOpen((o) => !o)}>Tag → equipment</button>
         <span className="hint">{saving ? "Saving…" : board ? (board.from === iso ? "Crews from this day's Shop Board." : board.from === "standing" ? "Crews from the standing Shop Board setup." : `Crews from the Shop Board (same as ${board.from}).`) : ""}</span>
       </div>
       {err && <div className="err" style={{ marginBottom: 8 }}>{err}</div>}
       <CheckBackBanner jobs={jobs} onResume={resume} onEdit={(j) => setPurgJob(j)} />
       <UrgentBanner jobs={jobs} assign={assign} plannedOn={plannedOn} onPick={(r) => setSelected(r)} />
-      <SeasonBar on={seasonsOn} setOn={setSeasonsOn} jobs={jobs} />
       {purgJob && <PurgatoryModal j={jobBy[purgJob.ref] || purgJob} onPause={pause} onResume={resume} onClose={() => setPurgJob(null)} />}
       {rulesOpen && <TagRules onClose={() => setRulesOpen(false)} />}
       {sel && (
@@ -768,8 +775,9 @@ export default function Schedule({ me }) {
 
       {/* map + the job list underneath */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 12, alignItems: "start" }}>
-        <div className="card" style={{ position: "sticky", top: 70 }}>
-          <div style={{ height: "min(70vh, 680px)" }}>
+        <div style={{ position: "sticky", top: 70 }}>
+        <div className="card">
+          <div style={{ height: "min(62vh, 620px)" }}>
             <ScheduleMap jobs={mapJobs} points={points} assign={assign}
                          crewColor={crewColor} selected={selected} onPick={onMapPick} yardOf={yardOf} shop={shop}>
               {sel && (
@@ -805,6 +813,8 @@ export default function Schedule({ me }) {
             </ScheduleMap>
           </div>
           <div className="hint" style={{ padding: "6px 10px" }}>{geoState || "Numbered dots = this day's stops, in order. Small dots = backlog jobs (coloured by status). ★ = the shop."}</div>
+        </div>
+        <div style={{ marginTop: 10 }}><SeasonBar on={seasonsOn} setOn={setSeasonsOn} jobs={jobs} /></div>
         </div>
 
         {/* backlog */}

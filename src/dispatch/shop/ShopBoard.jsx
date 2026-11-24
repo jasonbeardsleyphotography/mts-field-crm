@@ -109,7 +109,7 @@ const TABS = [["crews", "The yard"], ["people", "People"], ["fleet", "Equipment"
 const C = {
   bg: "#14181C", panel: "#1B2126", tile: "#232B31", tileHi: "#293339",
   edge: "#313C44", edgeSoft: "#242D34",
-  ink: "#E7E2D6", inkDim: "#98A3AB", inkFaint: "#6B767E",
+  ink: "#F3EFE6", inkDim: "#B9C2C9", inkFaint: "#8E99A1",      // brighter (owner, Nov 24: easier to read)
 };
 
 
@@ -1754,7 +1754,7 @@ const CSS = scopeCss(`
 .lg .ring { background:none; border:1.5px dashed ${ST.tagged.color}; }
 
 /* --- the yard ------------------------------------------------------------ */
-.oy-g { display:grid; grid-template-columns:186px minmax(0,1fr) 360px;
+.oy-g { display:grid; grid-template-columns:186px minmax(0,1fr) 400px;
         grid-template-areas:"left canvas right"; gap:10px; padding:10px 16px 4px; }
 .left { grid-area:left; display:flex; flex-direction:column; gap:10px; }
 .left > div { flex:1; display:flex; }
@@ -1764,19 +1764,22 @@ const CSS = scopeCss(`
 .right > div { display:flex; min-height:0; }
 .right > div:first-child { flex:2.2; }      /* at the yard: the big one */
 .right > div:not(:first-child) { flex:1; min-height:120px; }   /* in for repair, broken: smaller */
-.ppl { display:grid; grid-template-columns:300px minmax(0,1fr); gap:12px; padding:10px 16px 12px; height:calc(100vh - 128px); min-height:560px; }
+.ppl { display:grid; grid-template-columns:210px minmax(0,1fr); gap:12px; padding:10px 16px 12px; height:calc(100vh - 128px); min-height:560px; }
 .ppl-side { background:${C.panel}; border:1px solid ${C.edgeSoft}; border-radius:4px; display:flex; flex-direction:column; min-height:0; overflow:hidden; }
 .ppl-list { display:flex; flex-direction:column; flex:1; min-height:0; overflow:auto; }
 .ppl-main { display:flex; flex-direction:column; min-height:0; }
 .ppl-main .cal-grid { flex:1; min-height:0; grid-template-rows:auto repeat(6, minmax(64px, 1fr)); }
 .ppl-main .cal-d { min-height:0; overflow:hidden; }
 @media (max-width:900px){ .ppl { grid-template-columns:1fr; height:auto; } .ppl-list { max-height:40vh; } .ppl-main .cal-d { min-height:96px; } }
-.ppl-row { display:grid; grid-template-columns:6px 1fr; grid-template-rows:auto auto; column-gap:10px; text-align:left; padding:9px 12px; border-top:1px solid ${C.edgeSoft}; min-height:48px; }
+.ppl-row { display:grid; grid-template-columns:6px minmax(0,1fr) auto; grid-template-rows:auto auto; column-gap:8px; text-align:left; padding:8px 8px 8px 10px; border-top:1px solid ${C.edgeSoft}; min-height:46px; cursor:pointer; user-select:none; }
+.ppl-row .ppl-ed { grid-column:3; grid-row:1 / 3; align-self:center; }
 .ppl-row i { grid-row:1 / 3; border-radius:2px; }
-.ppl-row span { font-size:14px; letter-spacing:.06em; }
+.ppl-row span { font-size:13.5px; letter-spacing:.05em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ppl-row small { font-size:10.5px; color:var(--faint); }
 .ppl-row[data-on="1"] { background:${C.tileHi}; box-shadow:inset 3px 0 0 #17A05B; }
-.ppl-edit { border-top:1px solid ${C.edge}; padding:10px 12px 14px; flex-shrink:0; max-height:46%; overflow:auto; background:${C.tile}; }
+.ppl-edit { padding:12px 14px 14px; overflow:auto; background:${C.panel}; box-shadow:0 18px 50px rgba(0,0,0,.6); }
+.ppl-ed { margin-left:auto; font-size:9.5px; letter-spacing:.08em; color:var(--dim); border:1px solid var(--edge); border-radius:2px; padding:2px 6px; flex-shrink:0; }
+.ppl-ed:hover { color:var(--ink); border-color:#5d6a73; }
 .ppl-main { min-width:0; }
 .ppl-main > .ppl-top, .ppl-main > .legend { flex-shrink:0; }
 .ppl-top { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
@@ -2161,7 +2164,7 @@ function stackIssues(members) {
 }
 
 function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setOps, onOrder, crewJobs = {},
-                   onCopy, onLink, onUnlink, look, onLook,
+                   onCopy, onLink, onUnlink, look, onLook, onCopyDay, onPasteDay, clip,
                    onMove, onNewCrew, onCrew, onPerson, onAddPerson, onOpenAsset, onDate, undoLabel, onUndo }) {
   const { begin, registerZone, drag } = engine;
   const assets = core.assets;
@@ -2396,7 +2399,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
                   return (
                     <div key={k.key} className="krow">
                       <span className="krow-h stencil">{k.label}</span>
-                      <div className="krow-b">{list.map((g) => binCard(g, "yard", 0.8, false))}</div>
+                      <div className="krow-b">{list.map((g) => binCard(g, "yard", 1, false))}</div>
                     </div>
                   );
                 })}
@@ -2409,7 +2412,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
               <div className="bin-h">BROKEN · DO NOT OPERATE<b>{brokeList.length}</b></div>
               <div className="hint" style={{ padding: "0 8px" }}>Stays broken on later days until you drag it out. Taking it out on a later day doesn't change the days before.</div>
               <div className="bin-b row">
-                {brokeList.map((g) => binCard(g, "broke", 0.55, true))}
+                {brokeList.map((g) => binCard(g, "broke", 0.95, true))}
                 {!brokeList.length && <span className="hint">nothing broken</span>}
               </div>
             </div>
@@ -2437,6 +2440,12 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
         </span>}
         {outIssues.length > 0 && (
           <span className="odd stencil" title={outIssues.join("\n")}>{outIssues.length} to check</span>
+        )}
+        <button className="btn stencil" onClick={onCopyDay} title="Remember this day's crews, then go to another day and paste">⧉ Copy this day</button>
+        {clip && clip.from !== iso && (
+          <button className="btn stencil" data-primary="1" onClick={onPasteDay} title="Put the copied crews on this day">
+            ⎘ Paste {new Date(clip.from + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric" })} here
+          </button>
         )}
         <button className="btn stencil" onClick={() => onCopy("tomorrow")}>Copy to tomorrow →</button>
         <button className="btn stencil" onClick={() => onCopy("week")}>Copy to rest of week</button>
@@ -3026,7 +3035,9 @@ const REASONS = [["vac", "Off duty"], ["hol", "🎉 Holiday (everyone)"], ["on",
 function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, onAddPerson, onRemove, onSetPerson }) {
   const [month, setMonth] = useState(() => { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return d; });
   const [picked, setPicked] = useState(() => new Set());   // people to mark (tap names to pick several)
-  const sel = picked.size === 1 ? [...picked][0] : null;     // one picked = its details can be edited
+  const sel = picked.size === 1 ? [...picked][0] : null;
+  const [editing, setEditing] = useState(null);              // the person whose ✎ Edit is open
+  const lastPick = useRef(null);
   const setSel = (id) => setPicked(id ? new Set([id]) : new Set());
   const [reason, setReason] = useState("vac");
   const [weeks, setWeeks] = useState({});        // sunday iso -> cells
@@ -3104,23 +3115,35 @@ function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, o
       <div className="ppl-side">
         <div className="bin-h" style={{ border: 0 }}>PEOPLE<button className="lnk stencil" onClick={onAddPerson}>+ add person</button><b>{roster.length}</b></div>
         <div style={{ display: "flex", gap: 6, padding: "0 8px 6px", alignItems: "center", flexWrap: "wrap" }}>
-          <span className="hint" style={{ padding: 0 }}>{picked.size ? `${picked.size} picked` : "Tap names to pick one or several"}</span>
+          <span className="hint" style={{ padding: 0 }}>{picked.size > 1 ? `${picked.size} picked` : "Tap a name · Ctrl / Shift for several"}</span>
           <span className="spacer" />
-          <button className="lnk stencil" onClick={() => setPicked(new Set(roster.map((p) => p.id)))}>all</button>
+          <button className="lnk stencil" onClick={() => setPicked(new Set(roster.map((p) => p.id)))}>select all</button>
           {picked.size > 0 && <button className="lnk stencil" onClick={() => setPicked(new Set())}>clear</button>}
         </div>
         <div className="ppl-list">
-          {roster.map((p) => (
-            <button key={p.id} className="ppl-row" data-on={picked.has(p.id) ? 1 : 0}
-                    onClick={() => setPicked((cur) => { const n = new Set(cur); n.has(p.id) ? n.delete(p.id) : n.add(p.id); return n; })}>
+          {roster.map((p, idx) => (
+            <div key={p.id} className="ppl-row" data-on={picked.has(p.id) ? 1 : 0} role="button" tabIndex={0}
+                 onClick={(e) => {
+                   // one person at a time; Ctrl / ⌘ adds or removes one; Shift picks the range (owner, Nov 24)
+                   if (e.shiftKey && lastPick.current != null) {
+                     const a = roster.findIndex((x) => x.id === lastPick.current), lo = Math.min(a, idx), hi = Math.max(a, idx);
+                     setPicked((cur) => { const n = new Set(cur); roster.slice(lo, hi + 1).forEach((x) => n.add(x.id)); return n; });
+                   } else if (e.ctrlKey || e.metaKey) {
+                     setPicked((cur) => { const n = new Set(cur); n.has(p.id) ? n.delete(p.id) : n.add(p.id); return n; });
+                     lastPick.current = p.id;
+                   } else { setPicked((cur) => (cur.size === 1 && cur.has(p.id) ? new Set() : new Set([p.id]))); lastPick.current = p.id; }
+                 }}>
               <i style={{ background: p.c || C.edge }} />
               <span className="stencil">{p.foreman ? "★ " : ""}{p.d}</span>
               <small>{(p.ops && p.ops.length ? p.ops : ["all"]).join(" · ")}{offCount(p.id) ? ` · ${offCount(p.id)} off` : ""}</small>
-            </button>
+              <button className="ppl-ed stencil" title={`Edit ${p.name}`} onClick={(e) => { e.stopPropagation(); setEditing(p.id); }}>✎ Edit</button>
+            </div>
           ))}
         </div>
-        {person && !person.del && (
-          <div className="ppl-edit">
+        {editing && core.people[editing] && !core.people[editing].del && (() => { const person = core.people[editing]; return (
+          <div onClick={() => setEditing(null)} style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div className="ppl-edit" onClick={(e) => e.stopPropagation()} style={{ width: "min(460px, 100%)", maxHeight: "90vh", borderRadius: 6, border: `1px solid ${C.edge}` }}>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: 4 }}><b className="stencil" style={{ fontSize: 14 }}>Edit {person.name}</b><span className="spacer" /><button className="btn stencil" onClick={() => setEditing(null)}>✕</button></div>
             <div className="fl stencil">NAME</div>
             <input className="srch" style={{ width: "100%" }} defaultValue={person.name} key={person.id}
                    onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== person.name) onRename(person.id, v); }} />
@@ -3135,10 +3158,12 @@ function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, o
             <div className="hint" style={{ padding: "6px 0" }}>{person.ops && person.ops.length ? `The yard flags ${person.name.split(" ")[0]} if put on a crew outside these.` : "None ticked = can work anywhere."}</div>
             <PersonExtras person={person} onSet={onSetPerson} />
             <div className="act" style={{ marginTop: 8 }}>
-              <button className="btn stencil" data-danger="1" onClick={() => { if (window.confirm(`Remove ${person.name} from the board?`)) { onRemove(person.id); setSel(null); } }}>Remove from board</button>
+              <button className="btn stencil" data-danger="1" onClick={() => { if (window.confirm(`Remove ${person.name} from the board?`)) { onRemove(person.id); setSel(null); setEditing(null); } }}>Remove from board</button>
+              <button className="btn stencil" data-primary="1" onClick={() => setEditing(null)}>Done</button>
             </div>
           </div>
-        )}
+          </div>
+        ); })()}
       </div>
 
       <div className="ppl-main">
@@ -3713,6 +3738,27 @@ export default function ShopBoard({ user, isAdmin = false }) {
     setDayArr((c) => ({ ...c, inherited: null }));
     apply(() => {}, `Day copied to ${targets.length} day${targets.length > 1 ? "s" : ""}`);
   };
+  /* COPY / PASTE a day's crews (owner, Nov 24): copy here, go to any day, paste. */
+  const [clip, setClip] = useState(() => { try { return JSON.parse(localStorage.getItem("mts-shop-clip") || "null"); } catch { return null; } });
+  const copyThisDay = () => {
+    const src = dayRef.current;
+    const c = { from: curRef.current, crews: clone(src.crews || {}), stacks: clone(src.stacks || {}), pos: clone(src.pos || {}) };
+    setClip(c); try { localStorage.setItem("mts-shop-clip", JSON.stringify(c)); } catch {}
+  };
+  const pasteHere = async () => {
+    if (!clip) return;
+    const iso = curRef.current;
+    const dl = (d) => new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    if (savedDays.has(iso) && !window.confirm(`${dl(iso)} already has its own plan. Replace it with the crews from ${dl(clip.from)}?`)) return;
+    const at = stampNow(), by = (meRef.current && meRef.current.name) || "?";
+    const crews = {};
+    Object.entries(clip.crews || {}).forEach(([id, c]) => { crews[id] = { ...clone(c), at, by }; });
+    const payload = { crews, stacks: changedKeys({}, clip.stacks || {}), pos: changedKeys({}, clip.pos || {}) };
+    const merged = await shopPatch(srvKey(kDay(iso)), payload, true);
+    if (merged && curRef.current === iso) setDayArr({ crews: merged.crews || crews, stacks: merged.stacks || {}, pos: merged.pos || {}, inherited: null });
+    setSavedDays((s2) => new Set(s2).add(iso));
+    apply(() => {}, `Crews from ${dl(clip.from)} pasted on ${dl(iso)}`);
+  };
   const saveStanding = () => apply((d, s) => {
     Object.values(dayRef.current.crews).forEach((c) => {
       d.crews[c.id] = { ...c, at: s.at, by: s.by };
@@ -4042,7 +4088,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
         </>
       )}
       {tab === "crews" && (
-        <YardView look={look} onLook={onLook} onOrder={orderCrews} core={dayCore} day={day} iso={cur} dayIndex={dayIndex} week={week} engine={engine} crewJobs={crewJobs}
+        <YardView look={look} onLook={onLook} onCopyDay={copyThisDay} onPasteDay={pasteHere} clip={clip} onOrder={orderCrews} core={dayCore} day={day} iso={cur} dayIndex={dayIndex} week={week} engine={engine} crewJobs={crewJobs}
                   savedDays={savedDays} ops={ops} setOps={setOps}
                   onMove={yardMove} onNewCrew={addCrew} onCrew={setOpenCrew} onPerson={setOpenPerson}
                   onOpenAsset={(id) => setOpenAsset(id)} onDate={setCur} onAddPerson={addPerson}

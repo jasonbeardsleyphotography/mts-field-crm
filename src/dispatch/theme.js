@@ -4,14 +4,14 @@
 export const C = {
   bg: "#14181C", panel: "#1B2126", tile: "#232B31", tileHi: "#293339",
   edge: "#313C44", edgeSoft: "#242D34",
-  ink: "#E7E2D6", inkDim: "#98A3AB", inkFaint: "#6B767E",
+  ink: "#F3EFE6", inkDim: "#B9C2C9", inkFaint: "#8E99A1",     // brighter (owner, Nov 24: easier to read)
   green: "#17A05B", amber: "#E5A100", blue: "#3A8DD8", red: "#D93B2B", grey: "#6E7A83",
 };
 
 export const CSS = `
 .dx, .dx * { box-sizing: border-box; }
 .dx { font-family:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif; background:${C.bg}; color:${C.ink};
-      min-height:100vh; -webkit-font-smoothing:antialiased; font-size:13px; }
+      min-height:100vh; -webkit-font-smoothing:antialiased; font-size:13.5px; font-weight:450; }
 .dx button { font:inherit; color:inherit; background:none; border:none; cursor:pointer; }
 .dx input, .dx select, .dx textarea { font:inherit; color:${C.ink}; }
 .dx :focus-visible { outline:2px solid ${C.ink}; outline-offset:2px; border-radius:2px; }

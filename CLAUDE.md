@@ -176,7 +176,11 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   a light tag BELOW it (HLoad); the Avant is green (FAMILY.AVANT). Crew people ride in the crew's TITLE BAR (layoutBox
   `headH`, plates after the name/✎/op), equipment starts at the left edge. NOTE: a too-wide string slice once deleted
   ~1,300 lines of this file (rebuilt from HEAD) — when replacing a range, check the end marker is the nearest one.
-  People tab: tap names to pick several (`picked` Set; details editable when exactly one), tap/drag days to mark all;
+  People tab (owner, Nov 24 later): narrow 210 px list; a plain click picks ONE person, Ctrl/⌘ adds/removes, Shift picks a
+  range, "select all"; each row has ✎ Edit (pop-up with name, works-in, colour, foreman, yard/office, remove). COPY /
+  PASTE a day: "⧉ Copy this day" (localStorage `mts-shop-clip`) → any other day → "⎘ Paste <day> here" (asks before
+  replacing a saved day). At the yard / Broken bins draw loads at full size (right column 400 px).
+  Formerly: tap names to pick several (`picked` Set), tap/drag days to mark all;
   "🎉 Holiday (everyone)" marks every person off that day (code `hol`, tap again to undo). `setMany` = one week patch.
   YARD LOOK: the owner picked A (light tag, sans-serif, units at 86%, 28 px between setups); the A/B/C switch was
   removed (`yardLook` is fixed to "A"; B/C stay in `YARD_LOOKS` for reference). Hooked units TOUCH the truck (no gap); lifts / Avants / spray rig behind a
@@ -275,6 +279,8 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   while today is in its window (`seasonWindowNow`) with work days left / until it opens. PURGATORY is a pop-up
   (`PurgatoryModal` in Backlog.jsx). CHECK-BACK: from the check-back date on, the job sits in a big ⏰ banner
   (`CheckBackBanner`, Schedule + Backlog) until "Back to the backlog" or "New date…" — it never leaves Purgatory by itself.
+  WEEKENDS OFF by default (`weekendsOn`, "Weekends" switch, `mts-sched-weekends`): Sat/Sun dimmed, week view Mon–Fri,
+  multi-day jobs skip weekends; on = Sun–Sat. Season switches sit UNDER the map.
   WEEK VIEW (`WeekGrid`): `WeekGrid` = crews × Mon–Sat, each cell a load bar (vs dayOsh of the
   people working that day), the jobs (1/3 parts), ⚠ when a job doesn't suit the crew; HTML5 drag from the list into a
   cell or between cells; tap a day header to open it. Boards for each day come from crewsForDay.
