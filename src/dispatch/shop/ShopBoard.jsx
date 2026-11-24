@@ -94,7 +94,7 @@ const fmtIso = (iso) => (iso === LEGACY_FROM ? "before this board" : new Date(is
 
 const DAY = {
   on:    { key: "on",    label: "On the board", short: "ON",    color: "#17A05B" },
-  vac:   { key: "vac",   label: "Vacation",     short: "VAC",   color: "#3A8DD8" },
+  vac:   { key: "vac",   label: "Off duty",     short: "OFF",   color: "#3A8DD8" },
   sick:  { key: "sick",  label: "Out sick",     short: "SICK",  color: "#D93B2B" },
   train: { key: "train", label: "Training",     short: "TRN",   color: "#E5A100" },
   light: { key: "light", label: "Light duty",   short: "LIGHT", color: "#6E7A83" },
@@ -666,62 +666,67 @@ const DAY_PREFIX = "mtsboard.day.v6.";
 
 const listDays = () => shopDays();
 
-/* Work out what is hitched to what from the order the iron is listed in:
-   a truck claims the next towed thing, a trailer claims the next carried
-   things. Re-derivable, so an inherited day arrives already stacked.        */
+/* COLUMNS (owner, Nov 24): a crew's equipment stands in columns — a truck and
+   what it tows, or one unit on its own. crew.cols = [[ids]] says exactly that;
+   crew.iron stays the flat list everything else reads. Nothing is ever hooked
+   up automatically: a unit dropped in a crew's empty slot gets a column of its
+   own; only a drop ON a column hooks it there. A column with nothing left in
+   it disappears. Crews saved before columns are read the old way: a truck
+   takes the next towed unit in its list. */
+function legacyCols(iron, assets) {
+  const cols = []; let cur = null, free = false;
+  (iron || []).forEach((id) => {
+    const a = assets[id]; if (!a || a.del) return;
+    if (a.hc === "truck") { cur = [id]; cols.push(cur); free = true; }
+    else if (a.hc === "towed" && cur && free) { cur.push(id); free = false; }
+    else cols.push([id]);
+  });
+  return cols;
+}
+function colsOf(crew, assets) {
+  const iron = (crew.iron || []).filter((id) => assets[id] && !assets[id].del);
+  const inIron = new Set(iron), seen = new Set();
+  let cols = [];
+  if (Array.isArray(crew.cols)) {
+    cols = crew.cols.map((col) => (col || []).filter((id) => inIron.has(id) && !seen.has(id) && seen.add(id))).filter((col) => col.length);
+  }
+  const rest = iron.filter((id) => !seen.has(id));
+  if (rest.length) cols = cols.concat(legacyCols(rest, assets));
+  return cols.map((col) => { const t = col.find((id) => assets[id].hc === "truck"); return t ? [t, ...col.filter((x) => x !== t)] : col; });
+}
+/** Hitches from the columns: the truck heading a column tows the first unit behind it. */
 function deriveHitch(crews, assets) {
   const hitch = {};
   Object.values(crews || {}).forEach((c) => {
-    if (c.del) return;
-    let truck = null, trailer = null;
-    const towedBy = {};
-    (c.iron || []).forEach((id) => {
-      const a = assets[id];
-      if (!a || a.del) return;
-      if (a.hc === "truck") { truck = id; trailer = null; }
-      else if (a.hc === "trailer" || a.hc === "towed") {
-        if (truck && !towedBy[truck]) { hitch[id] = truck; towedBy[truck] = id; }
-        trailer = a.hc === "trailer" ? id : null;
-      } else if (a.hc === "carried") {
-        if (trailer) hitch[id] = trailer;
-      }
+    if (!c || c.del) return;
+    colsOf(c, assets).forEach((col) => {
+      const lead = assets[col[0]];
+      if (lead && lead.hc === "truck" && col[1]) hitch[col[1]] = col[0];
     });
   });
   return hitch;
 }
-
-/* Group a crew's iron into loads: one lead per load, everything hitched under
-   it, and anything unattached standing on its own.                          */
-function loadsOf(crew, assets, hitch) {
-  const iron = (crew.iron || []).map((i) => assets[i]).filter((a) => a && !a.del);
-  const byId = Object.fromEntries(iron.map((a) => [a.id, a]));
-  const root = (id) => {
-    let cur = id, guard = 0;
-    while (hitch[cur] && byId[hitch[cur]] && guard++ < 6) cur = hitch[cur];
-    return cur;
-  };
-  const groups = new Map();
-  iron.forEach((a) => {
-    const r = root(a.id);
-    if (!groups.has(r)) groups.set(r, []);
-    if (r !== a.id) groups.get(r).push(a);
+/** A crew's columns as loads, in the order they stand. */
+function loadsOf(crew, assets) {
+  return colsOf(crew, assets).map((col) => {
+    const members = col.map((id) => assets[id]);
+    return { id: col[0], lead: members[0], members };
   });
-  const out = [];
-  groups.forEach((kids, r) => {
-    const lead = byId[r]; if (!lead) return;
-    const order = { truck: 0, trailer: 1, towed: 1, carried: 2 };
-    kids.sort((x, y) => (order[x.hc] || 3) - (order[y.hc] || 3));
-    out.push({ id: r, lead, members: [lead, ...kids] });
-  });
-  const rank = { truck: 0, trailer: 1, towed: 2, carried: 3 };
-  out.sort((a, b) => (rank[a.lead.hc] || 9) - (rank[b.lead.hc] || 9) || b.members.length - a.members.length);
-  return out;
+}
+/** Can these units be hooked onto this column? Returns the new column, or null (→ a column of their own). */
+function hookOnto(colIds, ids, assets) {
+  const col = colIds.map((i) => assets[i]).filter(Boolean), mv = ids.map((i) => assets[i]).filter(Boolean);
+  const cT = col.filter((a) => a.hc === "truck"), cO = col.filter((a) => a.hc !== "truck");
+  const mT = mv.filter((a) => a.hc === "truck"), mO = mv.filter((a) => a.hc !== "truck");
+  if (cT.length === 1 && !cO.length && !mT.length && mO.length === 1) return [cT[0].id, mO[0].id];   // behind the truck
+  if (!cT.length && cO.length === 1 && mT.length === 1 && !mO.length) return [mT[0].id, cO[0].id];   // a truck in front
+  return null;
 }
 
 /* Where should a newly dropped unit attach inside this crew? */
 function placeInCrew(asset, crew, assets, hitch) {
   if (!asset) return null;
-  const loads = loadsOf(crew, assets, hitch);
+  const loads = loadsOf(crew, assets);
   if (asset.hc === "towed" || asset.hc === "trailer") return pickTow(asset, loads, hitch);
   if (asset.hc === "carried") return pickCarrier(asset, loads);
   return null;
@@ -939,29 +944,54 @@ function loadDims(members) {
   };
 }
 
-function layoutBox(crew, i, core, hitch, anchors) {
+/* Name plates are as wide as the name (estimated from its length) and flow
+   across the box, wrapping like words, instead of fixed-size cells. */
+let measureCtx = null;
+const textW = (t, bold) => {
+  try {
+    measureCtx = measureCtx || document.createElement("canvas").getContext("2d");
+    measureCtx.font = `${bold ? 700 : 400} 12.5px 'Barlow Condensed','Arial Narrow',sans-serif`;
+    return measureCtx.measureText(t).width + t.length * 12.5 * (bold ? 0.08 : 0.07);   // + letter-spacing
+  } catch { return t.length * 8.2; }
+};
+const plateW = (p, off) => Math.ceil(9 + 22 + 4 + textW(`${p.foreman ? "★ " : ""}${p.d || p.name || ""}`, p.foreman) + (off ? 34 : 0) + (p.foreman ? 4 : 0));
+function layoutBox(crew, i, core, hitch, anchors, offOf = () => null) {
   const a = anchors[crew.id] || { x: i * 10, y: 0 };
-  const ppl = (crew.people || []).map((id) => core.people[id]).filter((p) => p && !p.del);
-  const loads = loadsOf(crew, core.assets, hitch).map((l) => ({ ...l, d: loadDims(l.members) }));
-  const pRows = Math.max(1, Math.ceil(ppl.length / PL_COLS));
-  const rows = [];
-  for (let r = 0; r * SL_COLS < Math.max(loads.length, 1); r++) {
-    const row = loads.slice(r * SL_COLS, (r + 1) * SL_COLS);
-    rows.push({ row, h: row.length ? Math.max(...row.map((l) => l.d.h)) + 6 : 46 });
-  }
+  const ppl = (crew.people || []).map((id) => core.people[id]).filter((p) => p && !p.del)
+    .sort((x, y) => (y.foreman ? 1 : 0) - (x.foreman ? 1 : 0));          // foremen first
+  const loads = loadsOf(crew, core.assets).map((l) => ({ ...l, d: loadDims(l.members) }));
   const w = BPAD * 2 + Math.max(PL_COLS * (PL_W + 6) - 6, SL_COLS * (SL_W + SL_GAP) - SL_GAP);
-  const h = HEAD + BPAD + pRows * PL_H + 4 + rows.reduce((t, r) => t + r.h, 0) + BPAD;
-
-  const pSlots = ppl.map((p, k) => ({
-    p, x: BPAD + (k % PL_COLS) * (PL_W + 6), y: HEAD + BPAD + Math.floor(k / PL_COLS) * PL_H,
-  }));
-  const lSlots = [];
-  let y = HEAD + BPAD + pRows * PL_H + 4;
+  const inner = w - BPAD * 2;
+  const pSlots = [];
+  let px = 0, py = 0;
+  ppl.forEach((p) => {
+    const pw = Math.min(inner, plateW(p, offOf(p.id)));
+    if (px > 0 && px + pw > inner) { px = 0; py += PL_H; }
+    pSlots.push({ p, w: pw, x: BPAD + px, y: HEAD + BPAD + py });
+    px += pw + 6;
+  });
+  const pH = ppl.length ? py + PL_H : PL_H;
+  // columns, SL_COLS to a row, plus one empty slot at the end ("new column")
+  const cells = [...loads, null];
+  const rows = [];
+  for (let r = 0; r * SL_COLS < cells.length; r++) {
+    const row = cells.slice(r * SL_COLS, (r + 1) * SL_COLS);
+    const hs = row.filter(Boolean).map((l) => l.d.h);
+    rows.push({ row, h: hs.length ? Math.max(...hs) + 6 : 64 });
+  }
+  const h = HEAD + BPAD + pH + 4 + rows.reduce((t, r) => t + r.h, 0) + BPAD;
+  const lSlots = [], cSlots = [];
+  let y = HEAD + BPAD + pH + 4, k = 0;
   rows.forEach(({ row, h: rh }) => {
-    row.forEach((l, k) => lSlots.push({ l, x: BPAD + k * (SL_W + SL_GAP) + (SL_W - l.d.w) / 2, y: y + rh - 6 - l.d.h }));
+    row.forEach((l, c) => {
+      const cx = BPAD + c * (SL_W + SL_GAP);
+      cSlots.push({ k, x: cx - 3, y, w: SL_W + 6, h: rh - 2, l });
+      if (l) lSlots.push({ l, k, x: cx + (SL_W - l.d.w) / 2, y: y + rh - 6 - l.d.h });
+      k++;
+    });
     y += rh;
   });
-  return { crew, hint: a, w, h, ppl, loads, pSlots, lSlots };
+  return { crew, hint: a, w, h, ppl, loads, pSlots, lSlots, cSlots };
 }
 
 const snap24 = (v) => Math.round(v / 24) * 24;
@@ -1360,6 +1390,12 @@ const CSS = scopeCss(`
 /* --- ghost -------------------------------------------------------------- */
 .ghost { position:fixed; left:0; top:0; z-index:200; pointer-events:none; will-change:transform; }
 .ghost > :first-child { transform:rotate(-1.2deg) scale(1.04); box-shadow:0 12px 26px rgba(0,0,0,.55); opacity:.97; }
+.ghost-shape { display:block; filter:grayscale(1) brightness(1.55); opacity:.8; }
+.cslot { position:absolute; border-radius:4px; border:1px dashed transparent; transition:background .1s, border-color .1s; }
+.cslot.empty { border-color:#2f3a42; display:flex; align-items:center; justify-content:center; color:#4a565f; font-size:18px; }
+.cslot.ready { border-color:#4b5963; }
+.cslot.empty.ready { border-color:#7d8b94; color:#9aa6ae; background:rgba(125,139,148,.06); }
+.cslot.hot { border:2px solid #E7E2D6; background:rgba(231,226,214,.12); box-shadow:0 0 0 3px rgba(231,226,214,.12); }
 .ghost-to { margin-top:6px; display:inline-block; font-size:10.5px; letter-spacing:.08em; padding:3px 8px; border-radius:2px;
             background:#17A05B; color:#08130c; white-space:nowrap; }
 .ghost-to.none { background:#2a333a; color:var(--dim); }
@@ -1578,6 +1614,11 @@ const CSS = scopeCss(`
 .bin-h b { margin-left:auto; font-weight:500; color:var(--dim); font-size:11px; letter-spacing:.04em; }
 .bin-b { display:flex; flex-wrap:wrap; gap:6px; padding:9px; align-items:flex-start; flex:1; align-content:flex-start; }
 .bin-b.row { align-items:flex-end; align-content:flex-end; overflow:auto; }
+.bin-b.kinds { flex-direction:column; flex-wrap:nowrap; gap:4px; overflow:auto; }
+.krow { display:flex; flex-direction:column; gap:1px; border-bottom:1px solid #222b31; padding-bottom:3px; }
+.krow:last-child { border-bottom:0; }
+.krow-h { font-size:9px; letter-spacing:.12em; color:var(--faint); }
+.krow-b { display:flex; flex-wrap:wrap; gap:2px 8px; align-items:flex-end; }
 .bin.vac { border-color:#33414c; background:#191f26; }
 .bin.vac .bin-h { color:#6f8695; }
 .bin.rep { border-color:#4a2d29; background:#1e1817; }
@@ -1594,6 +1635,8 @@ const CSS = scopeCss(`
 .plate-v { align-self:center; font-family:'Barlow Condensed',sans-serif; font-size:9px; letter-spacing:.1em;
            color:#131820; background:#5F87A6; padding:2px 5px; border-radius:2px; margin:0 7px 0 -3px; }
 .plate.off { opacity:.72; }
+.plate.fore { border-width:2px; background:#2b353d; box-shadow:0 0 0 1px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.5); }
+.plate.fore .plate-n { font-weight:700; color:#fff; letter-spacing:.08em; }
 
 .lcard { display:inline-flex; flex-direction:column; align-items:center; gap:3px;
          touch-action:none; cursor:grab; padding:4px; user-select:none; }
@@ -1860,10 +1903,11 @@ const ago = (t) => {
 
 /* ============================ YARD VIEW =================================== */
 const Plate = ({ p, onBegin, off, onClick, locked, warn }) => (
-  <span className={`plate${off ? " off" : ""}${locked ? " locked" : ""}${warn ? " warn" : ""}`} onPointerDown={locked ? undefined : onBegin} onClick={onClick}
-        title={locked ? "Off duty today — tap to put them back on duty" : warn || undefined}>
+  <span className={`plate${off ? " off" : ""}${locked ? " locked" : ""}${warn ? " warn" : ""}${p.foreman ? " fore" : ""}`} onPointerDown={locked ? undefined : onBegin} onClick={onClick}
+        title={locked ? "Off duty today — tap to put them back on duty" : warn || (p.foreman ? "Foreman" : undefined)}
+        style={p.foreman ? { borderColor: p.c || "#E7E2D6" } : undefined}>
     <span className="plate-c" style={{ background: p.c }} />
-    <span className="plate-n">{p.d}</span>
+    <span className="plate-n">{p.foreman ? "★ " : ""}{p.d}</span>
     {off && <span className="plate-v">{off}</span>}
   </span>
 );
@@ -1956,7 +2000,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
   }, []);
   const boxes = packBoxes(live(day.crews).map((c) => ({ ...c, people: (c.people || []).filter((pid) => !offToday(pid)) }))
     .filter((c) => !c.ops || ops[c.ops] !== false)
-    .map((c, i) => layoutBox(c, i, core, hitch2, anchors)), vw);
+    .map((c, i) => layoutBox(c, i, core, hitch2, anchors, offToday)), vw);
   /* the "+ New crew" tile sits where the next box would go; the canvas grows to fit */
   const lastBox = boxes[boxes.length - 1];
   const NEW_W = 220;
@@ -1974,7 +2018,8 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
     onOrder(ids);
   };
 
-  const room = roster.filter((p) => !crewHas.p.has(p.id) && !offToday(p.id));
+  const room = roster.filter((p) => !crewHas.p.has(p.id) && !offToday(p.id) && homeOf(p) !== "office");
+  const office = roster.filter((p) => !crewHas.p.has(p.id) && !offToday(p.id) && homeOf(p) === "office");
   const away = roster.filter((p) => offToday(p.id));
   const gMem = (g) => g.members.map((i) => assets[i]).filter((a) => a && !a.del);
   const gShown = (g) => { const o = new Set(); gMem(g).forEach((m) => (m.ops || []).forEach((x) => o.add(x))); return !o.size || [...o].some((x) => ops[x]); };
@@ -2061,6 +2106,16 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
               </div>
             </div>
           </Zone>
+          <Zone id="office" accepts={["person"]} registerZone={registerZone} onDrop={(it) => onMove(it, "office")}>
+            <div className={`bin${hot("office")}`}>
+              <div className="bin-h">OFFICE<b>{office.length}</b></div>
+              <div className="bin-b">
+                {office.map((p) => <Plate key={p.id} p={p} onClick={() => onPerson(p.id)}
+                                          onBegin={(e) => begin(e, { kind: "person", id: p.id, name: p.d, color: p.c, from: "office" })} />)}
+                {!office.length && <span className="hint">nobody in the office · drop a name here</span>}
+              </div>
+            </div>
+          </Zone>
         </div>
 
         <div className="canvas-wrap" ref={wrapRef}>
@@ -2090,13 +2145,26 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
                       <b>{b.ppl.filter((p) => !offToday(p.id)).length}p · {b.loads.length}{crewJobs[b.crew.id]?.jobs ? ` · ${crewJobs[b.crew.id].jobs} job${crewJobs[b.crew.id].jobs === 1 ? "" : "s"}` : ""}</b>
                     </div>
                     {b.ppl.length === 0 && b.loads.length === 0 && <span className="cbox-e">empty — drag a name or a truck in</span>}
-                    {b.pSlots.map(({ p, x, y }) => (
-                      <div key={p.id} className="slot" style={{ left: x, top: y, width: PL_W }}>
+                    {b.pSlots.map(({ p, x, y, w }) => (
+                      <div key={p.id} className="slot" style={{ left: x, top: y, width: w }}>
                         <Plate p={p} off={offToday(p.id)} onClick={() => onPerson(p.id)}
                                warn={p.ops && p.ops.length && b.crew.ops && !p.ops.includes(b.crew.ops) ? `${p.name} isn't set up for ${b.crew.ops}` : ""}
                                onBegin={(e) => begin(e, { kind: "person", id: p.id, name: p.d, color: p.c, from: `crew:${b.crew.id}` })} />
                       </div>
                     ))}
+                    {/* one drop slot per column (+ an empty one): drop ON a column to hook there,
+                        in the empty slot (or anywhere else in the box) for a column of its own */}
+                    {b.cSlots.map(({ k, x, y, w, h, l }) => {
+                      const zid = l ? `slot:${b.crew.id}:${k}` : `newcol:${b.crew.id}`;
+                      const holding = drag && drag.item.kind === "stack";
+                      return (
+                        <Zone key={zid} id={zid} accepts={["stack"]} registerZone={registerZone} onDrop={(it) => onMove(it, zid)}
+                              className={`cslot${l ? "" : " empty"}${holding ? " ready" : ""}${drag && drag.over === zid ? " hot" : ""}`}
+                              style={{ left: x, top: y, width: w, height: h }}>
+                          {!l && <span>＋</span>}
+                        </Zone>
+                      );
+                    })}
                     {b.lSlots.map(({ l, x, y }) => (
                       <div key={l.id} className="slot" style={{ left: x, top: y }}>
                         <LoadCard members={l.members} broken={broken(l.id)} odd={stackIssues(l.members)} label={false}
@@ -2115,8 +2183,17 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
           <Zone id="yard" accepts={["stack"]} registerZone={registerZone} onDrop={(it) => onMove(it, "yard")}>
             <div className={`bin${hot("yard")}`}>
               <div className="bin-h">AT THE YARD<b>{yard.length}</b></div>
-              <div className="bin-b row">
-                {yard.map((g) => binCard(g, "yard", 0.52, false))}
+              <div className="bin-b kinds">
+                {[...EQUIP_GROUPS, { key: "other", label: "Other" }].map((k) => {
+                  const list = yard.filter((g) => equipGroupOf(gMem(g)[0] || {}) === k.key);
+                  if (!list.length) return null;
+                  return (
+                    <div key={k.key} className="krow">
+                      <span className="krow-h stencil">{k.label}</span>
+                      <div className="krow-b">{list.map((g) => binCard(g, "yard", 0.7, false))}</div>
+                    </div>
+                  );
+                })}
                 {!yard.length && <span className="hint">everything is out</span>}
               </div>
             </div>
@@ -2126,7 +2203,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
               <div className="bin-h">BROKEN · DO NOT OPERATE<b>{brokeList.length}</b></div>
               <div className="hint" style={{ padding: "0 8px" }}>Stays broken on later days until you drag it out. Taking it out on a later day doesn't change the days before.</div>
               <div className="bin-b row">
-                {brokeList.map((g) => binCard(g, "broke", 0.44, true))}
+                {brokeList.map((g) => binCard(g, "broke", 0.6, true))}
                 {!brokeList.length && <span className="hint">nothing broken</span>}
               </div>
             </div>
@@ -2656,7 +2733,7 @@ function CrewSheet({ c, core, day, offToday, onClose, onRename, onOps, onDelete,
   );
 }
 
-function PersonSheet({ p, core, onClose, onRename, onRemove, offToday, onBackOnDuty, onCalendar }) {
+function PersonSheet({ p, core, onClose, onRename, onRemove, offToday, onBackOnDuty, onCalendar, onSetPerson }) {
   const [name, setName] = useState(p.name);
   const nameRef = useRef(name); nameRef.current = name;
   const killed = useRef(false);
@@ -2686,6 +2763,7 @@ function PersonSheet({ p, core, onClose, onRename, onRemove, offToday, onBackOnD
         </div>
       )}
       {!offToday && <div className="opts" style={{ marginTop: 10 }}><button className="btn stencil" onClick={onCalendar}>Days off calendar</button></div>}
+      <PersonExtras person={p} onSet={onSetPerson} />
       <div className="fl stencil">WITH THEM TODAY</div>
       {iron.length === 0
         ? <div style={{ fontSize: 11.5, color: C.inkFaint }}>No units on their crew.</div>
@@ -2707,9 +2785,39 @@ function PersonSheet({ p, core, onClose, onRename, onRemove, offToday, onBackOnD
    can't be put on a crew. Each person's operations (GTC / PHC / LC / Shop /
    Sales) are set here; the yard flags anyone put on a crew outside them.   */
 const PERSON_OPS = ["GTC", "PHC", "LC", "SHOP", "SALES"];
-const REASONS = [["vac", "Vacation"], ["sick", "Sick"], ["train", "Training"], ["light", "Light duty"], ["on", "Back on duty"]];
+/* Where a person starts the day when not on a crew: the yard (crew room) or the
+   office. Liz D and Mike T default to the office (owner, Nov 24). */
+const OFFICE_DEFAULT = ["p09", "p13"];
+const homeOf = (p) => p.home || (OFFICE_DEFAULT.includes(p.id) ? "office" : "yard");
+/* Person colours: everyone's SingleOps colour, plus any added since. */
+const PERSON_COLORS = ["#008299", ...new Set(SEED_PEOPLE.map((p) => p.c)), "#E5A100", "#17A05B", "#3A8DD8", "#D93B2B", "#B388FF", "#FF7043"];
+function PersonExtras({ person, onSet }) {
+  return (
+    <>
+      <div className="fl stencil">COLOUR</div>
+      <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
+        {PERSON_COLORS.map((c) => (
+          <button key={c} title={c === "#008299" ? `${c} (the colour sent for Alexander)` : c} onClick={() => onSet(person.id, { c })}
+                  style={{ width: 22, height: 22, borderRadius: 3, background: c, border: person.c === c ? "2px solid #fff" : "1px solid #0b0e11" }} />
+        ))}
+        <label title="Any colour" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: C.inkDim }}>
+          <input type="color" value={/^#[0-9a-f]{6}$/i.test(person.c || "") ? person.c : "#888888"} onChange={(e) => onSet(person.id, { c: e.target.value.toUpperCase() })}
+                 style={{ width: 28, height: 22, padding: 0, border: 0, background: "none" }} /> other
+        </label>
+      </div>
+      <div className="fl stencil">ROLE · WHERE THEY START</div>
+      <div className="opts">
+        <button className="opt stencil" data-on={person.foreman ? 1 : 0} onClick={() => onSet(person.id, { foreman: !person.foreman })}>{person.foreman ? "★ Foreman" : "☆ Make foreman"}</button>
+        <button className="opt stencil" data-on={homeOf(person) === "yard" ? 1 : 0} onClick={() => onSet(person.id, { home: "yard" })}>Yard</button>
+        <button className="opt stencil" data-on={homeOf(person) === "office" ? 1 : 0} onClick={() => onSet(person.id, { home: "office" })}>Office</button>
+      </div>
+    </>
+  );
+}
+// Owner, Nov 24: only "Off duty" (older sick / training marks still count as off).
+const REASONS = [["vac", "Off duty"], ["on", "Back on duty"]];
 
-function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, onAddPerson, onRemove }) {
+function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, onAddPerson, onRemove, onSetPerson }) {
   const [month, setMonth] = useState(() => { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return d; });
   const [sel, setSel] = useState(null);
   const [reason, setReason] = useState("vac");
@@ -2773,7 +2881,7 @@ function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, o
           {roster.map((p) => (
             <button key={p.id} className="ppl-row" data-on={sel === p.id ? 1 : 0} onClick={() => setSel(sel === p.id ? null : p.id)}>
               <i style={{ background: p.c || C.edge }} />
-              <span className="stencil">{p.d}</span>
+              <span className="stencil">{p.foreman ? "★ " : ""}{p.d}</span>
               <small>{(p.ops && p.ops.length ? p.ops : ["all"]).join(" · ")}{offCount(p.id) ? ` · ${offCount(p.id)} off` : ""}</small>
             </button>
           ))}
@@ -2792,6 +2900,7 @@ function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, o
               })}
             </div>
             <div className="hint" style={{ padding: "6px 0" }}>{person.ops && person.ops.length ? `The yard flags ${person.name.split(" ")[0]} if put on a crew outside these.` : "None ticked = can work anywhere."}</div>
+            <PersonExtras person={person} onSet={onSetPerson} />
             <div className="act" style={{ marginTop: 8 }}>
               <button className="btn stencil" data-danger="1" onClick={() => { if (window.confirm(`Remove ${person.name} from the board?`)) { onRemove(person.id); setSel(null); } }}>Remove from board</button>
             </div>
@@ -2839,8 +2948,8 @@ function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, o
           })}
         </div>
         <div className="legend" style={{ padding: "8px 0 0" }}>
-          {["vac", "sick", "train", "light"].map((k) => <i key={k}><span className="swatch" style={{ background: DAY[k].color }} />{DAY[k].label}</i>)}
-          <i style={{ color: C.inkFaint }}>Tap a marked day again to clear it. Light duty keeps the person available.</i>
+          <i><span className="swatch" style={{ background: DAY.vac.color }} />Off duty — sits in Off Duty on the yard that day</i>
+          <i style={{ color: C.inkFaint }}>Tap a marked day again to clear it.</i>
         </div>
       </div>
     </div>
@@ -3380,11 +3489,24 @@ export default function ShopBoard({ user, isAdmin = false }) {
     });
     return out;
   }, [sched, day, core, dayCore, week, dayIndex]);
-  const BIN_LABEL = { room: "→ Crew room", vac: "→ Off duty today", yard: "→ At the yard (unhooked)", broke: "→ Broken from this day on", newcrew: "→ New crew" };
+  const BIN_LABEL = { office: "→ Office", room: "→ Crew room", vac: "→ Off duty today", yard: "→ At the yard (unhooked)", broke: "→ Broken from this day on", newcrew: "→ New crew" };
   const dropLabel = (d) => {
     if (!d.over) return "";
     if (d.over === d.item.from) return "Same place — no change";
-    if (d.over.startsWith("crew:")) return `→ ${(day.crews[d.over.slice(5)] || {}).name || "crew"}`;
+    if (d.over.startsWith("crew:") || d.over.startsWith("newcol:")) {
+      const c = day.crews[d.over.slice(d.over.indexOf(":") + 1)] || {};
+      return d.item.kind === "stack" ? `→ ${c.name || "crew"} · its own column` : `→ ${c.name || "crew"}`;
+    }
+    if (d.over.startsWith("slot:")) {
+      const [, cid, k] = d.over.split(":");
+      const c = day.crews[cid]; if (!c) return "";
+      const col = colsOf(c, dayCore.assets)[+k] || [];
+      const ids = d.item.members || [d.item.id];
+      if (col.some((x) => ids.includes(x))) return "Same place — no change";
+      const h = hookOnto(col, ids, dayCore.assets);
+      const lead = dayCore.assets[col[0]] || {};
+      return h ? `→ hook up with ${lead.tag || lead.name} on ${c.name}` : `→ ${c.name} · its own column (that one's full)`;
+    }
     if (d.over === "canvas") return d.item.kind === "crew" ? "Drop to move the crew here" : "";
     return BIN_LABEL[d.over] || "";
   };
@@ -3426,8 +3548,9 @@ export default function ShopBoard({ user, isAdmin = false }) {
     if (where === "newcrew" && (kind === "person" || kind === "stack")) { crewAt(item, { x: 100000, y: 100000 }); return; }
     if (where === "canvas" && (kind === "person" || kind === "stack")) return;   // open ground: snaps back
     /* dropped inside a crew box: that box is now who it belongs to */
-    if (where && where.startsWith("crew:")) {
-      const cid = where.slice(5);
+    if (where && (where.startsWith("crew:") || where.startsWith("slot:") || where.startsWith("newcol:"))) {
+      const cid = where.startsWith("slot:") ? where.split(":")[1] : where.slice(where.indexOf(":") + 1);
+      const slotK = where.startsWith("slot:") ? +where.split(":")[2] : -1;
       const cname = (dayRef.current.crews[cid] || {}).name || "crew";
       if (kind === "person") {
         const wasOff = (week.cells[`${id}:${dayIndex}`] || {}).code;
@@ -3446,28 +3569,34 @@ export default function ShopBoard({ user, isAdmin = false }) {
       if (kind === "stack") {
         const ids = (item.members || dayRef.current.stacks[id] || [id]);
         const label = ids.map((m) => (coreRef.current.assets[m] || {}).tag).filter(Boolean).join(" · ");
+        const tc = dayRef.current.crews[cid];
+        const colsOfBefore = tc ? colsOf(tc, coreRef.current.assets) : [];
         setBroken(ids, false);
         snapshot(`${label} to ${cname}`);
         applyDay((d, s) => {
           Object.values(d.crews).forEach((c) => {
             const n = c.iron.length;
+            if (c.iron.some((x) => ids.includes(x))) c.cols = colsOf(c, coreRef.current.assets).map((col) => col.filter((x) => !ids.includes(x))).filter((col) => col.length);
             c.iron = c.iron.filter((x) => !ids.includes(x));
             if (c.iron.length !== n) { c.at = s.at; c.by = s.by; }
           });
           const c = d.crews[cid];
           if (c) {
-            // Something without a truck (a lift, Avant, chipper, grinder) hooks
-            // onto the crew's best free truck: it goes right after that truck.
+            // Columns: dropped ON a column → hooked there if that works (a towed
+            // unit behind a free truck, or a truck in front of a lone unit);
+            // anywhere else → a column of its own. Never hooked automatically.
             const A = coreRef.current.assets;
-            const hasTruck = ids.some((m) => A[m] && A[m].hc === "truck");
-            const first = A[ids[0]];
-            let at = -1;
-            if (!hasTruck && first && first.hc === "towed") {
-              const hitch = deriveHitch({ [c.id]: c }, A);
-              const tid = pickTow(first, loadsOf(c, A, hitch), hitch);
-              at = tid ? c.iron.indexOf(tid) : -1;
-            }
-            c.iron = at >= 0 ? [...c.iron.slice(0, at + 1), ...ids, ...c.iron.slice(at + 1)] : [...c.iron, ...ids];
+            const cols = colsOf(c, A);                       // (ids were just taken off every crew)
+            const target = slotK >= 0 ? colsOfBefore[slotK] : null;
+            const tIdx = target ? cols.findIndex((col) => col.some((x) => target.includes(x))) : -1;
+            const hooked = tIdx >= 0 ? hookOnto(cols[tIdx], ids, A) : null;
+            if (hooked) {
+              cols[tIdx] = hooked;
+              const left = ids.filter((x) => !hooked.includes(x));
+              if (left.length) cols.push(left);
+            } else cols.push(ids.slice());
+            c.cols = cols;
+            c.iron = cols.flat();
             c.at = s.at; c.by = s.by;
           }
           ids.forEach((m) => { delete d.pos[m]; });
@@ -3486,10 +3615,13 @@ export default function ShopBoard({ user, isAdmin = false }) {
       }
       const wasOff = (week.cells[`${id}:${dayIndex}`] || {}).code;
       if (wasOff && wasOff !== "on") setCell(id, dayIndex, "on");
+      // dropped in the office / crew room: that's where they start their days from now on
+      const p0 = coreRef.current.people[id];
+      if (p0 && (where === "office" || where === "room") && homeOf(p0) !== (where === "office" ? "office" : "yard")) setPerson(id, { home: where === "office" ? "office" : "yard" });
       applyDay((d, s) => {
         if (where === "canvas") d.pos[id] = { x: Math.max(4, Math.min(CW - 90, at.x)), y: Math.max(4, Math.min(CH - 60, at.y)) };
         else { delete d.pos[id]; pullOut(d, "person", [id], s); }
-      }, where === "canvas" ? `${label} onto the yard` : `${label} to the crew room`);
+      }, where === "canvas" ? `${label} onto the yard` : where === "office" ? `${label} to the office` : `${label} to the crew room`);
       return;
     }
     if (kind === "crew") {
@@ -3544,6 +3676,9 @@ export default function ShopBoard({ user, isAdmin = false }) {
     apply((d, s) => { d.people[id] = { id, name: "New name", d: "NEW NAME", at: s.at, by: s.by }; }, "Name added");
     setOpenPerson(id);
   };
+  const setPerson = (id, patch) =>
+    apply((d, s) => { const p = d.people[id]; if (p) { Object.assign(p, patch); p.at = s.at; p.by = s.by; } },
+          `${(coreRef.current.people[id] || {}).name || "Person"} · ${patch.c ? "colour" : patch.foreman != null ? (patch.foreman ? "foreman" : "not foreman") : patch.home ? `starts in the ${patch.home}` : "changed"}`);
   const renamePerson = (id, name) =>
     apply((d, s) => { const p = d.people[id]; if (p) { p.name = name; p.d = name.toUpperCase(); p.at = s.at; p.by = s.by; } },
           `Renamed ${name}`);
@@ -3650,7 +3785,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
       {tab === "people" && (
         <PeopleView core={core} me={me} boardWeekIso={wkIso}
                     onBoardCell={(key, val) => setWeek((w) => ({ cells: { ...w.cells, [key]: val } }))}
-                    onRename={renamePerson} onAddPerson={addPerson} onRemove={removePerson}
+                    onRename={renamePerson} onAddPerson={addPerson} onRemove={removePerson} onSetPerson={setPerson}
                     onSetOps={(id, list) => apply((d, s) => { const p = d.people[id]; if (p) { p.ops = PERSON_OPS.filter((o) => list.includes(o)); p.at = s.at; p.by = s.by; } },
                                                   `${(core.people[id] || {}).name} works in ${list.length ? list.join(", ") : "anything"}`)} />
       )}
@@ -3684,7 +3819,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
       )}
       {openPerson && core.people[openPerson] && !core.people[openPerson].del && (
         <PersonSheet p={core.people[openPerson]} core={core} onClose={() => setOpenPerson(null)}
-                     onRename={renamePerson} onRemove={removePerson}
+                     onRename={renamePerson} onRemove={removePerson} onSetPerson={setPerson}
                      offToday={(() => { const cc = week.cells[`${openPerson}:${dayIndex}`]; return cc && cc.code !== "on" && cc.code !== "light" ? DAY[cc.code].label : null; })()}
                      onBackOnDuty={() => setCell(openPerson, dayIndex, "on")}
                      onCalendar={() => { setOpenPerson(null); setTab("people"); }} />
@@ -3703,7 +3838,10 @@ export default function ShopBoard({ user, isAdmin = false }) {
               <span className="swatch" style={{ background: DAY[drag.item.code].color }} />{DAY[drag.item.code].label}
             </div>
           ) : (
-            <div className="mini stencil" style={{ borderLeftColor: drag.item.kind === "asset" ? (ST[(core.assets[drag.item.id] || {}).status] || ST.running).color : (drag.item.color || C.ink), padding: "6px 11px", fontSize: 12, gap: 7 }}>
+            <div className="mini stencil" style={{ borderLeftColor: drag.item.kind === "asset" ? (ST[(core.assets[drag.item.id] || {}).status] || ST.running).color : (drag.item.color || C.ink), padding: "6px 11px", fontSize: 12, gap: 7, flexDirection: drag.item.kind === "stack" ? "column" : "row", alignItems: "center" }}>
+              {drag.item.kind === "stack" && (drag.item.members || []).length > 0 && (
+                <span className="ghost-shape"><TopLoad members={drag.item.members.map((m) => dayCore.assets[m]).filter(Boolean)} scale={0.62} /></span>
+              )}
               {drag.item.shape && <MachineChip shape={drag.item.shape} />}{drag.item.name}
             </div>
           )}

@@ -46,6 +46,41 @@ const rollMonth = (ym, asOf) => {
   return `${+ym.slice(0, 4) + 1}${ym.slice(4)}`;
 };
 
+/** Line items from any table with Item Name + Quantity + a visit/job number. */
+const stripHtml = (h) => str(h).replace(/<br\s*\/?>|<\/p>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\n{2,}/g, "\n").trim();
+function readLineItems(rows, lineItems, notes) {
+  const lh = rows && headerMap(rows, ["Item Name", "Quantity"]);
+  if (!lh) return 0;
+  const refCol = lh.col("Visit Ref #") ?? lh.col("Ref #") ?? lh.col("Job #");
+  if (refCol == null) return 0;
+  let n = 0;
+  for (let i = lh.at + 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const id = ref(row[refCol]); const item = str(row[lh.col("Item Name")]); const qty = num(row[lh.col("Quantity")]) || 0;
+    if (!id || !item || !qty) continue;
+    const acc = lh.col("Accepted") != null ? row[lh.col("Accepted")] : null;
+    if (acc === false || norm(acc) === "false") continue;     // declined options aren't work to do
+    const isLabor = /labor/i.test(str(lh.col("Item Category") != null ? row[lh.col("Item Category")] : "")) || /labor/i.test(item);
+    const o = (lineItems[id] = lineItems[id] || { grindHrs: 0, grindUnits: 0, cleanup: 0, cleanupHrs: 0, seed: 0, seedHrs: 0, seedUnit: "", pruneHrs: 0, removeHrs: 0, other: {} });
+    const unit = lh.col("Unit of Measure") != null ? str(row[lh.col("Unit of Measure")]) : "";
+    // SingleOps line-item export: the crew hours are the Labor lines (Pruning / Removal /
+    // Stump Grind Labor); the service lines carry what was sold. Stump debris removal is a
+    // count and soil & seed installation is square feet — they have no hours of their own.
+    if (/stump/i.test(item) && /grind/i.test(item)) { if (isLabor) o.grindHrs += qty; else o.grindUnits += qty; }
+    else if (/stump/i.test(item) && /(debris|clean)/i.test(item)) { if (isLabor) o.cleanupHrs += qty; else o.cleanup += qty; }
+    else if (/soil\s*(and|&)\s*seed|seed.*install|hydroseed(?!ing mulch)/i.test(item) && !/mulch/i.test(item)) { if (isLabor) o.seedHrs += qty; else { o.seed += qty; o.seedUnit = /square/i.test(unit) ? "sq ft" : unit; } }
+    else if (isLabor && /prun/i.test(item)) o.pruneHrs += qty;
+    else if (isLabor && /remov/i.test(item)) o.removeHrs += qty;
+    else o.other[item] = (o.other[item] || 0) + qty;
+    if (notes && !notes[id]) {
+      const parts = ["Internal Notes", "Crew Notes"].map((k) => (lh.col(k) != null ? stripHtml(row[lh.col(k)]) : "")).filter(Boolean);
+      if (parts.length) notes[id] = [...new Set(parts)].join("\n— ");
+    }
+    n++;
+  }
+  return n;
+}
+
 export async function parseBacklogWorkbook(arrayBuffer, fileName = "") {
   const XLSX = await import("xlsx");
   const wb = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
@@ -110,26 +145,7 @@ export async function parseBacklogWorkbook(arrayBuffer, fileName = "") {
   // Items"; if more items are added to that SingleOps report, they're picked
   // up too). Labor-category quantities are hours; service quantities are units.
   const lineItems = {};       // ref -> { grindHrs, grindUnits, cleanup, cleanupHrs, seed, seedHrs, other: {name: qty} }
-  wb.SheetNames.forEach((name) => {
-    const rows = rowsOf(XLSX, wb, name);
-    const lh = rows && headerMap(rows, ["Item Name", "Quantity"]);
-    if (!lh) return;
-    const refCol = lh.col("Visit Ref #") ?? lh.col("Ref #") ?? lh.col("Job #");
-    if (refCol == null) return;
-    for (let i = lh.at + 1; i < rows.length; i++) {
-      const row = rows[i] || [];
-      const id = ref(row[refCol]); const item = str(row[lh.col("Item Name")]); const qty = num(row[lh.col("Quantity")]) || 0;
-      if (!id || !item || !qty) continue;
-      const acc = row[lh.col("Accepted")];
-      if (acc === false || norm(acc) === "false") continue;     // declined options aren't work to do
-      const isLabor = /labor/i.test(str(row[lh.col("Item Category")])) || /labor/i.test(item);
-      const o = (lineItems[id] = lineItems[id] || { grindHrs: 0, grindUnits: 0, cleanup: 0, cleanupHrs: 0, seed: 0, seedHrs: 0, other: {} });
-      if (/stump/i.test(item) && /grind/i.test(item)) { if (isLabor) o.grindHrs += qty; else o.grindUnits += qty; }
-      else if (/stump/i.test(item) && /(debris|clean)/i.test(item)) { if (isLabor) o.cleanupHrs += qty; else o.cleanup += qty; }
-      else if (/(seed|topsoil|soil)/i.test(item)) { if (isLabor) o.seedHrs += qty; else o.seed += qty; }
-      else o.other[item] = (o.other[item] || 0) + qty;
-    }
-  });
+  wb.SheetNames.forEach((name) => readLineItems(rowsOf(XLSX, wb, name), lineItems));
 
   // ── Job Notes ──────────────────────────────────────────────────────────────
   const notes = {};
@@ -229,4 +245,152 @@ export async function parseBacklogWorkbook(arrayBuffer, fileName = "") {
     forecast,
     warnings,
   };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SingleOps exports (CSV), the quicker way to refresh (owner, Nov 24).
+   • Visit export — one row per visit, the same rows and job numbers as the
+     workbook's "Visit Export" tab. The workbook's extra columns are worked out
+     here: weeks waiting (from "Converted to Active"), promise band and due
+     range (from "Backlog"), scheduled date / crew (Start, Stop, Assignees).
+     Hours = "Remaining Hours" (what is left to do).
+   • Line-item report (Item Name + Quantity + Visit Ref #) — stump grinding,
+     cleanup, soil & seed split.
+   What the exports don't carry is kept from the last upload: job notes, the
+   zip → zone table, the stump split (if no line-item file), the forecast.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const MON = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+const soDate = (v) => {
+  const t = str(v); if (!t) return null;
+  let m = t.match(/^([A-Za-z]{3})[a-z]*\.? (\d{1,2}), (\d{4})/);
+  if (m && MON[m[1].toLowerCase()] != null) return `${m[3]}-${String(MON[m[1].toLowerCase()] + 1).padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+  return iso(t) || (/^\d{4}-\d{2}-\d{2}/.test(t) ? t.slice(0, 10) : null);
+};
+const isoAdd = (d, days) => { const x = new Date(d + "T12:00:00"); x.setDate(x.getDate() + Math.round(days)); return x; };
+const mdy = (x) => `${String(x.getMonth() + 1).padStart(2, "0")}/${String(x.getDate()).padStart(2, "0")}/${String(x.getFullYear()).slice(2)}`;
+const truthy = (v) => v === true || norm(v) === "true";
+
+function visitJobs(rows, h, prev, today) {
+  const g = (r, label) => { const c = h.col(label); return c == null ? null : r[c]; };
+  const prevBy = Object.fromEntries((prev?.jobs || []).map((j) => [j.ref, j]));
+  const jobs = [];
+  for (let i = h.at + 1; i < rows.length; i++) {
+    const r = rows[i] || [];
+    const id = ref(g(r, "Ref #"));
+    if (!id || !/^\d/.test(id)) continue;
+    const left = num(g(r, "Remaining Hours")), est = num(g(r, "Estimated Hours"));
+    const hrs = left != null ? left : est;
+    if (hrs != null && hrs <= 0 && soDate(g(r, "Completion Date"))) continue;    // finished
+    const addr = str(g(r, "Job Location")).replace(/,\s*USA$/i, "");
+    const zip = ref(g(r, "Job Zip"));
+    const activeAt = soDate(g(r, "Converted to Active"));
+    const days = activeAt ? Math.max(0, Math.round((new Date(today + "T12:00:00") - new Date(activeAt + "T12:00:00")) / 86400000)) : null;
+    const weeks = days != null ? days / 7 : null;
+    const promised = num(g(r, "Backlog"));
+    const p = prevBy[id];
+    const start = soDate(g(r, "Start")), stop = soDate(g(r, "Stop")) || start;
+    const sched = start && stop && stop >= today;
+    jobs.push({
+      ref: id,
+      last: str(g(r, "Client Last")) || str(g(r, "Client Company")),
+      first: str(g(r, "Client First")),
+      addr,
+      town: str(g(r, "Job City")) || addr.split(",")[1]?.trim() || "",
+      zip,
+      zone: prev?.zones?.[zip]?.zone || p?.zone || "",
+      weeks,
+      promised,
+      promisedLabel: promised == null ? "" : promised >= 99 ? "99" : `${promised}-${promised + 2}`,
+      diff: promised != null && promised < 99 && weeks != null ? promised - weeks : null,
+      dueRange: activeAt && promised != null && promised < 99 ? `${mdy(isoAdd(activeAt, promised * 7))} - ${mdy(isoAdd(activeAt, (promised + 3) * 7 - 1))}` : "",
+      days,
+      hrs,
+      stumpHrs: p?.stumpHrs || 0,
+      netHrs: hrs,
+      price: num(g(r, "Total Price")),
+      stumpRev: p?.stumpRev || 0,
+      rep: str(g(r, "Sales Rep(s)")) || str(g(r, "Sales Rep")),
+      stage: str(g(r, "Current Stage")),
+      onHold: truthy(g(r, "On Hold")),
+      activeAt,
+      tags: str(g(r, "Tags")).split(",").map((t) => t.trim()).filter(Boolean),
+      notes: p?.notes || prev?.notes?.[id] || "",
+      schedDate: sched ? (start >= today ? start : today) : null,
+      schedWho: sched ? str(g(r, "Assignee(s)")) || str(g(r, "Assignees")) : "",
+      phone: str(g(r, "Client Mobile")) || str(g(r, "Client Phone")),
+      email: str(g(r, "Client Email")),
+    });
+  }
+  return jobs;
+}
+
+/**
+ * Read any mix of files into backlog data: the GTC Backlog workbook (.xlsm/.xlsx),
+ * a SingleOps Visit export (.csv) and/or a line-item report (.csv).
+ * files: [{ name, buf: ArrayBuffer }]; prev: the backlog data saved now (for what CSVs lack).
+ * Returns { data, summary: [lines] }.
+ */
+export async function importBacklogFiles(files, prev) {
+  const XLSX = await import("xlsx");
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const summary = [];
+  let data = null;
+  // 1. a workbook replaces everything
+  for (const f of files.filter((x) => /\.xls[xm]?$/i.test(x.name))) {
+    data = await parseBacklogWorkbook(f.buf, f.name);
+    summary.push(`${f.name}: the GTC Backlog workbook — ${data.jobs.length} jobs.`);
+  }
+  const base = data || prev || null;
+  // 2. CSVs
+  const csvs = [];
+  for (const f of files.filter((x) => /\.csv$/i.test(x.name))) {
+    const wb = XLSX.read(new Uint8Array(f.buf), { type: "array", raw: true });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null, blankrows: false });
+    csvs.push({ f, rows });
+  }
+  const visit = csvs.find(({ rows }) => { const h = headerMap(rows, ["Ref #", "Job Location"]); return h && (h.col("Remaining Hours") != null || h.col("Estimated Hours") != null); });
+  const jobExp = csvs.find(({ rows }) => { const h = headerMap(rows, ["Ref #", "Job Location"]); return h && h.col("Total Estimated Hours") != null && h.col("Remaining Hours") == null; });
+  if (visit) {
+    const h = headerMap(visit.rows, ["Ref #", "Job Location"]);
+    const jobs = visitJobs(visit.rows, h, base, today);
+    if (!jobs.length) throw new Error(`${visit.f.name}: no visits found.`);
+    const before = new Set((base?.jobs || []).map((j) => j.ref));
+    const now = new Set(jobs.map((j) => j.ref));
+    const added = jobs.filter((j) => !before.has(j.ref)).length;
+    const gone = [...before].filter((r) => !now.has(r)).length;
+    const noZone = jobs.filter((j) => !j.zone).length;
+    const noNotes = jobs.filter((j) => !j.notes).length;
+    data = {
+      version: 1, source: "singleops-visit-csv", fileName: visit.f.name, asOf: today, jobs,
+      lineItems: Object.fromEntries(Object.entries(base?.lineItems || {}).filter(([r]) => now.has(r))),
+      notes: base?.notes || {}, scheduled: [], zones: base?.zones || {}, priority: base?.priority || {},
+      forecast: base?.forecast || null, forecastFrom: base?.forecastFrom || base?.asOf || null,
+      warnings: [],
+    };
+    summary.push(`${visit.f.name}: SingleOps visit export — ${jobs.length} visits (${added} new, ${gone} gone since the last upload).`);
+    if (base) summary.push(`Kept from the last upload: job notes, zones${base.forecast ? ", the forecast" : ""}${Object.keys(data.lineItems).length ? ", the stump split" : ""}.`);
+    if (noZone) summary.push(`${noZone} visits have no zone (their zip isn't on the workbook's zone list).`);
+    const hasLines = csvs.some((c) => c !== visit && headerMap(c.rows, ["Item Name", "Quantity"]));
+    if (base && !hasLines) summary.push(`Job notes carried over for ${jobs.length - noNotes} visits (the visit export has no notes — add the line-item report for SingleOps notes).`);
+  } else if (jobExp) {
+    throw new Error(`${jobExp.f.name} is the Job export. Please use the Visit export — its job numbers (like 27722-2) and remaining hours match what gets scheduled.`);
+  }
+  // 3. line items (stump grinding, cleanup, soil & seed)
+  for (const c of csvs) {
+    if (c === visit) continue;
+    const li = {}, liNotes = {};
+    const n = readLineItems(c.rows, li, liNotes);
+    if (!n) { if (c !== jobExp) summary.push(`${c.f.name}: not recognised (expected a Visit export or a line-item report).`); continue; }
+    if (!data && !base) throw new Error("Upload the Visit export (or the workbook) first, then the line items.");
+    data = data || { ...base };
+    data.lineItems = { ...(data.lineItems || {}), ...li };      // visits not in this report keep what they had
+    // notes from SingleOps (Internal + Crew notes) win over the workbook's
+    let nn = 0;
+    data.jobs = data.jobs.map((j) => (liNotes[j.ref] ? (nn++, { ...j, notes: liNotes[j.ref] }) : j));
+    const matched = data.jobs.filter((j) => li[j.ref]).length;
+    summary.push(`${c.f.name}: line items for ${Object.keys(li).length} visits (${matched} of the ${data.jobs.length} in the backlog) — stump grinding hours, stump cleanup and soil & seed counts${nn ? `, notes for ${nn}` : ""}.`);
+    if (matched < data.jobs.length) summary.push(`${data.jobs.length - matched} backlog visits aren't in the line-item report (it may be filtered to unscheduled visits) — they keep their last stump split.`);
+  }
+  if (!data) throw new Error("Nothing to import — choose the SingleOps Visit export (.csv), a line-item report, or the GTC Backlog workbook.");
+  return { data, summary };
 }

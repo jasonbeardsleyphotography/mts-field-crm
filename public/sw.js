@@ -1,3 +1,4 @@
+// v119: Dispatch: crew columns + slot drops, foremen, Office bin, Purgatory, Emergency/Priority alerts, SingleOps CSV import.
 // v118: Shop Board: dated Broken, no trailers/sales cars, unhook by grabbing the towed part; aerial tag rules; Schedule follows the board's day.
 // v117: Dispatch: Quick pick tab, jobs on pause, seasons, OSH/SH hours + crew day load, tag filters and "Find work" per crew.
 // v116: Shop Board Equipment tab: columns by kind of machine, condition as card outline, repair vs broken, compact cards.
@@ -161,7 +162,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v118";
+const CACHE = "mts-field-v119";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { tagColor, tagShort } from "./backlogModel";
+import TagPill from "./TagPill.jsx";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Filter jobs by their SingleOps tags. Tap a tag once = must have it (green),
@@ -42,8 +42,8 @@ export default function TagFilter({ jobs, value, onChange, compact }) {
     <div style={{ display: "grid", gap: 6 }}>
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
         <button className="chip st" data-on={open ? 1 : 0} onClick={() => setOpen((o) => !o)}>Tags{n ? ` (${n})` : ""} {open ? "▴" : "▾"}</button>
-        {value.inc.map((t) => <button key={t} className="chip st" onClick={() => cycle(t)} style={{ borderColor: "#17A05B", color: "#8fe0b0" }} title="Must have — tap to switch to must NOT have">+ {tagShort(t)}</button>)}
-        {value.exc.map((t) => <button key={t} className="chip st" onClick={() => cycle(t)} style={{ borderColor: "#D93B2B", color: "#ff9a8f" }} title="Must NOT have — tap to clear">− {tagShort(t)}</button>)}
+        {value.inc.map((t) => <TagPill key={t} tag={t} state="inc" small onClick={() => cycle(t)} />)}
+        {value.exc.map((t) => <TagPill key={t} tag={t} state="exc" small onClick={() => cycle(t)} />)}
         {value.inc.length > 1 && <button className="chip st" onClick={() => onChange({ ...value, any: !value.any })}>{value.any ? "Match ANY green" : "Match ALL green"}</button>}
         {n > 0 && <button className="chip st" onClick={() => onChange(emptyTags())}>Clear tags</button>}
       </div>
@@ -53,16 +53,7 @@ export default function TagFilter({ jobs, value, onChange, compact }) {
           {groups.map(([k, tags]) => (
             <div key={k} style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
               <span className="hint" style={{ width: 104, padding: 0, flexShrink: 0 }}>{GROUP_NAMES[k] || k}</span>
-              {tags.map((t) => {
-                const s = state(t);
-                return (
-                  <button key={t} className="chip st" onClick={() => cycle(t)} data-on={s ? 1 : 0}
-                          style={{ borderColor: s === "inc" ? "#17A05B" : s === "exc" ? "#D93B2B" : undefined, textDecoration: s === "exc" ? "line-through" : "none" }}>
-                    <i style={{ display: "inline-block", width: 6, height: 6, borderRadius: 3, background: tagColor(t), marginRight: 4 }} />
-                    {s === "inc" ? "+ " : s === "exc" ? "− " : ""}{tagShort(t)}<b>{counts[t]}</b>
-                  </button>
-                );
-              })}
+              {tags.map((t) => <TagPill key={t} tag={t} state={state(t)} count={counts[t]} small onClick={() => cycle(t)} />)}
             </div>
           ))}
         </div>

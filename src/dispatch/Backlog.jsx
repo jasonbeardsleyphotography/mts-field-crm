@@ -3,7 +3,8 @@ import { api } from "./api";
 import { useBacklog } from "./useBacklog";
 import { fmtH, useHoursUnit } from "./hours";
 import { C } from "./theme";
-import { parseBacklogWorkbook } from "./parseWorkbook";
+import { importBacklogFiles } from "./parseWorkbook";
+import TagPill from "./TagPill.jsx";
 import { STATUS, STATUS_ORDER, FACETS, tagColor, tagShort, money, monthName, singleOpsJobUrl, jobColor, gradientColor, ageLegend, PAUSED_COLOR, SEASON_COLOR } from "./backlogModel";
 import { EQUIPMENT_ORDER } from "./crewCheck";
 import BacklogMap, { useJobPoints } from "./BacklogMap.jsx";
@@ -30,7 +31,9 @@ const sumGrind = (l) => l.reduce((t, j) => t + (j.grindHrs || 0), 0);
 const oldestFirst = (a, b) => (b.days || 0) - (a.days || 0);
 
 export function promiseText(j) {
-  if (j.status === "paused") return `On pause${j.paused?.until ? ` · check back ${new Date(j.paused.until + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}`;
+  if (j.status === "emergency" || j.status === "priority")
+    return `${j.status === "emergency" ? "EMERGENCY" : "Priority"}${j.nextVisit ? " · scheduled" : ""}${j.lateWeeks > 0 ? ` · ${Math.round(j.lateWeeks)} wk past promise` : ""}`;
+  if (j.status === "paused") return `Purgatory${j.paused?.until ? ` · check back ${new Date(j.paused.until + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}`;
   if (j.dueText) return j.dueText;
   if (j.status === "sched") return `Scheduled ${new Date(j.nextVisit + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}${j.visitWho ? ` · ${j.visitWho}` : ""}`;
   if (j.status === "hold") return "On hold";
@@ -76,15 +79,15 @@ export function PauseForm({ j, onPause, onResume, onDone }) {
   const go = async (fn) => { setBusy(true); setErr(""); try { await fn(); onDone?.(); } catch (e) { setErr(`Couldn't save (${e.message}).`); } setBusy(false); };
   return (
     <div style={{ display: "grid", gap: 6, padding: 8, border: `1px solid ${PAUSED_COLOR}`, borderRadius: 3, background: "rgba(179,136,255,.07)" }} onClick={(e) => e.stopPropagation()}>
-      <div className="hint" style={{ padding: 0 }}>Why can't it be scheduled yet? Shown on the card as “{j.name}: …”. Paused jobs never count as late.</div>
+      <div className="hint" style={{ padding: 0 }}>Why can't it be scheduled yet? Shown on the card as “{j.name}: …”. Jobs in Purgatory never count as late.{j.paused?.soHold ? " (It's on hold in SingleOps — take it off hold there to bring it back.)" : ""}</div>
       <input className="inp" autoFocus placeholder="e.g. wants to meet again with Jason first" value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)}
              onKeyDown={(e) => { if (e.key === "Enter" && reason.trim()) go(() => onPause(j.ref, reason.trim(), until)); }} />
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
         <span className="hint" style={{ padding: 0 }}>Check back on (optional)</span>
         <input className="inp" type="date" style={{ width: "auto" }} value={until} onChange={(e) => setUntil(e.target.value)} />
         <span className="spacer" />
-        {j.paused && <button className="btn st" disabled={busy} onClick={() => go(() => onResume(j.ref))}>Back to the backlog</button>}
-        <button className="btn st" data-primary="1" disabled={busy || !reason.trim()} onClick={() => go(() => onPause(j.ref, reason.trim(), until))}>{j.paused ? "Save" : "Pause it"}</button>
+        {j.paused && !j.paused.soHold && <button className="btn st" disabled={busy} onClick={() => go(() => onResume(j.ref))}>Back to the backlog</button>}
+        <button className="btn st" data-primary="1" disabled={busy || !reason.trim()} onClick={() => go(() => onPause(j.ref, reason.trim(), until))}>{j.paused && !j.paused.soHold ? "Save" : "Move to Purgatory"}</button>
         <button className="btn st" onClick={() => onDone?.()}>Cancel</button>
       </div>
       {err && <div className="err">{err}</div>}
@@ -125,12 +128,7 @@ function JobCard({ j, selected, onSelect, cardRef, colorBy, zoneColors, onPause,
         </div>
         {(j.needs.length > 0 || j.tags.length > 0) && (
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
-            {j.needs.map((n) => <span key={n} className="st" style={{ fontSize: 10, letterSpacing: ".05em", padding: "2px 6px", borderRadius: 2, background: "#2f3a43", color: C.ink }}>{n}</span>)}
-            {j.tags.filter((t) => !/^0[23] /.test(t) || /REQUIRED|CLIMB|GROUND/.test(t)).map((t) => (
-              <span key={t} className="st" style={{ fontSize: 10, letterSpacing: ".05em", padding: "2px 6px", borderRadius: 2, border: `1px solid ${C.edge}`, color: C.inkDim, display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <i style={{ width: 6, height: 6, borderRadius: 3, background: tagColor(t) }} />{tagShort(t)}
-              </span>
-            ))}
+            {j.tags.map((t) => <TagPill key={t} tag={t} small />)}
           </div>
         )}
         {j.note && (
@@ -143,7 +141,7 @@ function JobCard({ j, selected, onSelect, cardRef, colorBy, zoneColors, onPause,
           <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }} onClick={(e) => e.stopPropagation()}>
             <a className="btn st" href={singleOpsJobUrl(j.ref)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>Open in SingleOps</a>
             <a className="btn st" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(j.addr)}`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>Address</a>
-            <button className="btn st" style={{ borderColor: PAUSED_COLOR }} onClick={() => setPausing((v) => !v)}>{j.paused ? "Edit pause / resume" : "⏸ Pause…"}</button>
+            <button className="btn st" style={{ borderColor: PAUSED_COLOR }} onClick={() => setPausing((v) => !v)}>{j.paused ? "Purgatory: edit / bring back" : "⏸ Purgatory…"}</button>
             <span className="hint" style={{ alignSelf: "center" }}>{j.addr}{j.dueRange ? ` · window ${j.dueRange}` : ""}</span>
           </div>
         )}
@@ -171,7 +169,8 @@ function Group({ title, color, jobs, open, onToggle, children }) {
 
 export default function Backlog() {
   useHoursUnit();
-  const { data, jobs, err: loadErr, load, pause, resume } = useBacklog();
+  const { data, jobs, err: loadErr, load, pause, resume, deleted, restore } = useBacklog();
+  const [showDeleted, setShowDeleted] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
   const [q, setQ] = useState("");
@@ -189,14 +188,17 @@ export default function Backlog() {
 
   useEffect(() => { try { localStorage.setItem("mts-backlog-group", groupBy); } catch {} }, [groupBy]);
 
-  const upload = async (file) => {
-    if (!file) return;
-    setBusy(`Reading ${file.name}…`); setErr("");
+  const [summary, setSummary] = useState([]);
+  /* SingleOps Visit export (.csv) + optional line-item report (.csv), or the GTC Backlog workbook. */
+  const upload = async (list) => {
+    const files = [...(list || [])];
+    if (!files.length) return;
+    setBusy(`Reading ${files.map((f) => f.name).join(", ")}…`); setErr(""); setSummary([]);
     try {
-      const parsed = await parseBacklogWorkbook(await file.arrayBuffer(), file.name);
+      const { data: parsed, summary: sum } = await importBacklogFiles(await Promise.all(files.map(async (f) => ({ name: f.name, buf: await f.arrayBuffer() }))), data || null);
       setBusy("Saving…");
       await api("backlog", { method: "PUT", body: parsed });
-      await load(); setBusy("");
+      await load(); setBusy(""); setSummary(sum);
     } catch (e) { setBusy(""); setErr(e.status ? `Couldn't save it (${e.message}).` : (e.message || String(e))); }
   };
 
@@ -253,15 +255,15 @@ export default function Backlog() {
 
   const uploader = (
     <>
-      <input ref={fileRef} type="file" accept=".xlsm,.xlsx" style={{ display: "none" }} onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }} />
-      <button className="btn st" data-primary="1" disabled={!!busy} onClick={() => fileRef.current?.click()}>{busy || (data ? "Update from workbook" : "Upload the backlog workbook")}</button>
+      <input ref={fileRef} type="file" accept=".csv,.xlsm,.xlsx" multiple style={{ display: "none" }} onChange={(e) => { const l = [...(e.target.files || [])]; e.target.value = ""; upload(l); }} />
+      <button className="btn st" data-primary="1" disabled={!!busy} onClick={() => fileRef.current?.click()}>{busy || (data ? "Update from SingleOps" : "Upload the backlog")}</button>
     </>
   );
   if (!data) return (
     <div className="wrap" style={{ maxWidth: 640 }}>
       <div className="card"><div className="card-b" style={{ display: "grid", gap: 12 }}>
         <div className="st" style={{ fontSize: 16 }}>No backlog loaded yet</div>
-        <div className="hint">Upload the GTC Backlog workbook (.xlsm). Nothing is ever written back to it.</div>
+        <div className="hint">Upload the SingleOps <b>Visit export</b> (.csv) — plus, if you like, the line-item report for stump / soil & seed hours — or the GTC Backlog workbook (.xlsm). Nothing is ever written back.</div>
         <div>{uploader}</div>
         {(err || loadErr) && <div className="err">{err || loadErr}</div>}
       </div></div>
@@ -278,10 +280,34 @@ export default function Backlog() {
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
         <span className="mono" style={{ fontSize: 13 }}>{shown.length} jobs · <b>{fmtH(sumTree(shown))} tree work</b> · {fmtH(sumGrind(shown))} stump grinding · {money(shown.reduce((t, j) => t + (j.price || 0), 0))}</span>
         <span className="spacer" />
-        <span className="hint">{data.fileName}{data.asOf ? ` · sheet ${new Date(data.asOf + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</span>
+        <span className="hint">{data.source === "singleops-visit-csv" ? "SingleOps visit export" : data.fileName}{data.asOf ? ` · ${data.source === "singleops-visit-csv" ? "as of" : "sheet"} ${new Date(data.asOf + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</span>
         {uploader}
       </div>
       {err && <div className="err" style={{ marginBottom: 8 }}>{err}</div>}
+      {summary.length > 0 && (
+        <div className="card" style={{ padding: "8px 12px", marginBottom: 8, borderLeft: `4px solid ${C.green}`, fontSize: 12.5, display: "grid", gap: 2 }}>
+          <b className="st" style={{ fontSize: 12 }}>Updated</b>
+          {summary.map((l, i) => <span key={i}>{l}</span>)}
+          <span className="hint" style={{ padding: 0 }}>Choose the files together: SingleOps → Visits → Export (CSV); optionally the line-item report too. The workbook still works.</span>
+          <button className="chip st" style={{ justifySelf: "start" }} onClick={() => setSummary([])}>OK</button>
+        </div>
+      )}
+      {Object.keys(deleted).length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <button className="chip st" data-on={showDeleted ? 1 : 0} onClick={() => setShowDeleted((v) => !v)}>{Object.keys(deleted).length} deleted {showDeleted ? "▴" : "▾"}</button>
+          {showDeleted && (
+            <div className="card" style={{ marginTop: 6, padding: 8, display: "grid", gap: 4 }}>
+              {Object.entries(deleted).sort((a, b) => b[1].at - a[1].at).map(([ref, d]) => (
+                <div key={ref} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12.5 }}>
+                  <b>{d.name || ref}</b><span className="hint" style={{ padding: 0 }}>#{ref} · deleted by {d.by} {new Date(d.at).toLocaleDateString()}</span>
+                  <span className="spacer" />
+                  <button className="btn st" onClick={() => restore(ref)}>Restore</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: 10 }}>
         <div className="card-b" style={{ display: "grid", gap: 8, padding: 10 }}>
@@ -370,7 +396,7 @@ export default function Backlog() {
                 </span>
                 <span className="hint">({legend.map(([, l]) => l).join(" · ")})</span>
                 <span className="hint" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><i style={{ width: 10, height: 10, borderRadius: 5, background: SEASON_COLOR }} />waiting for season</span>
-                <span className="hint" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><i style={{ width: 10, height: 10, borderRadius: 5, background: PAUSED_COLOR }} />on pause</span>
+                <span className="hint" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><i style={{ width: 10, height: 10, borderRadius: 5, background: PAUSED_COLOR }} />purgatory</span>
               </>
             )}
             {colorBy === "status" && STATUS_ORDER.map((k) => <span key={k} className="hint" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><i style={{ width: 10, height: 10, borderRadius: 5, background: STATUS[k].color }} />{STATUS[k].label}</span>)}

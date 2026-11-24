@@ -26,9 +26,12 @@ export function gradientColor(t) {
   return `rgb(${a.map((v, k) => Math.round(v + (b[k] - v) * f)).join(",")})`;
 }
 export const PAUSED_COLOR = "#B388FF";
+export const EMERGENCY_COLOR = "#FF1744";
+export const PRIORITY_COLOR = "#FF4FD8";
 export const SEASON_COLOR = "#3FC1C9";
 /** The colour of a job's dot / bar when colouring by age. */
-export const jobColor = (j) => (j.status === "paused" ? PAUSED_COLOR : j.status === "season" ? SEASON_COLOR : gradientColor(j.ageT));
+export const jobColor = (j) => (j.status === "emergency" ? EMERGENCY_COLOR : j.status === "priority" ? PRIORITY_COLOR
+  : j.status === "paused" ? PAUSED_COLOR : j.status === "season" ? SEASON_COLOR : gradientColor(j.ageT));
 /** Legend for the age scale: [t, label] at five points along it. */
 export function ageLegend(jobs) {
   const d = jobs.filter((j) => j.ageT != null).map((j) => j.days || 0).sort((a, b) => a - b);
@@ -38,7 +41,9 @@ export function ageLegend(jobs) {
 }
 
 export const STATUS = {
-  paused: { label: "On pause",           color: PAUSED_COLOR, rank: 7 },
+  emergency: { label: "EMERGENCY",       color: EMERGENCY_COLOR, rank: -2 },
+  priority:  { label: "Priority",        color: PRIORITY_COLOR, rank: -1 },
+  paused: { label: "Purgatory",          color: PAUSED_COLOR, rank: 7 },
   over:   { label: "Past promise",       color: "#D93B2B", rank: 0 },
   soon:   { label: "Due in 2 weeks",     color: "#E5A100", rank: 1 },
   ok:     { label: "On time",            color: "#17A05B", rank: 2 },
@@ -47,7 +52,7 @@ export const STATUS = {
   sched:  { label: "Scheduled",          color: "#3A8DD8", rank: 5 },
   hold:   { label: "On hold (workbook)", color: "#6E7A83", rank: 6 },
 };
-export const STATUS_ORDER = ["paused", "over", "soon", "ok", "season", "flex", "sched", "hold"];
+export const STATUS_ORDER = ["emergency", "priority", "paused", "over", "soon", "ok", "season", "flex", "sched", "hold"];
 
 /* ── Seasons ────────────────────────────────────────────────────────────────
    A job with a season tag is due in its season, not by its weeks promise:
@@ -145,11 +150,17 @@ export function enrich(data, paused = {}, today = new Date()) {
     const season = j.tags.filter((t) => /^08 /.test(t)).map(tagShort);
     const visits = schedBy[j.ref] || [];
     const nextVisit = visits.map((v) => v.date).sort()[0] || j.schedDate;
-    const p = paused[j.ref] && !paused[j.ref].removed ? paused[j.ref] : null;
+    // Purgatory (owner, Nov 24) = jobs paused here + jobs ON HOLD in SingleOps, together.
+    const p = paused[j.ref] && !paused[j.ref].removed ? paused[j.ref]
+      : j.onHold ? { reason: "On hold in SingleOps", by: "SingleOps", soHold: true } : null;
     const se = seasonStatus(j, today);
     let status, lateWeeks = j.diff != null && j.diff < 0 ? -j.diff : 0, dueText = "";
     if (p) status = "paused";
     else if (j.onHold) status = "hold";
+    // SingleOps tags 07 **EMERGENCY** / 07 **PRIORITY** (owner, Nov 24): called out above
+    // everything else, even once scheduled (the Schedule's alert only counts unscheduled ones)
+    else if (j.tags.some((t) => /EMERGENCY/i.test(t))) status = "emergency";
+    else if (j.tags.some((t) => /\*\*PRIORITY\*\*|^07 PRIORITY/i.test(t))) status = "priority";
     else if (nextVisit) status = "sched";
     else if (se) { status = se.status; lateWeeks = se.lateWeeks; dueText = se.text; }
     else if ((j.promised ?? 99) >= 99) status = "flex";
@@ -166,7 +177,7 @@ export function enrich(data, paused = {}, today = new Date()) {
     return {
       ...j,
       treeHrs, grindHrs, cleanupHrs, seedHrs,
-      cleanupQty: li?.cleanup || 0, seedQty: li?.seed || 0, grindUnits: li?.grindUnits || 0,
+      cleanupQty: li?.cleanup || 0, seedQty: li?.seed || 0, seedUnit: li?.seedUnit || "", grindUnits: li?.grindUnits || 0,
       needs: equipmentNeeds(j.tags),
       name: [j.first, j.last].filter(Boolean).join(" ") || j.last || j.ref,
       crew: crewTag ? `${crewTag[1]}-person` : "",
@@ -181,7 +192,7 @@ export function enrich(data, paused = {}, today = new Date()) {
     };
   });
   // age rank (0 = newest … 1 = oldest) among the jobs on the colour scale
-  const ranked = out.filter((j) => j.status !== "paused" && j.status !== "season").sort((a, b) => (a.days || 0) - (b.days || 0));
+  const ranked = out.filter((j) => !["paused", "season", "emergency", "priority"].includes(j.status)).sort((a, b) => (a.days || 0) - (b.days || 0));
   const n = ranked.length;
   for (let i = 0; i < n;) {
     let k = i; while (k + 1 < n && (ranked[k + 1].days || 0) === (ranked[i].days || 0)) k++;

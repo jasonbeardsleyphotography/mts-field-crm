@@ -111,6 +111,13 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   "removed" entry blocks even a built-in account); otherwise the field app falls back to the built-in list + env var.
   Node functions pass `getStore`. Edge functions can't read Blobs: video-summary falls back to `GET /api/dispatch/allowed-field`
   (Bearer token → field permission); video-stream still uses the built-in list only.
+- IMPORT (owner, Nov 24): Backlog → "Update from SingleOps" takes several files at once (`importBacklogFiles`):
+  the SingleOps **Visit export** CSV (the job list: same refs as the workbook e.g. 27722-2, Remaining Hours, Backlog,
+  Converted to Active → weeks/promise/due range worked out here, Start/Stop/Assignees → scheduled, On Hold, tags) +
+  the **Line item export** CSV (Labor lines = crew hours: Pruning / Removal / Stump Grind Labor; Stump Debris Removal is a
+  count, Soil and Seed Installation is sq ft — no hours; Internal + Crew Notes → job notes). Zones (zip table), forecast
+  and anything a CSV lacks are kept from the last upload. The Job export is refused (different refs, rolled-up hours).
+  The owner's line-item report was filtered to Unscheduled visits; told to run it unfiltered.
 - Backlog: the GTC Backlog .xlsm is parsed in the browser (`parseWorkbook.js`, SheetJS `xlsx`, columns found by header
   text; forecast/priority tabs are a rolling 12 months — months before the sheet date mean next year). Stored on the
   server; nothing is written back to Excel. Later the same parser can take the live SharePoint file.
@@ -143,6 +150,15 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   un-breaking on a future day never changes earlier days. Old status "tagged"/"shop" = broken on every day until
   first edited. Everything shown for a day uses `dayCore` (assets resolved for that day); Schedule's crewsForDay too.
   The Shop Board and Schedule share the day being planned while the page is open (`src/dispatch/sharedDay.js`).
+  CREW COLUMNS (owner, Nov 24): `crew.cols = [[ids]]` beside `crew.iron` (= cols.flat()); `colsOf()` reads them (crews
+  saved earlier fall back to `legacyCols`: a truck takes the next towed unit). Every column is a drop slot
+  (`slot:<crew>:<k>`) plus one empty slot (`newcol:<crew>`); drop ON a column hooks only if `hookOnto` allows (towed unit
+  behind a free truck / truck in front of a lone unit), anywhere else = its own column. NEVER auto-hook (a chipper once
+  took a crew's Avant). Empty columns vanish. The drag ghost shows the held load in grey (`.ghost-shape`).
+  Name plates are as wide as the name (canvas-measured, `plateW`) and flow; foremen (`person.foreman`) first, bold,
+  outlined, ★. People: colour picker (PERSON_COLORS, #008299 first — the colour sent for Alexander), Off duty only
+  (older sick/training marks still count as off), `person.home` yard|office — Office bin under Off Duty (Liz D p09 and
+  Mike T p13 default to the office, OFFICE_DEFAULT). Yard bin groups loads in rough rows by kind (EQUIP_GROUPS).
   Room and yard are decided by crew MEMBERSHIP (`crewHas`), not screen positions (that left dropped people/trucks in
   both places). ✎ Edit on each crew opens CrewSheet: rename, operation, add/remove people and equipment via pickers
   (reuses yardMove). People tab (`PeopleView`): month calendar; pick a person + reason (vac/sick/train/light/on), tap or
@@ -165,7 +181,13 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   switch in the Dispatch header is per device (localStorage `mts-dispatch-hours-unit`); always format with `fmtH()` so the
   unit is printed. A normal day = 6.24 OSH (8 SH) per person working (`dayOsh`); Schedule warns when a crew is light/heavy.
   Stump grinding / cleanup / soil & seed never count toward the day (a later stage; a stump screen is planned).
-- Jobs ON PAUSE ("purgatory", owner's idea): `mts-dispatch` key `backlog/paused` = { ref: { reason, until, by, at } }
+- EMERGENCY / PRIORITY (tags 07 **EMERGENCY** / 07 **PRIORITY**): statuses above everything but Purgatory (even when
+  scheduled), own colours, top groups on the Backlog, pinned first + red/magenta banner on the Schedule (unscheduled only).
+- Schedule job rows: ⏸ Purgatory and 🗑 Delete (two-step confirm). Deleted jobs: `mts-dispatch` `backlog/deleted`
+  (`/api/dispatch/deleted`), hidden everywhere by useBacklog, restorable from the Backlog ("N deleted").
+- Tags look like SingleOps' pills (`TagPill.jsx`, full tag name + colour dot; picked = outlined + ✓).
+- PURGATORY (owner's name) = jobs paused here + jobs ON HOLD in SingleOps (shown as "On hold in SingleOps").
+- Jobs in Purgatory (paused here): `mts-dispatch` key `backlog/paused` = { ref: { reason, until, by, at } }
   (`/api/dispatch/paused`, GET / POST {ref, reason, until} | {ref, remove}); kept apart from the workbook so uploads keep
   them. Status `paused` beats everything, never late, own colour; card reads "Name: reason". Pause from a Backlog card,
   the Schedule map card or Quick pick. Shared loader `useBacklog.js` (backlog + paused, enriched).

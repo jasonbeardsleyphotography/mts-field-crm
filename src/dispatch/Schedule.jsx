@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { C } from "./theme";
 import { STATUS, money, jobColor, singleOpsJobUrl, tagShort } from "./backlogModel";
 import JobHours from "./JobHours.jsx";
+import TagPill from "./TagPill.jsx";
 import { useBacklog } from "./useBacklog";
 import { fmtH, useHoursUnit, dayOsh } from "./hours";
 import TagFilter, { emptyTags, passTags } from "./TagFilter.jsx";
@@ -263,11 +264,38 @@ function YardSettings({ settings, onSaved, onClose }) {
   );
 }
 
+const urgency = (j) => (j.status === "emergency" ? 0 : j.status === "priority" ? 1 : 2);
+
+/* Emergency / Priority jobs not on any crew this week — impossible to miss. */
+function UrgentBanner({ jobs, assign, plannedOn, onPick }) {
+  const open = jobs.filter((j) => (j.status === "emergency" || j.status === "priority") && !j.nextVisit && !assign[j.ref]?.crew && !plannedOn[j.ref]);
+  if (!open.length) return null;
+  const em = open.filter((j) => j.status === "emergency"), pr = open.filter((j) => j.status === "priority");
+  const row = (list, color, title, sub) => list.length > 0 && (
+    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "8px 12px", borderRadius: 4, background: color, color: "#fff", marginBottom: 6, boxShadow: `0 0 0 2px ${color}55, 0 4px 14px rgba(0,0,0,.4)` }}>
+      <b className="st" style={{ fontSize: 14, letterSpacing: ".08em" }}>{title} · {list.length} not scheduled</b>
+      <span style={{ fontSize: 12, opacity: 0.9 }}>{sub}</span>
+      {list.map((j) => (
+        <button key={j.ref} onClick={() => onPick(j.ref)} style={{ background: "rgba(0,0,0,.25)", color: "#fff", borderRadius: 3, padding: "4px 8px", fontSize: 12.5, border: "1px solid rgba(255,255,255,.35)" }}>
+          {j.name} · {j.town} · {fmtH(j.treeHrs)}
+        </button>
+      ))}
+    </div>
+  );
+  return (
+    <div style={{ marginBottom: 6 }}>
+      {row(em, "#C4122F", "🚨 EMERGENCY", "Highest priority — tap one to place it.")}
+      {row(pr, "#A3168A", "⚑ PRIORITY", "Next in line after emergencies.")}
+    </div>
+  );
+}
+
 export default function Schedule({ me }) {
   useHoursUnit();
   const [iso, setIso] = useState(() => sharedDay(isoOf(new Date())));
   useEffect(() => { setSharedDay(iso); }, [iso]);
-  const { data, jobs, pause, resume } = useBacklog();
+  const { data, jobs, pause, resume, remove: deleteJob } = useBacklog();
+  const [rowAct, setRowAct] = useState(null);        // { ref, kind: "pause" | "del" } on a backlog row
   const [tagF, setTagF] = useState(emptyTags);
   const [fitCrew, setFitCrew] = useState(null);      // crew id: list only jobs that crew can do
   const [rulesOpen, setRulesOpen] = useState(false);
@@ -409,16 +437,17 @@ export default function Schedule({ me }) {
     const s = q.trim().toLowerCase();
     const on = fitC ? peopleOn(fitC) : 0;
     return jobs.filter((j) => !assign[j.ref]?.crew)
-      .filter((j) => show === "all" || (j.status !== "hold" && j.status !== "sched" && j.status !== "paused" && !plannedOn[j.ref]))
+      .filter((j) => show === "all" || (j.status !== "hold" && j.status !== "sched" && j.status !== "paused" && !j.nextVisit && !plannedOn[j.ref]))
       .filter((j) => !s || `${j.name} ${j.ref} ${j.addr} ${j.zone} ${j.tags.join(" ")} ${j.paused?.reason || ""}`.toLowerCase().includes(s))
       .filter((j) => passTags(j, tagF))
       .filter((j) => !fitC || checkJob(j.tags, fitC, board.core.assets, on).problems === 0)
 
-      .sort(nearCrew ? (a, b) => (distTo[a.ref] ?? 1e9) - (distTo[b.ref] ?? 1e9)
-        : sort === "zone" ? (a, b) => (parseFloat(a.zone) || 99) - (parseFloat(b.zone) || 99)
-        : sort === "old" ? (a, b) => (b.days || 0) - (a.days || 0)
-        : sort === "big" ? (a, b) => (b.treeHrs || 0) - (a.treeHrs || 0)
-        : (a, b) => STATUS[a.status].rank - STATUS[b.status].rank || b.lateWeeks - a.lateWeeks);
+      // Emergency, then Priority jobs always sit at the top, whatever the sort
+      .sort((a, b) => urgency(a) - urgency(b) || (nearCrew ? (distTo[a.ref] ?? 1e9) - (distTo[b.ref] ?? 1e9)
+        : sort === "zone" ? (parseFloat(a.zone) || 99) - (parseFloat(b.zone) || 99)
+        : sort === "old" ? (b.days || 0) - (a.days || 0)
+        : sort === "big" ? (b.treeHrs || 0) - (a.treeHrs || 0)
+        : STATUS[a.status].rank - STATUS[b.status].rank || b.lateWeeks - a.lateWeeks));
   }, [jobs, assign, show, plannedOn, q, sort, nearCrew, distTo, tagF, fitC, peopleOn, board]); // eslint-disable-line react-hooks/exhaustive-deps
   const [limit, setLimit] = useState(80);
   useEffect(() => setLimit(80), [q, show, sort]);
@@ -457,6 +486,7 @@ export default function Schedule({ me }) {
         <span className="hint">{saving ? "Saving…" : board ? (board.from === iso ? "Crews from this day's Shop Board." : board.from === "standing" ? "Crews from the standing Shop Board setup." : `Crews from the Shop Board (same as ${board.from}).`) : ""}</span>
       </div>
       {err && <div className="err" style={{ marginBottom: 8 }}>{err}</div>}
+      <UrgentBanner jobs={jobs} assign={assign} plannedOn={plannedOn} onPick={(r) => setSelected(r)} />
       {yardsOpen && <YardSettings settings={settings} onSaved={setSettings} onClose={() => setYardsOpen(false)} />}
       {rulesOpen && <TagRules onClose={() => setRulesOpen(false)} />}
       {sel && (
@@ -571,7 +601,7 @@ export default function Schedule({ me }) {
                         {plannedOn[sel.ref] ? <span className="hint"> · planned {plannedOn[sel.ref]}</span> : null}
                         {assign[sel.ref]?.crew ? <span className="hint"> · on {(board?.crews || []).find((c) => c.id === assign[sel.ref].crew)?.name || "a crew"} today</span> : null}
                       </div>
-                      {sel.tags?.length > 0 && <div className="hint" style={{ marginTop: 3 }}>{sel.tags.map(tagShort).join(" · ")}</div>}
+                      {sel.tags?.length > 0 && <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 5 }}>{sel.tags.map((t) => <TagPill key={t} tag={t} small />)}</div>}
                       {sel.note && <div style={{ marginTop: 4, fontSize: 12, color: "#c8ced2", lineHeight: 1.4 }}>{sel.note}</div>}
                       <JobChecks r={checks[sel.ref]} />
                     </div>
@@ -584,7 +614,7 @@ export default function Schedule({ me }) {
                     ))}
                     {assign[sel.ref]?.crew && <button className="btn st" data-danger="1" onClick={() => { remove(sel.ref); setSelected(null); }}>Take off the schedule</button>}
                     <a className="btn st" href={singleOpsJobUrl(sel.ref)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>Open in SingleOps</a>
-                    <button className="btn st" style={{ borderColor: "#B388FF" }} onClick={() => setPausing((v) => !v)}>{sel.paused ? "Edit pause" : "⏸ Pause…"}</button>
+                    <button className="btn st" style={{ borderColor: "#B388FF" }} onClick={() => setPausing((v) => !v)}>{sel.paused ? "Purgatory…" : "⏸ Purgatory…"}</button>
                   </div>
                   {pausing && <div style={{ marginTop: 8 }}><PauseForm j={sel} onPause={pause} onResume={resume} onDone={() => setPausing(false)} /></div>}
                 </div>
@@ -616,24 +646,46 @@ export default function Schedule({ me }) {
                 {(board?.crews || []).filter((c) => (byCrew[c.id] || []).length).map((c) => <option key={c.id} value={`near:${c.id}`}>Nearest to {c.name}'s stops</option>)}
               </select>
               <button className="chip st" data-on={show === "all" ? 1 : 0} onClick={() => setShow((v) => (v === "all" ? "open" : "all"))}>
-                {show === "all" ? "Showing all (incl. paused)" : "Hiding scheduled / on hold / paused"}
+                {show === "all" ? "Showing all (incl. Purgatory)" : "Hiding scheduled / Purgatory"}
               </button>
             </div>
             <div className="hint">{list.length} jobs · {fmtH(list.reduce((t, j) => t + (j.treeHrs || 0), 0), 0)} tree work · {fmtH(list.reduce((t, j) => t + (j.grindHrs || 0), 0), 0)} stump. Drag onto a crew, or tap to pick.</div>
           </div>
           <div style={{ maxHeight: "62vh", overflow: "auto", padding: "0 8px 8px", display: "grid", gap: 4 }}>
             {list.slice(0, limit).map((j) => (
-              <div key={j.ref} draggable onDragStart={(e) => { e.dataTransfer.setData("text/x-job", j.ref); e.dataTransfer.effectAllowed = "move"; }}
+              <div key={j.ref}>
+              <div draggable onDragStart={(e) => { e.dataTransfer.setData("text/x-job", j.ref); e.dataTransfer.effectAllowed = "move"; }}
                    onClick={() => setSelected((s) => (s === j.ref ? null : j.ref))}
-                   style={{ display: "flex", gap: 8, padding: "6px 8px", borderRadius: 3, cursor: "grab", background: selected === j.ref ? C.tileHi : C.tile, borderLeft: `3px solid ${jobColor(j)}` }}>
+                   style={{ display: "flex", gap: 8, padding: "6px 8px", borderRadius: 3, cursor: "grab", background: selected === j.ref ? C.tileHi : C.tile, borderLeft: `3px solid ${jobColor(j)}`,
+                            boxShadow: j.status === "emergency" ? "inset 0 0 0 2px #FF1744" : j.status === "priority" ? "inset 0 0 0 1px #FF4FD8" : "none" }}>
                 <span style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}><b>{j.name}{j.paused ? ":" : ""}</b> {j.paused && <span style={{ color: "#d7c4ff" }}>{j.paused.reason}</span>} <span className="hint">#{j.ref}</span></div>
+                  <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {j.status === "emergency" && <b style={{ color: "#fff", background: "#C4122F", borderRadius: 2, padding: "0 5px", marginRight: 5, fontSize: 10.5 }}>EMERGENCY</b>}
+                    {j.status === "priority" && <b style={{ color: "#fff", background: "#A3168A", borderRadius: 2, padding: "0 5px", marginRight: 5, fontSize: 10.5 }}>PRIORITY</b>}
+                    <b>{j.name}{j.paused ? ":" : ""}</b> {j.paused && <span style={{ color: "#d7c4ff" }}>{j.paused.reason}</span>} <span className="hint">#{j.ref}</span></div>
                   <div className="hint" style={{ fontSize: 11 }}>
                     {j.town}{j.zone ? ` · Z${j.zone}` : ""} · {j.crew || "?"} · {Math.round(j.days || 0)} d · {j.status === "over" ? (j.seasonal ? j.dueText : `${Math.round(j.lateWeeks)} wk late`) : j.seasonal ? j.dueText : STATUS[j.status].label}
                     {plannedOn[j.ref] ? ` · planned ${plannedOn[j.ref]}` : ""}{distTo[j.ref] != null ? ` · ${miles(distTo[j.ref])}` : ""}
                   </div>
                 </span>
                 <JobHours j={j} size={13} />
+                <span style={{ display: "flex", flexDirection: "column", gap: 3 }} onClick={(e) => e.stopPropagation()}>
+                  <button className="btn" style={{ padding: "1px 6px", borderColor: "#B388FF" }} title={j.paused ? "In Purgatory — edit" : "Purgatory — can't be scheduled yet"}
+                          onClick={() => setRowAct((r) => (r?.ref === j.ref && r.kind === "pause" ? null : { ref: j.ref, kind: "pause" }))}>⏸</button>
+                  <button className="btn" style={{ padding: "1px 6px" }} data-danger="1" title="Delete from the backlog"
+                          onClick={() => setRowAct((r) => (r?.ref === j.ref && r.kind === "del" ? null : { ref: j.ref, kind: "del" }))}>🗑</button>
+                </span>
+              </div>
+              {rowAct?.ref === j.ref && rowAct.kind === "pause" && (
+                <div style={{ margin: "3px 0 6px" }}><PauseForm j={j} onPause={pause} onResume={resume} onDone={() => setRowAct(null)} /></div>
+              )}
+              {rowAct?.ref === j.ref && rowAct.kind === "del" && (
+                <div style={{ margin: "3px 0 6px", padding: 8, border: "1px solid #D93B2B", borderRadius: 3, background: "rgba(217,59,43,.08)", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12.5 }}>Delete <b>{j.name}</b> (#{j.ref}) from the Dispatch backlog? It won't come back on the next import. You can restore it on the Backlog tab.</span>
+                  <button className="btn st" data-danger="1" onClick={async () => { try { await deleteJob(j.ref, j.name); setRowAct(null); setSelected(null); } catch (e) { setErr(`Couldn't delete (${e.message}).`); } }}>Yes, delete</button>
+                  <button className="btn st" onClick={() => setRowAct(null)}>Cancel</button>
+                </div>
+              )}
               </div>
             ))}
             {list.length > limit && <button className="btn st" onClick={() => setLimit((l) => l + 100)}>Show more</button>}

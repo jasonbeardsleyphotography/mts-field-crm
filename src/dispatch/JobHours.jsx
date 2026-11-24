@@ -12,7 +12,7 @@ export function hoursParts(j) {
   if (j.cleanupHrs > 0) parts.push({ k: "cleanup", label: "stump cleanup", text: fmtH(j.cleanupHrs) });
   else if (j.cleanupQty > 0) parts.push({ k: "cleanup", label: "stump cleanup", text: `×${r1(j.cleanupQty)}` });
   if (j.seedHrs > 0) parts.push({ k: "seed", label: "soil & seed", text: fmtH(j.seedHrs) });
-  else if (j.seedQty > 0) parts.push({ k: "seed", label: "soil & seed", text: `×${r1(j.seedQty)}` });
+  else if (j.seedQty > 0) parts.push({ k: "seed", label: "soil & seed", text: j.seedUnit ? `${r1(j.seedQty)} ${j.seedUnit}` : `×${r1(j.seedQty)}` });
   return parts;
 }
 

@@ -139,4 +139,4 @@ export default function BacklogMap({ jobs, points, selected, onPick, colorBy = "
     </div>
   );
 }
-const STATUS_Z = { over: 60, soon: 50, ok: 40, season: 25, flex: 20, sched: 30, hold: 10, paused: 15 };
+const STATUS_Z = { emergency: 90, priority: 80, over: 60, soon: 50, ok: 40, season: 25, flex: 20, sched: 30, hold: 10, paused: 15 };

@@ -27,6 +27,8 @@
      PUT    backlog  {…}            (dispatch) replace it
      GET    paused                  (dispatch) jobs on pause { ref: { reason, until, by, at } }
      POST   paused {ref, reason, until} | {ref, remove}   pause / edit / resume a job
+     GET    deleted                 (dispatch) jobs deleted from the backlog { ref: { at, by, name } }
+     POST   deleted {ref, name} | {ref, restore}          delete / restore a job
      POST   geocode  {items:[{id,addr}]}  (dispatch) lat/lng, cached
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -215,6 +217,24 @@ export default async (req) => {
     for (const [k, v] of Object.entries(all)) if (v.removed && Date.now() - v.at > 60 * 86400000) delete all[k];
     await D().set("backlog/paused", JSON.stringify(all));
     return json({ paused: all });
+  }
+  // Jobs deleted from the Dispatch backlog (done, cancelled, duplicates). Kept
+  // apart from the workbook so a re-import doesn't bring them back.
+  // { ref: { at, by, name } }; restoring removes the entry.
+  if (route === "deleted" && method === "GET") {
+    const raw = await D().get("backlog/deleted");
+    return json({ deleted: raw ? JSON.parse(raw) : {} });
+  }
+  if (route === "deleted" && method === "POST") {
+    const b = await body();
+    const ref = String(b?.ref || "").slice(0, 40);
+    if (!ref) return json({ error: "bad_data" }, 400);
+    const raw = await D().get("backlog/deleted");
+    const all = raw ? JSON.parse(raw) : {};
+    if (b.restore) delete all[ref];
+    else all[ref] = { at: Date.now(), by: me.name || me.email, name: String(b.name || "").slice(0, 80) };
+    await D().set("backlog/deleted", JSON.stringify(all));
+    return json({ deleted: all });
   }
   if (route === "geocode" && method === "POST") {
     const { items } = await body();

@@ -4,6 +4,7 @@ import { STATUS, jobColor, singleOpsJobUrl, tagShort } from "./backlogModel";
 import { useBacklog } from "./useBacklog";
 import { useJobPoints, loadMaps } from "./BacklogMap.jsx";
 import JobHours from "./JobHours.jsx";
+import TagPill from "./TagPill.jsx";
 import TagFilter, { emptyTags, passTags } from "./TagFilter.jsx";
 import { PauseForm, promiseText } from "./Backlog.jsx";
 import { crewsForDay, km, miles } from "./Schedule.jsx";
@@ -243,7 +244,7 @@ export default function QuickPick({ me }) {
               <JobHours j={sel} />
               <button className="btn" onClick={() => setSelected(null)} aria-label="Close">✕</button>
             </div>
-            {sel.tags?.length > 0 && <div className="hint" style={{ padding: 0 }}>{sel.tags.map(tagShort).join(" · ")}</div>}
+            {sel.tags?.length > 0 && <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>{sel.tags.map((t) => <TagPill key={t} tag={t} small />)}</div>}
             {crew && (() => { const r = checkJob(sel.tags, crew, board.core.assets, peopleOn(crew)); return r.problems || r.calls.length ? (
               <div style={{ fontSize: 12 }}>
                 {r.missing.map((m, i) => <div key={i} style={{ color: "#ff9a8f" }}>Needs {m.label} — {m.why}</div>)}
@@ -255,7 +256,7 @@ export default function QuickPick({ me }) {
               {crew && <button className="btn st" data-primary="1" style={{ borderColor: crewColor(crew.id), padding: "10px 13px" }} onClick={() => add(sel)}>+ Add to {crew.name} today</button>}
               <a className="btn st" style={{ textDecoration: "none", padding: "10px 13px" }} href={directions(sel.addr)} target="_blank" rel="noopener noreferrer">Directions</a>
               <a className="btn st" style={{ textDecoration: "none", padding: "10px 13px" }} href={singleOpsJobUrl(sel.ref)} target="_blank" rel="noopener noreferrer">SingleOps</a>
-              <button className="btn st" style={{ borderColor: "#B388FF", padding: "10px 13px" }} onClick={() => setPausing((v) => !v)}>⏸ Pause…</button>
+              <button className="btn st" style={{ borderColor: "#B388FF", padding: "10px 13px" }} onClick={() => setPausing((v) => !v)}>⏸ Purgatory…</button>
             </div>
             {pausing && <PauseForm j={sel} onPause={pause} onResume={resume} onDone={() => { setPausing(false); setSelected(null); }} />}
           </div>
