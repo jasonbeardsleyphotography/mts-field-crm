@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { STATUS, jobColor } from "./backlogModel";
 import { fmtH } from "./hours";
+import { useShop, starIcon } from "./shopLocation";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Map of backlog jobs. Each address is looked up once (server: US Census
@@ -78,6 +79,8 @@ export default function BacklogMap({ jobs, points, selected, onPick, colorBy = "
   const fitted = useRef(false);
   const [err, setErr] = useState("");
   const pickRef = useRef(onPick); pickRef.current = onPick;
+  const shop = useShop();
+  const shopMark = useRef(null);
 
   useEffect(() => {
     let dead = false;
@@ -126,6 +129,12 @@ export default function BacklogMap({ jobs, points, selected, onPick, colorBy = "
     if (!fitted.current && want.size) { map.current.fitBounds(bounds, 30); fitted.current = true; }
   }, [jobs, points, selected, colorBy, zoneColors]);
 
+  // the shop: a star
+  useEffect(() => {
+    const g = window.google?.maps;
+    if (!shop || !g || !map.current || shopMark.current) return;
+    shopMark.current = new g.Marker({ map: map.current, position: shop, zIndex: 1000, clickable: false, title: `Shop — ${shop.addr}`, icon: starIcon(g) });
+  });
   useEffect(() => {
     const p = selected && points[selected];
     if (p && map.current) map.current.panTo(p);

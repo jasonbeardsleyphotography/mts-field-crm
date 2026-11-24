@@ -155,12 +155,12 @@ export function enrich(data, paused = {}, today = new Date()) {
       : j.onHold ? { reason: "On hold in SingleOps", by: "SingleOps", soHold: true } : null;
     const se = seasonStatus(j, today);
     let status, lateWeeks = j.diff != null && j.diff < 0 ? -j.diff : 0, dueText = "";
-    if (p) status = "paused";
-    else if (j.onHold) status = "hold";
-    // SingleOps tags 07 **EMERGENCY** / 07 **PRIORITY** (owner, Nov 24): called out above
-    // everything else, even once scheduled (the Schedule's alert only counts unscheduled ones)
-    else if (j.tags.some((t) => /EMERGENCY/i.test(t))) status = "emergency";
+    // SingleOps tags 07 **EMERGENCY** / 07 **PRIORITY**: ALWAYS on top — above Purgatory,
+    // on hold and scheduled alike (owner, Nov 24). The Schedule's alert counts unscheduled ones.
+    if (j.tags.some((t) => /EMERGENCY/i.test(t))) status = "emergency";
     else if (j.tags.some((t) => /\*\*PRIORITY\*\*|^07 PRIORITY/i.test(t))) status = "priority";
+    else if (p) status = "paused";
+    else if (j.onHold) status = "hold";
     else if (nextVisit) status = "sched";
     else if (se) { status = se.status; lateWeeks = se.lateWeeks; dueText = se.text; }
     else if ((j.promised ?? 99) >= 99) status = "flex";

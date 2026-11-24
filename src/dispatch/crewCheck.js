@@ -22,7 +22,7 @@ const norm = (t) => String(t || "").trim().toUpperCase().replace(/\s+/g, " ");
 const NEEDS = [
   { tags: ["02 BUCKET"], label: "Bucket truck", what: "the bucket truck (F750 BUCKET)", aerial: true, ok: (a) => a.shape === "BUCKET" || /bucket/i.test(a.tag || "") },
   { tags: ["02 LIFT", "02 LIFT REGULAR"], label: "Lift", what: "any spider lift (CMC 83HD, 83HD+, 100HD)", aerial: true, ok: (a) => a.shape === "SPIDER" },
-  { tags: ["02 LIFT TALL!"], label: "Tall lift (CMC 100HD)", what: "the CMC 100HD — always needed when tagged", ok: (a) => a.code === "100" || /100HD/i.test(a.name || "") },
+  { tags: ["02 LIFT TALL!"], label: "Tall lift (CMC 100HD)", what: "the CMC 100HD — needed when tagged alone; with LIFT too it's preferred but an 83 ft lift can do it", ok: (a) => a.code === "100" || /100HD/i.test(a.name || "") },
   { tags: ["03 AVANT"], label: "Avant", what: "any Avant", ok: (a) => a.shape === "LOADER" },
   { tags: ["03 AVANT_BIG"], label: "Big Avant (755i)", what: "the Avant 755i", ok: (a) => /755/.test(`${a.name} ${a.spec}`) },
   { tags: ["03 BIG CHIP"], label: "Big chipper (19XPC)", what: "a Bandit 19XPC", ok: (a) => /19XPC/i.test(a.name || "") },
@@ -92,10 +92,16 @@ export function checkJob(tags, crew, assets, peopleOn) {
   const usable = (n) => units.filter(n.ok).some((u) => !isDown(u));
   const why = (n) => { const have = units.filter(n.ok); return !have.length ? (n.note || "not on this crew") : `${have[0].name} is broken`; };
   const tagged = NEEDS.filter((n) => !n.later && n.tags.some((t) => T.includes(t)));
+  // LIFT + LIFT TALL! together = the tall lift is best, but a regular lift CAN do it (owner, Nov 24):
+  // the tall lift becomes one more aerial option, and its absence only a soft note.
+  const tallToo = T.includes("02 LIFT TALL!") && (T.includes("02 LIFT REGULAR") || T.includes("02 LIFT"));
+  const isAerial = (n) => n.aerial || (tallToo && n.tags.includes("02 LIFT TALL!"));
+  const prefer = [];
+  if (tallToo) { const tall = NEEDS.find((n) => n.tags.includes("02 LIFT TALL!")); if (!usable(tall)) prefer.push("best with the tall lift (CMC 100HD) — an 83 ft lift can do it"); }
   // machines that are always needed when tagged
-  tagged.filter((n) => !n.aerial).forEach((n) => { if (!usable(n)) missing.push({ label: n.label, why: why(n) }); });
+  tagged.filter((n) => !isAerial(n)).forEach((n) => { if (!usable(n)) missing.push({ label: n.label, why: why(n) }); });
   // aerial: any one option will do, unless 02 REQUIRED (then every machine tagged)
-  const aer = tagged.filter((n) => n.aerial);
+  const aer = tagged.filter(isAerial);
   if (aer.length) {
     if (T.includes("02 REQUIRED")) aer.forEach((n) => { if (!usable(n)) missing.push({ label: n.label, why: why(n) + " · REQUIRED" }); });
     else if (!Object.keys(CREW_AERIAL).some((t) => T.includes(t)) && !aer.some(usable))
@@ -106,7 +112,7 @@ export function checkJob(tags, crew, assets, peopleOn) {
   const short = need && peopleOn != null && peopleOn < need ? { need, have: peopleOn } : null;
   const calls = T.filter((t) => CALLS[t]).map((t) => CALLS[t]);
   const gear = T.filter((t) => GEAR[t]).map((t) => GEAR[t]);
-  return { missing, short, calls, gear, problems: missing.length + (short ? 1 : 0) };
+  return { missing, short, calls, gear, prefer, problems: missing.length + (short ? 1 : 0) };
 }
 
 /** One line per problem, for lists and tooltips. */

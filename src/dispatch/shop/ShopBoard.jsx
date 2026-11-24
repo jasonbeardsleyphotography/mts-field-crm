@@ -21,7 +21,7 @@ import { sharedDay, setSharedDay } from "../sharedDay";
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ============================ SEED (from Fleetio export, 08/26/2026) ======= */
-const SEED_ASSETS = [{"id":"a01","name":"F750 BUCKET","spec":"2017 F750 Bucket Truck","cat":"AERIAL","shape":"BUCKET","ops":["GTC"],"status":"running","yard":"Brighton","plate":"25633MM","note":"","tag":"Bucket","hc":"truck","pull":["flatbed"],"fam":"AERIAL","code":"BKT","top":"bucket","vl":"F750 BUCKET"},{"id":"a02","name":"F650 CHIP","spec":"2018 F650 Chip Truck - 4X2 2dr Regular Cab 158","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Brighton","plate":"25634MM","note":"","tag":"Chip Truck","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"F650","top":"chipbody","vl":"F650 CHIP"},{"id":"a03","name":"F250 LIFT TRUCK","spec":"2019 F250 - Lift Truck","cat":"SERVICE","shape":"PICKUP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"95009MM","note":"","tag":"Lift Truck","hc":"truck","pull":["lift"],"fam":"SERVICE","code":"F250","top":"flatbed","vl":"F250"},{"id":"a04","name":"F350 LIFT TRUCK","spec":"2019 F350 Lift Truck","cat":"SERVICE","shape":"PICKUP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"65099NA","note":"","tag":"Lift Truck","hc":"truck","pull":["lift"],"fam":"SERVICE","code":"F350","top":"flatbed","vl":"F350"},{"id":"a05","name":"F750 CHIP '19","spec":"2019 F750 Chip Truck - 4X2 4dr SuperCab 179-28","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Brighton","plate":"31108MN","note":"","tag":"Chip Truck","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"F750","top":"chipbody","vl":"F750 '19"},{"id":"a06","name":"BELMONT 10K","spec":"2020 Belmont Dump Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CD 70633","note":"","tag":"Dump Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"BEL","top":"flattrailer","vl":"BELMONT"},{"id":"a07","name":"TEXAS","spec":"2021 F750 Chip Truck","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Off-site","plate":"74251NE","note":"","tag":"Texas","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"TEX","top":"chipbody","vl":"TEXAS"},{"id":"a08","name":"WOOD TRUCK","spec":"2021 F750 Dump Truck 4X2 4dr SuperCab 179-281","cat":"DUMP TRUCK","shape":"DUMP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"99168NE","note":"","tag":"Wood Truck","hc":"truck","pull":["flatbed"],"fam":"WOOD","code":"WOOD","top":"rolloff","vl":"WOOD TRUCK"},{"id":"a09","name":"CMC 83HD+ '21","spec":"2021 Lift - CMC 83HD+","cat":"SPIDER LIFT","shape":"SPIDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Lift","hc":"carried","rides":["lift"],"fam":"AERIAL","code":"83+","top":"spider","vl":"CMC 83HD+"},{"id":"a10","name":"LIFT TRAILER '21","spec":"2021 Lift Trailer - No Ramp","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CA86310","note":"","tag":"Lift Trailer","hc":"trailer","tt":"lift","fam":"LIFTTR","code":"LT21","top":"lifttrailer","vl":"LT '21"},{"id":"a11","name":"AVANT '21","spec":"2021 Avant","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Avant","hc":"carried","rides":["flatbed"],"fam":"AVANT","code":"A21","top":"avant","vl":"AVANT 21"},{"id":"a12","name":"RAV4 '21","spec":"2021 Rav 4 - Sales - AWD XLE 4dr SUV","cat":"SALES","shape":"CAR","ops":["SALES"],"status":"running","yard":"Brighton","plate":"KKJ2683","note":"","tag":"Rav4","hc":"truck","fam":"SALES","code":"R21","top":"car","vl":"RAV4 21"},{"id":"a13","name":"REISER 20FT","spec":"2021 Reiser 20 ft. 2-Axle Platform/Flatbed Tra","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CJ58195","note":"","tag":"Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"R20","top":"flattrailer","vl":"REISER 20"},{"id":"a14","name":"DARTH","spec":"2022 F250 PHC Pickup - Black","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC"],"status":"running","yard":"Rush Scottsville","plate":"76997 ML","note":"","tag":"Darth","hc":"truck","fam":"PHC","code":"DRTH","top":"flatbed","vl":"DARTH"},{"id":"a15","name":"BRIDGETTE","spec":"2022 F550 Chip Truck","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Brighton","plate":"51734NC","note":"","tag":"Bridgette","hc":"truck","pull":["chipper","grinder"],"fam":"CHIP","code":"BRDG","top":"chipbody","vl":"BRIDGETTE"},{"id":"a16","name":"CMC 83HD '22","spec":"2022 Lift CMC 83HD","cat":"SPIDER LIFT","shape":"SPIDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Lift","hc":"carried","rides":["lift"],"fam":"AERIAL","code":"83","top":"spider","vl":"CMC 83HD"},{"id":"a17","name":"RATTLIN LOG","spec":"2023 F750 Dump Truck","cat":"DUMP TRUCK","shape":"DUMP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"38858 ND","note":"","tag":"Rattlin Log","hc":"truck","pull":["flatbed"],"fam":"WOOD","code":"RTL","top":"rolloff","vl":"RATTLIN LOG"},{"id":"a18","name":"ISUZU PHC","spec":"2023 Isuzu PHC Rig","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC"],"status":"running","yard":"Rush Scottsville","plate":"95112ND","note":"","tag":"PHC Rig","hc":"truck","fam":"PHC","code":"ISZ","top":"cabover","vl":"ISUZU"},{"id":"a19","name":"LIFT TRAILER '23","spec":"2023 Lift Trailer - No Ramp","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"cd 71509","note":"","tag":"Lift Trailer","hc":"trailer","tt":"lift","fam":"LIFTTR","code":"LT23","top":"lifttrailer","vl":"LT '23"},{"id":"a20","name":"REISER '23","spec":"2023 Reiser Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CD70287","note":"","tag":"Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"R23","top":"flattrailer","vl":"REISER 23"},{"id":"a21","name":"BANDIT 19XPC '24","spec":"2024 Bandit 19XPC Big Chipper","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"19A","top":"chipper","vl":"19XPC '24"},{"id":"a22","name":"COROLLA","spec":"2024 Toyota Corolla","cat":"SALES","shape":"CAR","ops":["SALES"],"status":"running","yard":"Brighton","plate":"HYH8990","note":"","tag":"Corolla","hc":"truck","fam":"SALES","code":"COR","top":"car","vl":"COROLLA"},{"id":"a23","name":"CMC 100HD","spec":"2025 CMC 100HD Lift","cat":"SPIDER LIFT","shape":"SPIDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Lift","hc":"carried","rides":["lift"],"fam":"AERIAL","code":"100","top":"spider","vl":"CMC 100HD"},{"id":"a24","name":"LIFT TRAILER '25","spec":"2025 NoRamp Lift Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CJ58425","note":"","tag":"Lift Trailer","hc":"trailer","tt":"lift","fam":"LIFTTR","code":"LT25","top":"lifttrailer","vl":"LT '25"},{"id":"a25","name":"HOPPER","spec":"2025 PHC Rig \"Hopper\"","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC"],"status":"running","yard":"Rush Scottsville","plate":"27575NG","note":"","tag":"Hopper","hc":"truck","fam":"PHC","code":"HOP","top":"cabover","vl":"HOPPER"},{"id":"a26","name":"RED REISER TILT","spec":"2025 Red Reiser Tilt Bed Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC","LC"],"status":"running","yard":"Brighton","plate":"CH71811","note":"","tag":"Tilt Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"TILT","top":"flattrailer","vl":"TILT"},{"id":"a27","name":"RAV4 '26","spec":"2026 Rav 4","cat":"SALES","shape":"CAR","ops":["SALES"],"status":"running","yard":"Brighton","plate":"MCK9239","note":"","tag":"Rav4","hc":"truck","fam":"SALES","code":"R26","top":"car","vl":"RAV4 26"},{"id":"a28","name":"BANDIT 18XP YELLOW","spec":"Bandit 18xp Yellow Chipper","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Off-site","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"18Y","top":"chipper","vl":"18XP YEL"},{"id":"a29","name":"BANDIT 15XPC","spec":"Bandit 15xpc","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"15","top":"chipper","vl":"15XPC"},{"id":"a30","name":"BANDIT 19XPC '22","spec":"Bandit 19XPC","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"19B","top":"chipper","vl":"19XPC '22"},{"id":"a31","name":"MORBARK 15R","spec":"Morbark 15R","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"parked","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"M15","top":"chipper","vl":"MORBARK 15R"},{"id":"a32","name":"MORBARK 1621","spec":"Morbark 1621","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"M16","top":"chipper","vl":"MORBARK 1621"},{"id":"a33","name":"F550 LAWN","spec":"F550 Lawn Truck Ford 2025","cat":"LAWN","shape":"LANDSCAPE","ops":["LC","PHC"],"status":"running","yard":"Rush Scottsville","plate":"32100NG","note":"","tag":"Lawn Truck","hc":"truck","pull":["flatbed"],"fam":"LAWN","code":"LAWN","top":"landscape","vl":"F550 LAWN"},{"id":"a34","name":"KUBOTA SPRAY","spec":"Kubota Spray Rig","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC","LC"],"status":"running","yard":"Rush Scottsville","plate":"","note":"","tag":"Spray Rig","hc":"carried","rides":["flatbed"],"fam":"PHC","code":"KUB","top":"utv","vl":"KUBOTA"},{"id":"a35","name":"AVANT '18","spec":"Avant 2018","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"parked","yard":"Brighton","plate":"","note":"","tag":"Avant","hc":"carried","rides":["flatbed"],"fam":"AVANT","code":"A18","top":"avant","vl":"AVANT 18"},{"id":"a36","name":"AVANT VIRGINIA","spec":"Avant Virginia","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"running","yard":"Off-site","plate":"","note":"","tag":"Avant","hc":"carried","rides":["flatbed"],"fam":"AVANT","code":"AVA","top":"avant","vl":"AVANT VA"},{"id":"a37","name":"RAYCO RG45X","spec":"Rayco Stump Grinder and Trailer","cat":"STUMP GRINDER","shape":"GRINDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"ck79362","note":"","tag":"Grinder","hc":"towed","tt":"grinder","fam":"GRINDER","code":"RG45","top":"grinder","vl":"RG45X"},{"id":"a38","name":"WESTCHESTER F750","spec":"Westchester F750 Chip Truck","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Off-site","plate":"27638NG","note":"","tag":"Chip Truck","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"WCH","top":"chipbody","vl":"WESTCHESTER"},{"id":"a39","name":"AVANT 755i","spec":"2025 Avant 755i (the big Avant)","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Big Avant","hc":"towed","tt":"flatbed","fam":"AVANT","code":"755","top":"avant","vl":"AVANT 755"},{"id":"a40","name":"F750 WOOD '27","spec":"2027 Ford F750 Wood Truck","cat":"DUMP TRUCK","shape":"DUMP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Wood Truck","hc":"truck","pull":["flatbed"],"fam":"WOOD","code":"W27","top":"rolloff","vl":"WOOD '27"}];
+const SEED_ASSETS = [{"id":"a01","name":"F750 BUCKET","spec":"2017 F750 Bucket Truck","cat":"AERIAL","shape":"BUCKET","ops":["GTC"],"status":"running","yard":"Brighton","plate":"25633MM","note":"","tag":"Bucket","hc":"truck","pull":["flatbed"],"fam":"AERIAL","code":"BKT","top":"bucket","vl":"F750 BUCKET"},{"id":"a02","name":"F650 CHIP","spec":"2018 F650 Chip Truck - 4X2 2dr Regular Cab 158","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Brighton","plate":"25634MM","note":"","tag":"Chip Truck","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"F650","top":"chipbody","vl":"F650 CHIP"},{"id":"a03","name":"F250 LIFT TRUCK","spec":"2019 F250 - Lift Truck","cat":"SERVICE","shape":"PICKUP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"95009MM","note":"","tag":"Lift Truck","hc":"truck","pull":["lift"],"fam":"SERVICE","code":"F250","top":"flatbed","vl":"F250"},{"id":"a04","name":"F350 LIFT TRUCK","spec":"2019 F350 Lift Truck","cat":"SERVICE","shape":"PICKUP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"65099NA","note":"","tag":"Lift Truck","hc":"truck","pull":["lift"],"fam":"SERVICE","code":"F350","top":"flatbed","vl":"F350"},{"id":"a05","name":"F750 CHIP '19","spec":"2019 F750 Chip Truck - 4X2 4dr SuperCab 179-28","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Brighton","plate":"31108MN","note":"","tag":"Chip Truck","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"F750","top":"chipbody","vl":"F750 '19"},{"id":"a06","name":"BELMONT 10K","spec":"2020 Belmont Dump Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CD 70633","note":"","tag":"Dump Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"BEL","top":"flattrailer","vl":"BELMONT"},{"id":"a07","name":"TEXAS","spec":"2021 F750 Chip Truck","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Off-site","plate":"74251NE","note":"","tag":"Texas","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"TEX","top":"chipbody","vl":"TEXAS"},{"id":"a08","name":"WOOD TRUCK","spec":"2021 F750 Dump Truck 4X2 4dr SuperCab 179-281","cat":"DUMP TRUCK","shape":"DUMP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"99168NE","note":"","tag":"Wood Truck","hc":"truck","pull":["flatbed"],"fam":"WOOD","code":"WOOD","top":"rolloff","vl":"WOOD TRUCK"},{"id":"a09","name":"CMC 83HD+ '21","spec":"2021 Lift - CMC 83HD+","cat":"SPIDER LIFT","shape":"SPIDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Lift","hc":"carried","rides":["lift"],"fam":"AERIAL","code":"83+","top":"spider","vl":"CMC 83HD+"},{"id":"a10","name":"LIFT TRAILER '21","spec":"2021 Lift Trailer - No Ramp","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CA86310","note":"","tag":"Lift Trailer","hc":"trailer","tt":"lift","fam":"LIFTTR","code":"LT21","top":"lifttrailer","vl":"LT '21"},{"id":"a11","name":"AVANT '21","spec":"2021 Avant","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Avant","hc":"carried","rides":["flatbed"],"fam":"AVANT","code":"A21","top":"avant","vl":"AVANT 21"},{"id":"a12","name":"RAV4 '21","spec":"2021 Rav 4 - Sales - AWD XLE 4dr SUV","cat":"SALES","shape":"CAR","ops":["SALES"],"status":"running","yard":"Brighton","plate":"KKJ2683","note":"","tag":"Rav4","hc":"truck","fam":"SALES","code":"R21","top":"car","vl":"RAV4 21"},{"id":"a13","name":"REISER 20FT","spec":"2021 Reiser 20 ft. 2-Axle Platform/Flatbed Tra","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CJ58195","note":"","tag":"Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"R20","top":"flattrailer","vl":"REISER 20"},{"id":"a14","name":"DARTH","spec":"2022 F250 PHC Pickup - Black","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC"],"status":"running","yard":"Rush Scottsville","plate":"76997 ML","note":"","tag":"Darth","hc":"truck","fam":"PHC","code":"DRTH","top":"flatbed","vl":"DARTH"},{"id":"a15","name":"BRIDGETTE","spec":"2022 F550 Chip Truck","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Brighton","plate":"51734NC","note":"","tag":"Bridgette","hc":"truck","pull":["chipper","grinder"],"fam":"CHIP","code":"BRDG","top":"chipbody550","vl":"BRIDGETTE"},{"id":"a16","name":"CMC 83HD '22","spec":"2022 Lift CMC 83HD","cat":"SPIDER LIFT","shape":"SPIDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Lift","hc":"carried","rides":["lift"],"fam":"AERIAL","code":"83","top":"spider","vl":"CMC 83HD"},{"id":"a17","name":"RATTLIN LOG","spec":"2023 F750 Dump Truck","cat":"DUMP TRUCK","shape":"DUMP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"38858 ND","note":"","tag":"Rattlin Log","hc":"truck","pull":["flatbed"],"fam":"WOOD","code":"RTL","top":"rolloff","vl":"RATTLIN LOG"},{"id":"a18","name":"ISUZU PHC","spec":"2023 Isuzu PHC Rig","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC"],"status":"running","yard":"Rush Scottsville","plate":"95112ND","note":"","tag":"PHC Rig","hc":"truck","fam":"PHC","code":"ISZ","top":"cabover","vl":"ISUZU"},{"id":"a19","name":"LIFT TRAILER '23","spec":"2023 Lift Trailer - No Ramp","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"cd 71509","note":"","tag":"Lift Trailer","hc":"trailer","tt":"lift","fam":"LIFTTR","code":"LT23","top":"lifttrailer","vl":"LT '23"},{"id":"a20","name":"REISER '23","spec":"2023 Reiser Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CD70287","note":"","tag":"Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"R23","top":"flattrailer","vl":"REISER 23"},{"id":"a21","name":"BANDIT 19XPC '24","spec":"2024 Bandit 19XPC Big Chipper","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"19A","top":"chipper","vl":"19XPC '24"},{"id":"a22","name":"COROLLA","spec":"2024 Toyota Corolla","cat":"SALES","shape":"CAR","ops":["SALES"],"status":"running","yard":"Brighton","plate":"HYH8990","note":"","tag":"Corolla","hc":"truck","fam":"SALES","code":"COR","top":"car","vl":"COROLLA"},{"id":"a23","name":"CMC 100HD","spec":"2025 CMC 100HD Lift","cat":"SPIDER LIFT","shape":"SPIDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Lift","hc":"carried","rides":["lift"],"fam":"AERIAL","code":"100","top":"spider100","vl":"CMC 100HD"},{"id":"a24","name":"LIFT TRAILER '25","spec":"2025 NoRamp Lift Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"CJ58425","note":"","tag":"Lift Trailer","hc":"trailer","tt":"lift","fam":"LIFTTR","code":"LT25","top":"lifttrailer","vl":"LT '25"},{"id":"a25","name":"HOPPER","spec":"2025 PHC Rig \"Hopper\"","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC"],"status":"running","yard":"Rush Scottsville","plate":"27575NG","note":"","tag":"Hopper","hc":"truck","fam":"PHC","code":"HOP","top":"cabover","vl":"HOPPER"},{"id":"a26","name":"RED REISER TILT","spec":"2025 Red Reiser Tilt Bed Trailer","cat":"TRAILER","shape":"TRAILER","ops":["GTC","LC"],"status":"running","yard":"Brighton","plate":"CH71811","note":"","tag":"Tilt Trailer","hc":"trailer","tt":"flatbed","fam":"FLATBED","code":"TILT","top":"flattrailer","vl":"TILT"},{"id":"a27","name":"RAV4 '26","spec":"2026 Rav 4","cat":"SALES","shape":"CAR","ops":["SALES"],"status":"running","yard":"Brighton","plate":"MCK9239","note":"","tag":"Rav4","hc":"truck","fam":"SALES","code":"R26","top":"car","vl":"RAV4 26"},{"id":"a28","name":"BANDIT 18XP YELLOW","spec":"Bandit 18xp Yellow Chipper","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Off-site","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"18Y","top":"chipper","vl":"18XP YEL"},{"id":"a29","name":"BANDIT 15XPC","spec":"Bandit 15xpc","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"15","top":"chipper","vl":"15XPC"},{"id":"a30","name":"BANDIT 19XPC '22","spec":"Bandit 19XPC","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"19B","top":"chipper","vl":"19XPC '22"},{"id":"a31","name":"MORBARK 15R","spec":"Morbark 15R","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"parked","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"M15","top":"chipper","vl":"MORBARK 15R"},{"id":"a32","name":"MORBARK 1621","spec":"Morbark 1621","cat":"CHIPPER","shape":"CHIPPER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Chipper","hc":"towed","tt":"chipper","fam":"CHIPPER","code":"M16","top":"chipper","vl":"MORBARK 1621"},{"id":"a33","name":"F550 LAWN","spec":"F550 Lawn Truck Ford 2025","cat":"LAWN","shape":"LANDSCAPE","ops":["LC","PHC"],"status":"running","yard":"Rush Scottsville","plate":"32100NG","note":"","tag":"Lawn Truck","hc":"truck","pull":["flatbed"],"fam":"LAWN","code":"LAWN","top":"landscape","vl":"F550 LAWN"},{"id":"a34","name":"KUBOTA SPRAY","spec":"Kubota Spray Rig","cat":"PHC RIG","shape":"BOXVAN","ops":["PHC","LC"],"status":"running","yard":"Rush Scottsville","plate":"","note":"","tag":"Spray Rig","hc":"carried","rides":["flatbed"],"fam":"PHC","code":"KUB","top":"utv","vl":"KUBOTA"},{"id":"a35","name":"AVANT '18","spec":"Avant 2018","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"parked","yard":"Brighton","plate":"","note":"","tag":"Avant","hc":"carried","rides":["flatbed"],"fam":"AVANT","code":"A18","top":"avant","vl":"AVANT 18"},{"id":"a36","name":"AVANT VIRGINIA","spec":"Avant Virginia","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"running","yard":"Off-site","plate":"","note":"","tag":"Avant","hc":"carried","rides":["flatbed"],"fam":"AVANT","code":"AVA","top":"avant","vl":"AVANT VA"},{"id":"a37","name":"RAYCO RG45X","spec":"Rayco Stump Grinder and Trailer","cat":"STUMP GRINDER","shape":"GRINDER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"ck79362","note":"","tag":"Grinder","hc":"towed","tt":"grinder","fam":"GRINDER","code":"RG45","top":"grinder","vl":"RG45X"},{"id":"a38","name":"WESTCHESTER F750","spec":"Westchester F750 Chip Truck","cat":"CHIP TRUCK","shape":"CHIPBOX","ops":["GTC"],"status":"running","yard":"Off-site","plate":"27638NG","note":"","tag":"Chip Truck","hc":"truck","pull":["chipper"],"avoid":["flatbed"],"fam":"CHIP","code":"WCH","top":"chipbody","vl":"WESTCHESTER"},{"id":"a39","name":"AVANT 755i","spec":"2025 Avant 755i (the big Avant)","cat":"AVANT","shape":"LOADER","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Big Avant","hc":"towed","tt":"flatbed","fam":"AVANT","code":"755","top":"avant","vl":"AVANT 755"},{"id":"a40","name":"F750 WOOD '27","spec":"2027 Ford F750 Wood Truck","cat":"DUMP TRUCK","shape":"DUMP","ops":["GTC"],"status":"running","yard":"Brighton","plate":"","note":"","tag":"Wood Truck","hc":"truck","pull":["flatbed"],"fam":"WOOD","code":"W27","top":"rolloff","vl":"WOOD '27"}];
 
 const SEED_PEOPLE = [{"id":"p01","name":"James","d":"JAMES","c":"#DC4520"},{"id":"p02","name":"James B","d":"JAMES B","c":"#DEB89A"},{"id":"p03","name":"Jason Beardsley","d":"JASON BEARDSLEY","c":"#8CC220"},{"id":"p04","name":"Jay H","d":"JAY H","c":"#0E7C86"},{"id":"p05","name":"Jeff Royston","d":"JEFF ROYSTON","c":"#66DFC0"},{"id":"p06","name":"Joe G","d":"JOE G","c":"#7A7A7A"},{"id":"p07","name":"Kevin V","d":"KEVIN V","c":"#2E4258"},{"id":"p08","name":"Kory H","d":"KORY H","c":"#9EC0DE"},{"id":"p09","name":"Liz DeMay","d":"LIZ DEMAY","c":"#A8D149"},{"id":"p10","name":"Luke","d":"LUKE","c":"#3B9DE8"},{"id":"p11","name":"Max","d":"MAX","c":"#A88C8C"},{"id":"p12","name":"Mike L","d":"MIKE L","c":"#FFC800"},{"id":"p13","name":"Mike T","d":"MIKE T","c":"#5A6670"},{"id":"p14","name":"Rebecca V","d":"REBECCA V","c":"#5A6670"},{"id":"p15","name":"Robert L","d":"ROBERT L","c":"#B02000"},{"id":"p16","name":"Sarah","d":"SARAH","c":"#00ACA0"},{"id":"p17","name":"Shawn","d":"SHAWN","c":"#A32B7C"},{"id":"p18","name":"Trevor","d":"TREVOR","c":"#A85BC8"}];
 
@@ -557,6 +557,23 @@ const TOP = {
     <path d="M17 18h6l1 40h-8z" fill={t.lo} />
     <rect x="13" y="55" width="14" height="9" rx="2" fill={t.hi} stroke={t.lo} strokeWidth="1.1" /></g>) },
 
+  /* CMC 100HD — the tall one: longer tracks, longer boom, hi-vis stripes on the boom */
+  spider100: { w: 44, l: 80, lab: [24, 32], art: (t) => (<g>
+    <path d="M5 15L-2 4l4-2 7 11zm34 0l7-11-4-2-7 11zM5 65l-7 11 4 2 7-11zm34 0l7 11-4 2-7-11z" fill={t.lo} />
+    <rect x="0.5" y="12" width="9" height="56" rx="4.5" fill="#0A0D10" />
+    <rect x="34.5" y="12" width="9" height="56" rx="4.5" fill="#0A0D10" />
+    <rect x="11" y="15" width="22" height="50" rx="2.5" fill={t.body} stroke={t.lo} strokeWidth="1.6" />
+    <path d="M18.5 17h7l1 58h-9z" fill={t.lo} />
+    {[24, 36, 48, 60].map((y) => <rect key={y} x="18.5" y={y} width="7" height="3" fill="#E5A100" />)}
+    <rect x="14" y="68" width="16" height="11" rx="2" fill={t.hi} stroke={t.lo} strokeWidth="1.2" /></g>) },
+
+  /* Bridgette — the F550 chip truck: shorter, lower body than the F650/F750s */
+  chipbody550: { w: 32, l: 94, lab: [30, 60], art: (t) => (<g><Whl w={32} l={94} />
+    <rect x="1" y="29" width="30" height="63" rx="2" fill={shade(t.body, 0.12)} stroke={t.lo} strokeWidth="1.4" />
+    <rect x="3.5" y="33" width="25" height="2" fill={t.lo} opacity=".6" />
+    <rect x="1" y="86" width="30" height="6" rx="1" fill={t.lo} opacity=".55" />
+    <Cab w={32} t={t} h={27} /></g>) },
+
   /* Avant — articulated, loader arms forward */
   avant: { w: 26, l: 50, lab: [30, 18], art: (t) => (<g><Whl w={26} l={50} r={8} inset={0} />
     <path d="M6 4h5l1 12H7zm9 0h5l-1 12h-5z" fill={t.lo} />
@@ -603,7 +620,7 @@ const TOP = {
 const VName = ({ w, lab, vl, code, ink, halo }) => {
   const [y0, len] = lab || [0, 40];
   vl = vl || code || "—"; code = code || vl;
-  const full = Math.min(11.5, (len - 9) / (vl.length * 0.55));
+  const full = Math.min(11.5, (len - 9) / (vl.length * 0.62));
   const use = full >= 7 ? vl : code;
   const size = full >= 7 ? full : Math.min(10.5, (len - 6) / (code.length * 0.6));
   return (
@@ -615,6 +632,64 @@ const VName = ({ w, lab, vl, code, ink, halo }) => {
 };
 
 const TGAP = 7;
+
+/* Side views, for units that read better from the side when the yard runs
+   horizontally (owner, Nov 24: the Avant's top view didn't look like one).
+   Drawn facing right, like the trucks. */
+const SIDE = {
+  avant: { w: 66, h: 38, art: (t, vl) => (<g>
+    <path d="M47 14 L62 21 L62 25 L46 19 Z" fill={t.body} stroke={t.lo} strokeWidth="1.2" />
+    <path d="M60 17 h6 v15 h-9 l3 -4 z" fill={t.lo} />
+    <rect x="4" y="16" width="52" height="11" rx="3" fill={t.body} stroke={t.lo} strokeWidth="1.3" />
+    <rect x="5" y="11" width="15" height="7" rx="2" fill={shade(t.body, -0.15)} stroke={t.lo} strokeWidth="1.1" />
+    <path d="M25 17 L27 2 H42 L44 17" fill="none" stroke={t.lo} strokeWidth="2.2" strokeLinejoin="round" />
+    <rect x="25" y="0.5" width="20" height="3.2" rx="1" fill={t.lo} />
+    <rect x="30" y="9" width="8" height="8" rx="1.5" fill="#20262b" />
+    <circle cx="14" cy="29" r="8" fill="#0A0D10" /><circle cx="14" cy="29" r="3" fill={t.lo} />
+    <circle cx="46" cy="29" r="8" fill="#0A0D10" /><circle cx="46" cy="29" r="3" fill={t.lo} />
+    <text x="34" y="24.5" textAnchor="middle" fill={t.ink} stroke={t.body} strokeWidth="2" paintOrder="stroke"
+          fontFamily="'Barlow Condensed',sans-serif" fontWeight="700" fontSize="7">{vl}</text>
+  </g>) },
+};
+const HGAP = 12;
+/** A unit's box when laid on its side: top views turned (length across), side views as drawn. */
+const hBox = (m) => { const sd = SIDE[m.top]; if (sd) return { w: sd.w, h: sd.h, side: sd }; const S = shapeOf(m); return { w: S.l, h: S.w, S }; };
+/** Lay out a load horizontally: the truck at the right facing right, what it tows behind it to the left. */
+function hLayout(members) {
+  const lead = members.find((m) => m.hc === "truck") || members[0];
+  const rest = members.filter((m) => m !== lead);
+  const seq = [lead, ...rest];                       // right to left
+  const boxes = seq.map(hBox);
+  const H = Math.max(...boxes.map((b) => b.h)) + 6;
+  const W = boxes.reduce((t, b) => t + b.w, 0) + HGAP * (seq.length - 1) + 14;
+  let x = W - 4;
+  const placed = seq.map((m, i) => { x -= boxes[i].w; const at = { m, b: boxes[i], x, y: (H - boxes[i].h) / 2 }; x -= HGAP; return at; });
+  return { W, H, placed, leadW: boxes[0].w };
+}
+function hDims(members) { const L = hLayout(members); return { w: L.W, h: L.H }; }
+/** The load drawn on its side, so the names read left to right. */
+function HLoad({ members, scale = 1, broken }) {
+  const { W, H, placed } = hLayout(members);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width={W * scale} height={H * scale} style={{ display: "block", overflow: "visible" }} aria-hidden="true">
+      {placed.map(({ m, b, x, y }, i) => {
+        const t = tones(m.fam), dim = m.status === "parked" ? 0.55 : 1;
+        const hitch = i > 0 && <line key={`h${m.id}`} x1={x + b.w} y1={H / 2} x2={placed[i - 1].x} y2={H / 2} stroke={shade(tones(placed[i - 1].m.fam).body, -0.45)} strokeWidth="3" />;
+        const ring = broken && <rect x={x - 3} y={y - 3} width={b.w + 6} height={b.h + 6} rx="4" fill="none" stroke="#D93B2B" strokeWidth="1.8" strokeDasharray="5 3" />;
+        if (b.side) return <g key={m.id} opacity={dim}>{hitch}<g transform={`translate(${x} ${y})`}>{b.side.art(t, m.vl || m.code)}</g>{ring}</g>;
+        const S = b.S;
+        return (
+          <g key={m.id} opacity={dim}>{hitch}
+            <g transform={`translate(${x + S.l} ${y}) rotate(90)`}>
+              {S.art(t)}
+              <VName w={S.w} lab={S.lab} vl={m.vl} code={m.code} ink={t.ink} halo={t.body} />
+            </g>{ring}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
 /* A shape we do not recognise must degrade, never take the board down. */
 const shapeOf = (m) => (m && TOP[m.top]) || TOP.flatbed;
 
@@ -955,43 +1030,43 @@ const textW = (t, bold) => {
   } catch { return t.length * 8.2; }
 };
 const plateW = (p, off) => Math.ceil(9 + 22 + 4 + textW(`${p.foreman ? "★ " : ""}${p.d || p.name || ""}`, p.foreman) + (off ? 34 : 0) + (p.foreman ? 4 : 0));
-function layoutBox(crew, i, core, hitch, anchors, offOf = () => null) {
+function layoutBox(crew, i, core, hitch, anchors, offOf = () => null, vw = CW) {
   const a = anchors[crew.id] || { x: i * 10, y: 0 };
   const ppl = (crew.people || []).map((id) => core.people[id]).filter((p) => p && !p.del)
     .sort((x, y) => (y.foreman ? 1 : 0) - (x.foreman ? 1 : 0));          // foremen first
-  const loads = loadsOf(crew, core.assets).map((l) => ({ ...l, d: loadDims(l.members) }));
-  const w = BPAD * 2 + Math.max(PL_COLS * (PL_W + 6) - 6, SL_COLS * (SL_W + SL_GAP) - SL_GAP);
-  const inner = w - BPAD * 2;
+  const loads = loadsOf(crew, core.assets).map((l) => ({ ...l, d: hDims(l.members) }));
+  const w = Math.max(480, vw - 32);
+  const PW = Math.round(Math.min(300, Math.max(190, w * 0.26)));          // people column
+  const pInner = PW - BPAD;
   const pSlots = [];
   let px = 0, py = 0;
   ppl.forEach((p) => {
-    const pw = Math.min(inner, plateW(p, offOf(p.id)));
-    if (px > 0 && px + pw > inner) { px = 0; py += PL_H; }
+    const pw = Math.min(pInner, plateW(p, offOf(p.id)));
+    if (px > 0 && px + pw > pInner) { px = 0; py += PL_H; }
     pSlots.push({ p, w: pw, x: BPAD + px, y: HEAD + BPAD + py });
     px += pw + 6;
   });
   const pH = ppl.length ? py + PL_H : PL_H;
-  // columns, SL_COLS to a row, plus one empty slot at the end ("new column")
-  const cells = [...loads, null];
-  const rows = [];
-  for (let r = 0; r * SL_COLS < cells.length; r++) {
-    const row = cells.slice(r * SL_COLS, (r + 1) * SL_COLS);
-    const hs = row.filter(Boolean).map((l) => l.d.h);
-    rows.push({ row, h: hs.length ? Math.max(...hs) + 6 : 64 });
-  }
-  const h = HEAD + BPAD + pH + 4 + rows.reduce((t, r) => t + r.h, 0) + BPAD;
-  const lSlots = [], cSlots = [];
-  let y = HEAD + BPAD + pH + 4, k = 0;
-  rows.forEach(({ row, h: rh }) => {
-    row.forEach((l, c) => {
-      const cx = BPAD + c * (SL_W + SL_GAP);
-      cSlots.push({ k, x: cx - 3, y, w: SL_W + 6, h: rh - 2, l });
-      if (l) lSlots.push({ l, k, x: cx + (SL_W - l.d.w) / 2, y: y + rh - 6 - l.d.h });
-      k++;
-    });
-    y += rh;
+  // equipment: each column (a load) a cell, flowing left → right, + one empty cell
+  const x0 = BPAD + PW + 8, EW = w - x0 - BPAD;
+  const cSlots = [], lSlots = [];
+  let cx = 0, cy = 0, rowH = 0, k = 0;
+  const rowsOut = [];
+  [...loads, null].forEach((l) => {
+    const cw = l ? l.d.w + 12 : 70, ch = l ? l.d.h + 12 : 56;
+    if (cx > 0 && cx + cw > EW) { rowsOut.push(rowH); cy += rowH + 6; cx = 0; rowH = 0; }
+    cSlots.push({ k, x: x0 + cx, y: HEAD + BPAD + cy, w: cw, h: ch, l, row: rowsOut.length });
+    cx += cw + 6; rowH = Math.max(rowH, ch); k++;
   });
-  return { crew, hint: a, w, h, ppl, loads, pSlots, lSlots, cSlots };
+  rowsOut.push(rowH);
+  // stretch each cell to its row's height and centre the load in it
+  cSlots.forEach((c) => {
+    c.h = rowsOut[c.row];
+    if (c.l) lSlots.push({ l: c.l, k: c.k, x: c.x + (c.w - c.l.d.w) / 2, y: c.y + (c.h - c.l.d.h) / 2 });
+  });
+  const eH = cy + rowH;
+  const h = HEAD + BPAD + Math.max(pH, eH) + BPAD;
+  return { crew, hint: a, w, h, ppl, loads, pSlots, lSlots, cSlots, PW };
 }
 
 const snap24 = (v) => Math.round(v / 24) * 24;
@@ -1551,10 +1626,11 @@ const CSS = scopeCss(`
 .lg .ring { background:none; border:1.5px dashed ${ST.tagged.color}; }
 
 /* --- the yard ------------------------------------------------------------ */
-.oy-g { display:grid; grid-template-columns:186px minmax(0,1fr) 330px;
+.oy-g { display:grid; grid-template-columns:186px minmax(0,1fr) 360px;
         grid-template-areas:"left canvas right"; gap:10px; padding:10px 16px 4px; }
 .left { grid-area:left; display:flex; flex-direction:column; gap:10px; }
 .left > div { flex:1; display:flex; }
+.left > div:not(:first-child) { flex:0 1 auto; min-height:110px; }
 .canvas-wrap { grid-area:canvas; overflow:auto; border:1px solid ${C.edgeSoft}; border-radius:4px; }
 .right { grid-area:right; display:flex; flex-direction:column; gap:10px; min-height:0; }
 .right > div { display:flex; min-height:0; }
@@ -1920,8 +1996,9 @@ function grabbed(e, members) {
   if (!svg) return members;
   const r = svg.getBoundingClientRect();
   const lead = members.find((m) => m.hc === "truck") || members[0];
-  const cut = (shapeOf(lead).l + TGAP / 2) / loadDims(members).h;
-  return (e.clientY - r.top) / Math.max(1, r.height) > cut ? members.filter((m) => m !== lead) : members;
+  const L = hLayout(members);
+  const cut = (L.W - 4 - L.leadW - HGAP / 2) / L.W;           // left of the hitch = what is towed
+  return (e.clientX - r.left) / Math.max(1, r.width) < cut ? members.filter((m) => m !== lead) : members;
 }
 
 const LoadCard = ({ members, onBegin, onClick, scale = 1, label = true, broken, odd, linked, onLink }) => (
@@ -1933,7 +2010,7 @@ const LoadCard = ({ members, onBegin, onClick, scale = 1, label = true, broken, 
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onLink(); }}>{linked ? "\u{1F512}" : "\u26AD"}</span>
     )}
-    <TopLoad members={members} scale={scale} broken={broken} />
+    <HLoad members={members} scale={scale} broken={broken} />
     {label && <span className="lcard-t">{members.map((m) => m.tag).join(" · ")}</span>}
   </span>
 );
@@ -2000,7 +2077,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
   }, []);
   const boxes = packBoxes(live(day.crews).map((c) => ({ ...c, people: (c.people || []).filter((pid) => !offToday(pid)) }))
     .filter((c) => !c.ops || ops[c.ops] !== false)
-    .map((c, i) => layoutBox(c, i, core, hitch2, anchors, offToday)), vw);
+    .map((c, i) => layoutBox(c, i, core, hitch2, anchors, offToday, vw)), vw);
   /* the "+ New crew" tile sits where the next box would go; the canvas grows to fit */
   const lastBox = boxes[boxes.length - 1];
   const NEW_W = 220;
@@ -2190,7 +2267,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
                   return (
                     <div key={k.key} className="krow">
                       <span className="krow-h stencil">{k.label}</span>
-                      <div className="krow-b">{list.map((g) => binCard(g, "yard", 0.7, false))}</div>
+                      <div className="krow-b">{list.map((g) => binCard(g, "yard", 0.8, false))}</div>
                     </div>
                   );
                 })}
@@ -2203,7 +2280,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
               <div className="bin-h">BROKEN · DO NOT OPERATE<b>{brokeList.length}</b></div>
               <div className="hint" style={{ padding: "0 8px" }}>Stays broken on later days until you drag it out. Taking it out on a later day doesn't change the days before.</div>
               <div className="bin-b row">
-                {brokeList.map((g) => binCard(g, "broke", 0.6, true))}
+                {brokeList.map((g) => binCard(g, "broke", 0.55, true))}
                 {!brokeList.length && <span className="hint">nothing broken</span>}
               </div>
             </div>
@@ -3840,7 +3917,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
           ) : (
             <div className="mini stencil" style={{ borderLeftColor: drag.item.kind === "asset" ? (ST[(core.assets[drag.item.id] || {}).status] || ST.running).color : (drag.item.color || C.ink), padding: "6px 11px", fontSize: 12, gap: 7, flexDirection: drag.item.kind === "stack" ? "column" : "row", alignItems: "center" }}>
               {drag.item.kind === "stack" && (drag.item.members || []).length > 0 && (
-                <span className="ghost-shape"><TopLoad members={drag.item.members.map((m) => dayCore.assets[m]).filter(Boolean)} scale={0.62} /></span>
+                <span className="ghost-shape"><HLoad members={drag.item.members.map((m) => dayCore.assets[m]).filter(Boolean)} scale={0.8} /></span>
               )}
               {drag.item.shape && <MachineChip shape={drag.item.shape} />}{drag.item.name}
             </div>

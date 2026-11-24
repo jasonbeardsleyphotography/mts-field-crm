@@ -159,6 +159,11 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   outlined, ★. People: colour picker (PERSON_COLORS, #008299 first — the colour sent for Alexander), Off duty only
   (older sick/training marks still count as off), `person.home` yard|office — Office bin under Off Duty (Liz D p09 and
   Mike T p13 default to the office, OFFICE_DEFAULT). Yard bin groups loads in rough rows by kind (EQUIP_GROUPS).
+  HORIZONTAL YARD (owner, Nov 24): each crew is a full-width band (people left, equipment flowing right; layoutBox takes
+  the visible width). Loads are drawn by `HLoad` (hLayout/hDims): truck at the right facing right, towed units to its
+  left; top views are turned on their side (names read left→right), units in `SIDE` (the Avant) use a side view.
+  Standard drawings: every 83 ft CMC = `spider`, the 100HD = `spider100`, all F650/F750 chip trucks = `chipbody`,
+  Bridgette (F550) = `chipbody550`, all wood trucks = `rolloff`. `grabbed` = the part LEFT of the hitch is towed.
   Room and yard are decided by crew MEMBERSHIP (`crewHas`), not screen positions (that left dropped people/trucks in
   both places). ✎ Edit on each crew opens CrewSheet: rename, operation, add/remove people and equipment via pickers
   (reuses yardMove). People tab (`PeopleView`): month calendar; pick a person + reason (vac/sick/train/light/on), tap or
@@ -226,11 +231,18 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   the shop/tagged out; #N PERSON vs people working that day (week cells); scheduling tags (09 MUST BE HOME, NEIGHBOR
   PERMISSION, OBSTACLE, 07 SCHEDULE…, 05 …, 04 lines) → the Schedule's "Office call list"; 06 gear → "load:" reminders.
   sched entries store the job's `tags` (backfilled once by the Schedule) so the Shop Board can check without the backlog.
-  "Best order" per crew: shortest straight-line loop yard → stops → yard (every order tried up to 8 stops; nearest-next
-  + 2-opt above). Yard addresses live in `mts-shop` key `settings` ({ yards: { Brighton|Rush Scottsville: {addr,lat,lng} } },
-  "Yards" button; Census lookup on the server, Google's geocoder in the browser as fallback). Default yard by crew op
-  (PHC/LC → Rush Scottsville, else Brighton); a per-day override is stored in sched.<iso> as assign["_yard:<crewId>"]
-  (keys starting "_" are not jobs).
+  ONE SHOP (owner, Nov 24): every crew runs out of 400 Western Blvd (`src/dispatch/shopLocation.js`, `useShop`):
+  looked up once with Google's geocoder (biased to the Rochester area; the sandbox can't reach the Census geocoder) and
+  saved as settings.yards.Shop; a ★ on every map (Schedule, Backlog, Quick pick). The Yards editor and per-crew yard
+  choice are gone. "Best order" = shortest straight-line loop shop → stops → shop.
+  Schedule list: oldest first by default (`mts-sched-sort`), tags as pills on every row, ⏸/🗑 only on the tapped row.
+  Emergency / Priority beat Purgatory and on hold. LIFT + LIFT TALL! = tall preferred (soft `prefer` note), 83 ok.
+  MULTI-DAY JOBS: `addToDay` splits a job bigger than what the crew has left that day into today's share + full days on
+  the same crew's next weekdays (Sat/Sun skipped); entries carry {hrs (this day's share), total, part, parts, days}.
+  `entryHrs` counts a part's share. Taking off / moving (moveTo) takes every day of it; moving re-plans from the target.
+  WEEK VIEW (Day | Week switch, `mts-sched-mode`): `WeekGrid` = crews × Mon–Sat, each cell a load bar (vs dayOsh of the
+  people working that day), the jobs (1/3 parts), ⚠ when a job doesn't suit the crew; HTML5 drag from the list into a
+  cell or between cells; tap a day header to open it. Boards for each day come from crewsForDay.
 
 ## Soil (/soil) — property soil maps (owner asked for it, Nov 2026)
 - Same separate build as Dispatch (`vite.dispatch.config.js` has inputs dispatch.html + soil.html; output

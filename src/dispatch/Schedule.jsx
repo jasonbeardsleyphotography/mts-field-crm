@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from "react";
 import { C } from "./theme";
 import { STATUS, money, jobColor, singleOpsJobUrl, tagShort } from "./backlogModel";
 import JobHours from "./JobHours.jsx";
@@ -12,6 +12,7 @@ import { shopGet, shopDays, shopPatch, shopSchedRange, stampNow, shopSettings, s
 import { freshCore, mergeCore, live, isoOf, addDays, weekStartOf, assetsOn } from "./shop/ShopBoard.jsx";
 import { sharedDay, setSharedDay } from "./sharedDay";
 import { checkJob, TAG_RULES, UNMAPPED_TAGS } from "./crewCheck";
+import { useShop, starIcon, SHOP_ADDR } from "./shopLocation";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Schedule — put backlog jobs on the Shop Board's crews for a day.
@@ -38,9 +39,6 @@ const byCrewRaw = (assign) => {
   Object.entries(assign || {}).forEach(([ref, a]) => { if (a?.crew && !ref.startsWith("_")) (out[a.crew] = out[a.crew] || []).push({ ref, ...a }); });
   return out;
 };
-const YARD_NAMES = ["Brighton", "Rush Scottsville"];
-const defaultYard = (c) => (["PHC", "LC"].includes(c.ops) ? "Rush Scottsville" : "Brighton");
-const yardKey = (crewId) => `_yard:${crewId}`;     // per-day yard choice, stored beside the jobs
 
 /** Round-trip length (km) yard → stops in order → yard. */
 const tripKm = (yard, pts) => {
@@ -100,7 +98,7 @@ export async function crewsForDay(iso) {
   return { core, off, crews: live(crews).filter((c) => ["GTC", "PHC", "LC"].includes(c.ops || "GTC")), from: day?.crews ? from : "standing" };
 }
 
-function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick, yardOf, children }) {
+function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick, yardOf, shop, children }) {
   const el = useRef(null), map = useRef(null), layers = useRef([]), fitted = useRef(false);
   const pickRef = useRef(onPick); pickRef.current = onPick;
   const [err, setErr] = useState("");
@@ -146,17 +144,13 @@ function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick, yardOf
       const path = list.map((x) => x.p);
       if (y) {
         layers.current.push(new g.Polyline({ map: map.current, path: [y, ...path, y], strokeColor: crewColor(crew), strokeOpacity: 0.35, strokeWeight: 2, clickable: false }));
-        if (!yardsDrawn.has(`${y.lat},${y.lng}`)) {
-          yardsDrawn.add(`${y.lat},${y.lng}`); bounds.extend(y);
-          layers.current.push(new g.Marker({ map: map.current, position: y, zIndex: 5, clickable: false, title: `Yard: ${y.name}`,
-            icon: { path: "M -7 -7 L 7 -7 L 7 7 L -7 7 Z", fillColor: "#E7E2D6", fillOpacity: 1, strokeColor: "#0b0e11", strokeWeight: 1.5, scale: 1 },
-            label: { text: "Y", color: "#0b0e11", fontSize: "10px", fontWeight: "700" } }));
-        }
+        if (!yardsDrawn.has(`${y.lat},${y.lng}`)) { yardsDrawn.add(`${y.lat},${y.lng}`); bounds.extend(y); }
       }
       if (path.length > 1) layers.current.push(new g.Polyline({ map: map.current, path, strokeColor: crewColor(crew), strokeOpacity: 0.9, strokeWeight: 3, clickable: false }));
     });
+    if (shop) layers.current.push(new g.Marker({ map: map.current, position: shop, zIndex: 5, clickable: false, title: `Shop — ${shop.addr}`, icon: starIcon(g) }));
     if (any && !fitted.current) { map.current.fitBounds(bounds, 30); fitted.current = true; }
-  }, [jobs, points, assign, selected, crewColor, yardOf]);
+  }, [jobs, points, assign, selected, crewColor, yardOf, shop]);
   useEffect(() => { const p = selected && points[selected]; if (p && map.current) map.current.panTo(p); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div style={{ position: "relative", height: "100%", minHeight: 320 }}>
@@ -169,12 +163,13 @@ function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick, yardOf
 
 /* Red: the crew can't do it as set up. Amber: call about it. Grey: what to load. */
 function JobChecks({ r }) {
-  if (!r || (!r.problems && !r.calls.length && !r.gear.length)) return null;
+  if (!r || (!r.problems && !r.calls.length && !r.gear.length && !(r.prefer || []).length)) return null;
   const chip = (bg, fg) => ({ display: "inline-block", fontSize: 10.5, padding: "1px 6px", borderRadius: 2, background: bg, color: fg, marginRight: 4, marginTop: 3 });
   return (
     <div>
       {r.missing.map((m, i) => <span key={i} style={chip("rgba(217,59,43,.18)", "#ff9a8f")} title={m.why}>needs {m.label}{m.why !== "not on this crew" ? ` · ${m.why}` : ""}</span>)}
       {r.short && <span style={chip("rgba(217,59,43,.18)", "#ff9a8f")}>{r.short.need}-person job · crew has {r.short.have}</span>}
+      {(r.prefer || []).map((t, i) => <span key={`p${i}`} style={chip("rgba(229,161,0,.16)", "#f0c050")}>{t}</span>)}
       {r.calls.length > 0 && <span style={chip("rgba(229,161,0,.16)", "#f0c050")} title={r.calls.join("\n")}>📞 {r.calls.length} to cover when calling</span>}
       {r.gear.length > 0 && <span style={chip("#2a333a", "#98A3AB")}>load: {r.gear.join(", ")}</span>}
     </div>
@@ -228,42 +223,8 @@ function TagRules({ onClose }) {
   );
 }
 
-function YardSettings({ settings, onSaved, onClose }) {
-  const names = [...new Set([...YARD_NAMES, ...Object.keys(settings.yards || {})])];
-  const [vals, setVals] = useState(() => Object.fromEntries(names.map((n) => [n, settings.yards?.[n]?.addr || ""])));
-  const [busy, setBusy] = useState(""), [msg, setMsg] = useState("");
-  const save = async (name) => {
-    setBusy(name); setMsg("");
-    try { onSaved(await saveYard(name, vals[name])); setMsg(`${name} saved.`); }
-    catch (e) {
-      if (e.message !== "address_not_found") { setMsg(`Couldn't save (${e.message}).`); setBusy(""); return; }
-      // the free lookup missed it: try Google's, in this browser
-      try {
-        await loadMaps();
-        const res = await new Promise((ok) => new window.google.maps.Geocoder().geocode({ address: vals[name] }, (r, st) => ok(st === "OK" ? r[0].geometry.location : null)));
-        if (!res) throw new Error();
-        onSaved(await saveYard(name, vals[name], { lat: res.lat(), lng: res.lng() })); setMsg(`${name} saved.`);
-      } catch { setMsg("That address couldn't be found. Check the spelling and include the town."); }
-    }
-    setBusy("");
-  };
-  return (
-    <div className="card" style={{ padding: 12, marginBottom: 10, display: "grid", gap: 8, maxWidth: 640 }}>
-      <div className="st" style={{ fontSize: 13 }}>Yard addresses</div>
-      <div className="hint">Where crews start and finish. "Best order" plans the shortest loop from the crew's yard and back (straight-line distance, not roads).</div>
-      {names.map((n) => (
-        <div key={n} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ width: 130 }}>{n}</span>
-          <input className="inp" style={{ flex: "1 1 240px" }} placeholder="Street, town, NY zip" value={vals[n] || ""} onChange={(e) => setVals({ ...vals, [n]: e.target.value })} />
-          <button className="btn st" disabled={!vals[n]?.trim() || busy === n} onClick={() => save(n)}>{busy === n ? "Finding…" : "Save"}</button>
-        </div>
-      ))}
-      {msg && <div className="hint">{msg}</div>}
-      <div><button className="btn st" onClick={onClose}>Close</button></div>
-    </div>
-  );
-}
-
+/** Next weekday (Mon–Fri) after an ISO date. */
+const nextWorkday = (d) => { const x = new Date(d + "T12:00:00"); do { x.setDate(x.getDate() + 1); } while (x.getDay() === 0 || x.getDay() === 6); return isoOf(x); };
 const urgency = (j) => (j.status === "emergency" ? 0 : j.status === "priority" ? 1 : 2);
 
 /* Emergency / Priority jobs not on any crew this week — impossible to miss. */
@@ -290,6 +251,108 @@ function UrgentBanner({ jobs, assign, plannedOn, onPick }) {
   );
 }
 
+/* ═══ WEEK VIEW ═══════════════════════════════════════════════════════════════
+   Crews down the side, Mon–Sat across. Each cell = that crew's day: a load bar
+   (tree-work hours vs a normal day for the people working), the jobs in order
+   (multi-day jobs show "2/3"), and warnings. Drag a job from the list on the
+   right into any cell, or drag a job between cells to move it (all its days
+   move together). Tap a day's header to open that day. */
+function WeekGrid({ days, boards, week, jobBy, entryHrs, crewColor, selected, onSelect, onDropJob, onMoveJob, onRemove, onOpenDay, checksFor, today }) {
+  const [over, setOver] = useState(null);
+  // crews: every crew on any day of the week, in the order of the first day that has them
+  const crews = [];
+  const seen = new Set();
+  days.forEach((d) => (boards[d]?.crews || []).forEach((c) => { if (!seen.has(c.id)) { seen.add(c.id); crews.push(c); } }));
+  const peopleOnDay = (d, c) => { const b = boards[d]; return b ? (c.people || []).filter((id) => b.core.people[id] && !b.core.people[id].del && !b.off.has(id)).length : 0; };
+  const cellJobs = (d, crewId) => Object.entries(week[d]?.assign || {}).filter(([r, a]) => a?.crew === crewId && !r.startsWith("_"))
+    .map(([ref, a]) => ({ ref, ...a })).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const dayTotals = (d) => { const all = Object.entries(week[d]?.assign || {}).filter(([r, a]) => a?.crew && !r.startsWith("_")).map(([ref, a]) => ({ ref, ...a })); return { n: all.length, h: all.reduce((t, x) => t + entryHrs(x), 0) }; };
+  const drop = (e, d, crewId) => {
+    e.preventDefault(); setOver(null);
+    const mv = e.dataTransfer.getData("text/x-wk");
+    if (mv) { const [ref, from] = mv.split("|"); onMoveJob(from, ref, d, crewId); return; }
+    const ref = e.dataTransfer.getData("text/x-job");
+    if (ref) onDropJob(d, ref, crewId);
+  };
+  if (!crews.length) return <div className="hint">Loading the week's crews…</div>;
+  const col = `150px repeat(${days.length}, minmax(150px, 1fr))`;
+  return (
+    <div className="card" style={{ overflow: "auto" }}>
+      <div style={{ display: "grid", gridTemplateColumns: col, minWidth: 150 + days.length * 150 }}>
+        <div style={{ padding: 8, borderBottom: `1px solid ${C.edge}` }} className="hint">Crew</div>
+        {days.map((d) => {
+          const dt = new Date(d + "T12:00:00"), t = dayTotals(d);
+          return (
+            <button key={d} onClick={() => onOpenDay(d)} title="Open this day"
+                    style={{ padding: "6px 8px", textAlign: "left", borderBottom: `1px solid ${C.edge}`, borderLeft: `1px solid ${C.edgeSoft}`, background: d === today ? "#252e35" : "transparent" }}>
+              <b className="st" style={{ fontSize: 12.5 }}>{DN[dt.getDay()]} {dt.getDate()}</b>
+              <div className="hint" style={{ padding: 0 }}>{t.n} job{t.n === 1 ? "" : "s"} · {fmtH(t.h, 0)}</div>
+            </button>
+          );
+        })}
+        {crews.map((c) => (
+          <Fragment key={c.id}>
+            <div style={{ padding: 8, borderBottom: `1px solid ${C.edgeSoft}`, borderLeft: `4px solid ${crewColor(c.id)}` }}>
+              <b className="st" style={{ fontSize: 12.5 }}>{c.name}</b>
+              <div className="hint" style={{ padding: 0 }}>{c.ops || "GTC"}</div>
+            </div>
+            {days.map((d) => {
+              const onBoard = (boards[d]?.crews || []).some((x) => x.id === c.id);
+              const list = cellJobs(d, c.id);
+              const ppl = peopleOnDay(d, c), target = dayOsh(ppl);
+              const load = list.reduce((t, x) => t + entryHrs(x), 0);
+              const pct = target ? load / target : 0;
+              const barCol = !list.length ? C.edge : pct < 0.8 ? C.amber : pct <= 1.1 ? C.green : C.red;
+              const key = `${d}|${c.id}`;
+              return (
+                <div key={key} onDragOver={(e) => { if (onBoard) { e.preventDefault(); if (over !== key) setOver(key); } }} onDragLeave={() => setOver((o) => (o === key ? null : o))}
+                     onDrop={(e) => onBoard && drop(e, d, c.id)}
+                     style={{ padding: 6, borderBottom: `1px solid ${C.edgeSoft}`, borderLeft: `1px solid ${C.edgeSoft}`, minHeight: 74, minWidth: 0, overflow: "hidden",
+                              background: !onBoard ? "repeating-linear-gradient(135deg, #1a1f23 0 6px, #171b1f 6px 12px)" : over === key ? "#2b353d" : d === today ? "#1f262c" : "transparent",
+                              outline: over === key ? `2px solid ${crewColor(c.id)}` : "none", outlineOffset: -2 }}>
+                  {!onBoard ? <div className="hint" style={{ padding: 0 }}>not on the board</div> : (
+                    <>
+                      <div title={`${fmtH(load)} of a normal ${fmtH(target, 2)} day for ${ppl} people`} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                        <div style={{ flex: 1, height: 6, borderRadius: 3, background: "#2a333a", overflow: "hidden" }}>
+                          <div style={{ width: `${Math.min(100, pct * 100)}%`, height: "100%", background: barCol }} />
+                        </div>
+                        <span className="mono" style={{ fontSize: 10.5, color: barCol === C.edge ? C.inkFaint : barCol }}>{fmtH(load, 0)}/{fmtH(target, 0)}</span>
+                      </div>
+                      <div style={{ display: "grid", gap: 3 }}>
+                        {list.map((x) => {
+                          const j = jobBy[x.ref], r = checksFor(d, c, x);
+                          const urgent = j?.status === "emergency" ? "#FF1744" : j?.status === "priority" ? "#FF4FD8" : null;
+                          return (
+                            <div key={x.ref} draggable onDragStart={(e) => { e.dataTransfer.setData("text/x-wk", `${x.ref}|${d}`); e.dataTransfer.effectAllowed = "move"; }}
+                                 onClick={() => onSelect(x.ref)} title={`${j?.name || x.label} — ${j?.town || x.town}`}
+                                 style={{ display: "flex", gap: 4, alignItems: "center", padding: "3px 5px", borderRadius: 3, cursor: "grab", fontSize: 11.5, minWidth: 0,
+                                          background: selected === x.ref ? C.tileHi : C.tile, borderLeft: `3px solid ${urgent || (j ? jobColor(j) : C.edge)}`,
+                                          boxShadow: r?.problems ? "inset 0 0 0 1px #D93B2B" : "none" }}>
+                              <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                {x.parts > 1 && <b style={{ color: "#9cc4e4", marginRight: 3 }}>{x.part}/{x.parts}</b>}{j ? j.name : x.label}
+                                <span className="hint" style={{ padding: 0 }}> {j?.town || x.town}</span>
+                              </span>
+                              {r?.problems > 0 && <span title="Doesn't suit this crew — open the day" style={{ color: "#ff9a8f" }}>⚠</span>}
+                              <span className="mono" style={{ fontSize: 10.5, color: C.inkDim }}>{fmtH(entryHrs(x), 1).replace(/ .*/, "")}</span>
+                              <button className="btn" style={{ padding: "0 4px", fontSize: 10 }} title="Take off (all its days)" onClick={(e) => { e.stopPropagation(); onRemove(d, x.ref); }}>✕</button>
+                            </div>
+                          );
+                        })}
+                        {!list.length && <div className="hint" style={{ padding: 0 }}>{ppl ? "drop jobs here" : "nobody working"}</div>}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </Fragment>
+        ))}
+      </div>
+      <div className="hint" style={{ padding: "6px 10px" }}>Bar = tree work vs a normal day ({fmtH(dayOsh(1), 2)} per person working): amber light · green about right · red heavy. Drag jobs from the list into a day, or between days. Jobs bigger than a day carry on to the crew's next weekdays (shown 1/2, 2/2).</div>
+    </div>
+  );
+}
+
 export default function Schedule({ me }) {
   useHoursUnit();
   const [iso, setIso] = useState(() => sharedDay(isoOf(new Date())));
@@ -301,21 +364,25 @@ export default function Schedule({ me }) {
   const [rulesOpen, setRulesOpen] = useState(false);
   const [pausing, setPausing] = useState(false);
   const [board, setBoard] = useState(null);          // { core, crews, from }
+  const [mode, setMode] = useState(() => { try { return localStorage.getItem("mts-sched-mode") || "day"; } catch { return "day"; } });
+  useEffect(() => { try { localStorage.setItem("mts-sched-mode", mode); } catch {} }, [mode]);
+  const [boards, setBoards] = useState({});          // iso -> crews for that day (week view)
   const [assign, setAssign] = useState({});          // this day: ref -> { crew, order, label, hrs, at, by }
   const [week, setWeek] = useState({});              // iso -> assign (planned on other days)
   const [selected, setSelected] = useState(null);
   const [q, setQ] = useState("");
   const [show, setShow] = useState("open");          // open | all
-  const [sort, setSort] = useState("late");
+  const [sort, setSort] = useState(() => { try { return localStorage.getItem("mts-sched-sort") || "old"; } catch { return "old"; } });
+  useEffect(() => { try { localStorage.setItem("mts-sched-sort", sort); } catch {} }, [sort]);
   const [saving, setSaving] = useState(0);
   const [err, setErr] = useState("");
-  const [settings, setSettings] = useState({ yards: {} });
-  const [yardsOpen, setYardsOpen] = useState(false);
+  const shop = useShop();
   const gen = useRef(0);
-  useEffect(() => { shopSettings().then(setSettings); }, []);
 
   const { points, state: geoState } = useJobPoints(jobs);
   const jobBy = useMemo(() => Object.fromEntries(jobs.map((j) => [j.ref, j])), [jobs]);
+  /** The hours an entry puts on its day: a multi-day part's share, else the job's tree work. */
+  const entryHrs = useCallback((x) => (x.parts ? (x.hrs || 0) : jobBy[x.ref] ? jobBy[x.ref].treeHrs : (x.hrs ?? 0)), [jobBy]);
 
   // load the day: crews from the Shop Board + this week's schedules
   useEffect(() => {
@@ -327,6 +394,17 @@ export default function Schedule({ me }) {
       setBoard(b); setWeek(wk); setAssign(wk[iso]?.assign || {});
     })();
   }, [iso]);
+
+  // week view: the crews for every day of the week (each day can differ on the Shop Board)
+  const weekStartIso = isoOf(weekStartOf(new Date(iso + "T12:00:00")));
+  const weekDays = useMemo(() => [1, 2, 3, 4, 5, 6].map((i) => isoOf(addDays(new Date(weekStartIso + "T12:00:00"), i))), [weekStartIso]);
+  useEffect(() => {
+    if (mode !== "week") return;
+    let dead = false;
+    Promise.all(weekDays.map((d) => crewsForDay(d).then((b) => [d, b]))).then((list) => { if (!dead) setBoards(Object.fromEntries(list)); });
+    const t = setInterval(async () => { if (document.hidden || savingRef.current) return; const wk = await shopSchedRange(weekStartIso, 7); if (!dead && !savingRef.current) setWeek(wk); }, 10000);
+    return () => { dead = true; clearInterval(t); };
+  }, [mode, weekStartIso]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // pick up other people's changes to this day
   const savingRef = useRef(0); savingRef.current = saving;
@@ -370,34 +448,37 @@ export default function Schedule({ me }) {
   }, [assign]);
   const plannedOn = useMemo(() => {
     const out = {};
-    Object.entries(week).forEach(([d, s]) => { if (d !== iso) Object.entries(s.assign || {}).forEach(([ref, a]) => { if (a?.crew && !ref.startsWith("_")) out[ref] = d; }); });
+    Object.entries(week).forEach(([d, s]) => { if (d !== iso || mode === "week") Object.entries(s.assign || {}).forEach(([ref, a]) => { if (a?.crew && !ref.startsWith("_")) out[ref] = out[ref] && out[ref] < d ? out[ref] : d; }); });
     return out;
-  }, [week, iso]);
+  }, [week, iso, mode]);
+  const checksFor = useCallback((d, c, x) => {
+    const b = boards[d]; if (!b) return null;
+    const on = (c.people || []).filter((id) => b.core.people[id] && !b.core.people[id].del && !b.off.has(id)).length;
+    return checkJob(jobBy[x.ref]?.tags || x.tags, c, b.core.assets, on);
+  }, [boards, jobBy]);
 
-  const save = async (entries) => {
+  const isoRef = useRef(iso); isoRef.current = iso;
+  /** Save job entries on any day (the day shown, or another day of the week). */
+  const saveDay = async (dayIso, entries) => {
     const at = stampNow(), by = me?.name || me?.email || "?";
     const patch = {};
     Object.entries(entries).forEach(([ref, v]) => { patch[ref] = { ...v, at, by }; });
-    setAssign((cur) => ({ ...cur, ...patch }));
+    if (dayIso === isoRef.current) setAssign((cur) => ({ ...cur, ...patch }));
+    setWeek((w) => ({ ...w, [dayIso]: { ...(w[dayIso] || {}), assign: { ...((w[dayIso] || {}).assign || {}), ...patch } } }));
     setSaving((n) => n + 1);
-    const merged = await shopPatch(`sched.${iso}`, { assign: patch });
+    const merged = await shopPatch(`sched.${dayIso}`, { assign: patch });
     setSaving((n) => n - 1);
     if (!merged) setErr("Couldn't save the last change — check your connection. It will show again once saved.");
-    else { setErr(""); setWeek((w) => ({ ...w, [iso]: merged })); }
+    else { setErr(""); setWeek((w) => ({ ...w, [dayIso]: merged })); }
   };
+  const save = (entries) => saveDay(iso, entries);
   const label = (j) => ({ label: `${j.name} #${j.ref}`, town: j.town, hrs: j.treeHrs ?? j.hrs ?? 0, tags: j.tags || [] });
-  const crewYardName = useCallback((crewId) => {
-    const c = (board?.crews || []).find((x) => x.id === crewId);
-    return assign[yardKey(crewId)]?.yard || (c ? defaultYard(c) : "Brighton");
-  }, [board, assign]);
-  const yardOf = useCallback((crewId) => {
-    const name = crewYardName(crewId), y = settings.yards?.[name];
-    return y ? { lat: y.lat, lng: y.lng, name } : null;
-  }, [crewYardName, settings]);
+  // every crew runs out of the one shop (owner, Nov 24)
+  const yardOf = useCallback(() => shop, [shop]);
   const autoOrder = (crewId) => {
     const items = byCrew[crewId] || [];
     const yard = yardOf(crewId);
-    if (!yard) { setErr(`Set the ${crewYardName(crewId)} yard address first (Yards button, top right) so the route can start there.`); setYardsOpen(true); return; }
+    if (!yard) { setErr(`Still finding the shop (${SHOP_ADDR}) on the map — try again in a moment.`); return; }
     const placed = items.filter((x) => points[x.ref]), unplaced = items.filter((x) => !points[x.ref]);
     const ord = bestOrder(yard, placed.map((x) => ({ p: points[x.ref] })));
     const finalList = [...ord.map((i) => placed[i]), ...unplaced];
@@ -405,13 +486,54 @@ export default function Schedule({ me }) {
     finalList.forEach((x, i) => { if ((x.order ?? -1) !== i) entries[x.ref] = { ...assign[x.ref], order: i }; });
     if (Object.keys(entries).length) save(entries);
   };
-  const addTo = (ref, crew) => {
+  /* Put a job on a crew on a day. A job bigger than what the crew has left that
+     day is split: today's share, then the same crew on the next weekdays (Sat/Sun
+     skipped), a full day each, until it's done — "Day 1 of 3", "Day 2 of 3"…
+     Each day counts only its own share. All its days are stored on each part,
+     so taking it off (or moving it) takes every day with it. */
+  const addToDay = async (dayIso, ref, crew, dayBoard, dayAssign) => {
     const j = jobBy[ref]; if (!j) return;
-    const list = (byCrew[crew] || []).filter((x) => x.ref !== ref);
-    save({ [ref]: { crew, order: list.length ? Math.max(...list.map((x) => x.order ?? 0)) + 1 : 0, ...label(j) } });
+    const b = dayBoard || boards[dayIso] || board;
+    const c = (b?.crews || []).find((x) => x.id === crew);
+    const ppl = c ? (c.people || []).filter((id) => b.core.people[id] && !b.core.people[id].del && !b.off.has(id)).length : 2;
+    const cap = Math.max(dayOsh(ppl || 1), 1);
+    const A = dayAssign || (dayIso === iso ? assign : week[dayIso]?.assign) || {};
+    const list = Object.entries(A).filter(([r, a]) => a?.crew === crew && r !== ref && !r.startsWith("_")).map(([r, a]) => ({ ref: r, ...a }));
+    const used = list.reduce((t, x) => t + entryHrs(x), 0);
+    const total = j.treeHrs ?? j.hrs ?? 0;
+    const left = cap - used;
+    const parts = [];
+    let first = total <= Math.max(left, 0) + 0.25 ? total : left >= 1 ? left : Math.min(total, cap);
+    parts.push(first);
+    let rest = total - first;
+    while (rest > 0.25 && parts.length < 20) { const p = Math.min(rest, cap); parts.push(p); rest -= p; }
+    if (rest > 0) parts[parts.length - 1] += rest;
+    const days = [dayIso];
+    while (days.length < parts.length) days.push(nextWorkday(days[days.length - 1]));
+    const base = { crew, ...label(j), total };
+    const multi = parts.length > 1 ? { parts: parts.length, days } : { parts: null, days: null };
+    for (let k = 0; k < parts.length; k++) {
+      const order = k === 0 ? (list.length ? Math.max(...list.map((x) => x.order ?? 0)) + 1 : 0) : -1;   // later days: first thing in the morning
+      await saveDay(days[k], { [ref]: { ...base, ...multi, part: parts.length > 1 ? k + 1 : null, hrs: parts[k], order } });
+    }
     setSelected(null);
   };
-  const remove = (ref) => save({ [ref]: { ...(assign[ref] || {}), crew: null } });
+  const addTo = (ref, crew) => addToDay(iso, ref, crew);
+  /** Take a job off (every day of it, if it spans several). */
+  const removeFrom = (dayIso, ref) => {
+    const e = (dayIso === iso ? assign : week[dayIso]?.assign || {})[ref] || {};
+    (e.days && e.days.length ? e.days : [dayIso]).forEach((d) => saveDay(d, { [ref]: { crew: null, days: null, parts: null, part: null } }));
+  };
+  const remove = (ref) => removeFrom(iso, ref);
+  /** Move a job (all its days) to another crew / day: it's re-planned from there. */
+  const moveTo = async (fromIso, ref, toIso, crew) => {
+    const e = (fromIso === iso ? assign : week[fromIso]?.assign || {})[ref] || {};
+    if (fromIso === toIso && e.crew === crew) return;
+    const gone = new Set(e.days && e.days.length ? e.days : [fromIso]);
+    await Promise.all([...gone].map((d) => saveDay(d, { [ref]: { crew: null, days: null, parts: null, part: null } })));
+    const A = { ...((toIso === iso ? assign : week[toIso]?.assign) || {}) }; delete A[ref];
+    await addToDay(toIso, ref, crew, null, A);
+  };
   const move = (crew, idx, dir) => {
     const list = byCrew[crew] || []; const k = idx + dir;
     if (k < 0 || k >= list.length) return;
@@ -432,7 +554,7 @@ export default function Schedule({ me }) {
     return out;
   }, [nearCrew, byCrew, points, jobs]);
   const fitC = fitCrew && board?.crews.find((c) => c.id === fitCrew);
-  const fitLeft = fitC ? Math.max(0, dayOsh(peopleOn(fitC)) - (byCrew[fitC.id] || []).reduce((t, x) => t + (jobBy[x.ref] ? jobBy[x.ref].treeHrs : (x.hrs || 0)), 0)) : 0;
+  const fitLeft = fitC ? Math.max(0, dayOsh(peopleOn(fitC)) - (byCrew[fitC.id] || []).reduce((t, x) => t + entryHrs(x), 0)) : 0;
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
     const on = fitC ? peopleOn(fitC) : 0;
@@ -465,14 +587,17 @@ export default function Schedule({ me }) {
 
   return (
     <div className="wrap" style={{ maxWidth: 1800 }}>
-      {/* day picker */}
+      {/* day / week picker */}
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+        <div className="tabs" role="group" aria-label="View">
+          {[["day", "Day"], ["week", "Week"]].map(([k, l]) => <button key={k} className="tab st" aria-selected={mode === k} onClick={() => setMode(k)}>{l}</button>)}
+        </div>
         <button className="btn st" onClick={() => setIso(isoOf(addDays(new Date(iso + "T12:00:00"), -7)))}>‹</button>
         {[0, 1, 2, 3, 4, 5, 6].map((i) => {
           const d = addDays(wkStart, i), di = isoOf(d);
           const n = Object.entries((di === iso ? { assign } : week[di])?.assign || {}).filter(([k, a]) => a?.crew && !k.startsWith("_")).length;
           return (
-            <button key={di} className="chip st" data-on={di === iso ? 1 : 0} onClick={() => setIso(di)}
+            <button key={di} className="chip st" data-on={mode === "day" && di === iso ? 1 : 0} onClick={() => { setIso(di); setMode("day"); }}
                     style={{ borderColor: di === today ? "#6b7880" : undefined }}>
               {DN[d.getDay()]} {d.getDate()}{n ? <b>{n}</b> : null}
             </button>
@@ -482,12 +607,10 @@ export default function Schedule({ me }) {
         <button className="btn st" onClick={() => setIso(today)}>Today</button>
         <span className="spacer" />
         <button className="btn st" onClick={() => setRulesOpen((o) => !o)}>Tag → equipment</button>
-        <button className="btn st" onClick={() => setYardsOpen((o) => !o)}>Yards</button>
         <span className="hint">{saving ? "Saving…" : board ? (board.from === iso ? "Crews from this day's Shop Board." : board.from === "standing" ? "Crews from the standing Shop Board setup." : `Crews from the Shop Board (same as ${board.from}).`) : ""}</span>
       </div>
       {err && <div className="err" style={{ marginBottom: 8 }}>{err}</div>}
       <UrgentBanner jobs={jobs} assign={assign} plannedOn={plannedOn} onPick={(r) => setSelected(r)} />
-      {yardsOpen && <YardSettings settings={settings} onSaved={setSettings} onClose={() => setYardsOpen(false)} />}
       {rulesOpen && <TagRules onClose={() => setRulesOpen(false)} />}
       {sel && (
         <div className="card" style={{ padding: "8px 12px", marginBottom: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderColor: "#58666f" }}>
@@ -500,14 +623,20 @@ export default function Schedule({ me }) {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 12, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: mode === "week" ? "minmax(0, 1fr) minmax(300px, 380px)" : "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 12, alignItems: "start" }}>
+        {mode === "week" && (
+          <WeekGrid days={weekDays} boards={boards} week={week} jobBy={jobBy} entryHrs={entryHrs} crewColor={crewColor}
+                    selected={selected} onSelect={(r) => setSelected((s) => (s === r ? null : r))}
+                    onDropJob={(d, ref, crew) => addToDay(d, ref, crew, boards[d])} onMoveJob={moveTo} onRemove={removeFrom}
+                    onOpenDay={(d) => { setIso(d); setMode("day"); }} checksFor={checksFor} today={today} />
+        )}
         {/* crews */}
-        <div style={{ display: "grid", gap: 8 }}>
+        {mode === "day" && <div style={{ display: "grid", gap: 8 }}>
           <CallList assign={assign} checks={checks} jobBy={jobBy} crews={board?.crews || []} crewColor={crewColor} />
           {!board && <div className="hint">Loading crews…</div>}
           {(board?.crews || []).map((c) => {
             const items = byCrew[c.id] || [];
-            const total = items.reduce((t, x) => t + (jobBy[x.ref] ? jobBy[x.ref].treeHrs : (x.hrs ?? 0)), 0);
+            const total = items.reduce((t, x) => t + entryHrs(x), 0);
             const stumpTotal = items.reduce((t, x) => t + (jobBy[x.ref]?.grindHrs || 0) + (jobBy[x.ref]?.cleanupHrs || 0), 0);
             const target = dayOsh(peopleOn(c)), gap = target - total;
             const fitting = fitCrew === c.id;
@@ -544,14 +673,9 @@ export default function Schedule({ me }) {
                 )}
                 {items.length > 0 && (
                   <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "6px 8px 0", flexWrap: "wrap" }}>
-                    <span className="hint">From</span>
-                    <select className="inp" style={{ width: "auto", padding: "3px 6px", fontSize: 11.5 }} value={crewYardName(c.id)}
-                            onChange={(e) => save({ [yardKey(c.id)]: { yard: e.target.value } })}>
-                      {[...new Set([...YARD_NAMES, ...Object.keys(settings.yards || {})])].map((y) => <option key={y} value={y}>{y}{settings.yards?.[y] ? "" : " (no address)"}</option>)}
-                    </select>
-                    <span className="hint">{trip ? `≈ ${miles(trip)} round trip, straight-line` : ""}</span>
+                    <span className="hint">{trip ? `★ From the shop · ≈ ${miles(trip)} round trip, straight-line` : "★ From the shop"}</span>
                     <span className="spacer" />
-                    {items.length > 1 && <button className="btn st" onClick={() => autoOrder(c.id)} title="Shortest order from the yard and back">Best order</button>}
+                    {items.length > 1 && <button className="btn st" onClick={() => autoOrder(c.id)} title="Shortest order from the shop and back">Best order</button>}
                   </div>
                 )}
                 <div style={{ padding: 6, display: "grid", gap: 4, minHeight: 40 }}>
@@ -564,7 +688,8 @@ export default function Schedule({ me }) {
                         <span className="mono" style={{ width: 18, height: 18, borderRadius: 9, background: crewColor(c.id), color: "#0b0e11", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{i + 1}</span>
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{j ? j.name : x.label}</div>
-                          <div className="hint" style={{ fontSize: 11 }}>{j?.town || x.town}{j ? "" : ` · ${fmtH(x.hrs)}`}{prev && here ? ` · ${miles(km(prev, here))} from ${i === 0 ? "yard" : "last"}` : ""}{!j ? " · no longer in the backlog" : ""}</div>
+                          {x.parts > 1 && <div style={{ fontSize: 11, color: "#9cc4e4" }}>Day {x.part} of {x.parts} · {fmtH(x.hrs)} today of {fmtH(x.total)}</div>}
+                          <div className="hint" style={{ fontSize: 11 }}>{j?.town || x.town}{j ? "" : ` · ${fmtH(x.hrs)}`}{prev && here ? ` · ${miles(km(prev, here))} from ${i === 0 ? "the shop" : "last"}` : ""}{!j ? " · no longer in the backlog" : ""}</div>
                           <JobChecks r={checks[x.ref]} />
                         </span>
                         {j && <JobHours j={j} size={13} />}
@@ -582,13 +707,14 @@ export default function Schedule({ me }) {
               </div>
             );
           })}
-        </div>
+        </div>}
 
         {/* map */}
+        {mode === "day" && (
         <div className="card" style={{ position: "sticky", top: 70 }}>
           <div style={{ height: "min(70vh, 680px)" }}>
             <ScheduleMap jobs={mapJobs} points={points} assign={assign}
-                         crewColor={crewColor} selected={selected} onPick={onMapPick} yardOf={yardOf}>
+                         crewColor={crewColor} selected={selected} onPick={onMapPick} yardOf={yardOf} shop={shop}>
               {sel && (
                 <div className="card" style={{ position: "absolute", left: 10, right: 10, bottom: 10, zIndex: 5, padding: "10px 12px", background: "rgba(27,33,38,.97)", boxShadow: "0 6px 20px rgba(0,0,0,.5)", maxHeight: "60%", overflow: "auto" }}>
                   <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
@@ -621,8 +747,9 @@ export default function Schedule({ me }) {
               )}
             </ScheduleMap>
           </div>
-          <div className="hint" style={{ padding: "6px 10px" }}>{geoState || "Numbered dots = this day's stops, in order. Small dots = backlog jobs (coloured by status)."}</div>
+          <div className="hint" style={{ padding: "6px 10px" }}>{geoState || "Numbered dots = this day's stops, in order. Small dots = backlog jobs (coloured by status). ★ = the shop."}</div>
         </div>
+        )}
 
         {/* backlog */}
         <div className="card">
@@ -639,8 +766,8 @@ export default function Schedule({ me }) {
             <TagFilter jobs={jobs} value={tagF} onChange={setTagF} compact />
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <select className="inp" style={{ width: "auto", flex: 1 }} value={sort} onChange={(e) => setSort(e.target.value)}>
-                <option value="late">Most past promise first</option>
                 <option value="old">Oldest first</option>
+                <option value="late">Most past promise first</option>
                 <option value="big">Biggest first</option>
                 <option value="zone">By zone</option>
                 {(board?.crews || []).filter((c) => (byCrew[c.id] || []).length).map((c) => <option key={c.id} value={`near:${c.id}`}>Nearest to {c.name}'s stops</option>)}
@@ -667,14 +794,15 @@ export default function Schedule({ me }) {
                     {j.town}{j.zone ? ` · Z${j.zone}` : ""} · {j.crew || "?"} · {Math.round(j.days || 0)} d · {j.status === "over" ? (j.seasonal ? j.dueText : `${Math.round(j.lateWeeks)} wk late`) : j.seasonal ? j.dueText : STATUS[j.status].label}
                     {plannedOn[j.ref] ? ` · planned ${plannedOn[j.ref]}` : ""}{distTo[j.ref] != null ? ` · ${miles(distTo[j.ref])}` : ""}
                   </div>
+                  {j.tags.length > 0 && <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 4 }}>{j.tags.map((t) => <TagPill key={t} tag={t} small />)}</div>}
                 </span>
                 <JobHours j={j} size={13} />
-                <span style={{ display: "flex", flexDirection: "column", gap: 3 }} onClick={(e) => e.stopPropagation()}>
+                {selected === j.ref && <span style={{ display: "flex", flexDirection: "column", gap: 3 }} onClick={(e) => e.stopPropagation()}>
                   <button className="btn" style={{ padding: "1px 6px", borderColor: "#B388FF" }} title={j.paused ? "In Purgatory — edit" : "Purgatory — can't be scheduled yet"}
                           onClick={() => setRowAct((r) => (r?.ref === j.ref && r.kind === "pause" ? null : { ref: j.ref, kind: "pause" }))}>⏸</button>
                   <button className="btn" style={{ padding: "1px 6px" }} data-danger="1" title="Delete from the backlog"
                           onClick={() => setRowAct((r) => (r?.ref === j.ref && r.kind === "del" ? null : { ref: j.ref, kind: "del" }))}>🗑</button>
-                </span>
+                </span>}
               </div>
               {rowAct?.ref === j.ref && rowAct.kind === "pause" && (
                 <div style={{ margin: "3px 0 6px" }}><PauseForm j={j} onPause={pause} onResume={resume} onDone={() => setRowAct(null)} /></div>

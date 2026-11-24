@@ -11,6 +11,7 @@ import { crewsForDay, km, miles } from "./Schedule.jsx";
 import { shopGet, shopPatch, stampNow, shopSettings } from "./shop/shopApi";
 import { isoOf } from "./shop/ShopBoard.jsx";
 import { checkJob } from "./crewCheck";
+import { useShop, starIcon } from "./shopLocation";
 import { fmtH, useHoursUnit, dayOsh, inUnit, hoursUnit } from "./hours";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -28,7 +29,8 @@ const RANGES = [["any", "Any", 0, Infinity], ["s", "Under 2", 0, 2], ["m", "2–
 const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 const directions = (addr) => (isIOS() ? `https://maps.apple.com/?daddr=${encodeURIComponent(addr)}` : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}`);
 
-function QuickMap({ jobs, points, origin, selected, onPick, crewColor }) {
+function QuickMap({ jobs, points, origin, selected, onPick, crewColor, shop }) {
+  const shopMark = useRef(null);
   const el = useRef(null), map = useRef(null), marks = useRef(new Map()), originMark = useRef(null), lastFit = useRef("");
   const pickRef = useRef(onPick); pickRef.current = onPick;
   const [ready, setReady] = useState(false), [err, setErr] = useState("");
@@ -64,6 +66,7 @@ function QuickMap({ jobs, points, origin, selected, onPick, crewColor }) {
     for (const [ref, m] of marks.current) if (!want.has(ref)) { m.setMap(null); marks.current.delete(ref); }
     // origin
     if (originMark.current) { originMark.current.setMap(null); originMark.current = null; }
+    if (shop && !shopMark.current) shopMark.current = new g.Marker({ map: map.current, position: shop, zIndex: 900, clickable: false, title: `Shop — ${shop.addr}`, icon: starIcon(g) });
     if (origin?.p) {
       originMark.current = new g.Marker({ map: map.current, position: origin.p, zIndex: 1000, clickable: false, title: origin.label,
         icon: { path: "M -8 -8 L 8 -8 L 8 8 L -8 8 Z", fillColor: crewColor || "#E7E2D6", fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2, scale: 1 } });
@@ -77,7 +80,7 @@ function QuickMap({ jobs, points, origin, selected, onPick, crewColor }) {
       jobs.slice(0, 8).forEach((j) => { if (points[j.ref]) { b.extend(points[j.ref]); n++; } });
       if (n > 1) map.current.fitBounds(b, 60); else if (n === 1 && origin?.p) map.current.panTo(origin.p);
     }
-  }, [ready, jobs, points, origin, selected, crewColor]);
+  }, [ready, jobs, points, origin, selected, crewColor, shop]);
   useEffect(() => { const p = selected && points[selected]; if (p && map.current) map.current.panTo(p); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div style={{ position: "absolute", inset: 0 }}>
@@ -94,7 +97,7 @@ export default function QuickPick({ me }) {
   const { points } = useJobPoints(jobs);
   const [board, setBoard] = useState(null);
   const [assign, setAssign] = useState({});
-  const [settings, setSettings] = useState({ yards: {} });
+  const shop = useShop();
   const [crewId, setCrewId] = useState(() => { try { return localStorage.getItem("mts-qp-crew") || ""; } catch { return ""; } });
   const [range, setRange] = useState("any");
   const [fit, setFit] = useState(true);
@@ -119,9 +122,9 @@ export default function QuickPick({ me }) {
   useEffect(() => {
     let dead = false;
     (async () => {
-      const [b, s, st] = await Promise.all([crewsForDay(iso), shopGet(`sched.${iso}`), shopSettings()]);
+      const [b, s] = await Promise.all([crewsForDay(iso), shopGet(`sched.${iso}`)]);
       if (dead) return;
-      setBoard(b); setAssign(s?.assign || {}); setSettings(st || { yards: {} });
+      setBoard(b); setAssign(s?.assign || {});
     })();
     const t = setInterval(async () => { if (!document.hidden) { const s = await shopGet(`sched.${iso}`); if (s?.assign) setAssign(s.assign); } }, 15000);
     return () => { dead = true; clearInterval(t); };
@@ -141,13 +144,9 @@ export default function QuickPick({ me }) {
     if (near === "me") return me_ ? { p: me_, label: "You are here" } : null;
     const last = [...stops].reverse().find((x) => points[x.ref]);
     if (last) return { p: points[last.ref], label: `${crew?.name || "Crew"}'s last stop: ${jobBy[last.ref]?.name || last.label}` };
-    if (crew) {
-      const name = assign[`_yard:${crew.id}`]?.yard || (["PHC", "LC"].includes(crew.ops) ? "Rush Scottsville" : "Brighton");
-      const y = settings.yards?.[name];
-      if (y) return { p: { lat: y.lat, lng: y.lng }, label: `${name} yard (no stops yet today)` };
-    }
+    if (crew && shop) return { p: { lat: shop.lat, lng: shop.lng }, label: "the shop (no stops yet today)" };
     return null;
-  }, [near, me_, stops, points, crew, jobBy, assign, settings]);
+  }, [near, me_, stops, points, crew, jobBy, shop]);
   const locate = () => {
     setMsg("Finding you…");
     navigator.geolocation?.getCurrentPosition(
@@ -188,7 +187,7 @@ export default function QuickPick({ me }) {
   const pill = { position: "absolute", left: 8, right: 8, zIndex: 6, background: "rgba(27,33,38,.96)", border: `1px solid ${C.edge}`, borderRadius: 6, boxShadow: "0 6px 20px rgba(0,0,0,.45)" };
   return (
     <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, top, overflow: "hidden" }}>
-      <QuickMap jobs={shown} points={points} origin={origin} selected={selected} onPick={(r) => { setPausing(false); setSelected((s) => (s === r ? null : r)); setSheet("peek"); }} crewColor={crew ? crewColor(crew.id) : null} />
+      <QuickMap shop={shop} jobs={shown} points={points} origin={origin} selected={selected} onPick={(r) => { setPausing(false); setSelected((s) => (s === r ? null : r)); setSheet("peek"); }} crewColor={crew ? crewColor(crew.id) : null} />
 
       {/* controls */}
       <div style={{ ...pill, top: 8, padding: 8, display: "grid", gap: 7, maxHeight: "55%", overflow: "auto" }}>
