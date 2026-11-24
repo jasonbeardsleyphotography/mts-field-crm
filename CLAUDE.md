@@ -58,6 +58,14 @@ tell him something is "safe" unless you checked.
   (a 1,400-visit simulation of the camera/idle load was the way the freeze was finally found) and say clearly
   what only the owner's phone can confirm.
 
+- **NEVER LOSE THE OWNER'S WORK (Dispatch/Soil, Nov 24).** Netlify Blobs' default reads are *eventual* (up to ~60 s
+  stale). The shop server merged patches onto a stale read and wrote it back — a person the owner had just added
+  vanished and deleted people came back after a deploy. Now: every server function wraps `getStore` to
+  `{ consistency: "strong" }` (dispatch.mjs, soil.mjs — and the helpers they pass it to); a daily safety copy of the
+  board is kept at `mts-shop` `bak/core.<date>`; each device keeps its own copy (`mts-shop-core-backup`) and on opening
+  sends back anything NEWER than the server's (time stamps decide; Reset sets `core.resetAt`, which is honoured); Reset
+  needs the word RESET typed. Any new read-modify-write on Blobs must use a strong read.
+
 ## Freeze report
 `src/freezeLog.js` records camera steps, background jobs, stalls (heartbeat gaps) and errors to localStorage
 (`mts-freeze-log`, last 4 sessions) as they happen. The owner sends it via Settings → Copy freeze report.

@@ -15,7 +15,9 @@
    "internal" field (dollar amounts, hours) and the link list before sending.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-import { getStore } from "@netlify/blobs";
+import { getStore as blobStore } from "@netlify/blobs";
+// strong reads: a read-modify-write must never start from an out-of-date copy
+const getStore = (n) => blobStore(typeof n === "string" ? { name: n, consistency: "strong" } : n);
 import { caller } from "../lib/session.mjs";
 
 const S = () => getStore("mts-soil");

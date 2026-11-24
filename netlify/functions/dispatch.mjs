@@ -32,7 +32,12 @@
      POST   geocode  {items:[{id,addr}]}  (dispatch) lat/lng, cached
    ═══════════════════════════════════════════════════════════════════════════ */
 
-import { getStore } from "@netlify/blobs";
+import { getStore as blobStore } from "@netlify/blobs";
+/* STRONG reads everywhere (owner, Nov 24): Netlify Blobs' default "eventual" reads can
+   return a copy up to ~60 s old. A save built on an old copy wrote it back over newer
+   work — that erased a person the owner had just added and brought back people he had
+   deleted. Every read here is now the latest version. */
+const getStore = (n) => blobStore(typeof n === "string" ? { name: n, consistency: "strong" } : n);
 import { parseCookies, appPermissions, loadUserList, forgetUserCache, isOwnerEmail, APPS, emailForToken } from "../lib/accounts.mjs";
 import { caller as sessionCaller } from "../lib/session.mjs";
 
@@ -308,6 +313,7 @@ function mergeShop(key, cur, patch, replace, t) {
       assets: byAt(cur.assets, patch.assets), crews: byAt(cur.crews, patch.crews),
       people: byAt(cur.people, patch.people), rigs: byAt(cur.rigs, patch.rigs),
       log: [...log.values()].sort((a, b) => b.at - a.at).slice(0, 40),
+      resetAt: Math.max(cur.resetAt || 0, patch.resetAt || 0),
     };
   }
   if (key.startsWith("day.")) {
@@ -402,6 +408,11 @@ async function shopRoute(sub, req, url, me) {
       if (attempt > 0 && landed(b.key, cur, b.patch, t)) { merged = cur; break; }
       merged = mergeShop(b.key, cur, b.patch, !!b.replace && attempt === 0, t);
       await SH().set(b.key, JSON.stringify(merged));
+      // a daily safety copy of the board (core), so lost work can always be recovered
+      if (b.key === "core" && attempt === 0) {
+        const bk = `bak/core.${new Date().toISOString().slice(0, 10)}`;
+        try { if (!(await SH().get(bk)) && cur) await SH().set(bk, JSON.stringify(cur)); } catch {}
+      }
       await new Promise((ok) => setTimeout(ok, 80 + Math.random() * 160));
     }
     return json({ ok: true, value: merged, now: Date.now() });

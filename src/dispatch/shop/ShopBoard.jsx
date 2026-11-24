@@ -343,6 +343,7 @@ function mergeLog(a, b) {
 }
 function mergeCore(a, b) {
   return {
+    resetAt: Math.max((a && a.resetAt) || 0, (b && b.resetAt) || 0),
     assets: reSpec(mergeMap(a && a.assets, b && b.assets)),
     crews:  mergeMap(a && a.crews,  b && b.crews),
     people: mergeMap(a && a.people, b && b.people),
@@ -355,6 +356,10 @@ const freshCore = () => ({
   rigs: asMap(SEED_RIGS), log: [],
 });
 const live = (map) => Object.values(map || {}).filter((x) => !x.del);
+/* This device's copy of the board (see the boot in ShopBoard). Not under "mts-field-". */
+const CORE_BACKUP = "mts-shop-core-backup";
+const saveCoreBackup = (c) => { try { localStorage.setItem(CORE_BACKUP, JSON.stringify({ assets: c.assets, crews: c.crews, people: c.people, rigs: c.rigs, savedAt: Date.now() })); } catch {} };
+const loadCoreBackup = () => { try { return JSON.parse(localStorage.getItem(CORE_BACKUP) || "null"); } catch { return null; } };
 /* keep this device's latest values for the keys an edit just sent */
 const changedKeysApply = (local, sent) => {
   const out = {};
@@ -3282,15 +3287,45 @@ export default function ShopBoard({ user, isAdmin = false }) {
 
   const people = core.people;
 
-  /* --- boot: who am I, then pull the board ------------------------------- */
+  /* --- boot: pull the board, then put back anything this device knows that the
+     server lost (owner, Nov 24: an update erased a person he'd added and revived
+     people he'd deleted). Every device keeps its own copy of the board; on opening,
+     any person / unit / crew whose copy here is NEWER than the server's (or that the
+     server no longer has) is sent back. Time stamps decide, so a deletion stays
+     deleted and an older copy never undoes newer work; Reset (resetAt) is honoured. */
   useEffect(() => {
     (async () => {
-      const remote = await sGet(K_CORE);
-      if (remote) setCore((c) => mergeCore(remote, c));
+      let remote = null;
+      for (let i = 0; i < 4 && !remote; i++) { remote = await sGet(K_CORE); if (!remote) await new Promise((ok) => setTimeout(ok, 800 * (i + 1))); }
+      if (remote) {
+        setCore((c) => mergeCore(remote, c));
+        const mine = loadCoreBackup();
+        if (mine) {
+          const floor = remote.resetAt || 0, push = {}; let n = 0;
+          ["assets", "crews", "people", "rigs"].forEach((coll) => {
+            push[coll] = {};
+            Object.entries(mine[coll] || {}).forEach(([id, v]) => {
+              const r = (remote[coll] || {})[id];
+              if (v && (v.at || 0) > floor && (!r || (v.at || 0) > (r.at || 0))) { push[coll][id] = v; n++; }
+            });
+          });
+          if (n) {
+            setCore((c) => mergeCore(push, c));
+            const merged = await shopPatch("core", push);
+            if (merged) setCore((c) => mergeCore(merged, c));
+          }
+        }
+      } else setSync("err");
       setSavedDays(new Set(await listDays()));
       setBooted(true);
     })();
   }, []);
+  // keep this device's copy of the board up to date (only once the server's copy is in)
+  useEffect(() => {
+    if (!booted) return;
+    const t = setTimeout(() => saveCoreBackup(core), 800);
+    return () => clearTimeout(t);
+  }, [core, booted]);
 
   useEffect(() => {
     if (!me) return;
@@ -3933,8 +3968,10 @@ export default function ShopBoard({ user, isAdmin = false }) {
     if (!armed) { setArmed(true); setTimeout(() => setArmed(false), 4000); return; }
     setArmed(false);
     if (!isAdmin) return;
-    const f = freshCore();
-    setCore(f);
+    // wipes everyone's people, crews and equipment changes — never from a stray double tap
+    if ((window.prompt("This erases EVERY change anyone has made to the board (people, crews, equipment) and goes back to the original import. Type RESET to do it.") || "").trim().toUpperCase() !== "RESET") return;
+    const f = { ...freshCore(), resetAt: stampNow() };
+    setCore(f); saveCoreBackup(f);
     await shopPatch("core", f, true);
     await shopPatch(srvKey(kWeek(wkIso)), { cells: {} }, true); setWeek({ cells: {} });
   };
