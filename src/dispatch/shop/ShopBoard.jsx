@@ -741,7 +741,7 @@ const YARD_LOOKS = {
   B: { label: "B · dark plate", unit: 0.8, fs: 12.5, font: "system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif", bg: "#0E1215", ink: "#F7F3EA", gap: 32 },
   C: { label: "C · big yellow tag", unit: 0.9, fs: 13, font: "'Arial Narrow', 'Roboto Condensed', Arial, sans-serif", bg: "#FFD54F", ink: "#111", gap: 26 },
 };
-let yardLook = (() => { try { return YARD_LOOKS[localStorage.getItem("mts-yard-look")] ? localStorage.getItem("mts-yard-look") : "A"; } catch { return "A"; } })();
+let yardLook = "A";          // the owner picked A (Nov 24); B and C kept here only for reference
 const LOOK = () => YARD_LOOKS[yardLook];
 const setYardLook = (k) => { yardLook = YARD_LOOKS[k] ? k : "A"; try { localStorage.setItem("mts-yard-look", yardLook); } catch {} };
 
@@ -2417,11 +2417,6 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
         </div>
       </div>
       <div className="ybar">
-        <span className="fl stencil" style={{ margin: 0 }}>LOOK</span>
-        {Object.entries(YARD_LOOKS).map(([k, v]) => (
-          <button key={k} className="chip stencil" data-on={look === k ? 1 : 0} title={v.label} onClick={() => onLook(k)}>{v.label}</button>
-        ))}
-        <span className="vr" />
         <span className="fl stencil" style={{ margin: 0 }}>SHOW</span>
         {OP_ORDER.map((o) => (
           <button key={o} className="chip stencil" data-on={ops[o] ? 1 : 0}

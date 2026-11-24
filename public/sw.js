@@ -1,3 +1,4 @@
+// v124: Shop Board: yard look A only (owner's pick).
 // v123: Dispatch: never lose board edits — strong server reads, per-device self-healing copy, daily backup, Reset needs RESET typed.
 // v122: Dispatch: tidy tag rows + band legend, crews in yard order, crew tags in Find work, accepted-day week counting, yard looks A/B/C, hooked-up drawings.
 // v121: Dispatch: call-in lookup (when a job lands), season countdowns, Oldest view, side-view yard with name tags, Holiday + bulk days off.
@@ -166,7 +167,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v123";
+const CACHE = "mts-field-v124";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

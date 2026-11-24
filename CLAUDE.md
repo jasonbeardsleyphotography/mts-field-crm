@@ -178,8 +178,8 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   ~1,300 lines of this file (rebuilt from HEAD) — when replacing a range, check the end marker is the nearest one.
   People tab: tap names to pick several (`picked` Set; details editable when exactly one), tap/drag days to mark all;
   "🎉 Holiday (everyone)" marks every person off that day (code `hol`, tap again to undo). `setMany` = one week patch.
-  YARD LOOK A/B/C (`YARD_LOOKS`, chips on the yard's bottom bar, localStorage `mts-yard-look`): unit scale, name-tag
-  font/size/colours, gap between setups. Hooked units TOUCH the truck (no gap); lifts / Avants / spray rig behind a
+  YARD LOOK: the owner picked A (light tag, sans-serif, units at 86%, 28 px between setups); the A/B/C switch was
+  removed (`yardLook` is fixed to "A"; B/C stay in `YARD_LOOKS` for reference). Hooked units TOUCH the truck (no gap); lifts / Avants / spray rig behind a
   truck sit on a drawn trailer (`TRAILERED`) whose tongue meets it. Name tags never wider than their own unit.
   Room and yard are decided by crew MEMBERSHIP (`crewHas`), not screen positions (that left dropped people/trucks in
   both places). ✎ Edit on each crew opens CrewSheet: rename, operation, add/remove people and equipment via pickers
