@@ -126,27 +126,24 @@ export function workdaysBetween(a, b) {
   return n;
 }
 
-/* WHERE A JOB LANDS (owner, Nov 24) — for answering "when are you coming?".
-   Weeks are Mon–Fri work weeks. Week 1 = the first full work week after the sale
-   (the Monday after it). A "13–15 weeks" promise lands in week 14 or 15, i.e. the
-   week of (week-1 Monday + 13 weeks) or the week after. Sold Wed Jul 1 → week 1
-   starts Jul 6 → lands the week of Oct 5 or Oct 12. */
-const nextMonday = (d) => { const x = new Date(d); x.setHours(12, 0, 0, 0); do { x.setDate(x.getDate() + 1); } while (x.getDay() !== 1); return x; };
-const addWeeks = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n * 7); return x; };
-const fmtWk = (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) });
+/* WHERE A JOB LANDS (owner, Nov 24, corrected the same day) — for "when are you coming?".
+   Weeks are Mon–Fri work weeks counted FROM THE DAY IT WAS ACCEPTED: 13 weeks after
+   Wed Jul 1 = 65 work days later = Wed Sep 30. A "13–15 weeks" promise lands between
+   accepted + 13 work weeks and accepted + 15 work weeks (Sep 30 – Oct 14). */
+const addWorkdays = (d, n) => { const x = new Date(d); x.setHours(12, 0, 0, 0); let k = 0; while (k < n) { x.setDate(x.getDate() + 1); const w = x.getDay(); if (w !== 0 && w !== 6) k++; } return x; };
+const fmtWk = (d) => d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) });
 export function landing(j, today = new Date()) {
   if (!j.activeAt || j.promised == null || j.promised >= 99) return null;
-  const w1 = nextMonday(new Date(j.activeAt + "T12:00:00"));
-  const a = addWeeks(w1, j.promised), b = addWeeks(w1, j.promised + 1);
-  const endB = new Date(b); endB.setDate(endB.getDate() + 4);            // Friday of the later week
+  const acc = new Date(j.activeAt + "T12:00:00");
+  const a = addWorkdays(acc, j.promised * 5), b = addWorkdays(acc, (j.promised + 2) * 5);
   const t = new Date(today); t.setHours(12, 0, 0, 0);
-  const sold = new Date(j.activeAt + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const sold = acc.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   const band = j.promisedLabel || `${j.promised}-${j.promised + 2}`;
   let when;
-  if (t > endB) { const late = Math.max(1, Math.round((t - endB) / (7 * DAYMS))); when = `was due the week of ${fmtWk(a)} or ${fmtWk(b)} — ${late} week${late === 1 ? "" : "s"} overdue`; }
-  else if (t >= a) when = `due now — the week of ${fmtWk(a)} or ${fmtWk(b)}`;
-  else { const wd = workdaysBetween(t, a); when = `should land the week of ${fmtWk(a)} or ${fmtWk(b)} (${Math.ceil(wd / 5)} work week${Math.ceil(wd / 5) === 1 ? "" : "s"} away)`; }
-  return { a: a.toISOString().slice(0, 10), b: b.toISOString().slice(0, 10), text: `Sold ${sold}, promised ${band} weeks → ${when}` };
+  if (t > b) { const late = Math.max(1, Math.round(workdaysBetween(b, t) / 5)); when = `was due ${fmtWk(a)} – ${fmtWk(b)} — ${late} work week${late === 1 ? "" : "s"} overdue`; }
+  else if (t >= a) when = `due now — between ${fmtWk(a)} and ${fmtWk(b)}`;
+  else { const wd = workdaysBetween(t, a); when = `should land between ${fmtWk(a)} and ${fmtWk(b)} (${Math.ceil(wd / 5)} work week${Math.ceil(wd / 5) === 1 ? "" : "s"} away)`; }
+  return { a: a.toISOString().slice(0, 10), b: b.toISOString().slice(0, 10), text: `Accepted ${sold}, promised ${band} weeks → ${when}` };
 }
 
 const groupOf = (tag) => {

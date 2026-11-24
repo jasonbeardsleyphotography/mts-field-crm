@@ -108,7 +108,8 @@ export function checkJob(tags, crew, assets, peopleOn) {
       missing.push({ label: aer.map((n) => n.label).join(" or "), why: aer.length > 1 ? "none on this crew" : why(aer[0]) });
   }
   const size = T.map((t) => (t.match(/^#(\d) PERSON$/) || [])[1]).filter(Boolean).map(Number);
-  const need = size.length ? Math.max(...size) : 0;
+  // "#2 PERSON" + "#3 PERSON" on one job = either size will do (owner, Nov 24): the smallest counts
+  const need = size.length ? Math.min(...size) : 0;
   const short = need && peopleOn != null && peopleOn < need ? { need, have: peopleOn } : null;
   const calls = T.filter((t) => CALLS[t]).map((t) => CALLS[t]);
   const gear = T.filter((t) => GEAR[t]).map((t) => GEAR[t]);
@@ -132,4 +133,15 @@ export function equipmentNeeds(tags) {
 /** Can this crew do this job today (equipment that works + enough people)? */
 export function fitsCrew(tags, crew, assets, peopleOn) {
   return checkJob(tags, crew, assets, peopleOn).problems === 0;
+}
+
+/** The tags a crew can take on today: its working machines' tags, the no-machine aerial
+    tags (every foreman climbs), and #N PERSON up to the people working. For "Find work". */
+export function crewTags(crew, assets, peopleOn) {
+  const units = (crew?.iron || []).map((id) => assets?.[id]).filter((a) => a && !a.del && !isDown(a));
+  const out = [];
+  NEEDS.forEach((n) => { if (!n.later && units.some(n.ok)) n.tags.forEach((t) => out.push(t)); });
+  Object.keys(CREW_AERIAL).forEach((t) => out.push(t));
+  for (let k = 2; k <= Math.min(4, peopleOn || 0); k++) out.push(`#${k} PERSON`);
+  return [...new Set(out)].sort((a, b) => a.localeCompare(b));
 }

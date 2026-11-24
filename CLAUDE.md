@@ -170,6 +170,9 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   ~1,300 lines of this file (rebuilt from HEAD) — when replacing a range, check the end marker is the nearest one.
   People tab: tap names to pick several (`picked` Set; details editable when exactly one), tap/drag days to mark all;
   "🎉 Holiday (everyone)" marks every person off that day (code `hol`, tap again to undo). `setMany` = one week patch.
+  YARD LOOK A/B/C (`YARD_LOOKS`, chips on the yard's bottom bar, localStorage `mts-yard-look`): unit scale, name-tag
+  font/size/colours, gap between setups. Hooked units TOUCH the truck (no gap); lifts / Avants / spray rig behind a
+  truck sit on a drawn trailer (`TRAILERED`) whose tongue meets it. Name tags never wider than their own unit.
   Room and yard are decided by crew MEMBERSHIP (`crewHas`), not screen positions (that left dropped people/trucks in
   both places). ✎ Edit on each crew opens CrewSheet: rename, operation, add/remove people and equipment via pickers
   (reuses yardMove). People tab (`PeopleView`): month calendar; pick a person + reason (vac/sick/train/light/on), tap or
@@ -218,7 +221,8 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
 - Backlog "📞 Someone calling?" lookup (name / street / phone / job #) → big card: WHERE IT LANDS (`landing` in
   backlogModel: Mon–Fri weeks; week 1 = the Monday after the sale; a "13–15" promise lands the week of
   week1+13 or week1+14, e.g. sold Wed Jul 1 → Oct 5 or Oct 12), or a season COUNTDOWN (work days until the season window
-  ends = overdue), plus Purgatory / Delete (two-step). Every card shows the same line (`LandLine`). Group "Oldest" = one
+  ends = overdue), plus Purgatory / Delete (two-step). CORRECTED by the owner: weeks count from the ACCEPTED day in
+  Mon–Fri work weeks — 13 weeks after Wed Jul 1 = 65 work days = Wed Sep 30; a 13–15 promise lands Sep 30 – Oct 14. Every card shows the same line (`LandLine`). Group "Oldest" = one
   flat list, oldest first. Schedule multi-day: later days use only what the crew has FREE that day (other jobs count),
   skipping full days (24 free then 16 free → a third day).
 - Backlog tab = a job manager, not a dashboard: one totals line, Group by Priority (status categories) / Equipment
@@ -247,7 +251,10 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   looked up once with Google's geocoder (biased to the Rochester area; the sandbox can't reach the Census geocoder) and
   saved as settings.yards.Shop; a ★ on every map (Schedule, Backlog, Quick pick). The Yards editor and per-crew yard
   choice are gone. "Best order" = shortest straight-line loop shop → stops → shop.
-  Schedule list: oldest first by default (`mts-sched-sort`), tags as pills on every row, ⏸/🗑 only on the tapped row.
+  Schedule list: oldest first by default (`mts-sched-sort`), tags as one tidy uniform row (`TagRow` in TagPill.jsx:
+  sorted, same size, short names), 7px colour band with a legend above the list, ⏸/🗑 only on the tapped row.
+  Crews are listed in the YARD's order (crewsForDay sorts by day.pos like packBoxes). "Find work" shows the crew's tags
+  (`crewTags`). #2 PERSON + #3 PERSON on one job = either (the smallest counts).
   Emergency / Priority beat Purgatory and on hold. LIFT + LIFT TALL! = tall preferred (soft `prefer` note), 83 ok.
   MULTI-DAY JOBS: `addToDay` splits a job bigger than what the crew has left that day into today's share + full days on
   the same crew's next weekdays (Sat/Sun skipped); entries carry {hrs (this day's share), total, part, parts, days}.

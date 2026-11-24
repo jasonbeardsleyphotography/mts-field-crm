@@ -1,3 +1,4 @@
+// v122: Dispatch: tidy tag rows + band legend, crews in yard order, crew tags in Find work, accepted-day week counting, yard looks A/B/C, hooked-up drawings.
 // v121: Dispatch: call-in lookup (when a job lands), season countdowns, Oldest view, side-view yard with name tags, Holiday + bulk days off.
 // v120: Dispatch: horizontal yard with side-on drawings, one shop (★), Schedule week view, multi-day jobs, oldest-first list.
 // v119: Dispatch: crew columns + slot drops, foremen, Office bin, Purgatory, Emergency/Priority alerts, SingleOps CSV import.
@@ -164,7 +165,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v121";
+const CACHE = "mts-field-v122";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

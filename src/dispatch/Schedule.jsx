@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from "react";
 import { C } from "./theme";
-import { STATUS, money, jobColor, singleOpsJobUrl, tagShort } from "./backlogModel";
+import { STATUS, money, jobColor, singleOpsJobUrl, tagShort, gradientColor, EMERGENCY_COLOR, PRIORITY_COLOR, PAUSED_COLOR, SEASON_COLOR } from "./backlogModel";
 import JobHours from "./JobHours.jsx";
-import TagPill from "./TagPill.jsx";
+import TagPill, { TagRow } from "./TagPill.jsx";
 import { useBacklog } from "./useBacklog";
 import { fmtH, useHoursUnit, dayOsh } from "./hours";
 import TagFilter, { emptyTags, passTags } from "./TagFilter.jsx";
@@ -11,7 +11,7 @@ import { useJobPoints, loadMaps } from "./BacklogMap.jsx";
 import { shopGet, shopDays, shopPatch, shopSchedRange, stampNow, shopSettings, saveYard } from "./shop/shopApi";
 import { freshCore, mergeCore, live, isoOf, addDays, weekStartOf, assetsOn } from "./shop/ShopBoard.jsx";
 import { sharedDay, setSharedDay } from "./sharedDay";
-import { checkJob, TAG_RULES, UNMAPPED_TAGS } from "./crewCheck";
+import { checkJob, crewTags, TAG_RULES, UNMAPPED_TAGS } from "./crewCheck";
 import { useShop, starIcon, SHOP_ADDR } from "./shopLocation";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -95,7 +95,11 @@ export async function crewsForDay(iso) {
   const di = Math.round((new Date(iso + "T12:00:00") - new Date(sun + "T12:00:00")) / 86400000);
   const wk = await shopGet(`week.${sun}`);
   const off = new Set(Object.entries(wk?.cells || {}).filter(([k, v]) => k.endsWith(`:${di}`) && v && !["on", "light"].includes(v.code)).map(([k]) => k.split(":")[0]));
-  return { core, off, crews: live(crews).filter((c) => ["GTC", "PHC", "LC"].includes(c.ops || "GTC")), from: day?.crews ? from : "standing" };
+  // the same order as the Shop Board's yard (crews sort by where they sit there; see packBoxes)
+  const pos = (day?.crews && day.pos) || {};
+  const ordered = live(crews).map((c, i) => ({ c, h: pos[c.id] || { x: i * 10, y: 0 } }))
+    .sort((a, b) => (a.h.y - b.h.y) || (a.h.x - b.h.x)).map((x) => x.c);
+  return { core, off, crews: ordered.filter((c) => ["GTC", "PHC", "LC"].includes(c.ops || "GTC")), from: day?.crews ? from : "standing" };
 }
 
 function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick, yardOf, shop, children }) {
@@ -637,7 +641,7 @@ export default function Schedule({ me }) {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: mode === "week" ? "minmax(0, 1fr) minmax(300px, 380px)" : "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 12, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: mode === "week" ? "minmax(0, 1fr) minmax(340px, 420px)" : "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", gap: 12, alignItems: "start" }}>
         {mode === "week" && (
           <WeekGrid days={weekDays} boards={boards} week={week} jobBy={jobBy} entryHrs={entryHrs} crewColor={crewColor}
                     selected={selected} onSelect={(r) => setSelected((s) => (s === r ? null : r))}
@@ -771,6 +775,8 @@ export default function Schedule({ me }) {
             {fitC && (
               <div style={{ padding: "6px 8px", borderRadius: 3, border: `1px solid ${crewColor(fitC.id)}`, display: "grid", gap: 5 }}>
                 <div style={{ fontSize: 12.5 }}>Showing jobs <b style={{ color: crewColor(fitC.id) }}>{fitC.name}</b> can do (its machines, {peopleOn(fitC)} people). It has <b>{fmtH(fitLeft)}</b> left to fill today.</div>
+                <div className="hint" style={{ padding: 0 }}>Tags this crew covers:</div>
+                <TagRow tags={crewTags(fitC, board.core.assets, peopleOn(fitC))} />
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   <button className="chip st" onClick={() => setFitCrew(null)}>Show every job</button>
                 </div>
@@ -790,6 +796,13 @@ export default function Schedule({ me }) {
                 {show === "all" ? "Showing all (incl. Purgatory)" : "Hiding scheduled / Purgatory"}
               </button>
             </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 11, color: C.inkDim }} title="The band on the left of each job">
+              <span>Band:</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>newest <i style={{ width: 70, height: 7, borderRadius: 4, background: `linear-gradient(90deg, ${[0, .25, .5, .75, 1].map(gradientColor).join(",")})` }} /> oldest</span>
+              {[[EMERGENCY_COLOR, "emergency"], [PRIORITY_COLOR, "priority"], [SEASON_COLOR, "waiting for season"], [PAUSED_COLOR, "purgatory"]].map(([c, l]) => (
+                <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><i style={{ width: 9, height: 9, borderRadius: 2, background: c }} />{l}</span>
+              ))}
+            </div>
             <div className="hint">{list.length} jobs · {fmtH(list.reduce((t, j) => t + (j.treeHrs || 0), 0), 0)} tree work · {fmtH(list.reduce((t, j) => t + (j.grindHrs || 0), 0), 0)} stump. Drag onto a crew, or tap to pick.</div>
           </div>
           <div style={{ maxHeight: "62vh", overflow: "auto", padding: "0 8px 8px", display: "grid", gap: 4 }}>
@@ -797,7 +810,7 @@ export default function Schedule({ me }) {
               <div key={j.ref}>
               <div draggable onDragStart={(e) => { e.dataTransfer.setData("text/x-job", j.ref); e.dataTransfer.effectAllowed = "move"; }}
                    onClick={() => setSelected((s) => (s === j.ref ? null : j.ref))}
-                   style={{ display: "flex", gap: 8, padding: "6px 8px", borderRadius: 3, cursor: "grab", background: selected === j.ref ? C.tileHi : C.tile, borderLeft: `3px solid ${jobColor(j)}`,
+                   style={{ display: "flex", gap: 8, padding: "6px 8px", borderRadius: 3, cursor: "grab", background: selected === j.ref ? C.tileHi : C.tile, borderLeft: `7px solid ${jobColor(j)}`,
                             boxShadow: j.status === "emergency" ? "inset 0 0 0 2px #FF1744" : j.status === "priority" ? "inset 0 0 0 1px #FF4FD8" : "none" }}>
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -808,7 +821,7 @@ export default function Schedule({ me }) {
                     {j.town}{j.zone ? ` · Z${j.zone}` : ""} · {j.crew || "?"} · {Math.round(j.days || 0)} d · {j.status === "over" ? (j.seasonal ? j.dueText : `${Math.round(j.lateWeeks)} wk late`) : j.seasonal ? j.dueText : STATUS[j.status].label}
                     {plannedOn[j.ref] ? ` · planned ${plannedOn[j.ref]}` : ""}{distTo[j.ref] != null ? ` · ${miles(distTo[j.ref])}` : ""}
                   </div>
-                  {j.tags.length > 0 && <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 4 }}>{j.tags.map((t) => <TagPill key={t} tag={t} small />)}</div>}
+                  {j.tags.length > 0 && <TagRow tags={j.tags} />}
                 </span>
                 <JobHours j={j} size={13} />
                 {selected === j.ref && <span style={{ display: "flex", flexDirection: "column", gap: 3 }} onClick={(e) => e.stopPropagation()}>

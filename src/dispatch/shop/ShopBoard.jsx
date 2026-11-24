@@ -729,41 +729,83 @@ const SIDE = {
     {[0, 45, 90, 135, 180, 225, 270, 315].map((d) => <rect key={d} x="11" y="14" width="2" height="3.5" fill={t.hi} transform={`rotate(${d} 12 25)`} />)}
     <SW cx={36} cy={31} r={6} /></g>) },
 };
-const HGAP = 12;
-const TAG_H = 13;
+/* YARD LOOK (owner picks A / B / C on the yard's bottom bar; per device). Units a
+   little smaller, names bigger in an easy sans-serif tag, more room between setups. */
+const YARD_LOOKS = {
+  A: { label: "A · light tag", unit: 0.86, fs: 11.5, font: "system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif", bg: "#F2EEE5", ink: "#111", gap: 28 },
+  B: { label: "B · dark plate", unit: 0.8, fs: 12.5, font: "system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif", bg: "#0E1215", ink: "#F7F3EA", gap: 32 },
+  C: { label: "C · big yellow tag", unit: 0.9, fs: 13, font: "'Arial Narrow', 'Roboto Condensed', Arial, sans-serif", bg: "#FFD54F", ink: "#111", gap: 26 },
+};
+let yardLook = (() => { try { return YARD_LOOKS[localStorage.getItem("mts-yard-look")] ? localStorage.getItem("mts-yard-look") : "A"; } catch { return "A"; } })();
+const LOOK = () => YARD_LOOKS[yardLook];
+const setYardLook = (k) => { yardLook = YARD_LOOKS[k] ? k : "A"; try { localStorage.setItem("mts-yard-look", yardLook); } catch {} };
+
+/* Units carried on their own trailer when hooked behind a truck (owner: "assume it has
+   its own trailer"): drawn sitting on a low deck whose tongue meets the truck. */
+const TRAILERED = new Set(["avant", "spider", "spider100", "utv"]);
+const TR_LIFT = 7;          // how far the unit sits up on its trailer deck
+const TR_TONGUE = 12;       // trailer tongue reaching forward to the truck
+let labelCtx = null;
+const labelPx = (txt, look) => {
+  try { labelCtx = labelCtx || document.createElement("canvas").getContext("2d"); labelCtx.font = `700 ${look.fs}px ${look.font}`; return labelCtx.measureText(txt).width; }
+  catch { return txt.length * look.fs * 0.6; }
+};
 /** A unit's box from the side (falls back to the flatbed pickup drawing for unknown kinds). */
 const hBox = (m) => { const sd = SIDE[m.top] || SIDE.flatbed; return { w: sd.w, h: sd.h, side: sd }; };
-/** Lay out a load horizontally: the truck at the right facing right, what it tows behind it to the left. */
+/** Lay out a load horizontally: the truck at the right facing right, what it tows hooked
+    on right behind it (touching), in drawing units (× LOOK().unit on screen). */
 function hLayout(members) {
+  const look = LOOK(), u = look.unit;
   const lead = members.find((m) => m.hc === "truck") || members[0];
   const rest = members.filter((m) => m !== lead);
   const seq = [lead, ...rest];                       // right to left
-  const boxes = seq.map(hBox);
-  const GH = Math.max(...boxes.map((b) => b.h));     // ground: every unit sits on the same line
-  const H = GH + TAG_H + 4;
-  const W = boxes.reduce((t, b) => t + b.w, 0) + HGAP * (seq.length - 1) + 6;
-  let x = W - 2;
-  const placed = seq.map((m, i) => { x -= boxes[i].w; const at = { m, b: boxes[i], x, y: GH - boxes[i].h }; x -= HGAP; return at; });
-  return { W, H, GH, placed, leadW: boxes[0].w };
+  const towed = (i) => i > 0 && lead.hc === "truck";
+  const boxes = seq.map((m, i) => {
+    const b = hBox(m), tr = towed(i) && TRAILERED.has(m.top);
+    const name = String(m.vl || m.code || m.name || "");
+    return { ...b, tr, name, lw: labelPx(name, look) / u + 12, fw: b.w + (tr ? TR_TONGUE : 0) };
+  });
+  const GH = Math.max(...boxes.map((b) => b.h + (b.tr ? TR_LIFT : 0)));
+  const TAGH = (look.fs + 7) / u;
+  const H = GH + TAGH + 5;
+  const padR = Math.max(0, (boxes[0].lw - boxes[0].w) / 2), last = boxes[boxes.length - 1];
+  const padL = Math.max(0, (last.lw - last.fw) / 2);
+  const W = padL + boxes.reduce((t, b) => t + b.fw, 0) + padR + 2;
+  let x = W - padR - 1;
+  const placed = seq.map((m, i) => {
+    const b = boxes[i];
+    x -= b.fw;                                        // hooked units touch: no gap
+    const ux = x;                                     // the unit itself sits left of its tongue
+    return { m, b, x: ux, y: GH - b.h - (b.tr ? TR_LIFT : 0) };
+  });
+  return { W, H, GH, TAGH, placed, leadW: boxes[0].w + padR, u };
 }
-function hDims(members) { const L = hLayout(members); return { w: L.W, h: L.H }; }
-/** The load from the side, each unit's name in a plain tag underneath. */
+function hDims(members) { const L = hLayout(members); return { w: L.W * L.u, h: L.H * L.u }; }
+/** The load from the side, hooked up, each unit's name in a tag underneath. */
 function HLoad({ members, scale = 1, broken }) {
-  const { W, H, GH, placed } = hLayout(members);
+  const look = LOOK();
+  const { W, H, GH, TAGH, placed, u } = hLayout(members);
+  const fs = look.fs / u;
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width={W * scale} height={H * scale} style={{ display: "block", overflow: "visible" }} aria-hidden="true">
+    <svg viewBox={`0 0 ${W} ${H}`} width={W * u * scale} height={H * u * scale} style={{ display: "block", overflow: "visible" }} aria-hidden="true">
       {placed.map(({ m, b, x, y }) => {
         const t = tones(m.fam), dim = m.status === "parked" ? 0.55 : 1;
-        const name = String(m.vl || m.code || m.name || "");
-        const fs = Math.max(6.5, Math.min(9.5, (b.w + HGAP - 8) / Math.max(1, name.length * 0.66)));
-        const tw = Math.min(b.w + HGAP - 2, name.length * fs * 0.66 + 8);
+        const tw = Math.min(b.lw, b.fw - 4);                       // never wider than its own unit: neighbours don't collide
+        const cx = x + b.w / 2;
         return (
           <g key={m.id} opacity={dim}>
+            {b.tr && (
+              <g>
+                <rect x={x - 2} y={GH - TR_LIFT - 1} width={b.w + 4} height="4" rx="1" fill="#3a444b" stroke="#1b2126" strokeWidth="0.8" />
+                <path d={`M${x + b.w + 2} ${GH - TR_LIFT + 1} L${x + b.fw} ${GH - 5}`} stroke="#3a444b" strokeWidth="3" />
+                <circle cx={x + b.w * 0.45} cy={GH - 3} r="3.6" fill="#0A0D10" />
+              </g>
+            )}
             <g transform={`translate(${x} ${y})`}>{b.side.art(t)}</g>
             {broken && <rect x={x - 3} y={y - 3} width={b.w + 6} height={b.h + 6} rx="4" fill="none" stroke="#D93B2B" strokeWidth="1.8" strokeDasharray="5 3" />}
-            <rect x={x + b.w / 2 - tw / 2} y={GH + 3} width={tw} height={TAG_H} rx="2.5" fill="#E7E2D6" stroke={t.body} strokeWidth="1.2" />
-            <text x={x + b.w / 2} y={GH + 3 + TAG_H / 2} textAnchor="middle" dominantBaseline="central" fill="#14181C"
-                  fontFamily="'Barlow Condensed','Arial Narrow',sans-serif" fontWeight="700" fontSize={fs} letterSpacing="0.3">{name}</text>
+            <rect x={cx - tw / 2} y={GH + 3} width={tw} height={TAGH} rx={TAGH / 2.6} fill={look.bg} stroke={t.body} strokeWidth={1.4 / u} />
+            <text x={cx} y={GH + 3 + TAGH / 2} textAnchor="middle" dominantBaseline="central" fill={look.ink}
+                  fontFamily={look.font} fontWeight="700" fontSize={fs} textLength={b.lw - 12 > tw - 8 ? tw - 8 : undefined} lengthAdjust="spacingAndGlyphs">{b.name}</text>
           </g>
         );
       })}
@@ -1134,7 +1176,7 @@ function layoutBox(crew, i, core, hitch, anchors, offOf = () => null, vw = CW) {
   let cx = 0, cy = 0, rowH = 0, k = 0;
   const rowsOut = [];
   [...loads, null].forEach((l) => {
-    const cw = l ? l.d.w + 12 : 70, ch = l ? l.d.h + 12 : 56;
+    const cw = l ? l.d.w + LOOK().gap : 70, ch = l ? l.d.h + 12 : 56;
     if (cx > 0 && cx + cw > EW) { rowsOut.push(rowH); cy += rowH + 6; cx = 0; rowH = 0; }
     cSlots.push({ k, x: x0 + cx, y: headH + BPAD + cy, w: cw, h: ch, l, row: rowsOut.length });
     cx += cw + 6; rowH = Math.max(rowH, ch); k++;
@@ -2079,7 +2121,7 @@ function grabbed(e, members) {
   const r = svg.getBoundingClientRect();
   const lead = members.find((m) => m.hc === "truck") || members[0];
   const L = hLayout(members);
-  const cut = (L.W - 4 - L.leadW - HGAP / 2) / L.W;           // left of the hitch = what is towed
+  const cut = (L.W - 1 - L.leadW) / L.W;                       // left of the hitch = what is towed
   return (e.clientX - r.left) / Math.max(1, r.width) < cut ? members.filter((m) => m !== lead) : members;
 }
 
@@ -2114,7 +2156,7 @@ function stackIssues(members) {
 }
 
 function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setOps, onOrder, crewJobs = {},
-                   onCopy, onLink, onUnlink,
+                   onCopy, onLink, onUnlink, look, onLook,
                    onMove, onNewCrew, onCrew, onPerson, onAddPerson, onOpenAsset, onDate, undoLabel, onUndo }) {
   const { begin, registerZone, drag } = engine;
   const assets = core.assets;
@@ -2370,6 +2412,11 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
         </div>
       </div>
       <div className="ybar">
+        <span className="fl stencil" style={{ margin: 0 }}>LOOK</span>
+        {Object.entries(YARD_LOOKS).map(([k, v]) => (
+          <button key={k} className="chip stencil" data-on={look === k ? 1 : 0} title={v.label} onClick={() => onLook(k)}>{v.label}</button>
+        ))}
+        <span className="vr" />
         <span className="fl stencil" style={{ margin: 0 }}>SHOW</span>
         {OP_ORDER.map((o) => (
           <button key={o} className="chip stencil" data-on={ops[o] ? 1 : 0}
@@ -3195,6 +3242,8 @@ export default function ShopBoard({ user, isAdmin = false }) {
   const [dayFocus, setDayFocus] = useState(null);
   const [flashSet, setFlashSet] = useState(new Set());
   const [filters, setFilters] = useState({ op: "", yard: "", st: "", q: "" });
+  const [look, setLookState] = useState(yardLook);
+  const onLook = (k) => { setYardLook(k); setLookState(k); };
   const [cur, setCur] = useState(() => sharedDay(isoOf(new Date())));
   useEffect(() => { setSharedDay(cur); }, [cur]);
   const wkIso = useMemo(() => isoOf(weekStartOf(new Date(cur + "T00:00:00"))), [cur]);
@@ -3961,7 +4010,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
         </>
       )}
       {tab === "crews" && (
-        <YardView onOrder={orderCrews} core={dayCore} day={day} iso={cur} dayIndex={dayIndex} week={week} engine={engine} crewJobs={crewJobs}
+        <YardView look={look} onLook={onLook} onOrder={orderCrews} core={dayCore} day={day} iso={cur} dayIndex={dayIndex} week={week} engine={engine} crewJobs={crewJobs}
                   savedDays={savedDays} ops={ops} setOps={setOps}
                   onMove={yardMove} onNewCrew={addCrew} onCrew={setOpenCrew} onPerson={setOpenPerson}
                   onOpenAsset={(id) => setOpenAsset(id)} onDate={setCur} onAddPerson={addPerson}

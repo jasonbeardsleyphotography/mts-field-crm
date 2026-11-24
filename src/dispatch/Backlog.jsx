@@ -332,7 +332,7 @@ export default function Backlog() {
           <b className="st" style={{ fontSize: 13 }}>📞 Someone calling?</b>
           <input className="inp" style={{ flex: "1 1 280px", maxWidth: 520, fontSize: 15 }} placeholder="Type their name, street, phone or job #" value={callQ} onChange={(e) => setCallQ(e.target.value)} />
           {callQ && <button className="btn st" onClick={() => setCallQ("")}>Clear</button>}
-          <span className="hint" style={{ padding: 0 }}>Weeks are Mon–Fri work weeks, counted from the first full week after the sale.</span>
+          <span className="hint" style={{ padding: 0 }}>Weeks are Mon–Fri work weeks counted from the day it was accepted (13 weeks after Wed Jul 1 = Wed Sep 30).</span>
         </div>
         {callQ.trim().length >= 2 && (
           <div style={{ display: "grid", gap: 8, marginTop: 10 }}>

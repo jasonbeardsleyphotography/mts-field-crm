@@ -20,3 +20,27 @@ export default function TagPill({ tag, state, count, onClick, small }) {
     </Tag>
   );
 }
+
+/* A job's tags in a tidy row for lists (owner, Nov 24: pills in narrow rows looked
+   scattered): all the same size, always in the same order (by tag number), short names
+   ("02 LIFT REGULAR" → "LIFT REGULAR"), the colour dot says which group; the full name is
+   on hover. Wraps cleanly; never wider than the row. */
+const short = (t) => t.replace(/^\d\d\s+/, "").replace(/^#(\d) PERSON$/, "$1-PERSON");
+export function TagRow({ tags, max }) {
+  const list = [...(tags || [])].sort((a, b) => a.localeCompare(b));
+  const shown = max ? list.slice(0, max) : list;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 4, minWidth: 0 }}>
+      {shown.map((t) => (
+        <span key={t} title={t}
+              style={{ display: "inline-flex", alignItems: "center", gap: 4, height: 18, padding: "0 6px 0 5px", borderRadius: 9, maxWidth: 150,
+                       background: "#1d2328", border: "1px solid #333d45", fontSize: 10.5, fontWeight: 600, letterSpacing: ".02em",
+                       color: "#d4cfc3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textTransform: "uppercase" }}>
+          <i style={{ width: 7, height: 7, borderRadius: "50%", background: tagColor(t), flexShrink: 0 }} />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{short(t)}</span>
+        </span>
+      ))}
+      {max && list.length > max && <span className="hint" style={{ padding: 0, fontSize: 10.5 }}>+{list.length - max}</span>}
+    </div>
+  );
+}
