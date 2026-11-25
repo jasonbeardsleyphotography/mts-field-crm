@@ -1436,6 +1436,8 @@ const CSS = scopeCss(`
 .mb.mb-sub { padding-bottom:0 !important; display:flex; align-items:center; gap:8px; flex-wrap:nowrap; background:transparent !important; min-height:0 !important; }
 .mb.mb-sub .tab { padding:5px 11px; }
 .mb.mb-sub .btn { padding:4px 10px; }
+.mb.mb-sub .tabs { flex-wrap:nowrap; }
+.mb.mb-sub .tab, .mb.mb-sub .btn, .mb.mb-sub .sync { white-space:nowrap; flex-shrink:0; }
 @media (max-width:640px){
   .hd .hd-in { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; padding:4px 8px; gap:6px; }
   .hd .hd-in::-webkit-scrollbar { display:none; }
