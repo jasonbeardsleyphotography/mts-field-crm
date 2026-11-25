@@ -3,9 +3,24 @@ import { tagColor } from "./backlogModel";
 /* A SingleOps-style tag: a rounded pill with the tag's colour dot and its full
    name. `state` "inc" = picked (outlined in the tag's colour, with a check),
    "exc" = excluded (red outline, struck through). */
-export default function TagPill({ tag, state, count, onClick, small }) {
+export default function TagPill({ tag, state, count, onClick, small, filled }) {
   const col = tagColor(tag);
   const Tag = onClick ? "button" : "span";
+  if (filled) {
+    const n = parseInt(col.slice(1), 16), lum = 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255);
+    const light = lum > 175 && state !== "exc";                 // yellow etc.: dark text reads better than white
+    // big, filled with the tag's colour, bright white text + border (owner, Nov 25: easier to read)
+    return (
+      <Tag onClick={onClick} title={state === "inc" ? "Must have — tap again for must NOT have" : state === "exc" ? "Must NOT have — tap again to clear" : "Tap = must have"}
+           style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 999, background: state === "exc" ? "#2a2f33" : col,
+                    border: state ? "3px solid #ffffff" : "1.5px solid rgba(255,255,255,.85)", color: light ? "#111" : "#ffffff", fontSize: 13, fontWeight: 700, letterSpacing: ".02em",
+                    textShadow: light ? "none" : "0 1px 2px rgba(0,0,0,.85), 0 0 1px rgba(0,0,0,.9)", whiteSpace: "nowrap", cursor: onClick ? "pointer" : "default", fontFamily: "inherit",
+                    textDecoration: state === "exc" ? "line-through" : "none", boxShadow: state === "inc" ? "0 0 0 2px rgba(23,160,91,.9)" : "none" }}>
+        {state === "inc" ? "✓ " : state === "exc" ? "✕ " : ""}{tag}
+        {count != null && <b style={{ fontWeight: 600, opacity: 0.9 }}>{count}</b>}
+      </Tag>
+    );
+  }
   return (
     <Tag onClick={onClick} title={state === "inc" ? "Must have" : state === "exc" ? "Must NOT have" : undefined}
          style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: small ? "2px 8px 2px 5px" : "3px 10px 3px 6px", borderRadius: 999,

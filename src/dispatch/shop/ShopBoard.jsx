@@ -1759,6 +1759,8 @@ const CSS = scopeCss(`
 .left { grid-area:left; display:flex; flex-direction:column; gap:10px; }
 .left > div { flex:1; display:flex; }
 .left > div:not(:first-child) { flex:0 1 auto; min-height:110px; }
+.left > div:first-child { flex:0 1 auto; max-height:34vh; }           /* crew room: shorter (owner, Nov 25) */
+.left > div:first-child .bin-b { overflow:auto; }
 .canvas-wrap { grid-area:canvas; overflow:auto; border:1px solid ${C.edgeSoft}; border-radius:4px; }
 .right { grid-area:right; display:flex; flex-direction:column; gap:10px; min-height:0; }
 .right > div { display:flex; min-height:0; }
@@ -1773,6 +1775,9 @@ const CSS = scopeCss(`
 @media (max-width:900px){ .ppl { grid-template-columns:1fr; height:auto; } .ppl-list { max-height:40vh; } .ppl-main .cal-d { min-height:96px; } }
 .ppl-row { display:grid; grid-template-columns:6px minmax(0,1fr) auto; grid-template-rows:auto auto; column-gap:8px; text-align:left; padding:8px 8px 8px 10px; border-top:1px solid ${C.edgeSoft}; min-height:46px; cursor:pointer; user-select:none; }
 .ppl-row .ppl-ed { grid-column:3; grid-row:1 / 3; align-self:center; }
+.ppl-row > i { grid-column:1; grid-row:1 / 3; }
+.ppl-row > span { grid-column:2; grid-row:1; min-width:0; }
+.ppl-row > small { grid-column:2; grid-row:2; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ppl-row i { grid-row:1 / 3; border-radius:2px; }
 .ppl-row span { font-size:13.5px; letter-spacing:.05em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ppl-row small { font-size:10.5px; color:var(--faint); }
@@ -2163,8 +2168,64 @@ function stackIssues(members) {
   return out;
 }
 
+/* YESTERDAY (owner, Nov 25): how today's crews differ from the previous work day
+   (Monday compares with Friday). Folds away; remembered per device. */
+function YesterdayPanel({ prev, crews, core }) {
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem("mts-yard-yesterday") === "1"; } catch { return false; } });
+  useEffect(() => { try { localStorage.setItem("mts-yard-yesterday", open ? "1" : "0"); } catch {} }, [open]);
+  if (!prev) return null;
+  const pc = prev.crews || {};
+  const pname = (id) => ((core.people[id] || {}).name || "?").split(" ")[0];
+  const aname = (id) => (core.assets[id] || {}).vl || (core.assets[id] || {}).name || null;
+  const rows = live(crews).map((c) => {
+    const y = pc[c.id] && !pc[c.id].del ? pc[c.id] : null;
+    const yp = new Set((y && y.people) || []), tp = new Set(c.people || []);
+    const yi = new Set(((y && y.iron) || []).filter(aname)), ti = new Set((c.iron || []).filter(aname));
+    return {
+      c, y,
+      addP: [...tp].filter((x) => !yp.has(x)), lostP: [...yp].filter((x) => !tp.has(x)), keptP: [...tp].filter((x) => yp.has(x)),
+      addI: [...ti].filter((x) => !yi.has(x)), lostI: [...yi].filter((x) => !ti.has(x)),
+    };
+  });
+  const changed = rows.filter((r) => r.addP.length + r.lostP.length + r.addI.length + r.lostI.length > 0).length;
+  const label = new Date(prev.iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  const chip = (txt, kind) => (
+    <span key={kind + txt} style={{ fontSize: 11.5, padding: "1px 6px", borderRadius: 2, marginRight: 4, whiteSpace: "nowrap",
+      background: kind === "add" ? "rgba(23,160,91,.2)" : kind === "lost" ? "rgba(217,59,43,.18)" : "transparent",
+      color: kind === "add" ? "#7fe0a8" : kind === "lost" ? "#ff9a8f" : C.inkDim, textDecoration: kind === "lost" ? "line-through" : "none" }}>
+      {kind === "add" ? "+" : kind === "lost" ? "−" : ""}{txt}
+    </span>
+  );
+  return (
+    <div className="yest" style={{ margin: "0 0 8px", border: `1px solid ${C.edgeSoft}`, borderRadius: 4, background: C.panel }}>
+      <button onClick={() => setOpen((o) => !o)} style={{ width: "100%", display: "flex", gap: 8, alignItems: "center", padding: "7px 10px", textAlign: "left" }}>
+        <b className="stencil" style={{ fontSize: 11.5, letterSpacing: ".1em" }}>Compared with {label}</b>
+        <span style={{ fontSize: 11.5, color: changed ? "#f0c050" : C.inkDim }}>{changed ? `${changed} crew${changed === 1 ? "" : "s"} changed` : "same crews"}</span>
+        <span className="spacer" style={{ flex: 1 }} /><span style={{ color: C.inkDim }}>{open ? "▴ hide" : "▾ show"}</span>
+      </button>
+      {open && (
+        <div style={{ padding: "0 10px 8px", display: "grid", gap: 4 }}>
+          {rows.map((r) => (
+            <div key={r.c.id} style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", fontSize: 12 }}>
+              <b className="stencil" style={{ width: 70, flexShrink: 0 }}>{r.c.name}</b>
+              {!r.y ? <span style={{ color: "#7fe0a8", fontSize: 11.5 }}>new crew today</span> : (
+                <span>
+                  {r.keptP.map((x) => chip(pname(x), "kept"))}{r.addP.map((x) => chip(pname(x), "add"))}{r.lostP.map((x) => chip(pname(x), "lost"))}
+                  {(r.addI.length > 0 || r.lostI.length > 0) && <span style={{ color: C.inkFaint, margin: "0 4px" }}>·</span>}
+                  {r.addI.map((x) => chip(aname(x), "add"))}{r.lostI.map((x) => chip(aname(x), "lost"))}
+                </span>
+              )}
+            </div>
+          ))}
+          <div style={{ fontSize: 10.5, color: C.inkFaint }}>Green + = new on that crew today · red − = was on it {label}, not today. Unchanged equipment isn't listed.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setOps, onOrder, crewJobs = {},
-                   onCopy, onLink, onUnlink, look, onLook, onCopyDay, onPasteDay, clip,
+                   onCopy, onLink, onUnlink, look, onLook, onCopyDay, onPasteDay, clip, prevDay,
                    onMove, onNewCrew, onCrew, onPerson, onAddPerson, onOpenAsset, onDate, undoLabel, onUndo }) {
   const { begin, registerZone, drag } = engine;
   const assets = core.assets;
@@ -2328,6 +2389,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
         </div>
 
         <div className="canvas-wrap" ref={wrapRef}>
+          <YesterdayPanel prev={prevDay} crews={day.crews} core={core} />
           <Zone id="canvas" accepts={["crew"]} registerZone={registerZone}
                 onDrop={(it, _z, at) => dropCrew(it.id, at)}>
             <div className="canvas" style={{ width: vw, height: canvasH }}>
@@ -3025,7 +3087,10 @@ function PersonExtras({ person, onSet }) {
       </div>
       <div className="fl stencil">ROLE · WHERE THEY START</div>
       <div className="opts">
-        <button className="opt stencil" data-on={person.foreman ? 1 : 0} onClick={() => onSet(person.id, { foreman: !person.foreman })}>{person.foreman ? "★ Foreman" : "☆ Make foreman"}</button>
+        <label className="opt stencil" data-on={person.foreman ? 1 : 0} style={{ display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer" }}>
+          <input type="checkbox" checked={!!person.foreman} onChange={() => onSet(person.id, { foreman: !person.foreman })} style={{ width: 16, height: 16, accentColor: "#E5A100" }} />
+          {person.foreman ? "★ Foreman — yes" : "Foreman — no"}
+        </label>
         <button className="opt stencil" data-on={homeOf(person) === "yard" ? 1 : 0} onClick={() => onSet(person.id, { home: "yard" })}>Yard</button>
         <button className="opt stencil" data-on={homeOf(person) === "office" ? 1 : 0} onClick={() => onSet(person.id, { home: "office" })}>Office</button>
       </div>
@@ -3100,6 +3165,18 @@ function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, o
     const code = reason === "on" ? "on" : cur === reason ? "on" : reason;   // tap again to clear
     paint.current = { code, done: new Set([k]) };
     setMany(ids.map((pid) => ({ pid, d, code })));
+  };
+  /* Shift-tap: mark every day from the last tapped day to this one (owner, Nov 25:
+     tap Monday, Shift-tap Friday = the whole week) — same reason as the last tap. */
+  const lastDay = useRef(null);
+  const markRange = (a, b) => {
+    const from = a < b ? a : b, to = a < b ? b : a;
+    const ids = reason === "hol" ? roster.map((p) => p.id) : [...picked];
+    if (!ids.length) { setErr("Pick one or more people on the left first, or choose Holiday."); return; }
+    const code = reason === "on" ? "on" : (paint.current && paint.current.code) || reason;
+    const list = [];
+    for (let d = new Date(from); d <= to; d = addDays(d, 1)) ids.forEach((pid) => list.push({ pid, d: new Date(d), code }));
+    setMany(list);
   };
   const onGridMove = (e) => {
     if (!paint.current || !e.buttons) return;
@@ -3194,7 +3271,7 @@ function PeopleView({ core, me, boardWeekIso, onBoardCell, onRename, onSetOps, o
               <div key={k} data-day={k} className="cal-d" data-out={inMonth(d) ? 0 : 1} data-today={k === todayIso ? 1 : 0}
                    data-wknd={d.getDay() === 0 || d.getDay() === 6 ? 1 : 0}
                    style={mine ? { boxShadow: `inset 0 0 0 2px ${DAY[mine].color}`, background: `${DAY[mine].color}22` } : undefined}
-                   onPointerDown={(e) => { e.preventDefault(); tapDay(d, false); }}>
+                   onPointerDown={(e) => { e.preventDefault(); if (e.shiftKey && lastDay.current) markRange(lastDay.current, d); else tapDay(d, false); lastDay.current = d; }}>
                 <b className="mono">{d.getDate()}</b>
                 <div className="cal-offs">
                   {offs.slice(0, 6).map(({ p, code }) => (
@@ -3742,6 +3819,23 @@ export default function ShopBoard({ user, isAdmin = false }) {
     apply(() => {}, `Day copied to ${targets.length} day${targets.length > 1 ? "s" : ""}`);
   };
   /* COPY / PASTE a day's crews (owner, Nov 24): copy here, go to any day, paste. */
+  // the previous work day's crews (Mon → Fri), for "Compared with yesterday"
+  const [prevDay, setPrevDay] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const d = new Date(cur + "T12:00:00");
+      do { d.setDate(d.getDate() - 1); } while (d.getDay() === 0 || d.getDay() === 6);
+      const piso = isoOf(d);
+      let rec = await sGet(kDay(piso)), from = piso;
+      if (!rec?.crews) {
+        const before = (await listDays()).filter((x) => x < piso).sort();
+        for (let i = before.length - 1; i >= 0 && !rec?.crews; i--) { rec = await sGet(kDay(before[i])); from = before[i]; }
+      }
+      if (alive) setPrevDay(rec?.crews ? { iso: piso, from, crews: rec.crews } : null);
+    })();
+    return () => { alive = false; };
+  }, [cur]);
   const [clip, setClip] = useState(() => { try { return JSON.parse(localStorage.getItem("mts-shop-clip") || "null"); } catch { return null; } });
   const copyThisDay = () => {
     const src = dayRef.current;
@@ -4091,7 +4185,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
         </>
       )}
       {tab === "crews" && (
-        <YardView look={look} onLook={onLook} onCopyDay={copyThisDay} onPasteDay={pasteHere} clip={clip} onOrder={orderCrews} core={dayCore} day={day} iso={cur} dayIndex={dayIndex} week={week} engine={engine} crewJobs={crewJobs}
+        <YardView prevDay={prevDay} look={look} onLook={onLook} onCopyDay={copyThisDay} onPasteDay={pasteHere} clip={clip} onOrder={orderCrews} core={dayCore} day={day} iso={cur} dayIndex={dayIndex} week={week} engine={engine} crewJobs={crewJobs}
                   savedDays={savedDays} ops={ops} setOps={setOps}
                   onMove={yardMove} onNewCrew={addCrew} onCrew={setOpenCrew} onPerson={setOpenPerson}
                   onOpenAsset={(id) => setOpenAsset(id)} onDate={setCur} onAddPerson={addPerson}

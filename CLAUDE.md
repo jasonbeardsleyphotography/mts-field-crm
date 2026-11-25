@@ -180,6 +180,10 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   range, "select all"; each row has ✎ Edit (pop-up with name, works-in, colour, foreman, yard/office, remove). COPY /
   PASTE a day: "⧉ Copy this day" (localStorage `mts-shop-clip`) → any other day → "⎘ Paste <day> here" (asks before
   replacing a saved day). At the yard / Broken bins draw loads at full size (right column 400 px).
+  Nov 25: People rows place name / ops / ✎ explicitly in the grid (long ops lists hid the name — Max, Mike T); foreman is
+  a check box; Shift-tap on the month calendar marks every day between (`markRange`); crew room capped at 34vh so Office
+  and Off Duty show; "Compared with <previous work day>" fold-away panel above the crews (`YesterdayPanel`, + / − people
+  and equipment per crew; `mts-yard-yesterday`).
   Formerly: tap names to pick several (`picked` Set), tap/drag days to mark all;
   "🎉 Holiday (everyone)" marks every person off that day (code `hol`, tap again to undo). `setMany` = one week patch.
   YARD LOOK: the owner picked A (light tag, sans-serif, units at 86%, 28 px between setups); the A/B/C switch was
@@ -209,7 +213,8 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   numbers filled in (iPhone `sms://open?addresses=a,b&body=`, others `sms:a,b?body=`) + "Copy numbers"; nothing is sent
   by the app. Day picker (today / tomorrow / date), optional message. Numbers = `person.phone` on the Shop Board core
   (People → ✎ Edit, or Comms' "📇 Phone numbers" list; saving needs Shop Board rights); `cleanPhone` → +1XXXXXXXXXX.
-  crewsForDay(iso, true) returns every crew (incl. SHOP/SALES) + `off` set.
+  crewsForDay(iso, true) returns every crew (incl. SHOP/SALES) + `off` set. Nov 25: no Office button, no message box,
+  All company at the BOTTOM, no OSH/SH switch on this tab.
 - Hours (`src/dispatch/hours.js`): the workbook's hours are ON-SITE HOURS (OSH). Sales hours: 1 SH = 0.78 OSH. The OSH | SH
   switch in the Dispatch header is per device (localStorage `mts-dispatch-hours-unit`); always format with `fmtH()` so the
   unit is printed. A normal day = 6.24 OSH (8 SH) per person working (`dayOsh`); Schedule warns when a crew is light/heavy.
@@ -287,7 +292,9 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   (`PurgatoryModal` in Backlog.jsx). CHECK-BACK: from the check-back date on, the job sits in a big ⏰ banner
   (`CheckBackBanner`, Schedule + Backlog) until "Back to the backlog" or "New date…" — it never leaves Purgatory by itself.
   WEEKENDS OFF by default (`weekendsOn`, "Weekends" switch, `mts-sched-weekends`): Sat/Sun dimmed, week view Mon–Fri,
-  multi-day jobs skip weekends; on = Sun–Sat. Season switches sit UNDER the map.
+  multi-day jobs skip weekends; on = Sun–Sat. Weekends off also REMOVES Sat/Sun from the day strip. Season switches sit
+  UNDER the map. Tag picker (TagFilter): no category titles, one left-aligned run of big FILLED pills (TagPill `filled`:
+  tag colour fill, white text/border; dark text on light colours like the yellow 04 tags).
   WEEK VIEW (`WeekGrid`): `WeekGrid` = crews × Mon–Sat, each cell a load bar (vs dayOsh of the
   people working that day), the jobs (1/3 parts), ⚠ when a job doesn't suit the crew; HTML5 drag from the list into a
   cell or between cells; tap a day header to open it. Boards for each day come from crewsForDay.

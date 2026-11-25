@@ -652,7 +652,7 @@ export default function Schedule({ me }) {
         <button className="btn st" data-primary={mode === "week" ? 1 : 0} onClick={() => setMode((m) => (m === "week" ? "day" : "week"))}
                 title="Show the whole week above the crews (scroll down for the day)">{mode === "week" ? "▴ Hide week" : "▾ Week view"}</button>
         <button className="btn st" onClick={() => setIso(isoOf(addDays(new Date(iso + "T12:00:00"), -7)))}>‹</button>
-        {[0, 1, 2, 3, 4, 5, 6].map((i) => {
+        {(weekends ? [0, 1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5]).map((i) => {
           const d = addDays(wkStart, i), di = isoOf(d);
           const n = Object.entries((di === iso ? { assign } : week[di])?.assign || {}).filter(([k, a]) => a?.crew && !k.startsWith("_")).length;
           return (

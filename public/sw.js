@@ -1,3 +1,4 @@
+// v128: Dispatch: Comms tidy, weekends off hides Sat/Sun, People names + Shift ranges, crew room shorter, yesterday comparison, filled tag picker.
 // v127: Dispatch: Comms tab — one-tap group texts for a crew, active today, or all company; phone numbers on people.
 // v126: Dispatch: brighter text, slim People list with one-click/Ctrl/Shift picking + Edit pop-up, copy/paste a day, weekends off switch, seasons under the map, bigger bin icons.
 // v125: Schedule: crews across the top, week view above, fixed-column tag strip, season switches, Purgatory pop-up + check-back banner.
@@ -170,7 +171,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v127";
+const CACHE = "mts-field-v128";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

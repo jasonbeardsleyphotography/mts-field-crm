@@ -50,12 +50,9 @@ export default function TagFilter({ jobs, value, onChange, compact }) {
       {open && (
         <div style={{ display: "grid", gap: 5, maxHeight: compact ? "38vh" : "none", overflow: "auto" }}>
           <div className="hint" style={{ padding: 0 }}>Tap once = must have · twice = must NOT have · three times = clear</div>
-          {groups.map(([k, tags]) => (
-            <div key={k} style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-              <span className="hint" style={{ width: 104, padding: 0, flexShrink: 0 }}>{GROUP_NAMES[k] || k}</span>
-              {tags.map((t) => <TagPill key={t} tag={t} state={state(t)} count={counts[t]} small onClick={() => cycle(t)} />)}
-            </div>
-          ))}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "flex-start" }}>
+            {groups.flatMap(([, tags]) => tags).map((t) => <TagPill key={t} tag={t} state={state(t)} count={counts[t]} filled onClick={() => cycle(t)} />)}
+          </div>
         </div>
       )}
     </div>

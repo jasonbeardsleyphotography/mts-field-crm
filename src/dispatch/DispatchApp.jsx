@@ -97,7 +97,7 @@ export default function DispatchApp() {
             ))}
           </div>
           <div className="spacer" />
-          {current && current.id !== "shop" && current.id !== "admin" && (
+          {current && !["shop", "admin", "comms"].includes(current.id) && (
             <div className="tabs" role="group" aria-label="Hours shown as" title="On-site hours (OSH) or sales hours (SH). 1 SH = 0.78 OSH. The workbook's hours are OSH.">
               {["OSH", "SH"].map((u) => <button key={u} className="tab st" aria-selected={unit === u} onClick={() => setHoursUnit(u)}>{u}</button>)}
             </div>

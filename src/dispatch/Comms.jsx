@@ -120,8 +120,7 @@ export default function Comms({ me }) {
         ))}
         <input type="date" className="inp" style={{ width: "auto", padding: "6px 8px" }} value={iso} onChange={(e) => e.target.value && setIso(e.target.value)} />
       </div>
-      <input className="inp" style={{ fontSize: 15, padding: "10px 12px", marginBottom: 12 }} placeholder="Message (optional) — or type it in Messages"
-             value={body} onChange={(e) => setBody(e.target.value)} />
+
       {err && <div className="err" style={{ marginBottom: 8 }}>{err}</div>}
       {!board && <div className="hint">Loading the board…</div>}
 
@@ -129,8 +128,6 @@ export default function Comms({ me }) {
         <div style={{ display: "grid", gap: 12 }}>
           <TextButton big title="Active today" color="#17A05B" people={working} body={body}
                       sub={`${dayLabel(iso)}: office ${office.length} · yard ${yard.length} · on crews ${working.length - office.length - yard.length}${offPeople.length ? ` · ${offPeople.length} off (left out)` : ""}`} />
-          <TextButton big title="All company" color="#3A8DD8" people={people} body={body}
-                      sub="Everyone — office, yard and anyone off" />
 
           <div className="st" style={{ fontSize: 12, color: C.inkDim, marginTop: 6 }}>Crews · {dayLabel(iso)}</div>
           {(board.crews || []).filter((c) => (c.people || []).length).map((c, i) => {
@@ -138,8 +135,10 @@ export default function Comms({ me }) {
             return <TextButton key={c.id} title={c.name} color={crewColors[i % crewColors.length]} people={ppl} body={body}
                                sub={ppl.map((p) => p.name.split(" ")[0]).join(", ") || "nobody working"} />;
           })}
-          {office.length > 0 && <TextButton title="Office" color="#8a6bb8" people={office} body={body} sub={office.map((p) => p.name).join(", ")} />}
           {yard.length > 0 && <TextButton title="In the yard (not on a crew)" color="#6E7A83" people={yard} body={body} sub={yard.map((p) => p.name).join(", ")} />}
+          <div className="st" style={{ fontSize: 12, color: C.inkDim, marginTop: 6 }}>Everyone</div>
+          <TextButton big title="All company" color="#3A8DD8" people={people} body={body}
+                      sub="Everyone — office, yard and anyone off" />
           {offPeople.length > 0 && <div className="hint" style={{ padding: 0 }}>Off {dayLabel(iso).toLowerCase()}: {offPeople.map((p) => p.name).join(", ")} — only in “All company”.</div>}
           <div className="hint" style={{ padding: 0 }}>Each button opens your phone's Messages with those people filled in; you write and send it there. On a computer without texting, use “Copy numbers”.</div>
 
