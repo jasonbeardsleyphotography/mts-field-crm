@@ -3009,6 +3009,9 @@ const PERSON_COLORS = ["#008299", ...new Set(SEED_PEOPLE.map((p) => p.c)), "#E5A
 function PersonExtras({ person, onSet }) {
   return (
     <>
+      <div className="fl stencil">PHONE (FOR GROUP TEXTS IN COMMS)</div>
+      <input className="srch" type="tel" inputMode="tel" style={{ width: "100%" }} key={`ph-${person.id}`} defaultValue={person.phone || ""} placeholder="585-555-1234"
+             onBlur={(e) => { const v = e.target.value.trim(); if (v !== (person.phone || "")) onSet(person.id, { phone: v }); }} />
       <div className="fl stencil">COLOUR</div>
       <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
         {PERSON_COLORS.map((c) => (
@@ -3989,7 +3992,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
   };
   const setPerson = (id, patch) =>
     apply((d, s) => { const p = d.people[id]; if (p) { Object.assign(p, patch); p.at = s.at; p.by = s.by; } },
-          `${(coreRef.current.people[id] || {}).name || "Person"} · ${patch.c ? "colour" : patch.foreman != null ? (patch.foreman ? "foreman" : "not foreman") : patch.home ? `starts in the ${patch.home}` : "changed"}`);
+          `${(coreRef.current.people[id] || {}).name || "Person"} · ${patch.phone != null ? "phone number" : patch.c ? "colour" : patch.foreman != null ? (patch.foreman ? "foreman" : "not foreman") : patch.home ? `starts in the ${patch.home}` : "changed"}`);
   const renamePerson = (id, name) =>
     apply((d, s) => { const p = d.people[id]; if (p) { p.name = name; p.d = name.toUpperCase(); p.at = s.at; p.by = s.by; } },
           `Renamed ${name}`);

@@ -7,6 +7,7 @@ import AppMenu from "./AppMenu.jsx";
 import ShopBoard from "./shop/ShopBoard.jsx";
 import Schedule from "./Schedule.jsx";
 import QuickPick from "./QuickPick.jsx";
+import Comms from "./Comms.jsx";
 import { useHoursUnit, setHoursUnit } from "./hours";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -20,6 +21,7 @@ const TABS = [
   { id: "schedule", label: "Schedule", need: "dispatch" },
   { id: "backlog", label: "Backlog", need: "dispatch" },
   { id: "quick", label: "Quick pick", need: "dispatch" },
+  { id: "comms", label: "Comms", need: ["dispatch", "shop"] },     // group texts (owner, Nov 25)
   { id: "admin", label: "Admin", need: "admin", hidden: true },   // opened from the ☰ menu
 ];
 
@@ -55,7 +57,7 @@ export default function DispatchApp() {
   }, [loadMe]);
 
   const pick = (id) => { setTab(id); if (id !== "admin") { try { localStorage.setItem("mts-dispatch-tab", id); } catch {} } };
-  const allowed = (t) => me?.perms?.[t.need] || me?.perms?.admin;
+  const allowed = (t) => me?.perms?.admin || [].concat(t.need).some((n) => me?.perms?.[n]);
   const tabs = me ? TABS.filter(allowed) : [];
   const current = tabs.find((t) => t.id === tab) || tabs.find((t) => !t.soon);
 
@@ -122,6 +124,7 @@ export default function DispatchApp() {
       {current?.id === "shop" && <ShopBoard user={me} isAdmin={!!me.perms.admin} />}
       {current?.id === "schedule" && <Schedule me={me} />}
       {current?.id === "quick" && <QuickPick me={me} />}
+      {current?.id === "comms" && <Comms me={me} />}
       {current?.id === "admin" && <Admin me={me} />}
       <AppMenu me={me} current="dispatch" onAdmin={() => pick("admin")} onSignOut={signOut}
                buttonStyle={current?.id === "quick" ? { left: "auto", right: 12, bottom: "calc(40% + 16px)", width: 42, height: 42 } : undefined} />

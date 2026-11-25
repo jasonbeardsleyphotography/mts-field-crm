@@ -202,7 +202,14 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   Pickups, Trucks (not pickups), Material handlers, Chippers, Stump grinders, Sprayers & UTVs, Other), not conditions.
   Condition = the compact card's outline + a short badge; Broken (status `tagged`, red) sinks to the bottom. The Type filter and column switcher are gone;
   conditions are a filter row. Status keys are unchanged (only labels), so stored data is untouched.
-- Tab order (owner, Nov 23): Shop Board · Schedule · Backlog · Quick pick; Shop Board is the default tab.
+- Tab order (owner, Nov 23): Shop Board · Schedule · Backlog · Quick pick · Comms; Shop Board is the default tab.
+- COMMS tab (owner, Nov 25; `src/dispatch/Comms.jsx`, open to dispatch OR shop users): phone-first group texts. Big
+  buttons: Active today (everyone not off that day: office + yard + crews), All company (everyone), then one per crew
+  (its people working that day), Office, In the yard. Each is an `sms:` link that opens the phone's Messages with the
+  numbers filled in (iPhone `sms://open?addresses=a,b&body=`, others `sms:a,b?body=`) + "Copy numbers"; nothing is sent
+  by the app. Day picker (today / tomorrow / date), optional message. Numbers = `person.phone` on the Shop Board core
+  (People → ✎ Edit, or Comms' "📇 Phone numbers" list; saving needs Shop Board rights); `cleanPhone` → +1XXXXXXXXXX.
+  crewsForDay(iso, true) returns every crew (incl. SHOP/SALES) + `off` set.
 - Hours (`src/dispatch/hours.js`): the workbook's hours are ON-SITE HOURS (OSH). Sales hours: 1 SH = 0.78 OSH. The OSH | SH
   switch in the Dispatch header is per device (localStorage `mts-dispatch-hours-unit`); always format with `fmtH()` so the
   unit is printed. A normal day = 6.24 OSH (8 SH) per person working (`dayOsh`); Schedule warns when a crew is light/heavy.

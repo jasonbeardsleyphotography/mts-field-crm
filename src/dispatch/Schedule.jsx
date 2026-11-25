@@ -81,7 +81,7 @@ function bestOrder(yard, stops) {
 }
 
 /** The crews on the Shop Board for a day: its own record, else the latest earlier one, else the standing setup. */
-export async function crewsForDay(iso) {
+export async function crewsForDay(iso, allOps = false) {
   const raw = mergeCore(await shopGet("core"), freshCore());
   const core = { ...raw, assets: assetsOn(raw.assets, iso) };    // broken on THIS day
   let day = await shopGet(`day.${iso}`), from = iso;
@@ -99,7 +99,8 @@ export async function crewsForDay(iso) {
   const pos = (day?.crews && day.pos) || {};
   const ordered = live(crews).map((c, i) => ({ c, h: pos[c.id] || { x: i * 10, y: 0 } }))
     .sort((a, b) => (a.h.y - b.h.y) || (a.h.x - b.h.x)).map((x) => x.c);
-  return { core, off, crews: ordered.filter((c) => ["GTC", "PHC", "LC"].includes(c.ops || "GTC")), from: day?.crews ? from : "standing" };
+  return { core, off, offCode: Object.fromEntries(Object.entries(wk?.cells || {}).filter(([k, v]) => k.endsWith(`:${di}`) && v && !["on", "light"].includes(v.code)).map(([k, v]) => [k.split(":")[0], v.code])),
+           crews: allOps ? ordered : ordered.filter((c) => ["GTC", "PHC", "LC"].includes(c.ops || "GTC")), from: day?.crews ? from : "standing" };
 }
 
 function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick, yardOf, shop, children }) {
