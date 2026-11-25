@@ -281,7 +281,8 @@ function visitJobs(rows, h, prev, today) {
     const left = num(g(r, "Remaining Hours")), est = num(g(r, "Estimated Hours"));
     const hrs = left != null ? left : est;
     // finished: a completion date, or a done stage (the export may now include ALL stages for Performance)
-    if (soDate(g(r, "Completion Date")) || /complet|invoic|paid|closed|cancel|lost|declin/i.test(str(g(r, "Current Stage")))) continue;
+    // (owner, Nov 25: "Completed" OR "Approved" = done)
+    if (soDate(g(r, "Completion Date")) || /complet|approv|invoic|paid|closed|cancel|lost|declin/i.test(str(g(r, "Current Stage")))) continue;
     if (/^(lead|proposal|draft|estimate|quote)/i.test(str(g(r, "Current Stage")))) continue;   // not sold yet
     const addr = str(g(r, "Job Location")).replace(/,\s*USA$/i, "");
     const zip = ref(g(r, "Job Zip"));
@@ -346,7 +347,7 @@ function visitHistory(rows, h) {
       town: str(g(r, "Job City")),
       activeAt,
       start: soDate(g(r, "Start")) || "",
-      done: soDate(g(r, "Completion Date")) || "",
+      done: soDate(g(r, "Completion Date")) || (/complet|approv/i.test(str(g(r, "Current Stage"))) ? (soDate(g(r, "Stop")) || soDate(g(r, "Start")) || "") : ""),
       promised: num(g(r, "Backlog")),
       rep: str(g(r, "Sales Rep(s)")) || str(g(r, "Sales Rep")),
       hrs: num(g(r, "Estimated Hours")),

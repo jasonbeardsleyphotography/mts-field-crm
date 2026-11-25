@@ -1,3 +1,4 @@
+// v133: Dispatch: SingleOps-to-crews import switched off (approved = done), emergency/priority always listed, include/exclude tag filters with any/all, jobs leave the list instantly.
 // v132: Dispatch: SingleOps schedule onto crews on import, Performance kept-separate measures, shared weekends switch, shop star fix, equipment tab tidy.
 // v131: Dispatch: look B title bars; Backlog + Performance under Schedule; Stumps tab; copy yesterday crews with broken-equipment alert.
 // v130: Look A keeps the Shop Board tabs on one line.
@@ -175,7 +176,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v132";
+const CACHE = "mts-field-v133";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

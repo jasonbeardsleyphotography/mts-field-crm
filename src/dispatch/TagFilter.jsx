@@ -2,16 +2,21 @@ import { useMemo, useState } from "react";
 import TagPill from "./TagPill.jsx";
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Filter jobs by their SingleOps tags. Tap a tag once = must have it (green),
-   twice = must NOT have it (red), three times = ignore it again.
-   "Match all / any" decides how several green tags combine.
+   Filter jobs by their SingleOps tags (owner, Nov 25): two lists —
+   INCLUDE (green) and EXCLUDE (red) — each with its own ANY / ALL switch.
+   Tap a tag once = include, twice = exclude, three times = clear.
+   The tag filter always decides WHICH jobs show; the sort only orders them.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-export const emptyTags = () => ({ inc: [], exc: [], any: false });
+// incAll: job must have every included tag (else any one); excAll: job is left out only if it has every excluded tag (else any one)
+export const emptyTags = () => ({ inc: [], exc: [], any: false, excAll: false });
 export const tagsActive = (f) => f.inc.length + f.exc.length > 0;
 export function passTags(j, f) {
   const T = j.tags || [];
-  if (f.exc.some((t) => T.includes(t))) return false;
+  if (f.exc.length) {
+    const hit = f.excAll ? f.exc.every((t) => T.includes(t)) : f.exc.some((t) => T.includes(t));
+    if (hit) return false;
+  }
   if (!f.inc.length) return true;
   return f.any ? f.inc.some((t) => T.includes(t)) : f.inc.every((t) => T.includes(t));
 }
@@ -38,18 +43,38 @@ export default function TagFilter({ jobs, value, onChange, compact }) {
     onChange({ ...value, inc, exc });
   };
   const n = value.inc.length + value.exc.length;
+  const mode = (on, set, a, b) => (
+    <span style={{ display: "inline-flex", border: "1px solid #3a454d", borderRadius: 3, overflow: "hidden" }}>
+      {[[false, a], [true, b]].map(([v, l]) => (
+        <button key={l} className="st" onClick={() => set(v)} style={{ fontSize: 11, padding: "3px 8px", background: on === v ? "#3a454d" : "transparent", color: on === v ? "#fff" : "#9aa5ad" }}>{l}</button>
+      ))}
+    </span>
+  );
+  const row = (kind) => {
+    const list = value[kind];
+    const inc = kind === "inc";
+    return (
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", padding: "4px 6px", borderRadius: 3, background: inc ? "rgba(23,160,91,.10)" : "rgba(217,59,43,.10)" }}>
+        <b className="st" style={{ fontSize: 11.5, width: 62, color: inc ? "#7fe0a8" : "#ff9a8f" }}>{inc ? "INCLUDE" : "EXCLUDE"}</b>
+        {inc ? mode(!value.any, (v) => onChange({ ...value, any: !v }), "ANY", "ALL")
+             : mode(!!value.excAll, (v) => onChange({ ...value, excAll: v }), "ANY", "ALL")}
+        {!list.length && <span style={{ fontSize: 11.5, color: "#8E99A1" }}>{inc ? "tap a tag once" : "tap a tag twice"}</span>}
+        {list.map((t) => <TagPill key={t} tag={t} state={kind} small onClick={() => cycle(t)} />)}
+        <span style={{ fontSize: 11, color: "#8E99A1" }}>{list.length > 1 ? (inc ? (value.any ? "jobs with any of these" : "jobs with all of these") : (value.excAll ? "leave out jobs with all of these" : "leave out jobs with any of these")) : ""}</span>
+      </div>
+    );
+  };
   return (
     <div style={{ display: "grid", gap: 6 }}>
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
         <button className="chip st" data-on={open ? 1 : 0} onClick={() => setOpen((o) => !o)}>Tags{n ? ` (${n})` : ""} {open ? "▴" : "▾"}</button>
-        {value.inc.map((t) => <TagPill key={t} tag={t} state="inc" small onClick={() => cycle(t)} />)}
-        {value.exc.map((t) => <TagPill key={t} tag={t} state="exc" small onClick={() => cycle(t)} />)}
-        {value.inc.length > 1 && <button className="chip st" onClick={() => onChange({ ...value, any: !value.any })}>{value.any ? "Match ANY green" : "Match ALL green"}</button>}
         {n > 0 && <button className="chip st" onClick={() => onChange(emptyTags())}>Clear tags</button>}
       </div>
+      {(open || n > 0) && row("inc")}
+      {(open || n > 0) && row("exc")}
       {open && (
         <div style={{ display: "grid", gap: 5, maxHeight: compact ? "38vh" : "none", overflow: "auto" }}>
-          <div className="hint" style={{ padding: 0 }}>Tap once = must have · twice = must NOT have · three times = clear</div>
+          <div className="hint" style={{ padding: 0 }}>Tap once = include · twice = exclude · three times = clear</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "flex-start" }}>
             {groups.flatMap(([, tags]) => tags).map((t) => <TagPill key={t} tag={t} state={state(t)} count={counts[t]} filled onClick={() => cycle(t)} />)}
           </div>

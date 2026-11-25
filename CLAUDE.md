@@ -237,13 +237,14 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   completion to the grinding visit's completion — no promise), cleanup / soil & seed after grinding (SingleOps cleanup
   visits + the Stumps tab's stage log `stumps/state[ref].log[stage] = day reached`). Histories uploaded before Nov 25 lack
   tags until the next upload.
-- SINGLEOPS SCHEDULE → CREWS (owner, Nov 25; `src/dispatch/soSync.js`, run by the Backlog import after a Visit export):
-  visit Start→Stop (weekdays, today → +61 days) + Assignee(s) ("Max Crew", "Mike L", "Jeff Royston"; "Stump Grinding" /
-  "Stump Cleanup" are resources, skipped) → sched.<day> on the crew that has that person working that day (`crewFor`,
-  foremen first). Entries written carry `by: SO_BY` ("SingleOps import", `soConst.js`), `src: "singleops"` and show a
-  "SingleOps" mark on the Schedule. NEVER ERASE WORK: a job placed by hand (any entry by someone else, today on) wins —
-  only reported; a day the job was taken off by hand is never refilled; only SO_BY entries are moved / taken off by later
-  imports; moving or reordering one makes it hand-made. Jobs: `soStart`, `soStop`, `soWho` from visitJobs.
+- SINGLEOPS SCHEDULE → CREWS was built (v132) and SWITCHED OFF by the owner the same day ("need to think through how the
+  import interacts"; he disliked multi-day spreading on the calendar). The import is back to: backlog only; visits whose
+  Current Stage is Completed OR Approved (or that have a Completion Date) are done and leave the backlog. `SoLeftovers` on
+  the Schedule offers once to take off entries still `by: SO_BY` ("SingleOps import", `soConst.js`) — keep or remove.
+  Don't rebuild the sync without the owner.
+- Schedule job list (Nov 25): EMERGENCY / PRIORITY always listed (top), even when scheduled in SingleOps / in Purgatory /
+  "Hiding scheduled", until placed here; a job dropped on a crew leaves the list at once (`pending`). Tags (TagFilter):
+  INCLUDE and EXCLUDE rows, each with ANY / ALL (`any`, `excAll`); tags filter, the sort only orders.
 - WEEKENDS: one per-device switch for the Shop Board AND the Schedule (`src/dispatch/weekends.js`, `mts-sched-weekends`);
   off = Sat/Sun leave both day strips. Shop star: 400 Western Dr, Rochester NY 14623 (`inArea` check — the first look-up
   of "400 Western Blvd" landed in New York City; a stored point outside the Rochester area is ignored and looked up again).

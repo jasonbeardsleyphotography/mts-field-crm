@@ -269,6 +269,46 @@ function SeasonBar({ on, setOn, jobs }) {
 const urgency = (j) => (j.status === "emergency" ? 0 : j.status === "priority" ? 1 : 2);
 
 /* Emergency / Priority jobs not on any crew this week — impossible to miss. */
+/* The SingleOps → crews import (v132) was switched off again by the owner the same day.
+   Anything it placed and nobody has touched since is offered for removal, once. */
+function SoLeftovers({ me, onDone }) {
+  const [found, setFound] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const kept = (() => { try { return localStorage.getItem("mts-so-leftovers") === "kept"; } catch { return false; } })();
+  useEffect(() => {
+    if (kept) return;
+    let dead = false;
+    (async () => {
+      const t = isoOf(new Date());
+      const a = await shopSchedRange(addDays(new Date(t + "T12:00:00"), -14).toISOString().slice(0, 10), 31);
+      const b = await shopSchedRange(isoOf(addDays(new Date(t + "T12:00:00"), 17)), 31);
+      const out = [];
+      for (const [iso, rec] of Object.entries({ ...a, ...b })) for (const [ref, e] of Object.entries(rec?.assign || {})) if (e && e.crew && e.by === SO_BY) out.push({ iso, ref, label: e.label });
+      if (!dead) setFound(out);
+    })();
+    return () => { dead = true; };
+  }, [kept]);
+  if (kept || !found || !found.length) return null;
+  const takeOff = async () => {
+    setBusy(true);
+    const at = stampNow(), by = me?.name || me?.email || "?";
+    const byDay = {};
+    found.forEach((x) => { (byDay[x.iso] = byDay[x.iso] || {})[x.ref] = { crew: null, days: null, parts: null, part: null, at, by }; });
+    for (const [iso, assign] of Object.entries(byDay)) await shopPatch(`sched.${iso}`, { assign });
+    setBusy(false); setFound([]); onDone && onDone();
+  };
+  const jobsN = new Set(found.map((x) => x.ref)).size;
+  return (
+    <div className="card" style={{ borderLeft: "4px solid #9cc4e4", marginBottom: 8 }}>
+      <div className="card-b" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
+        <span>The SingleOps import (now switched off) put <b>{jobsN} job{jobsN === 1 ? "" : "s"}</b> on crews ({found.length} day{found.length === 1 ? "" : "s"}) that nobody has changed since. Take them off?</span>
+        <button className="btn st" data-primary="1" disabled={busy} onClick={takeOff}>{busy ? "Taking off…" : "Take them off"}</button>
+        <button className="btn st" disabled={busy} onClick={() => { try { localStorage.setItem("mts-so-leftovers", "kept"); } catch {} setFound([]); }}>Keep them</button>
+      </div>
+    </div>
+  );
+}
+
 function UrgentBanner({ jobs, assign, plannedOn, onPick }) {
   const open = jobs.filter((j) => (j.status === "emergency" || j.status === "priority") && !j.nextVisit && !assign[j.ref]?.crew && !plannedOn[j.ref]);
   if (!open.length) return null;
@@ -404,6 +444,7 @@ export default function Schedule({ me }) {
   const [seasonsOn, setSeasonsOn] = useState(() => { try { return JSON.parse(localStorage.getItem("mts-sched-seasons") || "{}"); } catch { return {}; } });
   useEffect(() => { try { localStorage.setItem("mts-sched-seasons", JSON.stringify(seasonsOn)); } catch {} }, [seasonsOn]);
   const [tagF, setTagF] = useState(emptyTags);
+  const [pending, setPending] = useState(() => new Set());
   const [fitCrew, setFitCrew] = useState(null);      // crew id: list only jobs that crew can do
   const [rulesOpen, setRulesOpen] = useState(false);
   const [pausing, setPausing] = useState(false);
@@ -538,6 +579,11 @@ export default function Schedule({ me }) {
      so taking it off (or moving it) takes every day with it. */
   const addToDay = async (dayIso, ref, crew, dayBoard, dayAssign) => {
     const j = jobBy[ref]; if (!j) return;
+    setPending((p) => new Set(p).add(ref));                    // off the job list right away
+    try { await addToDayNow(dayIso, ref, crew, dayBoard, dayAssign, j); }
+    finally { setPending((p) => { const n = new Set(p); n.delete(ref); return n; }); }
+  };
+  const addToDayNow = async (dayIso, ref, crew, dayBoard, dayAssign, j) => {
     const b = dayBoard || boards[dayIso] || board;
     const c = (b?.crews || []).find((x) => x.id === crew);
     const ppl = c ? (c.people || []).filter((id) => b.core.people[id] && !b.core.people[id].del && !b.off.has(id)).length : 2;
@@ -617,8 +663,10 @@ export default function Schedule({ me }) {
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
     const on = fitC ? peopleOn(fitC) : 0;
-    return jobs.filter((j) => !assign[j.ref]?.crew)
-      .filter((j) => show === "all" || (j.status !== "hold" && j.status !== "sched" && j.status !== "paused" && !j.nextVisit && !plannedOn[j.ref]))
+    // placed on a crew (this day, or planned on another day) = off the list at once (pending = on its way to the server)
+    return jobs.filter((j) => !assign[j.ref]?.crew && !pending.has(j.ref))
+      // EMERGENCY / PRIORITY always show (even scheduled in SingleOps / in Purgatory) until placed here (owner, Nov 25)
+      .filter((j) => (urgency(j) < 2 ? !plannedOn[j.ref] : show === "all" || (j.status !== "hold" && j.status !== "sched" && j.status !== "paused" && !j.nextVisit && !plannedOn[j.ref])))
       .filter((j) => !s || `${j.name} ${j.ref} ${j.addr} ${j.zone} ${j.tags.join(" ")} ${j.paused?.reason || ""}`.toLowerCase().includes(s))
       .filter((j) => passTags(j, tagF))
       .filter((j) => { const ks = seasonKeysOf(j.tags); return !ks.length || ks.some((k) => seasonsOn[k] !== false); })
@@ -630,7 +678,7 @@ export default function Schedule({ me }) {
         : sort === "old" ? (b.days || 0) - (a.days || 0)
         : sort === "big" ? (b.treeHrs || 0) - (a.treeHrs || 0)
         : STATUS[a.status].rank - STATUS[b.status].rank || b.lateWeeks - a.lateWeeks));
-  }, [jobs, assign, show, plannedOn, q, sort, nearCrew, distTo, tagF, fitC, peopleOn, board, seasonsOn]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [jobs, assign, pending, show, plannedOn, q, sort, nearCrew, distTo, tagF, fitC, peopleOn, board, seasonsOn]); // eslint-disable-line react-hooks/exhaustive-deps
   const [limit, setLimit] = useState(80);
   useEffect(() => setLimit(80), [q, show, sort]);
   // Stable list for the map (a new array every render made it rebuild every
@@ -672,6 +720,7 @@ export default function Schedule({ me }) {
       </div>
       {err && <div className="err" style={{ marginBottom: 8 }}>{err}</div>}
       <CheckBackBanner jobs={jobs} onResume={resume} onEdit={(j) => setPurgJob(j)} />
+      <SoLeftovers me={me} onDone={() => location.reload()} />
       <UrgentBanner jobs={jobs} assign={assign} plannedOn={plannedOn} onPick={(r) => setSelected(r)} />
       {purgJob && <PurgatoryModal j={jobBy[purgJob.ref] || purgJob} onPause={pause} onResume={resume} onClose={() => setPurgJob(null)} />}
       {rulesOpen && <TagRules onClose={() => setRulesOpen(false)} />}
@@ -842,7 +891,7 @@ export default function Schedule({ me }) {
                 {(board?.crews || []).filter((c) => (byCrew[c.id] || []).length).map((c) => <option key={c.id} value={`near:${c.id}`}>Nearest to {c.name}'s stops</option>)}
               </select>
               <button className="chip st" data-on={show === "all" ? 1 : 0} onClick={() => setShow((v) => (v === "all" ? "open" : "all"))}>
-                {show === "all" ? "Showing all (incl. Purgatory)" : "Hiding scheduled / Purgatory"}
+                {show === "all" ? "Showing all (incl. Purgatory)" : "Hiding scheduled / Purgatory (not Emergency / Priority)"}
               </button>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 11, color: C.inkDim }} title="The band on the left of each job">

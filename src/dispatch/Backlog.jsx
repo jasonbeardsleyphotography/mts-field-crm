@@ -4,9 +4,8 @@ import { useBacklog } from "./useBacklog";
 import { fmtH, useHoursUnit } from "./hours";
 import { C } from "./theme";
 import { importBacklogFiles } from "./parseWorkbook";
-import { syncSingleOps } from "./soSync";
 import TagPill from "./TagPill.jsx";
-import { enrich, STATUS, STATUS_ORDER, FACETS, tagColor, tagShort, money, monthName, singleOpsJobUrl, jobColor, gradientColor, ageLegend, PAUSED_COLOR, SEASON_COLOR } from "./backlogModel";
+import { STATUS, STATUS_ORDER, FACETS, tagColor, tagShort, money, monthName, singleOpsJobUrl, jobColor, gradientColor, ageLegend, PAUSED_COLOR, SEASON_COLOR } from "./backlogModel";
 import { EQUIPMENT_ORDER } from "./crewCheck";
 import BacklogMap, { useJobPoints } from "./BacklogMap.jsx";
 import JobHours from "./JobHours.jsx";
@@ -293,12 +292,6 @@ export default function Backlog() {
       setBusy("Saving…");
       await api("backlog", { method: "PUT", body: parsed });
       await load();
-      // SingleOps' scheduled visits → the crews on the Schedule (never over hand-made plans; see soSync.js)
-      if (parsed.source === "singleops-visit-csv" && parsed.jobs.some((j) => j.soStart)) {
-        setBusy("Putting SingleOps' scheduled visits on the crews…");
-        try { sum.push(...await syncSingleOps(enrich(parsed, {}))); }
-        catch (e) { sum.push(`Couldn't carry SingleOps' schedule over (${e.message}) — the backlog itself was saved.`); }
-      }
       setBusy(""); setSummary(sum);
     } catch (e) { setBusy(""); setErr(e.status ? `Couldn't save it (${e.message}).` : (e.message || String(e))); }
   };
