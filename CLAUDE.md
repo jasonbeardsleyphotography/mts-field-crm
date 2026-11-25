@@ -262,6 +262,11 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
 - CALL REMINDERS (owner, Nov 25): only 09 MUST BE HOME / NEIGHBOR PERMISSION / OBSTACLE / APPT. SCHEDULED / PET WASTE /
   SHORT and 07 EXTRA NOTICE / SCHEDULE (DATE) / SCHEDULE (DAY) (`CALLS` in crewCheck; TagStrip ☎ uses the same list).
   Shown as "📞 Confirm with client: …" (no counts).
+- SCHEDULE UNDO + ✕ (owner, Nov 25, after ✕ on day 2 wiped day 1 too): ✕ / take off = OFF FROM THAT DAY ON — earlier
+  days of a multi-day job stay (parts/total re-counted); on the first day it comes off completely (`removeFrom`). Every
+  Schedule action (add, take off, move, ±1 day, reorder, Best order) is wrapped in `undoable`: saveDay records each
+  entry's value from BEFORE the action (`undoGroup`), "↶ Undo · <what>" in the day toolbar (or Ctrl/⌘+Z) writes them
+  back, newest first (25 kept, this page session only).
 - SLACK CHECKLIST (owner, Nov 25): "☑ Copy for Slack" in the Office call list header (shown whenever the day has jobs)
   copies Markdown for a Slack canvas: a bold day title, then one "- [ ] FOREMAN: client · phone(s) · [#job](SingleOps
   link) · Confirm: … · morning / afternoon / all day (· day n of m)" line per job, crews in yard order, jobs in route order.
@@ -347,7 +352,7 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   Emergency / Priority beat Purgatory and on hold. LIFT + LIFT TALL! = tall preferred (soft `prefer` note), 83 ok.
   MULTI-DAY JOBS: `addToDay` splits a job bigger than what the crew has left that day into today's share + full days on
   the same crew's next weekdays (Sat/Sun skipped); entries carry {hrs (this day's share), total, part, parts, days}.
-  `entryHrs` counts a part's share. Taking off / moving (moveTo) takes every day of it; moving re-plans from the target.
+  `entryHrs` counts a part's share. Moving (moveTo) takes every day of it and re-plans from the target; ✕ = off from that day on.
   LAYOUT (owner, Nov 24 later): [▾ Week view] opens the WeekGrid ABOVE the day (pushes the page down; mode "week" =
   open, `mts-sched-mode`); then the day's crews as smaller 290 px boxes ACROSS THE TOP (sideways scroll); then the map
   and the job list underneath. Job rows use `TagStrip` (TagPill.jsx): five fixed columns CREW | AERIAL | EQUIPMENT |

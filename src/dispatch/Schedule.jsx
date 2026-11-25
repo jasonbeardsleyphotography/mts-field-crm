@@ -481,7 +481,7 @@ function WeekGrid({ days, boards, week, jobBy, entryHrs, crewColor, selected, on
                                 <button className="btn" style={{ padding: "0 4px", fontSize: 10 }} title="Went long: add the crew's next work day" onClick={(e) => { e.stopPropagation(); onChangeDays(d, x.ref, 1); }}>+1d</button>
                                 {x.parts > 1 && <button className="btn" style={{ padding: "0 4px", fontSize: 10 }} title="Finished short: drop the last day" onClick={(e) => { e.stopPropagation(); onChangeDays(d, x.ref, -1); }}>−1d</button>}
                               </>}
-                              <button className="btn" style={{ padding: "0 4px", fontSize: 10 }} title="Take off (all its days)" onClick={(e) => { e.stopPropagation(); onRemove(d, x.ref); }}>✕</button>
+                              <button className="btn" style={{ padding: "0 4px", fontSize: 10 }} title={x.parts > 1 && x.part > 1 ? "Finished — take it off from this day on (earlier days stay)" : "Take off the schedule"} onClick={(e) => { e.stopPropagation(); onRemove(d, x.ref); }}>✕</button>
                             </div>
                           );
                         })}
@@ -511,6 +511,9 @@ export default function Schedule({ me }) {
   useEffect(() => { try { localStorage.setItem("mts-sched-seasons", JSON.stringify(seasonsOn)); } catch {} }, [seasonsOn]);
   const [tagF, setTagF] = useState(emptyTags);
   const [pending, setPending] = useState(() => new Set());
+  const [undos, setUndos] = useState([]);
+  const [undoBusy, setUndoBusy] = useState(false);
+  const undoGroup = useRef(null);
   const [fitCrew, setFitCrew] = useState(null);      // crew id: list only jobs that crew can do
   const [rulesOpen, setRulesOpen] = useState(false);
   const [pausing, setPausing] = useState(false);
@@ -617,8 +620,48 @@ export default function Schedule({ me }) {
   }, [boards, jobBy]);
 
   const isoRef = useRef(iso); isoRef.current = iso;
+  const assignRef = useRef(assign); assignRef.current = assign;
+  const weekRef = useRef(week); weekRef.current = week;
+  /* UNDO (owner, Nov 25): every change made here (add, take off, move, +/− day, reorder, best order)
+     remembers what each day's entry was before; Undo writes those back (newest change first). */
+  const undoable = (labelOf, fn) => async (...args) => {
+    if (undoGroup.current) return fn(...args);                 // already inside an action (e.g. move → add)
+    const g = { label: labelOf(...args), items: [] };
+    undoGroup.current = g;
+    try { return await fn(...args); }
+    finally { undoGroup.current = null; if (g.items.length) setUndos((u) => [...u.slice(-24), g]); }
+  };
+  const nameOf = (ref) => jobBy[ref]?.name || ref;
+  const undo = async () => {
+    const g = undos[undos.length - 1]; if (!g || undoBusy) return;
+    setUndoBusy(true);
+    setUndos((u) => u.slice(0, -1));
+    for (const it of [...g.items].reverse()) {
+      const { at, by, ...prev } = it.prev || {};                 // eslint-disable-line no-unused-vars
+      await saveDay(it.iso, { [it.ref]: it.prev ? prev : { crew: null, days: null, parts: null, part: null } });
+    }
+    setUndoBusy(false);
+  };
+  const undoFn = useRef(undo); undoFn.current = undo;
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z" && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || "")) { e.preventDefault(); undoFn.current(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   /** Save job entries on any day (the day shown, or another day of the week). */
   const saveDay = async (dayIso, entries) => {
+    const g = undoGroup.current;
+    if (g) {
+      for (const ref of Object.keys(entries)) {
+        if (g.items.some((x) => x.iso === dayIso && x.ref === ref)) continue;     // keep the value from BEFORE the action
+        const known = dayIso === isoRef.current ? assignRef.current : weekRef.current[dayIso]?.assign;
+        let prev = known ? known[ref] : undefined;
+        if (!known) { try { prev = (await shopGet(`sched.${dayIso}`))?.assign?.[ref]; } catch {} }
+        g.items.push({ iso: dayIso, ref, prev: prev || null });
+      }
+    }
     const at = stampNow(), by = me?.name || me?.email || "?";
     const patch = {};
     Object.entries(entries).forEach(([ref, v]) => { patch[ref] = { ...v, at, by }; });
@@ -634,7 +677,7 @@ export default function Schedule({ me }) {
   const label = (j) => ({ label: `${j.name} #${j.ref}`, town: j.town, hrs: j.treeHrs ?? j.hrs ?? 0, tags: j.tags || [] });
   // every crew runs out of the one shop (owner, Nov 24)
   const yardOf = useCallback(() => shop, [shop]);
-  const autoOrder = (crewId) => {
+  const autoOrder = undoable((crewId) => `Best order`, (crewId) => {
     const items = byCrew[crewId] || [];
     const yard = yardOf(crewId);
     if (!yard) { setErr(`Still finding the shop (${SHOP_ADDR}) on the map — try again in a moment.`); return; }
@@ -643,19 +686,19 @@ export default function Schedule({ me }) {
     const finalList = [...ord.map((i) => placed[i]), ...unplaced];
     const entries = {};
     finalList.forEach((x, i) => { if ((x.order ?? -1) !== i) entries[x.ref] = { ...assign[x.ref], order: i }; });
-    if (Object.keys(entries).length) save(entries);
-  };
+    if (Object.keys(entries).length) return save(entries);
+  });
   /* Put a job on a crew on a day. A job bigger than what the crew has left that
      day is split: today's share, then the same crew on the next weekdays (Sat/Sun
      skipped), a full day each, until it's done — "Day 1 of 3", "Day 2 of 3"…
      Each day counts only its own share. All its days are stored on each part,
      so taking it off (or moving it) takes every day with it. */
-  const addToDay = async (dayIso, ref, crew, dayBoard, dayAssign) => {
+  const addToDay = undoable((d, ref) => `Add ${nameOf(ref)}`, async (dayIso, ref, crew, dayBoard, dayAssign) => {
     const j = jobBy[ref]; if (!j) return;
     setPending((p) => new Set(p).add(ref));                    // off the job list right away
     try { await addToDayNow(dayIso, ref, crew, dayBoard, dayAssign, j); }
     finally { setPending((p) => { const n = new Set(p); n.delete(ref); return n; }); }
-  };
+  });
   const addToDayNow = async (dayIso, ref, crew, dayBoard, dayAssign, j) => {
     const b = dayBoard || boards[dayIso] || board;
     const c = (b?.crews || []).find((x) => x.id === crew);
@@ -698,23 +741,35 @@ export default function Schedule({ me }) {
   };
   const addTo = (ref, crew) => addToDay(iso, ref, crew);
   /** Take a job off (every day of it, if it spans several). */
-  const removeFrom = (dayIso, ref) => {
+  /* ✕ = off the schedule FROM THIS DAY ON (owner, Nov 25): on day 2 of a 3-day job it finished on day 1 —
+     day 1 stays, days 2 and 3 go. On the first day (or a one-day job) it comes off completely. */
+  const OFF = { crew: null, days: null, parts: null, part: null };
+  const removeFrom = undoable((d, ref) => `Take off ${nameOf(ref)}`, async (dayIso, ref) => {
     const e = (dayIso === iso ? assign : week[dayIso]?.assign || {})[ref] || {};
-    (e.days && e.days.length ? e.days : [dayIso]).forEach((d) => saveDay(d, { [ref]: { crew: null, days: null, parts: null, part: null } }));
-  };
+    const days = (e.days && e.days.length ? [...e.days] : [dayIso]).sort();
+    const keep = days.filter((d) => d < dayIso), drop = days.filter((d) => d >= dayIso);
+    await Promise.all(drop.map((d) => saveDay(d, { [ref]: OFF })));
+    if (!keep.length) return;
+    const olds = await Promise.all(keep.map(async (d) => (d === iso ? assign[ref] : week[d]?.assign?.[ref]) || (await shopGet(`sched.${d}`))?.assign?.[ref] || e));
+    const n = keep.length, total = olds.reduce((t, x) => t + (x.parts ? (x.hrs || 0) : (x.hrs ?? 0)), 0);
+    for (let k = 0; k < n; k++) {
+      const { at, by, ...o } = olds[k];                          // eslint-disable-line no-unused-vars
+      await saveDay(keep[k], { [ref]: { ...o, total, parts: n > 1 ? n : null, days: n > 1 ? keep : null, part: n > 1 ? k + 1 : null } });
+    }
+  });
   const remove = (ref) => removeFrom(iso, ref);
   /** Move a job (all its days) to another crew / day: it's re-planned from there. */
-  const moveTo = async (fromIso, ref, toIso, crew) => {
+  const moveTo = undoable((f, ref) => `Move ${nameOf(ref)}`, async (fromIso, ref, toIso, crew) => {
     const e = (fromIso === iso ? assign : week[fromIso]?.assign || {})[ref] || {};
     if (fromIso === toIso && e.crew === crew) return;
     const gone = new Set(e.days && e.days.length ? e.days : [fromIso]);
     await Promise.all([...gone].map((d) => saveDay(d, { [ref]: { crew: null, days: null, parts: null, part: null } })));
     const A = { ...((toIso === iso ? assign : week[toIso]?.assign) || {}) }; delete A[ref];
     await addToDay(toIso, ref, crew, null, A);
-  };
+  });
   /* WENT LONG / FINISHED SHORT (owner, Nov 25): +1 day adds the crew's next work day to the job
      (same share as its last day); −1 day drops its last day. The other days keep their hours. */
-  const changeDays = async (fromIso, ref, delta) => {
+  const changeDays = undoable((f, ref, delta) => `${delta > 0 ? "+1" : "−1"} day ${nameOf(ref)}`, async (fromIso, ref, delta) => {
     const e = (fromIso === iso ? assign : week[fromIso]?.assign || {})[ref];
     if (!e?.crew) return;
     const days = (e.days && e.days.length ? [...e.days] : [fromIso]).sort();
@@ -731,15 +786,15 @@ export default function Schedule({ me }) {
       await saveDay(newDays[k], { [ref]: { ...base, hrs: newShares[k], order, parts: n > 1 ? n : null, days: n > 1 ? newDays : null, part: n > 1 ? k + 1 : null } });
     }
     if (gone) await saveDay(gone, { [ref]: { crew: null, days: null, parts: null, part: null } });
-  };
-  const move = (crew, idx, dir) => {
+  });
+  const move = undoable(() => "Reorder", (crew, idx, dir) => {
     const list = byCrew[crew] || []; const k = idx + dir;
     if (k < 0 || k >= list.length) return;
     const ord = list.map((x, i) => i); [ord[idx], ord[k]] = [ord[k], ord[idx]];
     const entries = {};
     list.forEach((x, i) => { const o = ord.indexOf(i); if ((x.order ?? i) !== o) entries[x.ref] = { ...assign[x.ref], order: o }; });
-    save(entries);
-  };
+    return save(entries);
+  });
 
   // backlog list
   const nearCrew = sort.startsWith("near:") ? sort.slice(5) : null;
@@ -813,6 +868,10 @@ export default function Schedule({ me }) {
         })}
         <button className="btn st" onClick={() => setIso(isoOf(addDays(new Date(iso + "T12:00:00"), 7)))}>›</button>
         <button className="btn st" onClick={() => setIso(today)}>Today</button>
+        <button className="btn st" data-danger={undos.length ? 1 : 0} disabled={!undos.length || undoBusy} onClick={undo}
+                title={undos.length ? `Undo: ${undos[undos.length - 1].label} (Ctrl+Z)` : "Nothing to undo"}>
+          ↶ Undo{undos.length ? ` · ${undos[undos.length - 1].label}` : ""}
+        </button>
         <span className="spacer" />
         <button className="chip st" data-on={weekends ? 1 : 0} onClick={() => setWeekends(!weekends)} title="Weekends are off unless this is on">{weekends ? "Weekends: ON" : "Weekends: off"}</button>
         <button className="chip st" data-on={mapOpen ? 1 : 0} onClick={() => setMapOpen(!mapOpen)} title="Show or hide the map">{mapOpen ? "Map: on" : "Map: off"}</button>
@@ -1067,7 +1126,7 @@ export default function Schedule({ me }) {
                         {j && <JobHours j={j} size={13} />}
                         <button className="btn" style={{ padding: "2px 7px" }} title="Earlier" onClick={(e) => { e.stopPropagation(); move(c.id, i, -1); }}>↑</button>
                         <button className="btn" style={{ padding: "2px 7px" }} title="Later" onClick={(e) => { e.stopPropagation(); move(c.id, i, 1); }}>↓</button>
-                        <button className="btn" style={{ padding: "2px 7px" }} title="Take off" onClick={(e) => { e.stopPropagation(); remove(x.ref); }}>✕</button>
+                        <button className="btn" style={{ padding: "2px 7px" }} title={x.parts > 1 && x.part > 1 ? "Finished — take it off from this day on (earlier days stay)" : "Take off the schedule"} onClick={(e) => { e.stopPropagation(); remove(x.ref); }}>✕</button>
                       </div>
                       {selected === x.ref && (
                         <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "2px 6px 6px 30px", fontSize: 11.5, color: C.inkDim }}>
