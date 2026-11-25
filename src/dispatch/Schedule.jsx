@@ -189,17 +189,71 @@ function JobChecks({ r }) {
 }
 
 /* Everything the office should raise when calling to schedule this day's jobs. */
-function CallList({ assign, checks, jobBy, crews, crewColor }) {
+/* SLACK CHECKLIST (owner, Nov 25): every job on this day's crews as one checklist line —
+   FOREMAN: client · phone · job # (link to SingleOps) · what to confirm · morning / afternoon —
+   in Markdown ("- [ ]"), which a Slack canvas turns into check boxes when pasted. */
+function slackChecklist({ iso, crews, board, byCrew, jobBy, checks, entryHrs }) {
+  const day = new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  const lines = [`**Client calls — ${day}**`, ""];
+  for (const c of crews) {
+    const items = byCrew[c.id] || [];
+    if (!items.length) continue;
+    const ppl = (c.people || []).map((id) => board?.core.people[id]).filter((p) => p && !p.del && !board.off.has(p.id));
+    const fore = (ppl.find((p) => p.foreman) || ppl[0] || { name: c.name }).name.toUpperCase();
+    const target = dayOsh(ppl.length || 1);
+    let before = 0;
+    for (const x of items) {
+      const j = jobBy[x.ref] || {};
+      const hrs = entryHrs(x);
+      const when = x.parts > 1 && x.part > 1 ? "all day (continuing)" : hrs >= target * 0.9 ? "all day" : before < target / 2 ? "morning" : "afternoon";
+      before += hrs;
+      const confirm = (checks[x.ref]?.calls || []).map((t) => t.split(" — ")[0]);
+      const parts = [
+        j.name || (x.label || "").replace(/ #.*$/, ""),
+        j.phone || "no phone on file",
+        `[#${x.ref}](${singleOpsJobUrl(x.ref)})`,
+        confirm.length ? `Confirm: ${confirm.join("; ")}` : "",
+        x.parts > 1 ? `${when} · day ${x.part} of ${x.parts}` : when,
+      ].filter(Boolean);
+      lines.push(`- [ ] ${fore}: ${parts.join(" · ")}`);
+    }
+  }
+  return lines.length > 2 ? lines.join("\n") : "";
+}
+
+function CopySlack(props) {
+  const [done, setDone] = useState("");
+  const copy = async (e) => {
+    e.stopPropagation();
+    const text = slackChecklist(props);
+    if (!text) { setDone("No jobs on this day"); return; }
+    try { await navigator.clipboard.writeText(text); setDone("Copied ✓ — paste into the Slack canvas"); }
+    catch { setDone("Couldn't copy — try again"); }
+    setTimeout(() => setDone(""), 2500);
+  };
+  return (
+    <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
+      <button className="btn st" data-primary="1" style={{ padding: "4px 10px", fontSize: 11 }} onClick={copy}
+              title="Copies every job on this day as a checklist for a Slack canvas: FOREMAN: client · phone · job # link · what to confirm · morning/afternoon">☑ Copy for Slack</button>
+      {done && <span style={{ fontSize: 11.5, color: "#7fe0a8", textTransform: "none", letterSpacing: 0 }}>{done}</span>}
+    </span>
+  );
+}
+
+function CallList({ assign, checks, jobBy, crews, crewColor, board, byCrew, entryHrs, iso }) {
   const [open, setOpen] = useState(true);
   const rows = Object.entries(assign).filter(([ref, a]) => a?.crew && !ref.startsWith("_") && checks[ref]?.calls?.length)
     .map(([ref, a]) => ({ ref, a, j: jobBy[ref], calls: checks[ref].calls }));
-  if (!rows.length) return null;
+  const anyJobs = Object.entries(assign).some(([ref, a]) => a?.crew && !ref.startsWith("_"));
+  if (!anyJobs) return null;
   return (
     <div className="card" style={{ borderLeft: `4px solid ${C.amber}` }}>
-      <button className="card-h st" style={{ width: "100%", color: C.ink, fontSize: 12 }} onClick={() => setOpen((o) => !o)}>
-        📞 Office call list · {rows.length} job{rows.length === 1 ? "" : "s"}<span className="spacer" />{open ? "▴" : "▾"}
-      </button>
-      {open && (
+      <div role="button" tabIndex={0} className="card-h st" style={{ width: "100%", color: C.ink, fontSize: 12, cursor: "pointer" }} onClick={() => setOpen((o) => !o)}>
+        📞 Office call list · {rows.length} job{rows.length === 1 ? "" : "s"} to confirm<span className="spacer" />
+        <CopySlack iso={iso} crews={crews} board={board} byCrew={byCrew} jobBy={jobBy} checks={checks} entryHrs={entryHrs} />
+        {open ? "▴" : "▾"}
+      </div>
+      {open && rows.length > 0 && (
         <div style={{ padding: "6px 10px", display: "grid", gap: 6 }}>
           {rows.map(({ ref, a, j, calls }) => (
             <div key={ref} style={{ fontSize: 12.5 }}>
@@ -1035,7 +1089,8 @@ export default function Schedule({ me }) {
                 })}
               </div>
             )}
-            <CallList assign={assign} checks={checks} jobBy={jobBy} crews={board?.crews || []} crewColor={crewColor} />
+            <CallList assign={assign} checks={checks} jobBy={jobBy} crews={board?.crews || []} crewColor={crewColor}
+                      board={board} byCrew={byCrew} entryHrs={entryHrs} iso={iso} />
           </div>
         </div>
       </div>

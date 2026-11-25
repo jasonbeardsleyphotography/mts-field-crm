@@ -1,3 +1,4 @@
+// v137: Schedule: "Copy for Slack" checklist of the day's jobs (foreman, client, phone, job link, confirm notes, morning/afternoon).
 // v136: Schedule lists only crews with people working; fit check on crew chips; warning for jobs on emptied crews.
 // v135: Dispatch Schedule workbench layout (jobs left, crews right, drop chips), +1/−1 day, check boxes for scheduled/Purgatory, trimmed call reminders.
 // v134: Performance ignores jobs with no Backlog weeks entered.
@@ -179,7 +180,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v136";
+const CACHE = "mts-field-v137";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

@@ -262,6 +262,10 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
 - CALL REMINDERS (owner, Nov 25): only 09 MUST BE HOME / NEIGHBOR PERMISSION / OBSTACLE / APPT. SCHEDULED / PET WASTE /
   SHORT and 07 EXTRA NOTICE / SCHEDULE (DATE) / SCHEDULE (DAY) (`CALLS` in crewCheck; TagStrip ☎ uses the same list).
   Shown as "📞 Confirm with client: …" (no counts).
+- SLACK CHECKLIST (owner, Nov 25): "☑ Copy for Slack" in the Office call list header (shown whenever the day has jobs)
+  copies Markdown for a Slack canvas: a bold day title, then one "- [ ] FOREMAN: client · phone(s) · [#job](SingleOps
+  link) · Confirm: … · morning / afternoon / all day (· day n of m)" line per job, crews in yard order, jobs in route order.
+  Morning/afternoon = whether the hours before it on that crew are under half the crew's day (`slackChecklist`).
 - WEEKENDS: one per-device switch for the Shop Board AND the Schedule (`src/dispatch/weekends.js`, `mts-sched-weekends`);
   off = Sat/Sun leave both day strips. Shop star: 400 Western Dr, Rochester NY 14623 (`inArea` check — the first look-up
   of "400 Western Blvd" landed in New York City; a stored point outside the Rochester area is ignored and looked up again).
