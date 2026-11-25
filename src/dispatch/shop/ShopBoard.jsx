@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { shopGet, shopDays, shopPatch, shopPresence, stampNow, changed, changedKeys } from "./shopApi";
 import { checkJob, problemLines } from "../crewCheck";
+import { useWeekends } from "../weekends";
 import { sharedDay, setSharedDay } from "../sharedDay";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1778,8 +1779,8 @@ const CSS = scopeCss(`
 .canvas-wrap { grid-area:canvas; overflow:auto; border:1px solid ${C.edgeSoft}; border-radius:4px; }
 .right { grid-area:right; display:flex; flex-direction:column; gap:10px; min-height:0; }
 .right > div { display:flex; min-height:0; }
-.right > div:first-child { flex:2.2; }      /* at the yard: the big one */
-.right > div:not(:first-child) { flex:1; min-height:120px; }   /* in for repair, broken: smaller */
+.right > div:first-child { flex:0 1 auto; }      /* at the yard: only as tall as what's in it; scrolls when crowded (owner, Nov 25) */
+.right > div:not(:first-child) { flex:1 0 auto; min-height:190px; }   /* broken: always on screen */
 .ppl { display:grid; grid-template-columns:210px minmax(0,1fr); gap:12px; padding:10px 16px 12px; height:calc(100vh - 128px); min-height:560px; }
 .ppl-side { background:${C.panel}; border:1px solid ${C.edgeSoft}; border-radius:4px; display:flex; flex-direction:column; min-height:0; overflow:hidden; }
 .ppl-list { display:flex; flex-direction:column; flex:1; min-height:0; overflow:auto; }
@@ -2041,50 +2042,23 @@ function FleetView({ core, crewsMap, engine, filters, setFilters, onOpen, flashS
   const crews = live(crewsMap);
   const crewOf = {};
   crews.forEach((c) => c.iron.forEach((i) => { crewOf[i] = c.name; }));
-  const yards = ["Brighton", "Rush Scottsville", "Off-site"];
-
+  // owner, Nov 25: no operation / yard / condition filters and no tallies — broken shows on the card itself
   const shown = assets.filter((a) => {
-    if (filters.op && !a.ops.includes(filters.op)) return false;
-    if (filters.yard && a.yard !== filters.yard) return false;
-    if (filters.st && a.status !== filters.st) return false;
-    const q = filters.q.trim().toLowerCase();
-    if (q && !(a.name + " " + a.spec + " " + (a.plate || "")).toLowerCase().includes(q)) return false;
-    return true;
+    const q = (filters.q || "").trim().toLowerCase();
+    return !q || (a.name + " " + a.spec + " " + (a.plate || "")).toLowerCase().includes(q);
   });
   const order = (l) => l.sort((x, y) => (SINK[x.status] ?? 0) - (SINK[y.status] ?? 0) || x.name.localeCompare(y.name));
   const groups = [...EQUIP_GROUPS, { key: "other", label: "Other" }]
     .map((g) => ({ ...g, items: order(shown.filter((a) => equipGroupOf(a) === g.key)) }))
     .filter((g) => g.items.length);
 
-  const toggle = (k, v) => setFilters((f) => ({ ...f, [k]: f[k] === v ? "" : v }));
-  const count = (k) => assets.filter((a) => a.status === k).length;
-
   return (
     <>
       <div className="tb">
-        {OP_ORDER.map((o) => (
-          <button key={o} className="chip stencil" data-on={filters.op === o ? 1 : 0} onClick={() => toggle("op", o)}>
-            <OpGlyph op={o} /> {o}
-          </button>
-        ))}
-        <span className="vr" />
-        {yards.map((y) => (
-          <button key={y} className="chip stencil" data-on={filters.yard === y ? 1 : 0} onClick={() => toggle("yard", y)}>{y}</button>
-        ))}
+        <span className="note" style={{ padding: 0 }}>Broken units have a red outline and sit at the bottom of their column. Tap a unit to change it.</span>
         <div className="spacer" />
-        {onAdd && <button className="btn stencil" data-primary="1" onClick={onAdd}>+ Add equipment</button>}
         <input className="srch" placeholder="Find unit or plate" value={filters.q}
                onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))} />
-      </div>
-      <div className="tb" style={{ paddingTop: 0, borderBottom: `1px solid ${C.edgeSoft}` }}>
-        <span className="fl stencil" style={{ margin: 0 }}>CONDITION</span>
-        {ST_ORDER.map((k) => (
-          <button key={k} className="chip stencil" data-on={filters.st === k ? 1 : 0} onClick={() => toggle("st", k)}
-                  style={{ borderColor: ST[k].color }}>
-            <span className="swatch" style={{ background: ST[k].color }} />{ST[k].label} <b className="mono" style={{ fontWeight: 500, opacity: .7 }}>{count(k)}</b>
-          </button>
-        ))}
-        <span className="note" style={{ padding: 0 }}>Outline = condition. Tap a unit to change it, or drag it to the bar at the bottom.</span>
       </div>
 
       <div className="cols">
@@ -2107,8 +2081,9 @@ function FleetView({ core, crewsMap, engine, filters, setFilters, onOpen, flashS
             </div>
           </div>
         ))}
-        {!groups.length && <div className="empty">Nothing matches. Adjust the filters.</div>}
+        {!groups.length && <div className="empty">Nothing matches.</div>}
       </div>
+      {onAdd && <div className="tb"><button className="btn stencil" onClick={onAdd}>+ Add equipment</button></div>}
     </>
   );
 }
@@ -2274,6 +2249,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
                    onCopy, onLink, onUnlink, look, onLook, onCopyPrev, onTakeOffBroken, prevDay,
                    onMove, onNewCrew, onCrew, onPerson, onAddPerson, onOpenAsset, onDate, undoLabel, onUndo }) {
   const { begin, registerZone, drag } = engine;
+  const [weekends, setWeekends] = useWeekends();
   const assets = core.assets;
   const roster = live(core.people);
   const pos = day.pos || {};
@@ -2381,6 +2357,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
         <button className="btn stencil" onClick={() => onDate(isoOf(addDays(mon, -7)))}>‹</button>
         {days.map((d, i) => {
           const di = isoOf(d);
+          if (!weekends && (d.getDay() === 0 || d.getDay() === 6) && di !== iso) return null;   // weekends off (shared switch)
           return (
             <button key={i} className="calday stencil" data-on={di === iso ? 1 : 0} data-today={di === todayIso ? 1 : 0}
                     onClick={() => onDate(di)}>
@@ -2392,6 +2369,8 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
         })}
         <button className="btn stencil" onClick={() => onDate(isoOf(addDays(mon, 7)))}>›</button>
         <button className="btn stencil" onClick={() => onDate(todayIso)}>Today</button>
+        <button className="btn stencil" data-primary={weekends ? 1 : 0} onClick={() => setWeekends(!weekends)}
+                title="Saturday and Sunday on the day strip (same switch as the Schedule's)">{weekends ? "Weekends: on" : "Weekends: off"}</button>
         <div className="spacer" />
         <button className="btn stencil" data-danger={undoLabel ? 1 : 0} disabled={!undoLabel}
                 onClick={onUndo} title={undoLabel || "Nothing to undo"}>

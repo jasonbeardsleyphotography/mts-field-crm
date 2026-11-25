@@ -61,7 +61,7 @@ function buildItems(allJobs, goneStumps, stumps, today) {
       ref: j.ref, name: j.name, addr: j.addr, town: j.town, zip: j.zip, phone: j.phone || "", tags: j.tags || [],
       notes: j.note || j.notes || "", grindHrs: j.grindHrs || 0, grindUnits: j.grindUnits || 0,
       cleanup: j.cleanupQty || 0, cleanupHrs: j.cleanupHrs || 0, seed: j.seedQty || 0, seedUnit: j.seedUnit || "", seedHrs: j.seedHrs || 0,
-      treeHrs: j.stumpOnly ? 0 : j.treeHrs, treeLeft, days: j.days, open: true,
+      treeHrs: j.stumpOnly ? 0 : j.treeHrs, treeLeft, days: j.days, open: true, soStart: j.soStop && j.soStop >= today ? j.soStart : "", soWho: j.soWho || "",
     });
     seen.add(j.ref);
   }
@@ -248,6 +248,7 @@ function StumpCard({ it, today, selected, onPick, save, busy }) {
         {workText(it) && <div style={{ fontSize: 13 }}>{workText(it)}</div>}
         {it.stage === "waiting" && <div style={{ fontSize: 12.5, color: "#f0c050" }}>Tree work still in the backlog{it.treeHrs > 0 ? ` on this visit (${fmtH(it.treeHrs)})` : " on this job"}.</div>}
         {it.auto && <div style={{ fontSize: 12, color: C.inkDim }}>↳ {it.auto}</div>}
+        {it.soStart && <div style={{ fontSize: 13, color: "#9cc4e4" }}>📅 Scheduled in SingleOps: {nice(it.soStart < today ? today : it.soStart, true)}{it.soWho ? ` · ${it.soWho}` : ""}</div>}
         {windowEnds && <div style={{ fontSize: 13, fontWeight: 600, color: late ? "#ff6b5e" : windowEnds <= addDays(today, 2) ? "#f0c050" : "#6fd39a" }}>{late ? `⚠ Clearance ran out ${nice(windowEnds, true)} — call again` : `Clear to dig until ${nice(windowEnds, true)}`}</div>}
         {it.tags.length > 0 && <TagRow tags={it.tags} />}
         {it.notes && <div style={{ fontSize: 12.5, color: C.inkDim, whiteSpace: "pre-wrap", maxHeight: 60, overflow: "hidden" }}>{it.notes}</div>}
@@ -306,7 +307,7 @@ export default function Stumps() {
   const save = async (it, set) => {
     setBusy(true); setErr("");
     try {
-      const r = await api("stumps", { method: "POST", body: { ref: it.ref, set: { ...set, snap: snapOf(it) } } });
+      const r = await api("stumps", { method: "POST", body: { ref: it.ref, today, set: { ...set, snap: snapOf(it) } } });
       setStumps(r.stumps || {});
     } catch (e) { setErr(`Couldn't save (${e.message}) — check your connection and try again.`); }
     setBusy(false);

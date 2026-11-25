@@ -260,7 +260,11 @@ export default async (req) => {
     const all = raw ? JSON.parse(raw) : {};
     const cur = all[ref] || {};
     const n = { ...cur };
-    if ("stage" in b.set) n.stage = STAGES.includes(b.set.stage) ? b.set.stage : "";
+    if ("stage" in b.set) {
+      n.stage = STAGES.includes(b.set.stage) ? b.set.stage : "";
+      // the day each stage was reached (Performance: how long cleanup / soil & seed take after grinding)
+      if (n.stage && n.stage !== cur.stage) n.log = { ...(cur.log || {}), [n.stage]: d(b.today) || new Date().toISOString().slice(0, 10) };
+    }
     for (const k of ["called", "clearFrom", "clearTo", "doneOn"]) if (k in b.set) n[k] = d(b.set[k]);
     if ("note" in b.set) n.note = String(b.set.note || "").slice(0, 600);
     if (b.set.snap && typeof b.set.snap === "object" && JSON.stringify(b.set.snap).length <= 6000) n.snap = b.set.snap;

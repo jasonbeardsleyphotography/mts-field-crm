@@ -13,6 +13,8 @@ import { freshCore, mergeCore, live, isoOf, addDays, weekStartOf, assetsOn } fro
 import { sharedDay, setSharedDay } from "./sharedDay";
 import { checkJob, crewTags, TAG_RULES, UNMAPPED_TAGS } from "./crewCheck";
 import { useShop, starIcon, SHOP_ADDR } from "./shopLocation";
+import { weekendsOn, useWeekends } from "./weekends";
+import { SO_BY } from "./soConst";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Schedule — put backlog jobs on the Shop Board's crews for a day.
@@ -232,8 +234,7 @@ function TagRules({ onClose }) {
 /* WEEKENDS (owner, Nov 24): off by default for all scheduling; the "Weekends" switch on
    the Schedule turns them on (per device). Off = Sat/Sun dimmed, the week view is Mon–Fri
    and multi-day jobs carry over Mon–Fri only. */
-let weekendsOn = (() => { try { return localStorage.getItem("mts-sched-weekends") === "1"; } catch { return false; } })();
-const nextWorkday = (d) => { const x = new Date(d + "T12:00:00"); do { x.setDate(x.getDate() + 1); } while (!weekendsOn && (x.getDay() === 0 || x.getDay() === 6)); return isoOf(x); };
+const nextWorkday = (d) => { const x = new Date(d + "T12:00:00"); do { x.setDate(x.getDate() + 1); } while (!weekendsOn() && (x.getDay() === 0 || x.getDay() === 6)); return isoOf(x); };
 /* SEASON SWITCHES (owner, Nov 24): permanent check boxes for the seasonal work.
    Unticked = jobs tagged only for that season are left out of the job list (jobs with
    no season tag always show). A box GLOWS while today is inside its window, with the
@@ -407,8 +408,7 @@ export default function Schedule({ me }) {
   const [rulesOpen, setRulesOpen] = useState(false);
   const [pausing, setPausing] = useState(false);
   const [board, setBoard] = useState(null);          // { core, crews, from }
-  const [weekends, setWeekendsState] = useState(weekendsOn);
-  const setWeekends = (v) => { weekendsOn = v; setWeekendsState(v); try { localStorage.setItem("mts-sched-weekends", v ? "1" : "0"); } catch {} };
+  const [weekends, setWeekends] = useWeekends();
   const [mode, setMode] = useState(() => { try { return localStorage.getItem("mts-sched-mode") || "day"; } catch { return "day"; } });
   useEffect(() => { try { localStorage.setItem("mts-sched-mode", mode); } catch {} }, [mode]);
   const [boards, setBoards] = useState({});          // iso -> crews for that day (week view)
@@ -752,7 +752,7 @@ export default function Schedule({ me }) {
                            style={{ display: "flex", gap: 6, alignItems: "center", padding: "5px 6px", background: selected === x.ref ? C.tileHi : C.tile, borderRadius: 3, cursor: "pointer" }}>
                         <span className="mono" style={{ width: 18, height: 18, borderRadius: 9, background: crewColor(c.id), color: "#0b0e11", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{i + 1}</span>
                         <span style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{j ? j.name : x.label}</div>
+                          <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.src === "singleops" && x.by === SO_BY && <span className="mono" title={`Put here from SingleOps (assigned: ${x.soWho || "?"}). Move or take it off and it becomes yours — later imports leave it alone.`} style={{ fontSize: 9.5, padding: "0 4px", marginRight: 5, borderRadius: 2, background: "#2a3a4a", color: "#9cc4e4", letterSpacing: ".04em" }}>SingleOps</span>}{j ? j.name : x.label}</div>
                           {x.parts > 1 && <div style={{ fontSize: 11, color: "#9cc4e4" }}>Day {x.part} of {x.parts} · {fmtH(x.hrs)} today of {fmtH(x.total)}</div>}
                           <div className="hint" style={{ fontSize: 11 }}>{j?.town || x.town}{j ? "" : ` · ${fmtH(x.hrs)}`}{prev && here ? ` · ${miles(km(prev, here))} from ${i === 0 ? "the shop" : "last"}` : ""}{!j ? " · no longer in the backlog" : ""}</div>
                           <JobChecks r={checks[x.ref]} />

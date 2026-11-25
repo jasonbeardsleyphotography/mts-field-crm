@@ -231,6 +231,24 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   Anything copied that is BROKEN that day → pop-up (`brokenAlert`) and a big red strike (`BrokenStrike`) over it on the crew
   until tapped (tap = off the crew → Broken bin). Any broken unit on a crew shows the strike. Schedule/crewCheck never count
   broken units (`isDown`).
+- PERFORMANCE kinds (owner, Nov 25; `kindOf` in Performance.jsx, from `history.tags`): only "main" visits count toward the
+  backlog promise. Kept separate: EMERGENCY (sold → done within 1–5 days), PRIORITY (within 2 work weeks), stump-only jobs
+  with no main visit (`stumpJob`, 2–4 week backlog), follow-up grinding (`followGrind`: work days from the main visit's
+  completion to the grinding visit's completion — no promise), cleanup / soil & seed after grinding (SingleOps cleanup
+  visits + the Stumps tab's stage log `stumps/state[ref].log[stage] = day reached`). Histories uploaded before Nov 25 lack
+  tags until the next upload.
+- SINGLEOPS SCHEDULE → CREWS (owner, Nov 25; `src/dispatch/soSync.js`, run by the Backlog import after a Visit export):
+  visit Start→Stop (weekdays, today → +61 days) + Assignee(s) ("Max Crew", "Mike L", "Jeff Royston"; "Stump Grinding" /
+  "Stump Cleanup" are resources, skipped) → sched.<day> on the crew that has that person working that day (`crewFor`,
+  foremen first). Entries written carry `by: SO_BY` ("SingleOps import", `soConst.js`), `src: "singleops"` and show a
+  "SingleOps" mark on the Schedule. NEVER ERASE WORK: a job placed by hand (any entry by someone else, today on) wins —
+  only reported; a day the job was taken off by hand is never refilled; only SO_BY entries are moved / taken off by later
+  imports; moving or reordering one makes it hand-made. Jobs: `soStart`, `soStop`, `soWho` from visitJobs.
+- WEEKENDS: one per-device switch for the Shop Board AND the Schedule (`src/dispatch/weekends.js`, `mts-sched-weekends`);
+  off = Sat/Sun leave both day strips. Shop star: 400 Western Dr, Rochester NY 14623 (`inArea` check — the first look-up
+  of "400 Western Blvd" landed in New York City; a stored point outside the Rochester area is ignored and looked up again).
+- Equipment tab (Nov 25): no operation / yard / condition filters and no tallies; search only; "+ Add equipment" under the
+  columns. Yard right column: At the yard is only as tall as its contents; Broken always on screen (min 190 px).
 - Tab order (owner, Nov 23): Shop Board · Schedule · Backlog · Quick pick · Comms; Shop Board is the default tab.
 - COMMS tab (owner, Nov 25; `src/dispatch/Comms.jsx`, open to dispatch OR shop users): phone-first group texts. Big
   buttons: Active today (everyone not off that day: office + yard + crews), All company (everyone), then one per crew

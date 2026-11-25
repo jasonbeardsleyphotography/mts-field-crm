@@ -319,6 +319,8 @@ function visitJobs(rows, h, prev, today) {
       notes: p?.notes || prev?.notes?.[id] || "",
       schedDate: sched ? (start >= today ? start : today) : null,
       schedWho: sched ? str(g(r, "Assignee(s)")) || str(g(r, "Assignees")) : "",
+      // SingleOps' own schedule for this visit (Schedule → carried onto the crews by syncSingleOps)
+      soStart: start || "", soStop: stop || "", soWho: str(g(r, "Assignee(s)")) || str(g(r, "Assignees")),
       phone: [...new Set([str(g(r, "Client Mobile")), str(g(r, "Client Phone"))].filter(Boolean))].join(" / "),
       email: str(g(r, "Client Email")),
     });
@@ -350,6 +352,9 @@ function visitHistory(rows, h) {
       hrs: num(g(r, "Estimated Hours")),
       stumps: /(^|,)\s*07 STUMP/i.test(str(g(r, "Tags"))),
       seasonal: /(^|,)\s*08 /.test(str(g(r, "Tags"))),
+      // the tags Performance sorts by: equipment (tree work), 07 (stumps / cleanup / emergency / priority), soil & seed
+      tags: str(g(r, "Tags")).split(",").map((t) => t.trim()).filter((t) => /^0[237] |SEED|SOIL/i.test(t)).slice(0, 12),
+      line: (str(g(r, "Visit Name")) || "").slice(0, 60),
     };
   }
   return out;
