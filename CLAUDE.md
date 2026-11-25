@@ -253,6 +253,10 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   `mts-sched-map`, 300 px), then the crew boxes in a grid — or the WeekGrid when Week view is on — then the Office call
   list. Under 1000 px wide the two columns stack. Purgatory jobs whose check-back date has come are back in the list
   ("⏰ BACK FROM PURGATORY") while the ⏰ banner stays until handled.
+- CREWS WITH NOBODY ON THEM (owner, Nov 25): stay on the Shop Board with their equipment, but crewsForDay (allOps=false:
+  Schedule, Week view, Quick pick) lists only crews with someone WORKING that day (`staffed`; returns `unstaffed` too).
+  Jobs left on such a crew → amber card on the Schedule day (✕ to take each off) and "⚠ n on a crew with no people" in the
+  week header. Crew chips show "✓ fits" or "⚠ n won't fit" (hover = what's missing) from checkJob.
 - WENT LONG / FINISHED SHORT: pick a job on a crew (day or week view) → "+1 day" adds the crew's next work day (same share
   as its last day, total grows) / "−1 day" drops its last day (`changeDays`). Owner kept the automatic multi-day split.
 - CALL REMINDERS (owner, Nov 25): only 09 MUST BE HOME / NEIGHBOR PERMISSION / OBSTACLE / APPT. SCHEDULED / PET WASTE /

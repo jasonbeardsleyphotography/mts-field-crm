@@ -101,8 +101,13 @@ export async function crewsForDay(iso, allOps = false) {
   const pos = (day?.crews && day.pos) || {};
   const ordered = live(crews).map((c, i) => ({ c, h: pos[c.id] || { x: i * 10, y: 0 } }))
     .sort((a, b) => (a.h.y - b.h.y) || (a.h.x - b.h.x)).map((x) => x.c);
+  // the Schedule only lists crews with someone WORKING on them that day (owner, Nov 25): a crew emptied of people
+  // stays on the Shop Board with its equipment, but isn't offered here until people are put on it again
+  const staffed = (c) => (c.people || []).some((id) => core.people[id] && !core.people[id].del && !off.has(id));
+  const opsOk = (c) => allOps || ["GTC", "PHC", "LC"].includes(c.ops || "GTC");
   return { core, off, offCode: Object.fromEntries(Object.entries(wk?.cells || {}).filter(([k, v]) => k.endsWith(`:${di}`) && v && !["on", "light"].includes(v.code)).map(([k, v]) => [k.split(":")[0], v.code])),
-           crews: allOps ? ordered : ordered.filter((c) => ["GTC", "PHC", "LC"].includes(c.ops || "GTC")), from: day?.crews ? from : "standing" };
+           crews: ordered.filter((c) => opsOk(c) && (allOps || staffed(c))), unstaffed: ordered.filter((c) => opsOk(c) && !staffed(c)),
+           from: day?.crews ? from : "standing" };
 }
 
 function ScheduleMap({ jobs, points, assign, crewColor, selected, onPick, yardOf, shop, children }) {
@@ -369,6 +374,8 @@ function WeekGrid({ days, boards, week, jobBy, entryHrs, crewColor, selected, on
                     style={{ padding: "6px 8px", textAlign: "left", borderBottom: `1px solid ${C.edge}`, borderLeft: `1px solid ${C.edgeSoft}`, background: d === today ? "#252e35" : "transparent" }}>
               <b className="st" style={{ fontSize: 12.5 }}>{DN[dt.getDay()]} {dt.getDate()}</b>
               <div className="hint" style={{ padding: 0 }}>{t.n} job{t.n === 1 ? "" : "s"} · {fmtH(t.h, 0)}</div>
+              {(() => { const shown = new Set((boards[d]?.crews || []).map((c) => c.id)); const lost = Object.entries(week[d]?.assign || {}).filter(([r, x]) => x?.crew && !r.startsWith("_") && boards[d] && !shown.has(x.crew)).length;
+                return lost ? <div style={{ fontSize: 11, color: C.amber }} title="Jobs on a crew with nobody on it this day — open the day to see them">⚠ {lost} on a crew with no people</div> : null; })()}
             </button>
           );
         })}
@@ -874,6 +881,14 @@ export default function Schedule({ me }) {
                             style={{ padding: "7px 10px", borderRadius: 3, fontSize: 12, border: `2px solid ${hot ? crewColor(c.id) : C.edge}`, borderLeft: `6px solid ${crewColor(c.id)}`,
                                      background: hot ? "#2b353d" : sel && !assign[sel.ref]?.crew ? "#232c33" : C.tile, color: C.ink, textAlign: "left" }}>
                       {c.name} <span className="mono" style={{ color: total > target + 1 || (target && target - total > 0.05) ? C.amber : C.inkDim, textTransform: "none" }}>{fmtH(total, 0)}/{fmtH(target, 0)}</span>
+                      {/* equipment / people fit for the day's jobs (owner, Nov 25: "how do I know it fits?") */}
+                      {items.length > 0 && (() => {
+                        const bad = items.filter((x) => (checks[x.ref]?.problems || 0) > 0);
+                        return bad.length
+                          ? <span title={bad.map((x) => `${jobBy[x.ref]?.name || x.label}: ${(checks[x.ref].missing || []).map((m) => `needs ${m.label}`).concat(checks[x.ref].short ? ["not enough people"] : []).join(", ")}`).join("\n")}
+                                  style={{ marginLeft: 6, color: "#fff", background: C.red, borderRadius: 2, padding: "0 5px", fontSize: 11 }}>⚠ {bad.length} won't fit</span>
+                          : <span title="Every job's equipment and crew-size tags are covered by this crew" style={{ marginLeft: 6, color: "#7fe0a8", fontSize: 11.5 }}>✓ fits</span>;
+                      })()}
                     </button>
                   );
                 })}
@@ -921,6 +936,13 @@ export default function Schedule({ me }) {
                 <div className="hint" style={{ padding: "4px 10px" }}>{geoState || "Numbered dots = this day's stops, in order. Small dots = backlog jobs. ★ = the shop."}</div>
               </div>
             )}
+            {mode !== "week" && (board?.unstaffed || []).filter((c) => (byCrew[c.id] || []).length).map((c) => (
+              <div key={c.id} className="card" style={{ borderLeft: `4px solid ${C.amber}`, padding: "8px 12px", fontSize: 12.5 }}>
+                <b>{c.name}</b> has nobody on it this day, so it's hidden here — but it still has {byCrew[c.id].length} job{byCrew[c.id].length === 1 ? "" : "s"}:{" "}
+                {byCrew[c.id].map((x) => (jobBy[x.ref]?.name || x.label)).join(", ")}. Put people on it on the Shop Board, or take {byCrew[c.id].length === 1 ? "it" : "them"} off:{" "}
+                {byCrew[c.id].map((x) => <button key={x.ref} className="chip st" style={{ marginLeft: 4 }} onClick={() => remove(x.ref)}>✕ {jobBy[x.ref]?.name || x.label}</button>)}
+              </div>
+            ))}
             {mode === "week" ? (
               <WeekGrid days={weekDays} boards={boards} week={week} jobBy={jobBy} entryHrs={entryHrs} crewColor={crewColor}
                         selected={selected} onSelect={(r) => setSelected((s) => (s === r ? null : r))}
