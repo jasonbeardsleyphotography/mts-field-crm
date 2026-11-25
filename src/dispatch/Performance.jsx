@@ -44,15 +44,18 @@ export function kindOf(ref, h, history, lineItems) {
   return hasMain ? "followGrind" : "stumpJob";
 }
 
+const noPromise = { n: 0 };
 function rowsOf(history, today, lineItems) {
   const out = [];
+  noPromise.n = 0;
   for (const [ref, h] of Object.entries(history || {})) {
     if (!h.activeAt) continue;
     const kind = kindOf(ref, h, history, lineItems);
     const started = h.start && h.start <= today ? h.start : (h.done || "");
     const finished = h.done || "";
     if (kind === "main") {
-      if (h.promised == null || h.promised >= 99 || h.seasonal) continue;
+      // no Backlog entry in SingleOps (blank — or 0 / a stray ".2") = no promise: left out entirely (owner, Nov 25)
+      if (h.promised == null || h.promised < 1 || h.promised >= 99 || h.seasonal) { if (h.promised == null || h.promised < 1) noPromise.n++; continue; }
       const weeks = started ? wk(h.activeAt, started) : wk(h.activeAt, today);
       const result = !started ? (weeks > h.promised + 2 ? "waitingLate" : "waiting")
         : weeks < h.promised ? "early" : weeks <= h.promised + 2 ? "onTime" : "late";
@@ -207,6 +210,7 @@ export default function Performance() {
       </div>
       <div className="hint" style={{ padding: 0 }}>
         BACKLOG PROMISE: on time = work started within promise → promise + 2 work weeks of the day it was converted to active.
+        Jobs with no Backlog weeks in SingleOps{noPromise.n ? ` (${noPromise.n} on file)` : ""} are left out completely.
         Left out here and measured on their own below: emergencies, priority jobs, stump-only jobs, and the follow-up stump visits
         (grinding after the main job, cleanup and soil & seed after grinding). Flexible (99) and seasonal jobs are left out.
       </div>

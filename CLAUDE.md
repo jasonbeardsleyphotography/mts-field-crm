@@ -213,7 +213,7 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   DispatchApp = CREW (Schedule.jsx) / BACKLOG (Backlog.jsx) / PERFORMANCE (Performance.jsx); `mts-dispatch-sched-tab`.
   A stored top tab "backlog" opens Schedule → Backlog.
 - PERFORMANCE (`Performance.jsx`): promise (Backlog weeks) vs start, in Mon–Fri work weeks from Converted to Active; on time =
-  started within promise → promise + 2; 99 and seasonal (08 tags) left out; stump visits optional. Data = `backlog.history`
+  started within promise → promise + 2; 99, seasonal (08 tags) and NO Backlog entry (blank, 0 or under 1) left out; stump visits optional. Data = `backlog.history`
   { ref: { name, town, activeAt, start, done, promised, rep, hrs, stumps, seasonal } } built by `visitHistory` from EVERY row
   of a Visit export and merged across uploads (newest wins). Needs the Visit export with ALL stages (Active + Completed);
   the import now skips completed / invoiced / paid / lead / proposal rows for the backlog itself.
