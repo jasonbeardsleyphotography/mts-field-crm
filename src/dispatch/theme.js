@@ -22,6 +22,9 @@ export const CSS = `
 .chev { height:5px; background:repeating-linear-gradient(115deg,${C.edge} 0 9px,transparent 9px 18px); }
 .hd-in { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:10px 16px 9px; }
 .brand { font-size:19px; line-height:1; font-weight:700; letter-spacing:.09em; }
+.hd.compact .hd-in { padding:5px 12px 5px; gap:10px; }
+.hd.compact .brand { font-size:15px; }
+.hd.compact .tab { padding:5px 11px; }
 .brand small { display:block; font-size:10px; color:${C.inkFaint}; letter-spacing:.14em; margin-top:4px; font-weight:500; }
 .tabs { display:flex; gap:2px; background:${C.bg}; border:1px solid ${C.edge}; border-radius:3px; padding:2px; flex-wrap:wrap; }
 .tab { padding:6px 12px; font-size:12.5px; border-radius:2px; color:${C.inkDim}; }
@@ -34,6 +37,12 @@ export const CSS = `
   .brand { display:none; }
   .who { display:none; }
   .tab { padding:6px 8px; font-size:11.5px; }
+  /* phones: each title bar is ONE line that slides sideways, never a tall stack */
+  .hd .hd-in { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; padding:4px 8px; }
+  .hd .hd-in::-webkit-scrollbar { display:none; }
+  .hd .tabs, #dx-sub, .mb-sub { flex-wrap:nowrap !important; flex-shrink:0; }
+  .hd .tab { white-space:nowrap; padding:5px 8px; }
+  .hd .spacer { display:none; }
 }
 
 .btn { padding:8px 13px; border:1px solid ${C.edge}; border-radius:2px; font-size:11.5px; letter-spacing:.07em; color:${C.ink}; }

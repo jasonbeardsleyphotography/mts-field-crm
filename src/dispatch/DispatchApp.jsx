@@ -9,6 +9,7 @@ import Schedule from "./Schedule.jsx";
 import QuickPick from "./QuickPick.jsx";
 import Comms from "./Comms.jsx";
 import { useHoursUnit, setHoursUnit } from "./hours";
+import { useHeaderLook, setHeaderLook } from "./headerLook";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS Dispatch — a separate tool on the field app's site (/dispatch).
@@ -33,6 +34,7 @@ const LINK_ERRORS = {
 
 export default function DispatchApp() {
   const unit = useHoursUnit();
+  const hlook = useHeaderLook();
   const [me, setMe] = useState(undefined);       // undefined = loading, null = signed out
   const [linkErr, setLinkErr] = useState("");
   const [tab, setTab] = useState(() => {
@@ -84,10 +86,9 @@ export default function DispatchApp() {
   return (
     <div className="dx">
       <style>{CSS}</style>
-      <header className="hd">
-        <div className="chev" />
+      <header className="hd compact">
         <div className="hd-in">
-          <div className="brand st">Dispatch<small>MONSTER TREE SERVICE · ROCHESTER</small></div>
+          <div className="brand st">Dispatch</div>
           <div className="tabs" role="tablist">
             {tabs.filter((t) => !t.hidden).map((t) => (
               <button key={t.id} className="tab st" role="tab" aria-selected={current?.id === t.id}
@@ -96,7 +97,13 @@ export default function DispatchApp() {
               </button>
             ))}
           </div>
+          {/* look A: the Shop Board puts its own tabs / Live / Day sheet here */}
+          <div id="dx-sub" style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }} />
           <div className="spacer" />
+          <div className="tabs" role="group" aria-label="Title bar look (pick one)" title="Pick the title-bar look you like — this chooser goes away once you've picked">
+            <span className="st" style={{ fontSize: 10, color: "#8E99A1", padding: "6px 6px 0" }}>LOOK</span>
+            {["A", "B", "C"].map((k) => <button key={k} className="tab st" aria-selected={hlook === k} onClick={() => setHeaderLook(k)}>{k}</button>)}
+          </div>
           {current && !["shop", "admin", "comms"].includes(current.id) && (
             <div className="tabs" role="group" aria-label="Hours shown as" title="On-site hours (OSH) or sales hours (SH). 1 SH = 0.78 OSH. The workbook's hours are OSH.">
               {["OSH", "SH"].map((u) => <button key={u} className="tab st" aria-selected={unit === u} onClick={() => setHoursUnit(u)}>{u}</button>)}

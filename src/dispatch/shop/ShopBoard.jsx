@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
+import { useHeaderLook } from "../headerLook";
 import { shopGet, shopDays, shopPatch, shopPresence, stampNow, changed, changedKeys } from "./shopApi";
 import { checkJob, problemLines } from "../crewCheck";
 import { sharedDay, setSharedDay } from "../sharedDay";
@@ -1422,6 +1424,26 @@ const CSS = scopeCss(`
 .hd { position:relative; z-index:2; background:${C.panel}; border-bottom:1px solid var(--edge); }
 .chev { height:5px; background:repeating-linear-gradient(115deg,${C.edge} 0 9px,transparent 9px 18px); }
 .hd-in { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:11px 16px 9px; }
+.hd.slim .hd-in { padding:3px 14px; gap:10px; }
+.hd.slim .tab { padding:4px 11px; font-size:12px; }
+.hd.slim .btn { padding:4px 10px; }
+.hd.inpage { background:transparent; border-bottom:0; }
+.hd.inpage .hd-in { padding:6px 16px 0; gap:10px; }
+.hd.inpage .tabs { background:transparent; border:0; }
+.hd.inpage .tab { border-bottom:2px solid transparent; border-radius:0; padding:5px 10px; }
+.hd.inpage .tab[aria-selected="true"] { background:transparent; box-shadow:none; border-bottom-color:${C.ink}; color:var(--ink); }
+.hd.inpage .btn { padding:4px 10px; }
+.mb.mb-sub { padding-bottom:0 !important; display:flex; align-items:center; gap:8px; flex-wrap:nowrap; background:transparent !important; min-height:0 !important; }
+.mb.mb-sub .tab { padding:5px 11px; }
+.mb.mb-sub .btn { padding:4px 10px; }
+@media (max-width:640px){
+  .hd .hd-in { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; padding:4px 8px; gap:6px; }
+  .hd .hd-in::-webkit-scrollbar { display:none; }
+  .hd .tabs { flex-wrap:nowrap; flex-shrink:0; }
+  .hd .tab { white-space:nowrap; padding:5px 8px; font-size:11.5px; }
+  .hd .spacer, .hd .who { display:none; }
+  .hd .btn, .hd .sync { white-space:nowrap; flex-shrink:0; }
+}
 .brand { font-size:19px; line-height:1; font-weight:700; letter-spacing:.09em; }
 .brand small { display:block; font-size:10.5px; color:var(--faint); letter-spacing:.14em; margin-top:4px; font-weight:500; }
 .tabs { display:flex; gap:2px; background:${C.bg}; border:1px solid var(--edge); border-radius:3px; padding:2px; }
@@ -3347,6 +3369,9 @@ export default function ShopBoard({ user, isAdmin = false }) {
   const [dayFocus, setDayFocus] = useState(null);
   const [flashSet, setFlashSet] = useState(new Set());
   const [filters, setFilters] = useState({ op: "", yard: "", st: "", q: "" });
+  const hlook = useHeaderLook();
+  const [subSlot, setSubSlot] = useState(null);
+  useEffect(() => { setSubSlot(document.getElementById("dx-sub")); return () => setSubSlot(null); }, []);
   const [look, setLookState] = useState(yardLook);
   const onLook = (k) => { setYardLook(k); setLookState(k); };
   const [cur, setCur] = useState(() => sharedDay(isoOf(new Date())));
@@ -4140,15 +4165,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
   const others = Object.entries(presence).filter(([uid, v]) => uid !== me.uid && Date.now() - v.at < 150000);
   const asset = openAsset && dayCore.assets[openAsset];
   const crew = openCrew && day.crews[openCrew];
-
-  return (
-    <div className="mb">
-      <style>{CSS}</style>
-
-      <header className="hd">
-        <div className="chev" />
-        <div className="hd-in">
-          <div className="brand stencil">Shop board<small>MONSTER TREE SERVICE · ROCHESTER</small></div>
+  const subControls = (<>
           <div className="tabs" role="tablist" style={{ display: TABS.length > 1 ? undefined : "none" }}>
             {TABS.map(([k, l]) => (
               <button key={k} className="tab stencil" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>{l}</button>
@@ -4167,8 +4184,21 @@ export default function ShopBoard({ user, isAdmin = false }) {
                   title="Reload the Fleetio import and clear everyone's changes">
             {armed ? "Reset everyone?" : "Reset"}
           </button>}
-        </div>
-      </header>
+        </>);
+
+  return (
+    <div className="mb">
+      <style>{CSS}</style>
+
+{/* TITLE BAR LOOK (owner picking, Nov 25): A = these controls ride in the Dispatch bar;
+          B = one slim bar here; C = a light row in the page that scrolls away */}
+      {hlook === "A" && subSlot ? createPortal(<div className="mb mb-sub">{subControls}</div>, subSlot)
+        : hlook === "A" ? null
+        : (
+        <header className={`hd ${hlook === "B" ? "slim" : "inpage"}`}>
+          <div className="hd-in">{subControls}</div>
+        </header>
+      )}
 
       {tab === "fleet" && (
         <>

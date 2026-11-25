@@ -206,6 +206,11 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   Pickups, Trucks (not pickups), Material handlers, Chippers, Stump grinders, Sprayers & UTVs, Other), not conditions.
   Condition = the compact card's outline + a short badge; Broken (status `tagged`, red) sinks to the bottom. The Type filter and column switcher are gone;
   conditions are a filter row. Status keys are unchanged (only labels), so stored data is untouched.
+- TITLE BARS (owner, Nov 25: "take up too much room"): the Dispatch bar is compact (`.hd.compact`, no subtitle/stripes).
+  The owner is PICKING a look (`src/dispatch/headerLook.js`, localStorage `mts-header-look`, temporary "LOOK A B C" chooser
+  in the Dispatch bar): A = the Shop Board's tabs / Live / Day sheet / Reset are portalled into the Dispatch bar (`#dx-sub`);
+  B = a second slim bar; C = a light underline-tab row in the page. On phones (≤640 px) every bar is one line that slides
+  sideways. Once he picks: fix it, remove the chooser and headerLook.js.
 - Tab order (owner, Nov 23): Shop Board · Schedule · Backlog · Quick pick · Comms; Shop Board is the default tab.
 - COMMS tab (owner, Nov 25; `src/dispatch/Comms.jsx`, open to dispatch OR shop users): phone-first group texts. Big
   buttons: Active today (everyone not off that day: office + yard + crews), All company (everyone), then one per crew
