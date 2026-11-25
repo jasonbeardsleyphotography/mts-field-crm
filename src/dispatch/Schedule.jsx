@@ -639,7 +639,7 @@ export default function Schedule({ me }) {
   const onMapPick = useCallback((r) => { setPausing(false); setSelected((s) => (s === r ? null : r)); }, []);
 
   if (data === undefined) return <div className="wrap hint">Loading…</div>;
-  if (!data) return <div className="wrap hint">Upload the backlog workbook on the Backlog tab first — the Schedule plans its jobs.</div>;
+  if (!data) return <div className="wrap hint">Upload the backlog workbook on Schedule → Backlog first — the Schedule plans its jobs.</div>;
 
   const wkStart = weekStartOf(new Date(iso + "T12:00:00"));
   const sel = selected && jobBy[selected];
@@ -883,7 +883,7 @@ export default function Schedule({ me }) {
               </div>
               {rowAct?.ref === j.ref && rowAct.kind === "del" && (
                 <div style={{ margin: "3px 0 6px", padding: 8, border: "1px solid #D93B2B", borderRadius: 3, background: "rgba(217,59,43,.08)", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12.5 }}>Delete <b>{j.name}</b> (#{j.ref}) from the Dispatch backlog? It won't come back on the next import. You can restore it on the Backlog tab.</span>
+                  <span style={{ fontSize: 12.5 }}>Delete <b>{j.name}</b> (#{j.ref}) from the Dispatch backlog? It won't come back on the next import. You can restore it on Schedule → Backlog.</span>
                   <button className="btn st" data-danger="1" onClick={async () => { try { await deleteJob(j.ref, j.name); setRowAct(null); setSelected(null); } catch (e) { setErr(`Couldn't delete (${e.message}).`); } }}>Yes, delete</button>
                   <button className="btn st" onClick={() => setRowAct(null)}>Cancel</button>
                 </div>

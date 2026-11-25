@@ -206,11 +206,31 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
   Pickups, Trucks (not pickups), Material handlers, Chippers, Stump grinders, Sprayers & UTVs, Other), not conditions.
   Condition = the compact card's outline + a short badge; Broken (status `tagged`, red) sinks to the bottom. The Type filter and column switcher are gone;
   conditions are a filter row. Status keys are unchanged (only labels), so stored data is untouched.
-- TITLE BARS (owner, Nov 25: "take up too much room"): the Dispatch bar is compact (`.hd.compact`, no subtitle/stripes).
-  The owner is PICKING a look (`src/dispatch/headerLook.js`, localStorage `mts-header-look`, temporary "LOOK A B C" chooser
-  in the Dispatch bar): A = the Shop Board's tabs / Live / Day sheet / Reset are portalled into the Dispatch bar (`#dx-sub`);
-  B = a second slim bar; C = a light underline-tab row in the page. On phones (≤640 px) every bar is one line that slides
-  sideways. Once he picks: fix it, remove the chooser and headerLook.js.
+- TITLE BARS (owner picked look B, Nov 25): compact Dispatch bar (`.hd.compact`, no subtitle/stripes) + slim second bars
+  (`.hd.slim`: the Shop Board's tabs/Live/Day sheet; Schedule's CREW · BACKLOG · PERFORMANCE). Phones (≤640 px): every bar is
+  one line that slides sideways.
+- TABS (owner, Nov 25): Shop Board · Schedule · Stumps · Quick pick · Comms. Backlog moved UNDER Schedule: `ScheduleArea` in
+  DispatchApp = CREW (Schedule.jsx) / BACKLOG (Backlog.jsx) / PERFORMANCE (Performance.jsx); `mts-dispatch-sched-tab`.
+  A stored top tab "backlog" opens Schedule → Backlog.
+- PERFORMANCE (`Performance.jsx`): promise (Backlog weeks) vs start, in Mon–Fri work weeks from Converted to Active; on time =
+  started within promise → promise + 2; 99 and seasonal (08 tags) left out; stump visits optional. Data = `backlog.history`
+  { ref: { name, town, activeAt, start, done, promised, rep, hrs, stumps, seasonal } } built by `visitHistory` from EVERY row
+  of a Visit export and merged across uploads (newest wins). Needs the Visit export with ALL stages (Active + Completed);
+  the import now skips completed / invoiced / paid / lead / proposal rows for the backlog itself.
+- STUMPS tab (`Stumps.jsx`, owner confirmed the stages Nov 25): Waiting on tree work → Needs stake-out → Ready to grind →
+  Ready for cleanup → Ready for soil & seed → Done. Stump visit = tag 07 STUMP… or stump line items (`stumpVisit` in enrich);
+  `stumpOnly` (tree hrs ≤ 0.25, or a later "-N" visit with no tree-equipment tags) are LEFT OUT of Backlog / Schedule /
+  Quick pick (useBacklog `jobs`; `allJobs` has them). Waiting = tree work left on this visit or another visit of the same job.
+  Stake-out: date called + CLEARANCE from / until (week calendar `ClearanceWeek`); on the clear-from day it shows as Ready to
+  grind; grind cards show "clear to dig until" (late = red). Stored: `mts-dispatch` `stumps/state` { ref: { stage, called,
+  clearFrom, clearTo, doneOn, note, snap, at, by } } via `/api/dispatch/stumps` (one job per POST, strong read). Visits that
+  leave the export are kept in `backlog.goneStumps` (import) and move on by themselves (cleanup / seed / done by what was sold).
+  "📄 Cleanup + soil & seed report" = printable page (new tab) or text, for the outsourced contractor; phones optional.
+- YARD — copy from the previous work day (owner, Nov 25): the "Compared with …" panel has "Copy all of <day>'s crews" and a
+  ⤵ Copy per crew (people + equipment; they come off other crews first). The ⧉ Copy this day / ⎘ Paste buttons are GONE.
+  Anything copied that is BROKEN that day → pop-up (`brokenAlert`) and a big red strike (`BrokenStrike`) over it on the crew
+  until tapped (tap = off the crew → Broken bin). Any broken unit on a crew shows the strike. Schedule/crewCheck never count
+  broken units (`isDown`).
 - Tab order (owner, Nov 23): Shop Board · Schedule · Backlog · Quick pick · Comms; Shop Board is the default tab.
 - COMMS tab (owner, Nov 25; `src/dispatch/Comms.jsx`, open to dispatch OR shop users): phone-first group texts. Big
   buttons: Active today (everyone not off that day: office + yard + crews), All company (everyone), then one per crew

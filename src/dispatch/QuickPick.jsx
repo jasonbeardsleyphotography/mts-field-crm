@@ -182,7 +182,7 @@ export default function QuickPick({ me }) {
   };
 
   if (data === undefined) return <div className="wrap hint">Loading…</div>;
-  if (!data) return <div className="wrap hint">Upload the backlog workbook on the Backlog tab first.</div>;
+  if (!data) return <div className="wrap hint">Upload the backlog workbook on Schedule → Backlog first.</div>;
 
   const pill = { position: "absolute", left: 8, right: 8, zIndex: 6, background: "rgba(27,33,38,.96)", border: `1px solid ${C.edge}`, borderRadius: 6, boxShadow: "0 6px 20px rgba(0,0,0,.45)" };
   return (

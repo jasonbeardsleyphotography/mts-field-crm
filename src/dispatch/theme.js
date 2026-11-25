@@ -25,6 +25,9 @@ export const CSS = `
 .hd.compact .hd-in { padding:5px 12px 5px; gap:10px; }
 .hd.compact .brand { font-size:15px; }
 .hd.compact .tab { padding:5px 11px; }
+.hd.slim { position:static; }
+.hd.slim .hd-in { padding:3px 14px; gap:10px; }
+.hd.slim .tab { padding:4px 11px; font-size:12px; }
 .brand small { display:block; font-size:10px; color:${C.inkFaint}; letter-spacing:.14em; margin-top:4px; font-weight:500; }
 .tabs { display:flex; gap:2px; background:${C.bg}; border:1px solid ${C.edge}; border-radius:3px; padding:2px; flex-wrap:wrap; }
 .tab { padding:6px 12px; font-size:12.5px; border-radius:2px; color:${C.inkDim}; }
@@ -40,7 +43,7 @@ export const CSS = `
   /* phones: each title bar is ONE line that slides sideways, never a tall stack */
   .hd .hd-in { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; padding:4px 8px; }
   .hd .hd-in::-webkit-scrollbar { display:none; }
-  .hd .tabs, #dx-sub, .mb-sub { flex-wrap:nowrap !important; flex-shrink:0; }
+  .hd .tabs { flex-wrap:nowrap !important; flex-shrink:0; }
   .hd .tab { white-space:nowrap; padding:5px 8px; }
   .hd .spacer { display:none; }
 }

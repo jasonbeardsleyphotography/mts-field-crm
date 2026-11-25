@@ -1,6 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { createPortal } from "react-dom";
-import { useHeaderLook } from "../headerLook";
 import { shopGet, shopDays, shopPatch, shopPresence, stampNow, changed, changedKeys } from "./shopApi";
 import { checkJob, problemLines } from "../crewCheck";
 import { sharedDay, setSharedDay } from "../sharedDay";
@@ -1427,17 +1425,6 @@ const CSS = scopeCss(`
 .hd.slim .hd-in { padding:3px 14px; gap:10px; }
 .hd.slim .tab { padding:4px 11px; font-size:12px; }
 .hd.slim .btn { padding:4px 10px; }
-.hd.inpage { background:transparent; border-bottom:0; }
-.hd.inpage .hd-in { padding:6px 16px 0; gap:10px; }
-.hd.inpage .tabs { background:transparent; border:0; }
-.hd.inpage .tab { border-bottom:2px solid transparent; border-radius:0; padding:5px 10px; }
-.hd.inpage .tab[aria-selected="true"] { background:transparent; box-shadow:none; border-bottom-color:${C.ink}; color:var(--ink); }
-.hd.inpage .btn { padding:4px 10px; }
-.mb.mb-sub { padding-bottom:0 !important; display:flex; align-items:center; gap:8px; flex-wrap:nowrap; background:transparent !important; min-height:0 !important; }
-.mb.mb-sub .tab { padding:5px 11px; }
-.mb.mb-sub .btn { padding:4px 10px; }
-.mb.mb-sub .tabs { flex-wrap:nowrap; }
-.mb.mb-sub .tab, .mb.mb-sub .btn, .mb.mb-sub .sync { white-space:nowrap; flex-shrink:0; }
 @media (max-width:640px){
   .hd .hd-in { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; padding:4px 8px; gap:6px; }
   .hd .hd-in::-webkit-scrollbar { display:none; }
@@ -1775,6 +1762,9 @@ const CSS = scopeCss(`
 .lgs { display:flex; flex-wrap:wrap; gap:3px 13px; }
 .lg { display:inline-flex; align-items:center; gap:5px; font-size:9.5px; color:var(--faint); letter-spacing:.03em; }
 .lg i { width:11px; height:11px; border-radius:2px; display:block; }
+.bstrike { position:absolute; inset:-6px; z-index:5; display:flex; align-items:flex-end; justify-content:center; background:rgba(120,10,0,.18); border:2px solid #ff2a1a; border-radius:4px; cursor:pointer; padding:0 0 2px; }
+.bstrike svg { position:absolute; inset:0; width:100%; height:100%; filter:drop-shadow(0 0 2px #000); }
+.bstrike span { position:relative; font-size:10px; font-weight:700; letter-spacing:.06em; color:#fff; background:#d0190c; padding:1px 6px; border-radius:2px; white-space:nowrap; }
 .lg .ring { background:none; border:1.5px dashed ${ST.tagged.color}; }
 
 /* --- the yard ------------------------------------------------------------ */
@@ -2194,7 +2184,24 @@ function stackIssues(members) {
 
 /* YESTERDAY (owner, Nov 25): how today's crews differ from the previous work day
    (Monday compares with Friday). Folds away; remembered per device. */
-function YesterdayPanel({ prev, crews, core }) {
+/* Big red strike over a BROKEN unit that is still on a crew (e.g. copied from yesterday).
+   It stays until tapped; tapping takes the broken unit(s) off the crew. */
+function BrokenStrike({ units, onTake }) {
+  if (!units.length) return null;
+  return (
+    <button className="bstrike" title="Broken today — tap to take it off this crew"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onTake(units.map((u) => u.id)); }}>
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <line x1="4" y1="96" x2="90" y2="10" stroke="#ff2a1a" strokeWidth="9" strokeLinecap="round" />
+        <polygon points="96,4 70,8 92,30" fill="#ff2a1a" />
+      </svg>
+      <span>BROKEN · tap to take off</span>
+    </button>
+  );
+}
+
+function YesterdayPanel({ prev, crews, core, iso, onCopy }) {
   const [open, setOpen] = useState(() => { try { return localStorage.getItem("mts-yard-yesterday") === "1"; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem("mts-yard-yesterday", open ? "1" : "0"); } catch {} }, [open]);
   if (!prev) return null;
@@ -2212,6 +2219,8 @@ function YesterdayPanel({ prev, crews, core }) {
     };
   });
   const changed = rows.filter((r) => r.addP.length + r.lostP.length + r.addI.length + r.lostI.length > 0).length;
+  const gone = live(pc).filter((y) => !live(crews).some((c) => c.id === y.id));     // crews it had that this day hasn't
+  const todayLabel = new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
   const label = new Date(prev.iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
   const chip = (txt, kind) => (
     <span key={kind + txt} style={{ fontSize: 11.5, padding: "1px 6px", borderRadius: 2, marginRight: 4, whiteSpace: "nowrap",
@@ -2229,8 +2238,14 @@ function YesterdayPanel({ prev, crews, core }) {
       </button>
       {open && (
         <div style={{ padding: "0 10px 8px", display: "grid", gap: 4 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
+            <button className="btn stencil" data-primary="1" onClick={() => onCopy(null)}>⤵ Copy all of {label}'s crews to {todayLabel}</button>
+            <span style={{ fontSize: 11, color: C.inkDim }}>or copy one crew with its ⤵ button (people + equipment)</span>
+          </div>
           {rows.map((r) => (
             <div key={r.c.id} style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", fontSize: 12 }}>
+              {r.y ? <button className="chip stencil" style={{ fontSize: 10.5, padding: "2px 7px" }} title={`Make ${r.c.name} the same as ${label}`} onClick={() => onCopy(r.c.id)}>⤵ Copy</button>
+                   : <span style={{ width: 52 }} />}
               <b className="stencil" style={{ width: 70, flexShrink: 0 }}>{r.c.name}</b>
               {!r.y ? <span style={{ color: "#7fe0a8", fontSize: 11.5 }}>new crew today</span> : (
                 <span>
@@ -2241,6 +2256,13 @@ function YesterdayPanel({ prev, crews, core }) {
               )}
             </div>
           ))}
+          {gone.map((y) => (
+            <div key={y.id} style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: 12 }}>
+              <button className="chip stencil" style={{ fontSize: 10.5, padding: "2px 7px" }} onClick={() => onCopy(y.id)}>⤵ Copy</button>
+              <b className="stencil" style={{ width: 70, flexShrink: 0 }}>{y.name}</b>
+              <span style={{ color: C.inkDim, fontSize: 11.5 }}>was out {label}, not on this day</span>
+            </div>
+          ))}
           <div style={{ fontSize: 10.5, color: C.inkFaint }}>Green + = new on that crew today · red − = was on it {label}, not today. Unchanged equipment isn't listed.</div>
         </div>
       )}
@@ -2249,7 +2271,7 @@ function YesterdayPanel({ prev, crews, core }) {
 }
 
 function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setOps, onOrder, crewJobs = {},
-                   onCopy, onLink, onUnlink, look, onLook, onCopyDay, onPasteDay, clip, prevDay,
+                   onCopy, onLink, onUnlink, look, onLook, onCopyPrev, onTakeOffBroken, prevDay,
                    onMove, onNewCrew, onCrew, onPerson, onAddPerson, onOpenAsset, onDate, undoLabel, onUndo }) {
   const { begin, registerZone, drag } = engine;
   const assets = core.assets;
@@ -2413,7 +2435,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
         </div>
 
         <div className="canvas-wrap" ref={wrapRef}>
-          <YesterdayPanel prev={prevDay} crews={day.crews} core={core} />
+          <YesterdayPanel prev={prevDay} crews={day.crews} core={core} iso={iso} onCopy={onCopyPrev} />
           <Zone id="canvas" accepts={["crew"]} registerZone={registerZone}
                 onDrop={(it, _z, at) => dropCrew(it.id, at)}>
             <div className="canvas" style={{ width: vw, height: canvasH }}>
@@ -2466,6 +2488,7 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
                                   onClick={() => onOpenAsset(l.lead.id)}
                                   onBegin={(e) => { const part = grabbed(e, l.members); begin(e, { kind: "stack", id: part[0].id, members: part.map((m) => m.id),
                                     name: part.map((m) => m.tag).join(" · "), from: part.length === l.members.length ? `crew:${b.crew.id}` : `part:crew:${b.crew.id}` }); }} />
+                        {broken(l.id) && <BrokenStrike units={l.members.filter((m) => m.status === "tagged")} onTake={onTakeOffBroken} />}
                       </div>
                     ))}
                 </Zone>
@@ -2526,12 +2549,6 @@ function YardView({ core, day, iso, dayIndex, week, engine, savedDays, ops, setO
         </span>}
         {outIssues.length > 0 && (
           <span className="odd stencil" title={outIssues.join("\n")}>{outIssues.length} to check</span>
-        )}
-        <button className="btn stencil" onClick={onCopyDay} title="Remember this day's crews, then go to another day and paste">⧉ Copy this day</button>
-        {clip && clip.from !== iso && (
-          <button className="btn stencil" data-primary="1" onClick={onPasteDay} title="Put the copied crews on this day">
-            ⎘ Paste {new Date(clip.from + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric" })} here
-          </button>
         )}
         <button className="btn stencil" onClick={() => onCopy("tomorrow")}>Copy to tomorrow →</button>
         <button className="btn stencil" onClick={() => onCopy("week")}>Copy to rest of week</button>
@@ -3371,9 +3388,6 @@ export default function ShopBoard({ user, isAdmin = false }) {
   const [dayFocus, setDayFocus] = useState(null);
   const [flashSet, setFlashSet] = useState(new Set());
   const [filters, setFilters] = useState({ op: "", yard: "", st: "", q: "" });
-  const hlook = useHeaderLook();
-  const [subSlot, setSubSlot] = useState(null);
-  useEffect(() => { setSubSlot(document.getElementById("dx-sub")); return () => setSubSlot(null); }, []);
   const [look, setLookState] = useState(yardLook);
   const onLook = (k) => { setYardLook(k); setLookState(k); };
   const [cur, setCur] = useState(() => sharedDay(isoOf(new Date())));
@@ -3859,29 +3873,63 @@ export default function ShopBoard({ user, isAdmin = false }) {
         const before = (await listDays()).filter((x) => x < piso).sort();
         for (let i = before.length - 1; i >= 0 && !rec?.crews; i--) { rec = await sGet(kDay(before[i])); from = before[i]; }
       }
-      if (alive) setPrevDay(rec?.crews ? { iso: piso, from, crews: rec.crews } : null);
+      if (alive) setPrevDay(rec?.crews ? { iso: piso, from, crews: rec.crews, stacks: rec.stacks || {}, pos: rec.pos || {} } : null);
     })();
     return () => { alive = false; };
   }, [cur]);
-  const [clip, setClip] = useState(() => { try { return JSON.parse(localStorage.getItem("mts-shop-clip") || "null"); } catch { return null; } });
-  const copyThisDay = () => {
-    const src = dayRef.current;
-    const c = { from: curRef.current, crews: clone(src.crews || {}), stacks: clone(src.stacks || {}), pos: clone(src.pos || {}) };
-    setClip(c); try { localStorage.setItem("mts-shop-clip", JSON.stringify(c)); } catch {}
+  /* COPY FROM THE PREVIOUS WORK DAY (owner, Nov 25) — from the "Compared with …" panel:
+     one crew, or every crew. Replaced the Copy-this-day / Paste buttons. Anything copied that is
+     BROKEN on this day stays on the crew under a red strike (BrokenStrike) and a pop-up lists it;
+     tapping the strike takes it off the crew. The Schedule never counts broken units. */
+  const [brokenAlert, setBrokenAlert] = useState(null);
+  const checkBroken = (crewList, iso) => {
+    const hits = [];
+    crewList.forEach((c) => (c.iron || []).forEach((u) => {
+      const a = coreRef.current.assets[u];
+      if (a && !a.del && brokenOn(a, iso)) hits.push({ unit: a.name || a.tag || u, crew: c.name });
+    }));
+    if (hits.length) setBrokenAlert({ iso, hits });
   };
-  const pasteHere = async () => {
-    if (!clip) return;
+  const copyFromPrev = (crewId) => {
+    const src = prevDay; if (!src) return;
     const iso = curRef.current;
     const dl = (d) => new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-    if (savedDays.has(iso) && !window.confirm(`${dl(iso)} already has its own plan. Replace it with the crews from ${dl(clip.from)}?`)) return;
-    const at = stampNow(), by = (meRef.current && meRef.current.name) || "?";
-    const crews = {};
-    Object.entries(clip.crews || {}).forEach(([id, c]) => { crews[id] = { ...clone(c), at, by }; });
-    const payload = { crews, stacks: changedKeys({}, clip.stacks || {}), pos: changedKeys({}, clip.pos || {}) };
-    const merged = await shopPatch(srvKey(kDay(iso)), payload, true);
-    if (merged && curRef.current === iso) setDayArr({ crews: merged.crews || crews, stacks: merged.stacks || {}, pos: merged.pos || {}, inherited: null });
+    const srcLabel = dl(src.from || src.iso);
+    if (!crewId) {
+      if (savedDays.has(iso) && !window.confirm(`Replace every crew on ${dl(iso)} with the crews from ${srcLabel}?`)) return;
+      const copied = live(src.crews);
+      applyDay((d, st) => {
+        Object.keys(d.crews).forEach((id) => { if (!src.crews[id] || src.crews[id].del) { if (!d.crews[id].del) d.crews[id] = { ...d.crews[id], del: true, at: st.at, by: st.by }; } });
+        Object.entries(src.crews).forEach(([id, c]) => { if (!c.del) d.crews[id] = { ...clone(c), at: st.at, by: st.by }; });
+        d.stacks = clone(src.stacks || {});
+        d.pos = clone(src.pos || {});
+      }, `Crews from ${srcLabel} copied to ${dl(iso)}`);
+      setSavedDays((s2) => new Set(s2).add(iso));
+      checkBroken(copied, iso);
+      return;
+    }
+    const y = src.crews[crewId]; if (!y || y.del) return;
+    const ppl = new Set(y.people || []), units = new Set(y.iron || []);
+    applyDay((d, st) => {
+      // whoever / whatever is on another crew today comes off it first
+      Object.values(d.crews).forEach((c) => {
+        if (c.id === crewId || c.del) return;
+        const before = JSON.stringify([c.people, c.iron, c.cols]);
+        c.people = (c.people || []).filter((x) => !ppl.has(x));
+        c.iron = (c.iron || []).filter((x) => !units.has(x));
+        if (c.cols) { c.cols = c.cols.map((col) => col.filter((x) => !units.has(x))).filter((col) => col.length); c.iron = c.cols.flat(); }
+        if (JSON.stringify([c.people, c.iron, c.cols]) !== before) { c.at = st.at; c.by = st.by; }
+      });
+      d.crews[crewId] = { ...clone(y), at: st.at, by: st.by };
+      if (src.pos && src.pos[crewId] && !d.pos[crewId]) d.pos[crewId] = clone(src.pos[crewId]);
+    }, `${y.name} copied from ${srcLabel}`);
     setSavedDays((s2) => new Set(s2).add(iso));
-    apply(() => {}, `Crews from ${dl(clip.from)} pasted on ${dl(iso)}`);
+    checkBroken([y], iso);
+  };
+  /* tap the red strike: the broken unit(s) come off the crew (into the Broken bin) */
+  const takeOffBroken = (ids) => {
+    const label = ids.map(nameOf).join(" · ");
+    applyDay((d, st) => { pullOut(d, "stack", ids, st); Object.values(d.crews).forEach((c) => { if (c.cols) { const n = c.cols.map((col) => col.filter((x) => !ids.includes(x))).filter((col) => col.length); if (JSON.stringify(n) !== JSON.stringify(c.cols)) { c.cols = n; c.iron = n.flat(); } } }); regroup(d, ids); }, `${label} (broken) taken off its crew`);
   };
   const saveStanding = () => apply((d, s) => {
     Object.values(dayRef.current.crews).forEach((c) => {
@@ -4192,15 +4240,10 @@ export default function ShopBoard({ user, isAdmin = false }) {
     <div className="mb">
       <style>{CSS}</style>
 
-{/* TITLE BAR LOOK (owner picking, Nov 25): A = these controls ride in the Dispatch bar;
-          B = one slim bar here; C = a light row in the page that scrolls away */}
-      {hlook === "A" && subSlot ? createPortal(<div className="mb mb-sub">{subControls}</div>, subSlot)
-        : hlook === "A" ? null
-        : (
-        <header className={`hd ${hlook === "B" ? "slim" : "inpage"}`}>
-          <div className="hd-in">{subControls}</div>
-        </header>
-      )}
+{/* slim second bar (owner picked look B, Nov 25) */}
+      <header className="hd slim">
+        <div className="hd-in">{subControls}</div>
+      </header>
 
       {tab === "fleet" && (
         <>
@@ -4217,7 +4260,7 @@ export default function ShopBoard({ user, isAdmin = false }) {
         </>
       )}
       {tab === "crews" && (
-        <YardView prevDay={prevDay} look={look} onLook={onLook} onCopyDay={copyThisDay} onPasteDay={pasteHere} clip={clip} onOrder={orderCrews} core={dayCore} day={day} iso={cur} dayIndex={dayIndex} week={week} engine={engine} crewJobs={crewJobs}
+        <YardView prevDay={prevDay} look={look} onLook={onLook} onCopyPrev={copyFromPrev} onTakeOffBroken={takeOffBroken} onOrder={orderCrews} core={dayCore} day={day} iso={cur} dayIndex={dayIndex} week={week} engine={engine} crewJobs={crewJobs}
                   savedDays={savedDays} ops={ops} setOps={setOps}
                   onMove={yardMove} onNewCrew={addCrew} onCrew={setOpenCrew} onPerson={setOpenPerson}
                   onOpenAsset={(id) => setOpenAsset(id)} onDate={setCur} onAddPerson={addPerson}
@@ -4254,6 +4297,21 @@ export default function ShopBoard({ user, isAdmin = false }) {
                    onRemovePerson={(pid) => yardMove({ kind: "person", id: pid }, "room")}
                    onAddStack={(g) => yardMove({ kind: "stack", id: g.id, members: g.members }, `crew:${crew.id}`)}
                    onRemoveStack={(g) => yardMove({ kind: "stack", id: g.id, members: g.members }, "yard")} />
+      )}
+      {brokenAlert && (
+        <Sheet onClose={() => setBrokenAlert(null)} tone={ST.tagged.color} title="⚠ Broken equipment on a crew"
+               sub={`In the Broken section on ${fmtIso(brokenAlert.iso)} — it can't go out`}>
+          <div style={{ padding: "4px 2px", display: "grid", gap: 8 }}>
+            {brokenAlert.hits.map((h, k) => (
+              <div key={k} style={{ fontSize: 15 }}><b style={{ color: "#ff6b5e" }}>{h.unit}</b> was on <b>{h.crew}</b>.</div>
+            ))}
+            <div style={{ fontSize: 13, color: C.inkDim }}>
+              It stays on the crew with a big red strike through it until you tap the strike — tapping takes it off the crew.
+              The Schedule doesn't count broken equipment when it checks which jobs a crew can do.
+            </div>
+            <button className="btn stencil" data-primary="1" onClick={() => setBrokenAlert(null)}>Got it</button>
+          </div>
+        </Sheet>
       )}
       {noteOpen && (
         <DaySheet core={dayCore} crewsMap={day.crews} week={week} iso={cur} dayIndex={dayIndex}

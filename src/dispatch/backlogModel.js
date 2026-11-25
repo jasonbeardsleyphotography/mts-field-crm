@@ -221,9 +221,15 @@ export function enrich(data, paused = {}, today = new Date()) {
     const grindHrs = li ? li.grindHrs : (j.stumpHrs || 0);
     const cleanupHrs = li?.cleanupHrs || 0, seedHrs = li?.seedHrs || 0;
     const treeHrs = Math.max(0, (j.hrs || 0) - grindHrs - cleanupHrs - seedHrs);
+    // STUMPS (owner, Nov 25): a stump visit = tagged 07 STUMP… or has stump work on its line items.
+    // Stump-ONLY visits (no tree work left, or a later "-2" visit with no tree equipment tags) leave
+    // the tree lists (Backlog, Schedule, Quick pick) and live on the Stumps tab.
+    const stumpVisit = j.tags.some((t) => /^07 STUMP/i.test(t)) || grindHrs > 0 || (li?.grindUnits || 0) > 0;
+    const stumpOnly = stumpVisit && (treeHrs <= 0.25
+      || (!li && /-\d+$/.test(j.ref) && !/-1$/.test(j.ref) && !j.tags.some((t) => /^0[23] /.test(t) && !/STUMP/i.test(t))));
     return {
       ...j,
-      treeHrs, grindHrs, cleanupHrs, seedHrs,
+      treeHrs, grindHrs, cleanupHrs, seedHrs, stumpVisit, stumpOnly,
       cleanupQty: li?.cleanup || 0, seedQty: li?.seed || 0, seedUnit: li?.seedUnit || "", grindUnits: li?.grindUnits || 0,
       needs: equipmentNeeds(j.tags),
       name: [j.first, j.last].filter(Boolean).join(" ") || j.last || j.ref,

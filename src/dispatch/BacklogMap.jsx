@@ -111,7 +111,7 @@ export default function BacklogMap({ jobs, points, selected, onPick, colorBy = "
     jobs.forEach((j) => {
       const p = points[j.ref]; if (!p) return;
       want.add(j.ref); bounds.extend(p);
-      const color = colorBy === "zone" ? (zoneColors[j.zone] || "#7d8a94") : colorBy === "age" ? jobColor(j) : STATUS[j.status].color;
+      const color = typeof colorBy === "function" ? colorBy(j) : colorBy === "zone" ? (zoneColors[j.zone] || "#7d8a94") : colorBy === "age" ? jobColor(j) : STATUS[j.status].color;
       const sel = selected === j.ref;
       const icon = {
         path: g.SymbolPath.CIRCLE, scale: sel ? 10 : Math.max(5, Math.min(9, 4 + (j.treeHrs ?? j.hrs ?? 0) / 6)),
@@ -123,7 +123,7 @@ export default function BacklogMap({ jobs, points, selected, onPick, colorBy = "
         m.addListener("click", () => pickRef.current?.(j.ref));
         markers.current.set(j.ref, m);
       } else { m.setIcon(icon); m.setPosition(p); }
-      m.setZIndex(sel ? 999 : STATUS_Z[j.status]);
+      m.setZIndex(sel ? 999 : (STATUS_Z[j.status] || 30));
     });
     for (const [ref, m] of markers.current) if (!want.has(ref)) { m.setMap(null); markers.current.delete(ref); }
     if (!fitted.current && want.size) { map.current.fitBounds(bounds, 30); fitted.current = true; }

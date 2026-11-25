@@ -8,8 +8,9 @@ import ShopBoard from "./shop/ShopBoard.jsx";
 import Schedule from "./Schedule.jsx";
 import QuickPick from "./QuickPick.jsx";
 import Comms from "./Comms.jsx";
+import Stumps from "./Stumps.jsx";
+import Performance from "./Performance.jsx";
 import { useHoursUnit, setHoursUnit } from "./hours";
-import { useHeaderLook, setHeaderLook } from "./headerLook";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MTS Dispatch — a separate tool on the field app's site (/dispatch).
@@ -19,12 +20,34 @@ import { useHeaderLook, setHeaderLook } from "./headerLook";
 
 const TABS = [
   { id: "shop", label: "Shop Board", need: "shop" },
-  { id: "schedule", label: "Schedule", need: "dispatch" },
-  { id: "backlog", label: "Backlog", need: "dispatch" },
+  { id: "schedule", label: "Schedule", need: "dispatch" },        // CREW · BACKLOG · PERFORMANCE inside (owner, Nov 25)
+  { id: "stumps", label: "Stumps", need: "dispatch" },
   { id: "quick", label: "Quick pick", need: "dispatch" },
   { id: "comms", label: "Comms", need: ["dispatch", "shop"] },     // group texts (owner, Nov 25)
   { id: "admin", label: "Admin", need: "admin", hidden: true },   // opened from the ☰ menu
 ];
+
+/* Schedule's own tabs (owner, Nov 25): CREW = the crew scheduler, BACKLOG = the job manager,
+   PERFORMANCE = promise vs start. A slim second bar like the Shop Board's. */
+const SCHED_TABS = [["crew", "Crew"], ["backlog", "Backlog"], ["perf", "Performance"]];
+function ScheduleArea({ me }) {
+  const [sub, setSub] = useState(() => { try { return localStorage.getItem("mts-dispatch-sched-tab") || "crew"; } catch { return "crew"; } });
+  const pick = (k) => { setSub(k); try { localStorage.setItem("mts-dispatch-sched-tab", k); } catch {} };
+  return (
+    <>
+      <header className="hd slim sub">
+        <div className="hd-in">
+          <div className="tabs" role="tablist">
+            {SCHED_TABS.map(([k, l]) => <button key={k} className="tab st" role="tab" aria-selected={sub === k} onClick={() => pick(k)}>{l}</button>)}
+          </div>
+        </div>
+      </header>
+      {sub === "crew" && <Schedule me={me} />}
+      {sub === "backlog" && <Backlog me={me} />}
+      {sub === "perf" && <Performance me={me} />}
+    </>
+  );
+}
 
 const LINK_ERRORS = {
   link_used_or_unknown: "That sign-in link has already been used (each link works once), or it was mistyped. Ask for a new one.",
@@ -34,12 +57,15 @@ const LINK_ERRORS = {
 
 export default function DispatchApp() {
   const unit = useHoursUnit();
-  const hlook = useHeaderLook();
   const [me, setMe] = useState(undefined);       // undefined = loading, null = signed out
   const [linkErr, setLinkErr] = useState("");
   const [tab, setTab] = useState(() => {
     if (/(^#|&)admin\b/.test(location.hash)) { history.replaceState(null, "", location.pathname); return "admin"; }
-    try { const t = localStorage.getItem("mts-dispatch-tab"); return t && t !== "admin" ? t : "shop"; } catch { return "shop"; }
+    try {
+      const t = localStorage.getItem("mts-dispatch-tab");
+      if (t === "backlog") { localStorage.setItem("mts-dispatch-sched-tab", "backlog"); return "schedule"; }   // Backlog moved under Schedule
+      return t && t !== "admin" ? t : "shop";
+    } catch { return "shop"; }
   });
 
   const loadMe = useCallback(async () => {
@@ -97,13 +123,7 @@ export default function DispatchApp() {
               </button>
             ))}
           </div>
-          {/* look A: the Shop Board puts its own tabs / Live / Day sheet here */}
-          <div id="dx-sub" style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }} />
           <div className="spacer" />
-          <div className="tabs" role="group" aria-label="Title bar look (pick one)" title="Pick the title-bar look you like — this chooser goes away once you've picked">
-            <span className="st" style={{ fontSize: 10, color: "#8E99A1", padding: "6px 6px 0" }}>LOOK</span>
-            {["A", "B", "C"].map((k) => <button key={k} className="tab st" aria-selected={hlook === k} onClick={() => setHeaderLook(k)}>{k}</button>)}
-          </div>
           {current && !["shop", "admin", "comms"].includes(current.id) && (
             <div className="tabs" role="group" aria-label="Hours shown as" title="On-site hours (OSH) or sales hours (SH). 1 SH = 0.78 OSH. The workbook's hours are OSH.">
               {["OSH", "SH"].map((u) => <button key={u} className="tab st" aria-selected={unit === u} onClick={() => setHoursUnit(u)}>{u}</button>)}
@@ -127,9 +147,9 @@ export default function DispatchApp() {
           </div></div>
         </div>
       )}
-      {current?.id === "backlog" && <Backlog me={me} />}
       {current?.id === "shop" && <ShopBoard user={me} isAdmin={!!me.perms.admin} />}
-      {current?.id === "schedule" && <Schedule me={me} />}
+      {current?.id === "schedule" && <ScheduleArea me={me} />}
+      {current?.id === "stumps" && <Stumps me={me} />}
       {current?.id === "quick" && <QuickPick me={me} />}
       {current?.id === "comms" && <Comms me={me} />}
       {current?.id === "admin" && <Admin me={me} />}

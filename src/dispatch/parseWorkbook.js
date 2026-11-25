@@ -280,7 +280,9 @@ function visitJobs(rows, h, prev, today) {
     if (!id || !/^\d/.test(id)) continue;
     const left = num(g(r, "Remaining Hours")), est = num(g(r, "Estimated Hours"));
     const hrs = left != null ? left : est;
-    if (hrs != null && hrs <= 0 && soDate(g(r, "Completion Date"))) continue;    // finished
+    // finished: a completion date, or a done stage (the export may now include ALL stages for Performance)
+    if (soDate(g(r, "Completion Date")) || /complet|invoic|paid|closed|cancel|lost|declin/i.test(str(g(r, "Current Stage")))) continue;
+    if (/^(lead|proposal|draft|estimate|quote)/i.test(str(g(r, "Current Stage")))) continue;   // not sold yet
     const addr = str(g(r, "Job Location")).replace(/,\s*USA$/i, "");
     const zip = ref(g(r, "Job Zip"));
     const activeAt = soDate(g(r, "Converted to Active"));
@@ -325,6 +327,35 @@ function visitJobs(rows, h, prev, today) {
 }
 
 /**
+ * PERFORMANCE history (owner, Nov 25): every visit in a Visit export — active AND completed —
+ * with the day it was sold (Converted to Active), the promise (Backlog, weeks), and the day the
+ * work started (Start). Kept across uploads (newest upload wins per visit), so it builds up.
+ */
+function visitHistory(rows, h) {
+  const g = (r, label) => { const c = h.col(label); return c == null ? null : r[c]; };
+  const out = {};
+  for (let i = h.at + 1; i < rows.length; i++) {
+    const r = rows[i] || [];
+    const id = ref(g(r, "Ref #"));
+    const activeAt = soDate(g(r, "Converted to Active"));
+    if (!id || !/^\d/.test(id) || !activeAt) continue;
+    out[id] = {
+      name: [str(g(r, "Client First")), str(g(r, "Client Last")) || str(g(r, "Client Company"))].filter(Boolean).join(" "),
+      town: str(g(r, "Job City")),
+      activeAt,
+      start: soDate(g(r, "Start")) || "",
+      done: soDate(g(r, "Completion Date")) || "",
+      promised: num(g(r, "Backlog")),
+      rep: str(g(r, "Sales Rep(s)")) || str(g(r, "Sales Rep")),
+      hrs: num(g(r, "Estimated Hours")),
+      stumps: /(^|,)\s*07 STUMP/i.test(str(g(r, "Tags"))),
+      seasonal: /(^|,)\s*08 /.test(str(g(r, "Tags"))),
+    };
+  }
+  return out;
+}
+
+/**
  * Read any mix of files into backlog data: the GTC Backlog workbook (.xlsm/.xlsx),
  * a SingleOps Visit export (.csv) and/or a line-item report (.csv).
  * files: [{ name, buf: ArrayBuffer }]; prev: the backlog data saved now (for what CSVs lack).
@@ -360,14 +391,34 @@ export async function importBacklogFiles(files, prev) {
     const gone = [...before].filter((r) => !now.has(r)).length;
     const noZone = jobs.filter((j) => !j.zone).length;
     const noNotes = jobs.filter((j) => !j.notes).length;
+    const hist = visitHistory(visit.rows, h);
+    // Stump visits SingleOps has closed (ground) are remembered for the Stumps tab, so the
+    // outsourced stump cleanup / soil & seed can still be tracked and sent to the contractor.
+    const goneStumps = { ...(base?.goneStumps || {}) };
+    for (const j of base?.jobs || []) {
+      if (now.has(j.ref) || goneStumps[j.ref]) continue;
+      const li = base?.lineItems?.[j.ref];
+      const stumpy = (j.tags || []).some((t) => /^07 STUMP/i.test(t)) || (li && (li.grindHrs || li.grindUnits || li.cleanup || li.seed));
+      if (!stumpy) continue;
+      goneStumps[j.ref] = {
+        gone: today, name: [j.first, j.last].filter(Boolean).join(" ") || j.last || j.ref, addr: j.addr, town: j.town, zip: j.zip,
+        phone: j.phone || "", email: j.email || "", tags: j.tags || [], notes: j.notes || base?.notes?.[j.ref] || "",
+        grindUnits: li?.grindUnits || 0, cleanup: li?.cleanup || 0, cleanupHrs: li?.cleanupHrs || 0, seed: li?.seed || 0, seedUnit: li?.seedUnit || "", seedHrs: li?.seedHrs || 0,
+      };
+    }
+    for (const [k, v] of Object.entries(goneStumps)) if (now.has(k) || (v.gone && v.gone < isoAdd(today, -400).toISOString().slice(0, 10))) delete goneStumps[k];
+    const doneN = Object.values(hist).filter((x) => x.done).length;
     data = {
       version: 1, source: "singleops-visit-csv", fileName: visit.f.name, asOf: today, jobs,
+      history: { ...(prev?.history || {}), ...hist },
+      goneStumps,
       lineItems: Object.fromEntries(Object.entries(base?.lineItems || {}).filter(([r]) => now.has(r))),
       notes: base?.notes || {}, scheduled: [], zones: base?.zones || {}, priority: base?.priority || {},
       forecast: base?.forecast || null, forecastFrom: base?.forecastFrom || base?.asOf || null,
       warnings: [],
     };
     summary.push(`${visit.f.name}: SingleOps visit export — ${jobs.length} visits (${added} new, ${gone} gone since the last upload).`);
+    summary.push(`Performance history: ${Object.keys(data.history).length} visits on file (${doneN} completed visits in this file${doneN < 20 ? " — for the Performance tab, export ALL stages, including Completed" : ""}).`);
     if (base) summary.push(`Kept from the last upload: job notes, zones${base.forecast ? ", the forecast" : ""}${Object.keys(data.lineItems).length ? ", the stump split" : ""}.`);
     if (noZone) summary.push(`${noZone} visits have no zone (their zip isn't on the workbook's zone list).`);
     const hasLines = csvs.some((c) => c !== visit && headerMap(c.rows, ["Item Name", "Quantity"]));
@@ -391,6 +442,8 @@ export async function importBacklogFiles(files, prev) {
     summary.push(`${c.f.name}: line items for ${Object.keys(li).length} visits (${matched} of the ${data.jobs.length} in the backlog) — stump grinding hours, stump cleanup and soil & seed counts${nn ? `, notes for ${nn}` : ""}.`);
     if (matched < data.jobs.length) summary.push(`${data.jobs.length - matched} backlog visits aren't in the line-item report (it may be filtered to unscheduled visits) — they keep their last stump split.`);
   }
+  if (data && !data.history && prev?.history) data.history = prev.history;     // a workbook upload keeps the history
+  if (data && !data.goneStumps && prev?.goneStumps) data.goneStumps = prev.goneStumps;
   if (!data) throw new Error("Nothing to import — choose the SingleOps Visit export (.csv), a line-item report, or the GTC Backlog workbook.");
   return { data, summary };
 }

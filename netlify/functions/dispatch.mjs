@@ -29,6 +29,8 @@
      POST   paused {ref, reason, until} | {ref, remove}   pause / edit / resume a job
      GET    deleted                 (dispatch) jobs deleted from the backlog { ref: { at, by, name } }
      POST   deleted {ref, name} | {ref, restore}          delete / restore a job
+     GET    stumps                  (dispatch) stump workflow per job { ref: { stage, called, clearFrom, clearTo, note, snap } }
+     POST   stumps {ref, set}                              change one job's stage / dates / note
      POST   geocode  {items:[{id,addr}]}  (dispatch) lat/lng, cached
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -240,6 +242,34 @@ export default async (req) => {
     else all[ref] = { at: Date.now(), by: me.name || me.email, name: String(b.name || "").slice(0, 80) };
     await D().set("backlog/deleted", JSON.stringify(all));
     return json({ deleted: all });
+  }
+  // STUMPS workflow (owner, Nov 25): per job { stage, called, clearFrom, clearTo, note, snap, at, by }.
+  // One job per save; the newest save of a job wins (server clock). snap = the job's details
+  // when it entered a stage, so cleanup / soil & seed jobs stay listed after SingleOps closes the visit.
+  if (route === "stumps" && method === "GET") {
+    const raw = await D().get("stumps/state");
+    return json({ stumps: raw ? JSON.parse(raw) : {} });
+  }
+  if (route === "stumps" && method === "POST") {
+    const b = await body();
+    const ref = String(b?.ref || "").slice(0, 40);
+    if (!ref || !b.set || typeof b.set !== "object") return json({ error: "bad_data" }, 400);
+    const d = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || "") ? v : "");
+    const STAGES = ["waiting", "stakeout", "grind", "cleanup", "seed", "done"];
+    const raw = await D().get("stumps/state");
+    const all = raw ? JSON.parse(raw) : {};
+    const cur = all[ref] || {};
+    const n = { ...cur };
+    if ("stage" in b.set) n.stage = STAGES.includes(b.set.stage) ? b.set.stage : "";
+    for (const k of ["called", "clearFrom", "clearTo", "doneOn"]) if (k in b.set) n[k] = d(b.set[k]);
+    if ("note" in b.set) n.note = String(b.set.note || "").slice(0, 600);
+    if (b.set.snap && typeof b.set.snap === "object" && JSON.stringify(b.set.snap).length <= 6000) n.snap = b.set.snap;
+    n.at = Date.now(); n.by = me.name || me.email;
+    all[ref] = n;
+    // forget jobs marked done more than a year ago
+    for (const [k, v] of Object.entries(all)) if (v.stage === "done" && Date.now() - (v.at || 0) > 400 * 86400000) delete all[k];
+    await D().set("stumps/state", JSON.stringify(all));
+    return json({ stumps: all });
   }
   if (route === "geocode" && method === "POST") {
     const { items } = await body();

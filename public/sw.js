@@ -1,3 +1,4 @@
+// v131: Dispatch: look B title bars; Backlog + Performance under Schedule; Stumps tab; copy yesterday crews with broken-equipment alert.
 // v130: Look A keeps the Shop Board tabs on one line.
 // v129: Dispatch: slimmer title bars + a temporary A/B/C chooser for the owner to pick one; phone bars stay one line.
 // v128: Dispatch: Comms tidy, weekends off hides Sat/Sun, People names + Shift ranges, crew room shorter, yesterday comparison, filled tag picker.
@@ -173,7 +174,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v130";
+const CACHE = "mts-field-v131";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

@@ -21,7 +21,9 @@ export function useBacklog() {
     return () => clearInterval(t);
   }, []);
   // deleted jobs are left out everywhere (Backlog lists them so they can be restored)
-  const jobs = useMemo(() => (data ? enrich({ ...data, jobs: data.jobs.filter((j) => !deleted[j.ref]) }, paused) : []), [data, paused, deleted]);
+  const allJobs = useMemo(() => (data ? enrich({ ...data, jobs: data.jobs.filter((j) => !deleted[j.ref]) }, paused) : []), [data, paused, deleted]);
+  // stump-only visits live on the Stumps tab, not in the tree-work lists (owner, Nov 25)
+  const jobs = useMemo(() => allJobs.filter((j) => !j.stumpOnly), [allJobs]);
   const pause = useCallback(async (ref, reason, until) => {
     const r = await api("paused", { method: "POST", body: { ref, reason, until } });
     setPaused(r.paused || {});
@@ -38,5 +40,5 @@ export function useBacklog() {
     const r = await api("deleted", { method: "POST", body: { ref, restore: true } });
     setDeleted(r.deleted || {});
   }, []);
-  return { data, jobs, err, load, pause, resume, deleted, remove, restore };
+  return { data, jobs, allJobs, err, load, pause, resume, deleted, remove, restore };
 }
