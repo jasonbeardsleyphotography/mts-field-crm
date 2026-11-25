@@ -245,6 +245,19 @@ clipboard copies and iPhone Shortcuts) are skipped on a laptop/Chromebook, even 
 - Schedule job list (Nov 25): EMERGENCY / PRIORITY always listed (top), even when scheduled in SingleOps / in Purgatory /
   "Hiding scheduled", until placed here; a job dropped on a crew leaves the list at once (`pending`). Tags (TagFilter):
   INCLUDE and EXCLUDE rows, each with ANY / ALL (`any`, `excAll`); tags filter, the sort only orders.
+- SCHEDULE → CREW LAYOUT = WORKBENCH (owner, Nov 25; replaced crews-across-the-top, which pushed the job list off screen
+  and made dragging impossible): `.sched-bench` fills the screen (height calc(100vh − 150px)); LEFT = jobs (search / tags /
+  sort on top; check-back + urgent banners and the list scroll; footer = count, Scheduled / Purgatory check boxes
+  (`mts-sched-show-sched`, `mts-sched-show-purg`) beside the compact SeasonBar, "Key" fold-away; padded left for the ☰).
+  RIGHT = crew DROP CHIPS (always visible; drop a job, or tap one after picking a job), then map (Map: on/off,
+  `mts-sched-map`, 300 px), then the crew boxes in a grid — or the WeekGrid when Week view is on — then the Office call
+  list. Under 1000 px wide the two columns stack. Purgatory jobs whose check-back date has come are back in the list
+  ("⏰ BACK FROM PURGATORY") while the ⏰ banner stays until handled.
+- WENT LONG / FINISHED SHORT: pick a job on a crew (day or week view) → "+1 day" adds the crew's next work day (same share
+  as its last day, total grows) / "−1 day" drops its last day (`changeDays`). Owner kept the automatic multi-day split.
+- CALL REMINDERS (owner, Nov 25): only 09 MUST BE HOME / NEIGHBOR PERMISSION / OBSTACLE / APPT. SCHEDULED / PET WASTE /
+  SHORT and 07 EXTRA NOTICE / SCHEDULE (DATE) / SCHEDULE (DAY) (`CALLS` in crewCheck; TagStrip ☎ uses the same list).
+  Shown as "📞 Confirm with client: …" (no counts).
 - WEEKENDS: one per-device switch for the Shop Board AND the Schedule (`src/dispatch/weekends.js`, `mts-sched-weekends`);
   off = Sat/Sun leave both day strips. Shop star: 400 Western Dr, Rochester NY 14623 (`inArea` check — the first look-up
   of "400 Western Blvd" landed in New York City; a stored point outside the Rochester area is ignored and looked up again).

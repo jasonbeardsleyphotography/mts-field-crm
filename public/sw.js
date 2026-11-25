@@ -1,3 +1,4 @@
+// v135: Dispatch Schedule workbench layout (jobs left, crews right, drop chips), +1/−1 day, check boxes for scheduled/Purgatory, trimmed call reminders.
 // v134: Performance ignores jobs with no Backlog weeks entered.
 // v133: Dispatch: SingleOps-to-crews import switched off (approved = done), emergency/priority always listed, include/exclude tag filters with any/all, jobs leave the list instantly.
 // v132: Dispatch: SingleOps schedule onto crews on import, Performance kept-separate measures, shared weekends switch, shop star fix, equipment tab tidy.
@@ -177,7 +178,7 @@
 // memoization to stop the map "shaking" during sync). Old-version assets are
 // never evicted by stale-while-revalidate alone, so a version bump is the only
 // reliable purge.
-const CACHE = "mts-field-v134";
+const CACHE = "mts-field-v135";
 const PRECACHE = ["/", "/index.html"];
 
 self.addEventListener("install", (e) => {

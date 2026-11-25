@@ -73,7 +73,8 @@ const STRIP = [
 const STRIP_COLORS = { crew: "#ff1f8f", aerial: "#33cc33", equip: "#b0703f", season: "#a8a820" };
 export function TagStrip({ tags }) {
   const T = tags || [];
-  const calls = T.filter((t) => /^0[4579] |^07 /.test(t) && !/^07 STUMP/.test(t));
+  // the client-call tags only (owner, Nov 25) — same list as crewCheck's CALLS
+  const calls = T.filter((t) => /^09 (MUST BE HOME|NEIGHBOR PERMISSION|OBSTACLE|APPT\. SCHEDULED|PET WASTE|SHORT)$|^07 (EXTRA NOTICE|SCHEDULE \(DATE\)|SCHEDULE \(DAY\))$/.test(t));
   return (
     <div style={{ display: "flex", gap: 6, marginTop: 4, alignItems: "center", minWidth: 0 }} title={T.join(" · ")}>
       {STRIP.map((col) => {
@@ -89,7 +90,7 @@ export function TagStrip({ tags }) {
           </span>
         );
       })}
-      {calls.length > 0 && <span title={calls.join("\n")} style={{ fontSize: 10.5, color: "#f0c050", whiteSpace: "nowrap" }}>☎ {calls.length}</span>}
+      {calls.length > 0 && <span title={`Confirm with the client:\n${calls.join("\n")}`} style={{ fontSize: 10.5, color: "#f0c050", whiteSpace: "nowrap" }}>☎</span>}
     </div>
   );
 }
@@ -101,7 +102,7 @@ export function TagStripKey() {
       <span><b style={{ color: STRIP_COLORS.aerial }}>▬</b> aerial (BKT bucket, LIFT, TALL 100HD, CLMB, GRND, REQ)</span>
       <span><b style={{ color: STRIP_COLORS.equip }}>▬</b> equipment (AVNT, 755 big Avant, 19XP big chipper, WOOD, CRANE, STMP)</span>
       <span><b style={{ color: STRIP_COLORS.season }}>▬</b> season (WIN SPR SUM FALL OAK)</span>
-      <span style={{ color: "#f0c050" }}>☎ things to cover when calling</span>
+      <span style={{ color: "#f0c050" }}>☎ confirm with the client when calling</span>
     </div>
   );
 }

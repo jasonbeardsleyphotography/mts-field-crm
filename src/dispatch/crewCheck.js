@@ -40,7 +40,7 @@ export const UNMAPPED_TAGS = {
 /** For the "Tag → equipment" list. */
 export const TAG_RULES = NEEDS.map((n) => ({ tags: n.tags, label: n.label, what: n.what + (n.aerial ? " (or another aerial option tagged, unless REQUIRED)" : ""), later: !!n.later }));
 
-/** Things to cover when the office calls to schedule. */
+/** Things to confirm with the client when the office calls to schedule (owner, Nov 25: only these). */
 const CALLS = {
   "09 MUST BE HOME": "Client must be home — confirm they'll be there",
   "09 NEIGHBOR PERMISSION": "Neighbour's permission needed — confirm it's been given",
@@ -51,25 +51,6 @@ const CALLS = {
   "07 EXTRA NOTICE": "Client wants extra notice before the crew comes",
   "07 SCHEDULE (DATE)": "Client asked for a specific date",
   "07 SCHEDULE (DAY)": "Client asked for a specific day of the week",
-  "07 CHECK NOTES": "Read the job notes before scheduling",
-  "07 *PARTIAL*": "Partial job — confirm which part is being done",
-  "07 **EMERGENCY**": "Emergency job",
-  "07 *STORM*": "Storm work",
-  "07 DRY/FROZEN": "Needs dry or frozen ground — check the forecast",
-  "07 MIDDAY DUMP": "Plan a midday dump run",
-  "07 EOD": "End-of-day job",
-  "07 PREVIEW": "Preview the site first",
-  "05 PARKING": "Parking is tight — plan where the trucks go",
-  "05 TRAFFIC": "Traffic control needed",
-  "05 SEPTIC": "Septic system — keep heavy equipment off it",
-  "05 IRRIGATION": "Irrigation — ask where the lines and heads are",
-  "05 LIGHTING": "Landscape lighting — ask where it is",
-  "05 POISON IVY": "Poison ivy on site",
-  "05 HELICOPTER": "Helicopter work — special arrangements",
-  "04 PRIMARY": "Primary power lines — check clearance / utility",
-  "04 SECONDARY": "Secondary lines — check clearance",
-  "04 SERVICE": "Service drop — check clearance",
-  "04 LINE DROP": "Line drop needed — arrange with the utility",
 };
 
 /** Reminders of what to load. */

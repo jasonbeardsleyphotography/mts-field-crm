@@ -177,7 +177,7 @@ function JobChecks({ r }) {
       {r.missing.map((m, i) => <span key={i} style={chip("rgba(217,59,43,.18)", "#ff9a8f")} title={m.why}>needs {m.label}{m.why !== "not on this crew" ? ` · ${m.why}` : ""}</span>)}
       {r.short && <span style={chip("rgba(217,59,43,.18)", "#ff9a8f")}>{r.short.need}-person job · crew has {r.short.have}</span>}
       {(r.prefer || []).map((t, i) => <span key={`p${i}`} style={chip("rgba(229,161,0,.16)", "#f0c050")}>{t}</span>)}
-      {r.calls.length > 0 && <span style={chip("rgba(229,161,0,.16)", "#f0c050")} title={r.calls.join("\n")}>📞 {r.calls.length} to cover when calling</span>}
+      {r.calls.length > 0 && <span style={chip("rgba(229,161,0,.16)", "#f0c050")} title={r.calls.join("\n")}>📞 Confirm with client: {r.calls.map((t) => t.split(" — ")[0]).join(" · ")}</span>}
       {r.gear.length > 0 && <span style={chip("#2a333a", "#98A3AB")}>load: {r.gear.join(", ")}</span>}
     </div>
   );
@@ -240,10 +240,11 @@ const nextWorkday = (d) => { const x = new Date(d + "T12:00:00"); do { x.setDate
    no season tag always show). A box GLOWS while today is inside its window, with the
    work days left; outside, it counts down to the window opening. Per device. */
 const SEASON_KEYS = ["WINTER", "SPRING", "SUMMER", "FALL", "OAK"];
-function SeasonBar({ on, setOn, jobs }) {
+function SeasonBar({ on, setOn, jobs, compact, children }) {
   return (
-    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "stretch", marginBottom: 10 }}>
-      <span className="st" style={{ fontSize: 11.5, color: C.inkDim, alignSelf: "center" }}>Seasonal work</span>
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "stretch", marginBottom: compact ? 0 : 10 }}>
+      {children}
+      <span className="st" style={{ fontSize: 11.5, color: C.inkDim, alignSelf: "center" }}>{compact ? "Seasons" : "Seasonal work"}</span>
       {SEASON_KEYS.map((k) => {
         const w = seasonWindowNow(k);
         const n = jobs.filter((j) => seasonKeysOf(j.tags).includes(k)).length;
@@ -251,13 +252,13 @@ function SeasonBar({ on, setOn, jobs }) {
         const checked = on[k] !== false;
         return (
           <label key={k} title={lit ? `In season now — ${w.workdays} work days left` : `Opens ${w?.nextStart ? w.nextStart.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—"}`}
-                 style={{ display: "flex", gap: 7, alignItems: "center", padding: "5px 10px", borderRadius: 5, cursor: "pointer", userSelect: "none",
+                 style={{ display: "flex", gap: 7, alignItems: "center", padding: compact ? "3px 8px" : "5px 10px", borderRadius: 5, cursor: "pointer", userSelect: "none",
                           background: lit ? "rgba(255,213,79,.14)" : C.panel, border: `1.5px solid ${lit ? "#FFD54F" : C.edge}`,
                           boxShadow: lit ? "0 0 10px rgba(255,213,79,.55), inset 0 0 6px rgba(255,213,79,.25)" : "none", opacity: checked ? 1 : 0.55 }}>
             <input type="checkbox" checked={checked} onChange={() => setOn({ ...on, [k]: !checked })} style={{ width: 16, height: 16, accentColor: "#E5A100" }} />
             <span style={{ display: "grid", lineHeight: 1.15 }}>
               <b className="st" style={{ fontSize: 12.5, color: lit ? "#FFE082" : C.ink }}>{k === "OAK" ? "Oak pruning" : w?.label}{lit ? " ●" : ""} <span className="mono" style={{ fontWeight: 400, color: C.inkDim }}>{n}</span></b>
-              <span style={{ fontSize: 10.5, color: lit ? "#ffe9a8" : C.inkFaint }}>{lit ? `in season · ${w.workdays} work days left` : w?.workdays != null ? `opens in ${w.workdays} work days` : ""}</span>
+              {(!compact || lit) && <span style={{ fontSize: 10.5, color: lit ? "#ffe9a8" : C.inkFaint }}>{lit ? `${compact ? "" : "in season · "}${w.workdays} work days left` : w?.workdays != null ? `opens in ${w.workdays} work days` : ""}</span>}
             </span>
           </label>
         );
@@ -338,7 +339,7 @@ function UrgentBanner({ jobs, assign, plannedOn, onPick }) {
    (multi-day jobs show "2/3"), and warnings. Drag a job from the list on the
    right into any cell, or drag a job between cells to move it (all its days
    move together). Tap a day's header to open that day. */
-function WeekGrid({ days, boards, week, jobBy, entryHrs, crewColor, selected, onSelect, onDropJob, onMoveJob, onRemove, onOpenDay, checksFor, today }) {
+function WeekGrid({ days, boards, week, jobBy, entryHrs, crewColor, selected, onSelect, onDropJob, onMoveJob, onRemove, onChangeDays, onOpenDay, checksFor, today }) {
   const [over, setOver] = useState(null);
   // crews: every crew on any day of the week, in the order of the first day that has them
   const crews = [];
@@ -415,6 +416,10 @@ function WeekGrid({ days, boards, week, jobBy, entryHrs, crewColor, selected, on
                               </span>
                               {r?.problems > 0 && <span title="Doesn't suit this crew — open the day" style={{ color: "#ff9a8f" }}>⚠</span>}
                               <span className="mono" style={{ fontSize: 10.5, color: C.inkDim }}>{fmtH(entryHrs(x), 1).replace(/ .*/, "")}</span>
+                              {selected === x.ref && onChangeDays && <>
+                                <button className="btn" style={{ padding: "0 4px", fontSize: 10 }} title="Went long: add the crew's next work day" onClick={(e) => { e.stopPropagation(); onChangeDays(d, x.ref, 1); }}>+1d</button>
+                                {x.parts > 1 && <button className="btn" style={{ padding: "0 4px", fontSize: 10 }} title="Finished short: drop the last day" onClick={(e) => { e.stopPropagation(); onChangeDays(d, x.ref, -1); }}>−1d</button>}
+                              </>}
                               <button className="btn" style={{ padding: "0 4px", fontSize: 10 }} title="Take off (all its days)" onClick={(e) => { e.stopPropagation(); onRemove(d, x.ref); }}>✕</button>
                             </div>
                           );
@@ -451,13 +456,20 @@ export default function Schedule({ me }) {
   const [board, setBoard] = useState(null);          // { core, crews, from }
   const [weekends, setWeekends] = useWeekends();
   const [mode, setMode] = useState(() => { try { return localStorage.getItem("mts-sched-mode") || "day"; } catch { return "day"; } });
+  const [mapOpen, setMapOpenS] = useState(() => { try { return localStorage.getItem("mts-sched-map") !== "0"; } catch { return true; } });
+  const setMapOpen = (v) => { setMapOpenS(v); try { localStorage.setItem("mts-sched-map", v ? "1" : "0"); } catch {} };
+  const [dropOver, setDropOver] = useState(null);
   useEffect(() => { try { localStorage.setItem("mts-sched-mode", mode); } catch {} }, [mode]);
   const [boards, setBoards] = useState({});          // iso -> crews for that day (week view)
   const [assign, setAssign] = useState({});          // this day: ref -> { crew, order, label, hrs, at, by }
   const [week, setWeek] = useState({});              // iso -> assign (planned on other days)
   const [selected, setSelected] = useState(null);
   const [q, setQ] = useState("");
-  const [show, setShow] = useState("open");          // open | all
+  // list switches (owner, Nov 25: check boxes by the seasons instead of the "Hiding scheduled / Purgatory" button)
+  const [showSched, setShowSchedS] = useState(() => { try { return localStorage.getItem("mts-sched-show-sched") === "1"; } catch { return false; } });
+  const [showPurg, setShowPurgS] = useState(() => { try { return localStorage.getItem("mts-sched-show-purg") === "1"; } catch { return false; } });
+  const setShowSched = (v) => { setShowSchedS(v); try { localStorage.setItem("mts-sched-show-sched", v ? "1" : "0"); } catch {} };
+  const setShowPurg = (v) => { setShowPurgS(v); try { localStorage.setItem("mts-sched-show-purg", v ? "1" : "0"); } catch {} };
   const [sort, setSort] = useState(() => { try { return localStorage.getItem("mts-sched-sort") || "old"; } catch { return "old"; } });
   useEffect(() => { try { localStorage.setItem("mts-sched-sort", sort); } catch {} }, [sort]);
   const [saving, setSaving] = useState(0);
@@ -639,6 +651,26 @@ export default function Schedule({ me }) {
     const A = { ...((toIso === iso ? assign : week[toIso]?.assign) || {}) }; delete A[ref];
     await addToDay(toIso, ref, crew, null, A);
   };
+  /* WENT LONG / FINISHED SHORT (owner, Nov 25): +1 day adds the crew's next work day to the job
+     (same share as its last day); −1 day drops its last day. The other days keep their hours. */
+  const changeDays = async (fromIso, ref, delta) => {
+    const e = (fromIso === iso ? assign : week[fromIso]?.assign || {})[ref];
+    if (!e?.crew) return;
+    const days = (e.days && e.days.length ? [...e.days] : [fromIso]).sort();
+    const getE = async (d) => (d === iso ? assign[ref] : week[d]?.assign?.[ref]) || (await shopGet(`sched.${d}`))?.assign?.[ref] || e;
+    const olds = await Promise.all(days.map(getE));
+    const shares = olds.map((x) => (x.parts ? (x.hrs || 0) : (x.hrs ?? e.total ?? 0)));
+    let newDays = days, newShares = shares, gone = null;
+    if (delta > 0) { newDays = [...days, nextWorkday(days[days.length - 1])]; newShares = [...shares, shares[shares.length - 1]]; }
+    else { if (days.length < 2) return; gone = days[days.length - 1]; newDays = days.slice(0, -1); newShares = shares.slice(0, -1); }
+    const n = newDays.length, total = newShares.reduce((t, h) => t + h, 0);
+    const base = { crew: e.crew, label: e.label, town: e.town, tags: e.tags, total };
+    for (let k = 0; k < n; k++) {
+      const order = k < olds.length ? (olds[k].order ?? 0) : -1;     // a new last day: first thing in the morning
+      await saveDay(newDays[k], { [ref]: { ...base, hrs: newShares[k], order, parts: n > 1 ? n : null, days: n > 1 ? newDays : null, part: n > 1 ? k + 1 : null } });
+    }
+    if (gone) await saveDay(gone, { [ref]: { crew: null, days: null, parts: null, part: null } });
+  };
   const move = (crew, idx, dir) => {
     const list = byCrew[crew] || []; const k = idx + dir;
     if (k < 0 || k >= list.length) return;
@@ -666,7 +698,14 @@ export default function Schedule({ me }) {
     // placed on a crew (this day, or planned on another day) = off the list at once (pending = on its way to the server)
     return jobs.filter((j) => !assign[j.ref]?.crew && !pending.has(j.ref))
       // EMERGENCY / PRIORITY always show (even scheduled in SingleOps / in Purgatory) until placed here (owner, Nov 25)
-      .filter((j) => (urgency(j) < 2 ? !plannedOn[j.ref] : show === "all" || (j.status !== "hold" && j.status !== "sched" && j.status !== "paused" && !j.nextVisit && !plannedOn[j.ref])))
+      .filter((j) => {
+        if (plannedOn[j.ref] && !showSched) return false;                 // planned here on another day
+        if (urgency(j) < 2) return true;
+        // Purgatory: back in the list by itself once its check-back date comes (and the ⏰ banner says so)
+        if ((j.status === "paused" || j.status === "hold") && !j.checkBack && !showPurg) return false;
+        if ((j.status === "sched" || j.nextVisit) && !showSched) return false;
+        return true;
+      })
       .filter((j) => !s || `${j.name} ${j.ref} ${j.addr} ${j.zone} ${j.tags.join(" ")} ${j.paused?.reason || ""}`.toLowerCase().includes(s))
       .filter((j) => passTags(j, tagF))
       .filter((j) => { const ks = seasonKeysOf(j.tags); return !ks.length || ks.some((k) => seasonsOn[k] !== false); })
@@ -678,9 +717,9 @@ export default function Schedule({ me }) {
         : sort === "old" ? (b.days || 0) - (a.days || 0)
         : sort === "big" ? (b.treeHrs || 0) - (a.treeHrs || 0)
         : STATUS[a.status].rank - STATUS[b.status].rank || b.lateWeeks - a.lateWeeks));
-  }, [jobs, assign, pending, show, plannedOn, q, sort, nearCrew, distTo, tagF, fitC, peopleOn, board, seasonsOn]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [jobs, assign, pending, showSched, showPurg, plannedOn, q, sort, nearCrew, distTo, tagF, fitC, peopleOn, board, seasonsOn]); // eslint-disable-line react-hooks/exhaustive-deps
   const [limit, setLimit] = useState(80);
-  useEffect(() => setLimit(80), [q, show, sort]);
+  useEffect(() => setLimit(80), [q, showSched, showPurg, sort]);
   // Stable list for the map (a new array every render made it rebuild every
   // marker on each re-render, which could swallow a tap mid-rebuild).
   const mapJobs = useMemo(() => jobs.filter((j) => assign[j.ref]?.crew || list.includes(j)), [jobs, assign, list]);
@@ -694,11 +733,11 @@ export default function Schedule({ me }) {
   const today = isoOf(new Date());
 
   return (
-    <div className="wrap" style={{ maxWidth: 1800 }}>
+    <div className="wrap" style={{ maxWidth: 2000, paddingBottom: 12 }}>
       {/* day / week picker */}
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
         <button className="btn st" data-primary={mode === "week" ? 1 : 0} onClick={() => setMode((m) => (m === "week" ? "day" : "week"))}
-                title="Show the whole week above the crews (scroll down for the day)">{mode === "week" ? "▴ Hide week" : "▾ Week view"}</button>
+                title="Crews for the whole week on the right (drag jobs into any day)">{mode === "week" ? "▸ Day view" : "▾ Week view"}</button>
         <button className="btn st" onClick={() => setIso(isoOf(addDays(new Date(iso + "T12:00:00"), -7)))}>‹</button>
         {(weekends ? [0, 1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5]).map((i) => {
           const d = addDays(wkStart, i), di = isoOf(d);
@@ -715,40 +754,182 @@ export default function Schedule({ me }) {
         <button className="btn st" onClick={() => setIso(today)}>Today</button>
         <span className="spacer" />
         <button className="chip st" data-on={weekends ? 1 : 0} onClick={() => setWeekends(!weekends)} title="Weekends are off unless this is on">{weekends ? "Weekends: ON" : "Weekends: off"}</button>
+        <button className="chip st" data-on={mapOpen ? 1 : 0} onClick={() => setMapOpen(!mapOpen)} title="Show or hide the map">{mapOpen ? "Map: on" : "Map: off"}</button>
         <button className="btn st" onClick={() => setRulesOpen((o) => !o)}>Tag → equipment</button>
         <span className="hint">{saving ? "Saving…" : board ? (board.from === iso ? "Crews from this day's Shop Board." : board.from === "standing" ? "Crews from the standing Shop Board setup." : `Crews from the Shop Board (same as ${board.from}).`) : ""}</span>
       </div>
       {err && <div className="err" style={{ marginBottom: 8 }}>{err}</div>}
-      <CheckBackBanner jobs={jobs} onResume={resume} onEdit={(j) => setPurgJob(j)} />
       <SoLeftovers me={me} onDone={() => location.reload()} />
-      <UrgentBanner jobs={jobs} assign={assign} plannedOn={plannedOn} onPick={(r) => setSelected(r)} />
       {purgJob && <PurgatoryModal j={jobBy[purgJob.ref] || purgJob} onPause={pause} onResume={resume} onClose={() => setPurgJob(null)} />}
       {rulesOpen && <TagRules onClose={() => setRulesOpen(false)} />}
-      {sel && (
-        <div className="card" style={{ padding: "8px 12px", marginBottom: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderColor: "#58666f" }}>
-          <b>{sel.name}</b><span className="hint">#{sel.ref} · {sel.town} · {fmtH(sel.treeHrs)} tree work{sel.grindHrs ? ` + ${fmtH(sel.grindHrs)} stump` : ""} · {money(sel.price)}{plannedOn[sel.ref] ? ` · planned ${plannedOn[sel.ref]}` : ""}</span>
-          <span className="spacer" />
-          {assign[sel.ref]?.crew
-            ? <button className="btn st" data-danger="1" onClick={() => { remove(sel.ref); setSelected(null); }}>Take off the schedule</button>
-            : <span className="hint">Tap “Add here” on a crew.</span>}
-          <button className="btn st" onClick={() => setSelected(null)}>Clear</button>
-        </div>
-      )}
 
-      {mode === "week" && (
-        <div style={{ marginBottom: 12 }}>
-          <WeekGrid days={weekDays} boards={boards} week={week} jobBy={jobBy} entryHrs={entryHrs} crewColor={crewColor}
-                    selected={selected} onSelect={(r) => setSelected((s) => (s === r ? null : r))}
-                    onDropJob={(d, ref, crew) => addToDay(d, ref, crew, boards[d])} onMoveJob={moveTo} onRemove={removeFrom}
-                    onOpenDay={(d) => setIso(d)} checksFor={checksFor} today={today} />
+      {/* ═══ WORKBENCH (owner, Nov 25): the jobs on the left and the crews on the right, side by side,
+          each scrolling on its own inside the screen — the page itself doesn't grow, so the list and every
+          crew stay reachable while dragging. The crew chips across the top of the right side are always
+          there as drop targets (and tap targets for a picked job). ═══ */}
+      <div className="sched-bench">
+        {/* ── LEFT: jobs to place ── */}
+        <div className="bench-col card">
+          <div className="bench-head" style={{ display: "grid", gap: 6 }}>
+            {fitC && (
+              <div style={{ padding: "6px 8px", borderRadius: 3, border: `1px solid ${crewColor(fitC.id)}`, display: "grid", gap: 5 }}>
+                <div style={{ fontSize: 12.5 }}>Showing jobs <b style={{ color: crewColor(fitC.id) }}>{fitC.name}</b> can do (its machines, {peopleOn(fitC)} people). It has <b>{fmtH(fitLeft)}</b> left to fill today.</div>
+                <TagRow tags={crewTags(fitC, board.core.assets, peopleOn(fitC))} />
+                <div><button className="chip st" onClick={() => setFitCrew(null)}>Show every job</button></div>
+              </div>
+            )}
+            <input className="inp" placeholder="Search name, job #, street, zone, tag…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <TagFilter jobs={jobs} value={tagF} onChange={setTagF} compact />
+            <select className="inp" value={sort} onChange={(e) => setSort(e.target.value)}>
+              <option value="old">Oldest first</option>
+              <option value="late">Most past promise first</option>
+              <option value="big">Biggest first</option>
+              <option value="zone">By zone</option>
+              {(board?.crews || []).filter((c) => (byCrew[c.id] || []).length).map((c) => <option key={c.id} value={`near:${c.id}`}>Nearest to {c.name}'s stops</option>)}
+            </select>
+          </div>
+          <div className="bench-scroll" style={{ display: "grid", gap: 4, alignContent: "start" }}>
+            <CheckBackBanner jobs={jobs} onResume={resume} onEdit={(j) => setPurgJob(j)} />
+            <UrgentBanner jobs={jobs} assign={assign} plannedOn={plannedOn} onPick={(r) => setSelected(r)} />
+            {list.slice(0, limit).map((j) => (
+              <div key={j.ref}>
+              <div draggable onDragStart={(e) => { e.dataTransfer.setData("text/x-job", j.ref); e.dataTransfer.effectAllowed = "move"; }}
+                   onClick={() => setSelected((s) => (s === j.ref ? null : j.ref))}
+                   style={{ display: "flex", gap: 8, padding: "6px 8px", borderRadius: 3, cursor: "grab", background: selected === j.ref ? C.tileHi : C.tile, borderLeft: `7px solid ${jobColor(j)}`,
+                            boxShadow: j.status === "emergency" ? "inset 0 0 0 2px #FF1744" : j.status === "priority" ? "inset 0 0 0 1px #FF4FD8" : "none" }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {j.status === "emergency" && <b style={{ color: "#fff", background: "#C4122F", borderRadius: 2, padding: "0 5px", marginRight: 5, fontSize: 10.5 }}>EMERGENCY</b>}
+                    {j.status === "priority" && <b style={{ color: "#fff", background: "#A3168A", borderRadius: 2, padding: "0 5px", marginRight: 5, fontSize: 10.5 }}>PRIORITY</b>}
+                    {j.checkBack && <b title={`Check-back date ${j.paused?.until} reached — back in the list`} style={{ color: "#0b0e11", background: "#FFD54F", borderRadius: 2, padding: "0 5px", marginRight: 5, fontSize: 10.5 }}>⏰ BACK FROM PURGATORY</b>}
+                    <b>{j.name}{j.paused ? ":" : ""}</b> {j.paused && <span style={{ color: "#d7c4ff" }}>{j.paused.reason}</span>} <span className="hint">#{j.ref}</span></div>
+                  <div className="hint" style={{ fontSize: 11 }}>
+                    {j.town}{j.zone ? ` · Z${j.zone}` : ""} · {j.crew || "?"} · {Math.round(j.days || 0)} d · {j.status === "over" ? (j.seasonal ? j.dueText : `${Math.round(j.lateWeeks)} wk late`) : j.seasonal ? j.dueText : STATUS[j.status].label}
+                    {plannedOn[j.ref] ? ` · planned ${plannedOn[j.ref]}` : ""}{distTo[j.ref] != null ? ` · ${miles(distTo[j.ref])}` : ""}
+                  </div>
+                  <TagStrip tags={j.tags} />
+                </span>
+                <JobHours j={j} size={13} />
+                {selected === j.ref && <span style={{ display: "flex", flexDirection: "column", gap: 3 }} onClick={(e) => e.stopPropagation()}>
+                  <button className="btn" style={{ padding: "1px 6px", borderColor: "#B388FF" }} title={j.paused ? "In Purgatory — edit" : "Purgatory — can't be scheduled yet"}
+                          onClick={() => setPurgJob(j)}>⏸</button>
+                  <button className="btn" style={{ padding: "1px 6px" }} data-danger="1" title="Delete from the backlog"
+                          onClick={() => setRowAct((r) => (r?.ref === j.ref && r.kind === "del" ? null : { ref: j.ref, kind: "del" }))}>🗑</button>
+                </span>}
+              </div>
+              {rowAct?.ref === j.ref && rowAct.kind === "del" && (
+                <div style={{ margin: "3px 0 6px", padding: 8, border: "1px solid #D93B2B", borderRadius: 3, background: "rgba(217,59,43,.08)", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12.5 }}>Delete <b>{j.name}</b> (#{j.ref}) from the Dispatch backlog? It won't come back on the next import. You can restore it on Schedule → Backlog.</span>
+                  <button className="btn st" data-danger="1" onClick={async () => { try { await deleteJob(j.ref, j.name); setRowAct(null); setSelected(null); } catch (e) { setErr(`Couldn't delete (${e.message}).`); } }}>Yes, delete</button>
+                  <button className="btn st" onClick={() => setRowAct(null)}>Cancel</button>
+                </div>
+              )}
+              </div>
+            ))}
+            {list.length > limit && <button className="btn st" onClick={() => setLimit((l) => l + 100)}>Show more</button>}
+          </div>
+          {/* under the job list (owner, Nov 25): count, key, and the switches */}
+          <div className="bench-foot" style={{ display: "grid", gap: 6 }}>
+            <div className="hint" style={{ padding: 0 }}>{list.length} jobs · {fmtH(list.reduce((t, j) => t + (j.treeHrs || 0), 0), 0)} tree work · {fmtH(list.reduce((t, j) => t + (j.grindHrs || 0), 0), 0)} stump. Drag onto a crew, or tap a job then a crew. Emergency / Priority always show; Purgatory jobs come back on their check-back date.</div>
+            <SeasonBar on={seasonsOn} setOn={setSeasonsOn} jobs={jobs} compact>
+              <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12.5 }}><input type="checkbox" checked={showSched} onChange={(e) => setShowSched(e.target.checked)} /> Scheduled</label>
+              <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12.5, marginRight: 6 }}><input type="checkbox" checked={showPurg} onChange={(e) => setShowPurg(e.target.checked)} /> Purgatory</label>
+            </SeasonBar>
+            <details>
+              <summary className="hint" style={{ padding: 0, cursor: "pointer" }}>Key — colour band and tag columns</summary>
+              <div style={{ display: "grid", gap: 4, marginTop: 4 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 11, color: C.inkDim }}>
+                  <span>Band:</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>newest <i style={{ width: 70, height: 7, borderRadius: 4, background: `linear-gradient(90deg, ${[0, .25, .5, .75, 1].map(gradientColor).join(",")})` }} /> oldest</span>
+                  {[[EMERGENCY_COLOR, "emergency"], [PRIORITY_COLOR, "priority"], [SEASON_COLOR, "waiting for season"], [PAUSED_COLOR, "purgatory"]].map(([c, l]) => (
+                    <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><i style={{ width: 9, height: 9, borderRadius: 2, background: c }} />{l}</span>
+                  ))}
+                </div>
+                <TagStripKey />
+              </div>
+            </details>
+          </div>
         </div>
-      )}
-      <CallList assign={assign} checks={checks} jobBy={jobBy} crews={board?.crews || []} crewColor={crewColor} />
-      <div className="st hint" style={{ padding: "6px 0 4px", fontSize: 11.5 }}>{new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })} — crews</div>
-      {/* crews: smaller boxes across the top (owner, Nov 24); scroll sideways if there are many */}
-      <div style={{ display: "flex", gap: 8, overflowX: "auto", alignItems: "flex-start", paddingBottom: 8, marginBottom: 12 }}>
-          {!board && <div className="hint">Loading crews…</div>}
-          {(board?.crews || []).map((c) => {
+
+        {/* ── RIGHT: the crews ── */}
+        <div className="bench-col card">
+          <div className="bench-head" style={{ display: "grid", gap: 6 }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <b className="st" style={{ fontSize: 12 }}>{mode === "week" ? "Week" : new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}</b>
+              <span className="hint" style={{ padding: 0 }}>{sel && !assign[sel.ref]?.crew ? <>Picked <b style={{ color: C.ink }}>{sel.name}</b> — tap a crew to add it</> : "Drop a job on a crew (here, or its box below)"}</span>
+              {sel && <button className="chip st" onClick={() => setSelected(null)}>Clear pick</button>}
+            </div>
+            {/* always-there drop chips, one per crew, with its load for the day */}
+            {mode !== "week" && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {(board?.crews || []).map((c) => {
+                  const items = byCrew[c.id] || [];
+                  const total = items.reduce((t, x) => t + entryHrs(x), 0), target = dayOsh(peopleOn(c));
+                  const hot = dropOver === c.id;
+                  return (
+                    <button key={c.id} className="st"
+                            onDragOver={(e) => { e.preventDefault(); if (dropOver !== c.id) setDropOver(c.id); }} onDragLeave={() => setDropOver((o) => (o === c.id ? null : o))}
+                            onDrop={(e) => { e.preventDefault(); setDropOver(null); const ref = e.dataTransfer.getData("text/x-job"); if (ref) addTo(ref, c.id); }}
+                            onClick={() => { if (sel && !assign[sel.ref]?.crew) addTo(sel.ref, c.id); else document.getElementById(`crew-${c.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
+                            style={{ padding: "7px 10px", borderRadius: 3, fontSize: 12, border: `2px solid ${hot ? crewColor(c.id) : C.edge}`, borderLeft: `6px solid ${crewColor(c.id)}`,
+                                     background: hot ? "#2b353d" : sel && !assign[sel.ref]?.crew ? "#232c33" : C.tile, color: C.ink, textAlign: "left" }}>
+                      {c.name} <span className="mono" style={{ color: total > target + 1 || (target && target - total > 0.05) ? C.amber : C.inkDim, textTransform: "none" }}>{fmtH(total, 0)}/{fmtH(target, 0)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div className="bench-scroll" style={{ display: "grid", gap: 10, alignContent: "start" }}>
+            {mapOpen && (
+              <div className="card" style={{ overflow: "hidden" }}>
+                <div style={{ height: 300 }}>
+                  <ScheduleMap jobs={mapJobs} points={points} assign={assign}
+                               crewColor={crewColor} selected={selected} onPick={onMapPick} yardOf={yardOf} shop={shop}>
+              {sel && (
+                <div className="card" style={{ position: "absolute", left: 10, right: 10, bottom: 10, zIndex: 5, padding: "10px 12px", background: "rgba(27,33,38,.97)", boxShadow: "0 6px 20px rgba(0,0,0,.5)", maxHeight: "60%", overflow: "auto" }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <b>{sel.name}{sel.paused ? ":" : ""}</b> {sel.paused && <span style={{ color: "#d7c4ff" }}>{sel.paused.reason}</span>} <span className="mono hint">#{sel.ref}</span>
+                      <div className="hint">{sel.addr || sel.town}{sel.zone ? ` · Zone ${sel.zone}` : ""}{sel.crew ? ` · ${sel.crew}` : ""} · {money(sel.price)}</div>
+                      <div style={{ fontSize: 12.5, marginTop: 3 }}>
+                        {sel.days != null && <span style={{ color: jobColor(sel) }}>{Math.round(sel.days)} days waiting · </span>}
+                        <span style={{ color: STATUS[sel.status].color }}>{promiseText(sel)}</span>
+                        {plannedOn[sel.ref] ? <span className="hint"> · planned {plannedOn[sel.ref]}</span> : null}
+                        {assign[sel.ref]?.crew ? <span className="hint"> · on {(board?.crews || []).find((c) => c.id === assign[sel.ref].crew)?.name || "a crew"} today</span> : null}
+                      </div>
+                      {sel.tags?.length > 0 && <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 5 }}>{sel.tags.map((t) => <TagPill key={t} tag={t} small />)}</div>}
+                      {sel.note && <div style={{ marginTop: 4, fontSize: 12, color: "#c8ced2", lineHeight: 1.4 }}>{sel.note}</div>}
+                      <JobChecks r={checks[sel.ref]} />
+                    </div>
+                    <JobHours j={sel} />
+                    <button className="btn" onClick={() => setSelected(null)} aria-label="Close">✕</button>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                    {!assign[sel.ref]?.crew && (board?.crews || []).map((c) => (
+                      <button key={c.id} className="btn st" style={{ borderColor: crewColor(c.id) }} onClick={() => addTo(sel.ref, c.id)}>+ {c.name}</button>
+                    ))}
+                    {assign[sel.ref]?.crew && <button className="btn st" data-danger="1" onClick={() => { remove(sel.ref); setSelected(null); }}>Take off the schedule</button>}
+                    <a className="btn st" href={singleOpsJobUrl(sel.ref)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>Open in SingleOps</a>
+                    <button className="btn st" style={{ borderColor: "#B388FF" }} onClick={() => setPurgJob(sel)}>{sel.paused ? "Purgatory…" : "⏸ Purgatory…"}</button>
+                  </div>
+
+                </div>
+              )}
+                  </ScheduleMap>
+                </div>
+                <div className="hint" style={{ padding: "4px 10px" }}>{geoState || "Numbered dots = this day's stops, in order. Small dots = backlog jobs. ★ = the shop."}</div>
+              </div>
+            )}
+            {mode === "week" ? (
+              <WeekGrid days={weekDays} boards={boards} week={week} jobBy={jobBy} entryHrs={entryHrs} crewColor={crewColor}
+                        selected={selected} onSelect={(r) => setSelected((s) => (s === r ? null : r))}
+                        onDropJob={(d, ref, crew) => addToDay(d, ref, crew, boards[d])} onMoveJob={moveTo} onRemove={removeFrom}
+                        onChangeDays={changeDays} onOpenDay={(d) => { setIso(d); setMode("day"); }} checksFor={checksFor} today={today} />
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 8, alignItems: "start" }}>
+                {!board && <div className="hint">Loading crews…</div>}
+                {(board?.crews || []).map((c) => {
             const items = byCrew[c.id] || [];
             const total = items.reduce((t, x) => t + entryHrs(x), 0);
             const stumpTotal = items.reduce((t, x) => t + (jobBy[x.ref]?.grindHrs || 0) + (jobBy[x.ref]?.cleanupHrs || 0), 0);
@@ -760,9 +941,9 @@ export default function Schedule({ me }) {
             const offHere = ppl.filter((p) => board.off.has(p.id));
             const probs = items.reduce((n, x) => n + (checks[x.ref]?.problems || 0), 0);
             return (
-              <div key={c.id} className="card" onDragOver={(e) => e.preventDefault()}
+              <div key={c.id} id={`crew-${c.id}`} className="card" onDragOver={(e) => e.preventDefault()}
                    onDrop={(e) => { e.preventDefault(); const ref = e.dataTransfer.getData("text/x-job"); if (ref) addTo(ref, c.id); }}
-                   style={{ flex: "0 0 290px", maxHeight: 440, overflowY: "auto", borderTop: `4px solid ${crewColor(c.id)}`, boxShadow: fitting ? `0 0 0 2px ${crewColor(c.id)}` : "none" }}>
+                   style={{ minWidth: 0, borderTop: `4px solid ${crewColor(c.id)}`, boxShadow: fitting ? `0 0 0 2px ${crewColor(c.id)}` : "none" }}>
                 <div className="card-h st" style={{ color: C.ink, fontSize: 12.5 }}>
                   {c.name}<span className="hint" style={{ textTransform: "none", letterSpacing: 0 }}>{ppl.filter((p) => !board.off.has(p.id)).map(firstName).join(", ") || "nobody on it"}{offHere.length ? ` (${offHere.map(firstName).join(", ")} off)` : ""}</span>
                   {probs > 0 && <span className="st" style={{ color: "#fff", background: C.red, borderRadius: 2, padding: "1px 6px", fontSize: 10.5 }} title="See the red notes on the jobs below">⚠ {probs}</span>}
@@ -797,7 +978,8 @@ export default function Schedule({ me }) {
                     const j = jobBy[x.ref];
                     const prev = i > 0 ? points[items[i - 1].ref] : yard, here = points[x.ref];
                     return (
-                      <div key={x.ref} onClick={() => setSelected(x.ref)}
+                      <Fragment key={x.ref}>
+                      <div onClick={() => setSelected(x.ref)}
                            style={{ display: "flex", gap: 6, alignItems: "center", padding: "5px 6px", background: selected === x.ref ? C.tileHi : C.tile, borderRadius: 3, cursor: "pointer" }}>
                         <span className="mono" style={{ width: 18, height: 18, borderRadius: 9, background: crewColor(c.id), color: "#0b0e11", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{i + 1}</span>
                         <span style={{ flex: 1, minWidth: 0 }}>
@@ -811,6 +993,14 @@ export default function Schedule({ me }) {
                         <button className="btn" style={{ padding: "2px 7px" }} title="Later" onClick={(e) => { e.stopPropagation(); move(c.id, i, 1); }}>↓</button>
                         <button className="btn" style={{ padding: "2px 7px" }} title="Take off" onClick={(e) => { e.stopPropagation(); remove(x.ref); }}>✕</button>
                       </div>
+                      {selected === x.ref && (
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "2px 6px 6px 30px", fontSize: 11.5, color: C.inkDim }}>
+                          <span>{x.parts > 1 ? `Day ${x.part} of ${x.parts}` : "One day"} —</span>
+                          <button className="btn st" style={{ padding: "2px 8px" }} title="Went long: add the crew's next work day" onClick={(e) => { e.stopPropagation(); changeDays(iso, x.ref, 1); }}>+1 day</button>
+                          {x.parts > 1 && <button className="btn st" style={{ padding: "2px 8px" }} title="Finished short: drop the last day" onClick={(e) => { e.stopPropagation(); changeDays(iso, x.ref, -1); }}>−1 day</button>}
+                        </div>
+                      )}
+                      </Fragment>
                     );
                   })}
                   {!items.length && <div className="hint" style={{ padding: "6px 4px" }}>Drag jobs here{sel ? "" : ", or tap a job and then “Add here”"}.</div>}
@@ -820,129 +1010,25 @@ export default function Schedule({ me }) {
                 </div>
               </div>
             );
-          })}
-      </div>
-
-      {/* map + the job list underneath */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 12, alignItems: "start" }}>
-        <div style={{ position: "sticky", top: 70 }}>
-        <div className="card">
-          <div style={{ height: "min(62vh, 620px)" }}>
-            <ScheduleMap jobs={mapJobs} points={points} assign={assign}
-                         crewColor={crewColor} selected={selected} onPick={onMapPick} yardOf={yardOf} shop={shop}>
-              {sel && (
-                <div className="card" style={{ position: "absolute", left: 10, right: 10, bottom: 10, zIndex: 5, padding: "10px 12px", background: "rgba(27,33,38,.97)", boxShadow: "0 6px 20px rgba(0,0,0,.5)", maxHeight: "60%", overflow: "auto" }}>
-                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <b>{sel.name}{sel.paused ? ":" : ""}</b> {sel.paused && <span style={{ color: "#d7c4ff" }}>{sel.paused.reason}</span>} <span className="mono hint">#{sel.ref}</span>
-                      <div className="hint">{sel.addr || sel.town}{sel.zone ? ` · Zone ${sel.zone}` : ""}{sel.crew ? ` · ${sel.crew}` : ""} · {money(sel.price)}</div>
-                      <div style={{ fontSize: 12.5, marginTop: 3 }}>
-                        {sel.days != null && <span style={{ color: jobColor(sel) }}>{Math.round(sel.days)} days waiting · </span>}
-                        <span style={{ color: STATUS[sel.status].color }}>{promiseText(sel)}</span>
-                        {plannedOn[sel.ref] ? <span className="hint"> · planned {plannedOn[sel.ref]}</span> : null}
-                        {assign[sel.ref]?.crew ? <span className="hint"> · on {(board?.crews || []).find((c) => c.id === assign[sel.ref].crew)?.name || "a crew"} today</span> : null}
-                      </div>
-                      {sel.tags?.length > 0 && <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 5 }}>{sel.tags.map((t) => <TagPill key={t} tag={t} small />)}</div>}
-                      {sel.note && <div style={{ marginTop: 4, fontSize: 12, color: "#c8ced2", lineHeight: 1.4 }}>{sel.note}</div>}
-                      <JobChecks r={checks[sel.ref]} />
-                    </div>
-                    <JobHours j={sel} />
-                    <button className="btn" onClick={() => setSelected(null)} aria-label="Close">✕</button>
-                  </div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-                    {!assign[sel.ref]?.crew && (board?.crews || []).map((c) => (
-                      <button key={c.id} className="btn st" style={{ borderColor: crewColor(c.id) }} onClick={() => addTo(sel.ref, c.id)}>+ {c.name}</button>
-                    ))}
-                    {assign[sel.ref]?.crew && <button className="btn st" data-danger="1" onClick={() => { remove(sel.ref); setSelected(null); }}>Take off the schedule</button>}
-                    <a className="btn st" href={singleOpsJobUrl(sel.ref)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>Open in SingleOps</a>
-                    <button className="btn st" style={{ borderColor: "#B388FF" }} onClick={() => setPurgJob(sel)}>{sel.paused ? "Purgatory…" : "⏸ Purgatory…"}</button>
-                  </div>
-
-                </div>
-              )}
-            </ScheduleMap>
-          </div>
-          <div className="hint" style={{ padding: "6px 10px" }}>{geoState || "Numbered dots = this day's stops, in order. Small dots = backlog jobs (coloured by status). ★ = the shop."}</div>
-        </div>
-        <div style={{ marginTop: 10 }}><SeasonBar on={seasonsOn} setOn={setSeasonsOn} jobs={jobs} /></div>
-        </div>
-
-        {/* backlog */}
-        <div className="card">
-          <div className="card-b" style={{ display: "grid", gap: 8 }}>
-            {fitC && (
-              <div style={{ padding: "6px 8px", borderRadius: 3, border: `1px solid ${crewColor(fitC.id)}`, display: "grid", gap: 5 }}>
-                <div style={{ fontSize: 12.5 }}>Showing jobs <b style={{ color: crewColor(fitC.id) }}>{fitC.name}</b> can do (its machines, {peopleOn(fitC)} people). It has <b>{fmtH(fitLeft)}</b> left to fill today.</div>
-                <div className="hint" style={{ padding: 0 }}>Tags this crew covers:</div>
-                <TagRow tags={crewTags(fitC, board.core.assets, peopleOn(fitC))} />
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <button className="chip st" onClick={() => setFitCrew(null)}>Show every job</button>
-                </div>
+                })}
               </div>
             )}
-            <input className="inp" placeholder="Search name, job #, street, zone, tag…" value={q} onChange={(e) => setQ(e.target.value)} />
-            <TagFilter jobs={jobs} value={tagF} onChange={setTagF} compact />
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <select className="inp" style={{ width: "auto", flex: 1 }} value={sort} onChange={(e) => setSort(e.target.value)}>
-                <option value="old">Oldest first</option>
-                <option value="late">Most past promise first</option>
-                <option value="big">Biggest first</option>
-                <option value="zone">By zone</option>
-                {(board?.crews || []).filter((c) => (byCrew[c.id] || []).length).map((c) => <option key={c.id} value={`near:${c.id}`}>Nearest to {c.name}'s stops</option>)}
-              </select>
-              <button className="chip st" data-on={show === "all" ? 1 : 0} onClick={() => setShow((v) => (v === "all" ? "open" : "all"))}>
-                {show === "all" ? "Showing all (incl. Purgatory)" : "Hiding scheduled / Purgatory (not Emergency / Priority)"}
-              </button>
-            </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 11, color: C.inkDim }} title="The band on the left of each job">
-              <span>Band:</span>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>newest <i style={{ width: 70, height: 7, borderRadius: 4, background: `linear-gradient(90deg, ${[0, .25, .5, .75, 1].map(gradientColor).join(",")})` }} /> oldest</span>
-              {[[EMERGENCY_COLOR, "emergency"], [PRIORITY_COLOR, "priority"], [SEASON_COLOR, "waiting for season"], [PAUSED_COLOR, "purgatory"]].map(([c, l]) => (
-                <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><i style={{ width: 9, height: 9, borderRadius: 2, background: c }} />{l}</span>
-              ))}
-            </div>
-            <TagStripKey />
-            <div className="hint">{list.length} jobs · {fmtH(list.reduce((t, j) => t + (j.treeHrs || 0), 0), 0)} tree work · {fmtH(list.reduce((t, j) => t + (j.grindHrs || 0), 0), 0)} stump. Drag onto a crew, or tap to pick.</div>
-          </div>
-          <div style={{ maxHeight: "62vh", overflow: "auto", padding: "0 8px 8px", display: "grid", gap: 4 }}>
-            {list.slice(0, limit).map((j) => (
-              <div key={j.ref}>
-              <div draggable onDragStart={(e) => { e.dataTransfer.setData("text/x-job", j.ref); e.dataTransfer.effectAllowed = "move"; }}
-                   onClick={() => setSelected((s) => (s === j.ref ? null : j.ref))}
-                   style={{ display: "flex", gap: 8, padding: "6px 8px", borderRadius: 3, cursor: "grab", background: selected === j.ref ? C.tileHi : C.tile, borderLeft: `7px solid ${jobColor(j)}`,
-                            boxShadow: j.status === "emergency" ? "inset 0 0 0 2px #FF1744" : j.status === "priority" ? "inset 0 0 0 1px #FF4FD8" : "none" }}>
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {j.status === "emergency" && <b style={{ color: "#fff", background: "#C4122F", borderRadius: 2, padding: "0 5px", marginRight: 5, fontSize: 10.5 }}>EMERGENCY</b>}
-                    {j.status === "priority" && <b style={{ color: "#fff", background: "#A3168A", borderRadius: 2, padding: "0 5px", marginRight: 5, fontSize: 10.5 }}>PRIORITY</b>}
-                    <b>{j.name}{j.paused ? ":" : ""}</b> {j.paused && <span style={{ color: "#d7c4ff" }}>{j.paused.reason}</span>} <span className="hint">#{j.ref}</span></div>
-                  <div className="hint" style={{ fontSize: 11 }}>
-                    {j.town}{j.zone ? ` · Z${j.zone}` : ""} · {j.crew || "?"} · {Math.round(j.days || 0)} d · {j.status === "over" ? (j.seasonal ? j.dueText : `${Math.round(j.lateWeeks)} wk late`) : j.seasonal ? j.dueText : STATUS[j.status].label}
-                    {plannedOn[j.ref] ? ` · planned ${plannedOn[j.ref]}` : ""}{distTo[j.ref] != null ? ` · ${miles(distTo[j.ref])}` : ""}
-                  </div>
-                  <TagStrip tags={j.tags} />
-                </span>
-                <JobHours j={j} size={13} />
-                {selected === j.ref && <span style={{ display: "flex", flexDirection: "column", gap: 3 }} onClick={(e) => e.stopPropagation()}>
-                  <button className="btn" style={{ padding: "1px 6px", borderColor: "#B388FF" }} title={j.paused ? "In Purgatory — edit" : "Purgatory — can't be scheduled yet"}
-                          onClick={() => setPurgJob(j)}>⏸</button>
-                  <button className="btn" style={{ padding: "1px 6px" }} data-danger="1" title="Delete from the backlog"
-                          onClick={() => setRowAct((r) => (r?.ref === j.ref && r.kind === "del" ? null : { ref: j.ref, kind: "del" }))}>🗑</button>
-                </span>}
-              </div>
-              {rowAct?.ref === j.ref && rowAct.kind === "del" && (
-                <div style={{ margin: "3px 0 6px", padding: 8, border: "1px solid #D93B2B", borderRadius: 3, background: "rgba(217,59,43,.08)", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12.5 }}>Delete <b>{j.name}</b> (#{j.ref}) from the Dispatch backlog? It won't come back on the next import. You can restore it on Schedule → Backlog.</span>
-                  <button className="btn st" data-danger="1" onClick={async () => { try { await deleteJob(j.ref, j.name); setRowAct(null); setSelected(null); } catch (e) { setErr(`Couldn't delete (${e.message}).`); } }}>Yes, delete</button>
-                  <button className="btn st" onClick={() => setRowAct(null)}>Cancel</button>
-                </div>
-              )}
-              </div>
-            ))}
-            {list.length > limit && <button className="btn st" onClick={() => setLimit((l) => l + 100)}>Show more</button>}
+            <CallList assign={assign} checks={checks} jobBy={jobBy} crews={board?.crews || []} crewColor={crewColor} />
           </div>
         </div>
       </div>
+      <style>{`
+        .sched-bench { display:grid; grid-template-columns: minmax(380px, 40%) minmax(0, 1fr); gap:10px; height: calc(100vh - 150px); min-height: 520px; }
+        .bench-col { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+        .bench-head { padding:8px 10px; border-bottom:1px solid ${C.edgeSoft}; flex:0 0 auto; }
+        .bench-scroll { flex:1 1 auto; min-height:0; overflow:auto; padding:8px; }
+        .bench-foot { flex:0 0 auto; padding:8px 10px 8px 64px; border-top:1px solid ${C.edgeSoft}; max-height:40%; overflow:auto; }   /* room for the ☰ button */
+        @media (max-width: 1000px) {
+          .sched-bench { grid-template-columns: 1fr; height:auto; }
+          .bench-col { overflow:visible; }
+          .bench-scroll { max-height: 70vh; }
+        }
+      `}</style>
     </div>
   );
 }
